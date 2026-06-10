@@ -1,0 +1,14 @@
+# Runtime / OS
+.DS_Store
+*.log
+.logs/
+
+# Swift / SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Editor
+.vscode/
+.idea/
+/.deleted
