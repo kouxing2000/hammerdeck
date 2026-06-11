@@ -90,7 +90,9 @@ function M.make(m)
     -- UI (scope-tracked) -------------------------------------------------------
     function ctx.chooser(opts)   return track(adapter.chooser(opts)) end
     function ctx.askChoice(opts) return track(adapter.askChoice(opts)) end
+    function ctx.askText(opts)   return track(adapter.askText(opts)) end
     function ctx.banner(text)    return track(adapter.banner(text)) end
+    function ctx.progressBar()   return track(adapter.progressBar()) end
 
     -- windows / apps -----------------------------------------------------------
     function ctx.listWindows()      return adapter.listWindows() end

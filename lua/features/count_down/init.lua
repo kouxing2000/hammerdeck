@@ -1,0 +1,117 @@
+-- features/count_down
+--
+-- Visual countdown timer (ported from the CountDown spoon + the donor's
+-- init.lua wiring): invoke, type the minutes, and a thin progress strip runs
+-- along the bottom of the screen; a notification fires when time is up.
+--
+-- MULTI-ACTION feature (the first one): "start" prompts/cancels on its hotkey;
+-- "pause" pause/resumes and ships DORMANT (no default trigger) -- bind it in
+-- Settings if you want it, exactly the contract's any-trigger-any-action idea.
+--
+-- Donor deviation: invoking start while a countdown runs CANCELS it (alert),
+-- instead of the spoon's finish-early-with-"time is up" notification -- saying
+-- time is up when the user aborted was a lie.
+
+return {
+    api         = 1,
+    id          = "count_down",
+    name        = "Countdown",
+    description = "Ask for minutes, then run a thin progress strip along the "
+        .. "bottom of the screen; notifies when time is up.",
+    version     = "1.0.0",
+    category    = "productivity",
+
+    options = {
+        { key = "defaultMinutes", type = "int", default = 5,
+          label = "Suggested minutes", min = 1, max = 480 },
+    },
+
+    actions = (function()
+        -- Shared closure state across both actions; rebuilt when ctx changes
+        -- (disable -> enable invalidated the old handles).
+        local st = nil
+
+        local function ensure(ctx)
+            if not st or st.ctx ~= ctx then
+                st = { ctx = ctx }
+            end
+            return st
+        end
+
+        local function cancel(s)
+            if s.timer then s.timer.stop(); s.timer = nil end
+            if s.bar then s.bar.stop(); s.bar = nil end
+            s.paused = false
+            s.total, s.elapsed, s.minutes = nil, nil, nil
+        end
+
+        local function startTicking(s)
+            s.timer = s.ctx.everySeconds(1, function()
+                s.elapsed = s.elapsed + 1
+                if s.elapsed >= s.total then
+                    local minutes = s.minutes
+                    local ctx = s.ctx
+                    cancel(s)
+                    ctx.notify("Time (" .. minutes .. " min) is up!",
+                        "Now is " .. os.date("%X", ctx.now()))
+                else
+                    s.bar.setProgress(s.elapsed / s.total)
+                end
+            end)
+        end
+
+        local function beginCountdown(s, minutes)
+            s.minutes = minutes
+            s.total = math.ceil(minutes * 60)
+            s.elapsed = 0
+            s.bar = s.ctx.progressBar()
+            s.paused = false
+            startTicking(s)
+            s.ctx.log("countdown started for " .. minutes .. " min")
+        end
+
+        return {
+            {
+                id = "start", label = "Start / cancel countdown",
+                defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "c" },
+                run = function(ctx)
+                    local s = ensure(ctx)
+                    if s.timer or s.paused then
+                        cancel(s)
+                        ctx.alert("Countdown cancelled")
+                        return
+                    end
+                    if s.prompt then return end   -- prompt already open
+                    s.prompt = ctx.askText {
+                        title = "Count down for how many minutes?",
+                        placeholder = "minutes",
+                        default = tostring(ctx.opt("defaultMinutes")),
+                        onSubmit = function(text)
+                            s.prompt = nil
+                            local minutes = tonumber(text)
+                            if minutes and minutes > 0 then
+                                beginCountdown(s, minutes)
+                            end
+                        end,
+                    }
+                end,
+            },
+            {
+                id = "pause", label = "Pause / resume",
+                -- Dormant: no default trigger; bind one in Settings to use it.
+                run = function(ctx)
+                    local s = ensure(ctx)
+                    if s.timer then
+                        s.timer.stop(); s.timer = nil
+                        s.paused = true
+                        ctx.log("countdown paused")
+                    elseif s.paused then
+                        s.paused = false
+                        startTicking(s)
+                        ctx.log("countdown resumed")
+                    end
+                end,
+            },
+        }
+    end)(),
+}

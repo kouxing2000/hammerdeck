@@ -27,6 +27,8 @@ myHammerSpoon:
   activity, with a short warning first.
 - **Clean Clipboard** (action) -- rewrites the clipboard as trimmed plain text
   (strips formatting); optionally turns newlines into commas.
+- **Countdown** (2 actions) -- ask for minutes, run a thin progress strip along
+  the screen bottom, notify when time is up; pause/resume on its own shortcut.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

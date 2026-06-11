@@ -159,6 +159,30 @@ function adapter.banner(text)
     }
 end
 
+-- One-shot text prompt: Enter submits the string, Escape cancels (nil). opts:
+--   title, placeholder, default, onSubmit(text|nil)
+function adapter.askText(opts)
+    local id = native.ask_text(
+        opts.title or "", opts.placeholder or "", opts.default or "",
+        function(text)
+            if opts.onSubmit then opts.onSubmit(text) end
+        end)
+    return {
+        dismiss = function() native.ask_text_dismiss(id) end,
+        stop    = function() native.stop(id) end,
+    }
+end
+
+-- Thin progress strip along the bottom of the main screen.
+-- Returns { setProgress(fraction 0..1), stop() }.
+function adapter.progressBar()
+    local id = native.progress_show()
+    return {
+        setProgress = function(f) native.progress_set(id, f) end,
+        stop        = function() native.stop(id) end,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Windows / apps
 -- ---------------------------------------------------------------------------

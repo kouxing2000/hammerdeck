@@ -397,19 +397,19 @@ registry.setEnabled("clipboard_clean", true)
 -- plainText mode: trims (and the string round-trip strips formatting)
 fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "plainText"
 fake.pasteboard = "   padded text\t "
-fake.pressHotkey("c")
+fake.pressHotkey("v")
 ok(fake.pasteboard == "padded text", "plainText mode trims the clipboard")
 
 -- newlinesToCommas mode
 fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "newlinesToCommas"
 fake.pasteboard = "a\nb\r\nc"
-fake.pressHotkey("c")
+fake.pressHotkey("v")
 ok(fake.pasteboard == "a,b,c", "newlinesToCommas mode joins lines with commas")
 
 -- empty clipboard: alert, no write
 fake.pasteboard = ""
 local alertsBefore = #fake.alerts
-fake.pressHotkey("c")
+fake.pressHotkey("v")
 ok(#fake.alerts == alertsBefore + 1, "empty clipboard alerts")
 ok(fake.pasteboard == "", "empty clipboard left unchanged")
 
@@ -509,5 +509,48 @@ ok(hits.a == 102, "legacy hammerdeck.trigger.<id> override is honored for sugar 
 registry.setEnabled("multi", false)
 registry.setEnabled("legacy", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after multi-action tests")
+
+-- T16: count_down (multi-action spoon port: prompt -> bar -> notify) -----------
+registry.register(require("features.count_down"))
+registry.setEnabled("count_down", true)
+
+fake.pressHotkey("c")
+local prompt = fake.openTextPrompt()
+ok(prompt ~= nil, "countdown start prompts for minutes")
+ok(prompt.default == "5", "prompt suggests the defaultMinutes option")
+prompt.submit("2")                              -- 2 minutes = 120 ticks
+local cdBar = fake.liveProgressBar()
+ok(cdBar ~= nil, "countdown shows a progress strip")
+fake.fireTimers("every", 1)
+ok(math.abs(cdBar.fraction - 1 / 120) < 1e-9, "progress advances per second")
+
+-- the dormant pause action goes live when the user binds it
+ok(registry.setTrigger("count_down", "pause",
+    { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "p" }) == true,
+    "binding a dormant action succeeds")
+fake.pressHotkey("p")                           -- pause
+ok(fake.fireTimers("every", 1) == 0, "paused countdown stops ticking")
+fake.pressHotkey("p")                           -- resume
+ok(fake.fireTimers("every", 1) == 1, "resume restarts the tick")
+
+-- invoking start while running cancels
+fake.pressHotkey("c")
+ok(fake.liveProgressBar() == nil, "start-while-running cancels the countdown")
+
+-- completion notifies and clears the bar
+fake.pressHotkey("c")
+fake.openTextPrompt().submit("1")               -- 60 ticks
+local cdN = #fake.notifications
+for _ = 1, 60 do fake.fireTimers("every", 1) end
+ok(#fake.notifications == cdN + 1, "completion notifies")
+ok(fake.liveProgressBar() == nil, "completion clears the strip")
+
+-- a dismissed prompt starts nothing
+fake.pressHotkey("c")
+fake.openTextPrompt().submit(nil)               -- Escape
+ok(fake.liveProgressBar() == nil, "dismissed prompt starts nothing")
+
+registry.setEnabled("count_down", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after count_down test")
 
 print("OK -- " .. passed .. " assertions passed")

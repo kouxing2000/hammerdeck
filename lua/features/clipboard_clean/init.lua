@@ -34,7 +34,9 @@ return {
           label = "Transform" },
     },
 
-    defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "c" },
+    -- ctrl+cmd+v: the donor's "paste simple format" combo (cmd+alt+ctrl+c
+    -- belongs to the countdown feature, donor parity).
+    defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "v" },
 
     action = function(ctx)
         local text = ctx.pasteboardRead()

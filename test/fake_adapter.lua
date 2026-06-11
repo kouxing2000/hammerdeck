@@ -20,6 +20,8 @@ fake.watchers      = {}   -- {event, fn, stopped}
 fake.choosers      = {}   -- see adapter.chooser
 fake.dialogs       = {}   -- see adapter.askChoice
 fake.banners       = {}   -- {text, stopped}
+fake.textPrompts   = {}   -- see adapter.askText
+fake.progressBars  = {}   -- {fraction, stopped}
 fake.windows       = {}   -- preset by the test for listWindows()
 fake.focused       = {}   -- focusWindow(id) calls
 fake.modifiers     = {}   -- e.g. { alt = true }
@@ -167,6 +169,38 @@ function adapter.banner(text)
     }
 end
 
+function adapter.askText(opts)
+    local d = {
+        title = opts.title, placeholder = opts.placeholder,
+        default = opts.default, onSubmit = opts.onSubmit,
+        open = true, stopped = false,
+    }
+    fake.textPrompts[#fake.textPrompts + 1] = d
+    alloc()
+    local function finish(text)
+        if not d.open then return end
+        d.open = false
+        freeOnce(d)
+        if d.onSubmit then d.onSubmit(text) end
+    end
+    -- test-side driver: type text and hit Enter (nil = Escape)
+    function d.submit(text) finish(text) end
+    return {
+        dismiss = function() finish(nil) end,
+        stop    = function() d.open = false; freeOnce(d) end,
+    }
+end
+
+function adapter.progressBar()
+    local p = { fraction = 0, stopped = false }
+    fake.progressBars[#fake.progressBars + 1] = p
+    alloc()
+    return {
+        setProgress = function(f) p.fraction = f end,
+        stop        = function() freeOnce(p) end,
+    }
+end
+
 -- Windows / apps ---------------------------------------------------------------
 
 function adapter.listWindows()
@@ -264,6 +298,20 @@ end
 function fake.liveBanner()
     for i = #fake.banners, 1, -1 do
         if not fake.banners[i].stopped then return fake.banners[i] end
+    end
+    return nil
+end
+
+function fake.openTextPrompt()
+    for i = #fake.textPrompts, 1, -1 do
+        if fake.textPrompts[i].open then return fake.textPrompts[i] end
+    end
+    return nil
+end
+
+function fake.liveProgressBar()
+    for i = #fake.progressBars, 1, -1 do
+        if not fake.progressBars[i].stopped then return fake.progressBars[i] end
     end
     return nil
 end

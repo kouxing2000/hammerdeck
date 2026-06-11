@@ -23,6 +23,8 @@ final class Native {
     private var cancellers: [Int32: () -> Void] = [:]
     private var banners: [Int32: BannerPanel] = [:]
     private var choosers: [Int32: ChooserPanel] = [:]
+    private var progresses: [Int32: ProgressPanel] = [:]
+    private var askTexts: [Int32: AskTextPanel] = [:]
 
     func attach(_ lua: LuaState) { self.lua = lua }
 
@@ -42,6 +44,8 @@ final class Native {
         cancellers[id] = nil
         banners[id] = nil
         choosers[id] = nil
+        progresses[id] = nil
+        askTexts[id] = nil
     }
 
     // MARK: - Table registration
@@ -81,6 +85,10 @@ final class Native {
             "chooser_set_selected_row": { L in MainActor.assumeIsolated { Native.shared.chooserSetSelectedRow(L) } },
             "chooser_select": { L in MainActor.assumeIsolated { Native.shared.chooserSelect(L) } },
             "ask_choice":   { L in MainActor.assumeIsolated { Native.shared.askChoice(L) } },
+            "ask_text":     { L in MainActor.assumeIsolated { Native.shared.askText(L) } },
+            "ask_text_dismiss": { L in MainActor.assumeIsolated { Native.shared.askTextDismiss(L) } },
+            "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
+            "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
             "ask_choice_dismiss": { L in MainActor.assumeIsolated { Native.shared.askChoiceDismiss(L) } },
             // windows / apps (list/focus are M2 Slice 2 -- AXUIElement)
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
@@ -427,6 +435,61 @@ final class Native {
 
     private func askChoiceDismiss(_ L: OpaquePointer?) -> Int32 {
         chooser(L)?.select(0)   // out-of-range select = finish(nil) = cancelled
+        return 0
+    }
+
+    // MARK: - askText (one-shot text prompt)
+
+    private func askText(_ L: OpaquePointer?) -> Int32 {
+        let title = LuaState.string(L, 1) ?? ""
+        let placeholder = LuaState.string(L, 2) ?? ""
+        let defaultValue = LuaState.string(L, 3) ?? ""
+        let ref = lua.makeRef(at: 4)
+
+        let id = allocId()
+        var done = false
+        let panel = AskTextPanel(title: title, placeholder: placeholder,
+                                 defaultValue: defaultValue) { text in
+            guard !done else { return }
+            done = true
+            Native.shared.lua.callRef(ref) { L in
+                if let text { lua_pushstring(L, text) } else { lua_pushnil(L) }
+                return 1
+            }
+            Native.shared.lua.releaseRef(ref)
+            Native.shared.freeResource(id)
+        }
+        cancellers[id] = {
+            if !done {
+                done = true
+                Native.shared.lua.releaseRef(ref)
+            }
+            panel.close()
+        }
+        askTexts[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    private func askTextDismiss(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) { askTexts[id]?.dismiss() }
+        return 0
+    }
+
+    // MARK: - Progress strip
+
+    private func progressShow(_ L: OpaquePointer?) -> Int32 {
+        let panel = ProgressPanel()
+        let id = registerResource { panel.close() }
+        progresses[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    private func progressSet(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init), let f = LuaState.double(L, 2) {
+            progresses[id]?.setProgress(f)
+        }
         return 0
     }
 
