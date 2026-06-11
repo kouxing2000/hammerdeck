@@ -191,6 +191,10 @@ function adapter.lockScreen()
     native.lock_screen()
 end
 
+function adapter.displaySleep()
+    native.display_sleep()
+end
+
 function adapter.startScreensaver()
     native.start_screensaver()
 end

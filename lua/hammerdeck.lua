@@ -30,6 +30,7 @@ local CATALOG = {
     "features.sleep_schedule",
     "features.rest_timer",
     "features.window_jump",
+    "features.idle_dimmer",
 }
 
 -- Quarantined load: a single broken plugin is recorded and skipped (surfaced

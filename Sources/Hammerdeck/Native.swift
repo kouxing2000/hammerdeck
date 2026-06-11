@@ -88,6 +88,7 @@ final class Native {
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
             "system_sleep": { L in MainActor.assumeIsolated { Native.shared.systemSleep(L) } },
             "lock_screen":  { L in MainActor.assumeIsolated { Native.shared.lockScreen(L) } },
+            "display_sleep": { L in MainActor.assumeIsolated { Native.shared.displaySleep(L) } },
             "start_screensaver": { L in MainActor.assumeIsolated { Native.shared.startScreensaver(L) } },
         ])
     }
@@ -462,6 +463,13 @@ final class Native {
     private func lockScreen(_ L: OpaquePointer?) -> Int32 {
         // Display sleep locks the session when "require password immediately"
         // is on (the default). Direct lock APIs are private; revisit in M3.
+        runCommand("/usr/bin/pmset", ["displaysleepnow"])
+        return 0
+    }
+
+    private func displaySleep(_ L: OpaquePointer?) -> Int32 {
+        // Turn the display off (no lock intent -- distinct from lockScreen,
+        // which will switch to a real lock API in M3).
         runCommand("/usr/bin/pmset", ["displaysleepnow"])
         return 0
     }

@@ -15,14 +15,16 @@ bridge works end-to-end (Swift runs Lua; Lua calls back into Swift).
 **Platform v2 + MVP features done (2026-06-10)**: the plugin contract
 ([`docs/PLUGIN_SYSTEM.md`](docs/PLUGIN_SYSTEM.md)) is implemented -- manifests
 with `api = 1`, ACTION vs SERVICE features, and a **scoped ctx** that tears down
-everything a feature created when it's disabled. Three real features are ported
-from myHammerSpoon:
+everything a feature created when it's disabled. Real features ported from
+myHammerSpoon:
 
 - **Sleep Schedule** (service) -- forced sleep with graduated warnings, one-time
   snooze, weekend shift.
 - **Rest Timer** (service) -- idle-aware rest reminders with daily work stats.
 - **Window Jump** (action) -- searchable Alt-Tab, most-recently-used first,
   cycle-and-release UX.
+- **Idle Display Off** (service) -- turns the display off after a stretch of no
+  activity, with a short warning first.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

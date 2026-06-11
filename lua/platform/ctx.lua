@@ -103,6 +103,7 @@ function M.make(m)
     function ctx.idleSeconds()       return adapter.idleSeconds() end
     function ctx.systemSleep()       adapter.systemSleep() end
     function ctx.lockScreen()        adapter.lockScreen() end
+    function ctx.displaySleep()      adapter.displaySleep() end
     function ctx.startScreensaver()  adapter.startScreensaver() end
 
     return ctx, scope

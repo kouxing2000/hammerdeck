@@ -25,7 +25,7 @@ fake.focused       = {}   -- focusWindow(id) calls
 fake.modifiers     = {}   -- e.g. { alt = true }
 fake.idle          = 0
 fake.clockOffset   = 0    -- added to os.time(); tests advance time with this
-fake.actions       = { sleep = 0, lock = 0, screensaver = 0 }
+fake.actions       = { sleep = 0, lock = 0, screensaver = 0, displaySleep = 0 }
 fake.liveHandles   = 0    -- allocated-and-not-yet-freed native resources
 
 local function alloc()
@@ -202,6 +202,7 @@ end
 
 function adapter.systemSleep()      fake.actions.sleep = fake.actions.sleep + 1 end
 function adapter.lockScreen()       fake.actions.lock = fake.actions.lock + 1 end
+function adapter.displaySleep()     fake.actions.displaySleep = fake.actions.displaySleep + 1 end
 function adapter.startScreensaver() fake.actions.screensaver = fake.actions.screensaver + 1 end
 
 -- Test drivers ------------------------------------------------------------------

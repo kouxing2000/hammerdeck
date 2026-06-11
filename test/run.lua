@@ -348,4 +348,43 @@ ok(not stillHasProbe, "non-catalog features are dropped by reload")
 registry.setEnabled("window_jump", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after hot-reload test")
 
+-- T12: idle_dimmer (service: warn after idle, sleep display after lead time) ---
+registry.register(require("features.idle_dimmer"))
+fake.settings["hammerdeck.opt.idle_dimmer.idleThresholdMin"] = 5   -- 300s
+fake.settings["hammerdeck.opt.idle_dimmer.warnSeconds"] = 10
+local dimsBefore   = fake.actions.displaySleep
+local alertsBefore = #fake.alerts
+registry.setEnabled("idle_dimmer", true)
+
+-- active: no warning, no display sleep
+fake.idle = 10
+fake.fireTimers("every", 5)
+ok(#fake.alerts == alertsBefore, "active: no idle warning")
+ok(fake.actions.displaySleep == dimsBefore, "active: display not slept")
+
+-- idle past threshold: warn exactly once
+fake.idle = 6 * 60
+fake.fireTimers("every", 5)
+ok(#fake.alerts == alertsBefore + 1, "idle past threshold: warning shown")
+fake.fireTimers("every", 5)
+ok(#fake.alerts == alertsBefore + 1, "warning shown only once")
+ok(fake.actions.displaySleep == dimsBefore, "no display sleep before the lead time")
+
+-- lead time elapses: display sleeps exactly once
+fake.clockOffset = fake.clockOffset + 10
+fake.fireTimers("every", 5)
+ok(fake.actions.displaySleep == dimsBefore + 1, "display slept after the lead time")
+fake.fireTimers("every", 5)
+ok(fake.actions.displaySleep == dimsBefore + 1, "display sleep fired only once")
+
+-- returning to activity re-arms the cycle
+fake.idle = 0
+fake.fireTimers("every", 5)
+fake.idle = 6 * 60
+fake.fireTimers("every", 5)
+ok(#fake.alerts == alertsBefore + 2, "returning to activity re-arms the warning")
+
+registry.setEnabled("idle_dimmer", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after idle_dimmer test")
+
 print("OK -- " .. passed .. " assertions passed")
