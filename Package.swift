@@ -13,10 +13,23 @@ let package = Package(
                 .headerSearchPath("include"),     // public API headers (lua.h, ...)
             ]
         ),
-        // The native host: owns the Swift<->Lua bridge and (later) the menubar UI.
+        // Everything real lives here so the integration tests can import it:
+        // the Swift<->Lua bridge, the native seam, panels, and the config UI.
+        .target(
+            name: "HammerdeckKit",
+            dependencies: ["CLua"]
+        ),
+        // Thin launcher: top-level code only (executable targets cannot be
+        // cleanly imported by test targets, so they stay logic-free).
         .executableTarget(
             name: "Hammerdeck",
-            dependencies: ["CLua"]
+            dependencies: ["HammerdeckKit"]
+        ),
+        // Integration tests against the REAL bridge (no fake adapter): boot the
+        // Lua platform in-process and exercise Lua<->Swift<->macOS end to end.
+        .testTarget(
+            name: "HammerdeckTests",
+            dependencies: ["HammerdeckKit"]
         ),
     ]
 )

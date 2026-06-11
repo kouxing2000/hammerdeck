@@ -11,16 +11,16 @@ payload (the feature platform). They meet at one bridge.
 
 ## The one inviolable rule
 
-**Only the Swift bridge (`Sources/Hammerdeck/LuaState.swift`) and the Lua seam
-(`lua/platform/adapter.lua`) may touch native / OS APIs.** Features and every
-other platform module go through the adapter. This keeps the host swappable and
-the layers clean. If you need a native call elsewhere, add it to the bridge +
-adapter, never reach past the seam.
+**Only the Swift bridge (`Sources/HammerdeckKit/LuaState.swift`) and the Lua
+seam (`lua/platform/adapter.lua`) may touch native / OS APIs.** Features and
+every other platform module go through the adapter. This keeps the host
+swappable and the layers clean. If you need a native call elsewhere, add it to
+the bridge + adapter, never reach past the seam.
 
-> Current state (M2 Slice 1 done, 2026-06-10): **no Hammerspoon anywhere** --
-> dropped entirely as a backend by owner decision. `adapter.lua` targets the
-> `native.*` table that `Sources/Hammerdeck/Native.swift` injects; `swift run`
-> boots `lua/hammerdeck.lua` and the features run in the standalone binary.
+> Current state (2026-06-11): **no Hammerspoon anywhere** -- dropped entirely
+> as a backend by owner decision. `adapter.lua` targets the `native.*` table
+> that `Sources/HammerdeckKit/Native.swift` injects; `swift run` boots
+> `lua/hammerdeck.lua` (features autodiscovered from `lua/features/`).
 > Pending: window listing (AXUIElement, M2 Slice 2) -- window_jump degrades to
 > an alert until then. See docs/HANDOVER.md.
 
@@ -29,10 +29,13 @@ adapter, never reach past the seam.
 `lua/features/*` -> `registry` -> `triggers` / `manifest` -> `adapter` (Lua seam)
 -> `LuaState.swift` (Swift bridge) -> macOS APIs
 
-- **lua/features/** -- logic only; declares a manifest (`api = 1`; ACTION =
-  `defaultTrigger`+`action(ctx)`, SERVICE = `start(ctx)`+optional `stop`),
-  receives only the scoped `ctx` (no raw adapter; no `os.time()` -- use
-  `ctx.now()`). Never touches native APIs or platform internals.
+- **lua/features/** -- logic only; declares a manifest (`api = 1`; ACTIONS =
+  `actions = {{id, label, defaultTrigger?, run}, ...}` -- one plugin, several
+  independently rebindable shortcuts; single-action sugar
+  `defaultTrigger`+`action(ctx)` still works; SERVICE = `start(ctx)`+optional
+  `stop`, may also declare `actions`), receives only the scoped `ctx` (no raw
+  adapter; no `os.time()` -- use `ctx.now()`). Never touches native APIs or
+  platform internals.
 - **lua/platform/manifest.lua** -- validates a feature's declared shape; resolves defaults.
 - **lua/platform/triggers.lua** -- declarative trigger spec -> live binding. Any
   trigger can fire any action (the core idea). Types: hotkey, schedule
@@ -44,25 +47,34 @@ adapter, never reach past the seam.
   design: `docs/PLUGIN_SYSTEM.md`.
 - **lua/platform/adapter.lua** -- the seam (Lua side); every binding it returns
   is a handle with `.stop()`.
-- **Sources/Hammerdeck/LuaState.swift** -- the bridge mechanics: owns the Lua
-  state, runs Lua, callback refs, table readers, `eval`.
-- **Sources/Hammerdeck/Native.swift** (+ HotkeyCenter/Panels helpers) -- the
+- **Sources/HammerdeckKit/LuaState.swift** -- the bridge mechanics: owns the
+  Lua state, runs Lua, callback refs, table readers, `eval`.
+- **Sources/HammerdeckKit/Native.swift** (+ HotkeyCenter/Panels helpers) -- the
   seam (Swift side): the `native` table the adapter calls. The only place
   macOS-API surface should grow.
-- **Sources/Hammerdeck/SettingsStore/SettingsView/StatusBar.swift** -- config
-  UI: menubar + SwiftUI settings window; forms are GENERATED from manifest
-  options (never write per-feature UI code). Reads the catalog via
+- **Sources/HammerdeckKit/SettingsStore/SettingsView/StatusBar.swift** --
+  config UI: menubar + SwiftUI settings window; forms are GENERATED from
+  manifest options (never write per-feature UI code). Reads the catalog via
   `registry.describe()` over `LuaState.eval`; writes the same
   `hammerdeck.opt.*` defaults keys `ctx.opt` reads.
+- **Sources/Hammerdeck/main.swift** -- thin launcher only (calls
+  `hammerdeckMain()`); all logic lives in the Kit so tests can import it.
+- **Tests/HammerdeckTests/** -- integration tests against the REAL bridge
+  (no fake adapter): boots the Lua platform in-process via `swift test`.
 - **Sources/CLua/** -- vendored Lua 5.4.7. Do NOT hand-edit. See `Sources/CLua/VENDOR.md`.
 
 ## Build / run
 
 ```bash
-swift build       # compiles CLua + Hammerdeck
+swift build       # compiles CLua + HammerdeckKit + the launcher
 swift run         # boots the platform in the native host (the real app)
 lua test/run.lua  # headless platform + feature tests (fake adapter, run after Lua changes)
+swift test        # integration tests on the REAL bridge (run after Swift/seam changes)
 ```
+
+The hotkey end-to-end test (`testGlobalHotkeySynthesis`) self-skips unless the
+terminal running `swift test` has the Accessibility permission (it posts real
+CGEvents). Everything else runs anywhere.
 
 Smoke test without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 swift run`.
 Settings live in the `Hammerdeck` defaults domain (`defaults read Hammerdeck`;
