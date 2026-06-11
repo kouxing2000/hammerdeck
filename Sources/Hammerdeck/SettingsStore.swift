@@ -39,6 +39,8 @@ struct FeatureInfo: Identifiable {
     var enabled: Bool
     let triggerDesc: String
     let options: [OptionInfo]
+    let failed: Bool            // load or start error -- the feature is broken
+    let errorMessage: String
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
@@ -53,6 +55,8 @@ struct FeatureInfo: Identifiable {
         self.options = (dict["options"] as? [Any])?
             .compactMap { $0 as? [String: Any] }
             .compactMap(OptionInfo.init) ?? []
+        self.failed = dict["failed"] as? Bool ?? false
+        self.errorMessage = dict["error"] as? String ?? ""
     }
 }
 

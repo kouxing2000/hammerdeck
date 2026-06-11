@@ -21,14 +21,44 @@ local registry = {}
 local features = {}   -- id -> manifest
 local bound    = {}   -- id -> { ctx, scope } (when enabled)
 
+-- Quarantine bookkeeping: a broken plugin must never take the whole app down.
+local loadFailures  = {}   -- list of { source, id?, error } -- never registered
+local startFailures = {}   -- id -> error string -- registered but failed to start
+
 local function enabledKey(id) return "hammerdeck.enabled." .. id end
 
--- Register a feature module (its validated manifest).
+-- Register a feature module (its validated manifest). Throws on a bad manifest
+-- or duplicate id -- callers that must survive a broken plugin use
+-- registry.load() (below), which quarantines those throws.
 function registry.register(m)
     manifest.validate(m)
     assert(not features[m.id], "duplicate feature id: " .. m.id)
     features[m.id] = m
     return m
+end
+
+-- Load + register one catalog module under quarantine. A broken module (require
+-- error, validate failure, duplicate id) is recorded and skipped instead of
+-- aborting the boot; the rest of the catalog still loads. Returns the manifest
+-- on success, nil on failure.
+function registry.load(source)
+    local okReq, mod = pcall(require, source)
+    if not okReq then
+        loadFailures[#loadFailures + 1] = { source = source, error = tostring(mod) }
+        adapter.log("feature load FAILED [" .. source .. "]: " .. tostring(mod))
+        return nil
+    end
+    local okReg, err = pcall(registry.register, mod)
+    if not okReg then
+        loadFailures[#loadFailures + 1] = {
+            source = source,
+            id = type(mod) == "table" and mod.id or nil,
+            error = tostring(err),
+        }
+        adapter.log("feature register FAILED [" .. source .. "]: " .. tostring(err))
+        return nil
+    end
+    return mod
 end
 
 function registry.all()
@@ -52,24 +82,43 @@ end
 
 local function bindFeature(m)
     if bound[m.id] then return end               -- already live
+    startFailures[m.id] = nil                     -- a retry clears the prior failure
     local ctx, scope = ctxlib.make(m)
     bound[m.id] = { ctx = ctx, scope = scope }
 
-    if m.action then
-        local spec = triggerFor(m)
-        if not spec then
-            adapter.log(m.id .. ": enabled but has no trigger; skipping")
-            return
+    -- Quarantine the feature's own start/bind code: a throw here (bad trigger
+    -- spec, exception in start(ctx)) must not abort startAll() and strand the
+    -- rest of the catalog. Fire-time errors in an action handler are contained
+    -- separately at the bridge's callRef boundary.
+    local ok, err = pcall(function()
+        if m.action then
+            local spec = triggerFor(m)
+            if not spec then
+                adapter.log(m.id .. ": enabled but has no trigger; skipping")
+                return
+            end
+            scope.adopt(triggers.bind(spec, function() m.action(ctx) end))
+            adapter.log(m.id .. ": bound (" .. spec.type .. ")")
+        else
+            m.start(ctx)
+            adapter.log(m.id .. ": started")
         end
-        scope.adopt(triggers.bind(spec, function() m.action(ctx) end))
-        adapter.log(m.id .. ": bound (" .. spec.type .. ")")
-    else
-        m.start(ctx)
-        adapter.log(m.id .. ": started")
+    end)
+
+    if not ok then
+        -- A partial start may have created handles before throwing; tear the
+        -- scope down so a broken feature leaks nothing, and drop the binding so
+        -- it reads as not-live. The enabled flag stays set, so describe() can
+        -- surface it as "enabled but failed".
+        scope.teardown()
+        bound[m.id] = nil
+        startFailures[m.id] = tostring(err)
+        adapter.log(m.id .. ": start/bind FAILED: " .. tostring(err))
     end
 end
 
 local function unbindFeature(m)
+    startFailures[m.id] = nil
     local b = bound[m.id]
     if not b then return end
     if m.stop then
@@ -137,9 +186,28 @@ function registry.describe()
             enabled = registry.isEnabled(m.id),
             triggerDesc = describeTrigger(m),
             options = opts,
+            failed = startFailures[m.id] ~= nil,
+            error = startFailures[m.id],
+        }
+    end
+    -- Modules that failed to even load/register: surface as inert "failed" rows
+    -- so a broken plugin is visible in the UI rather than silently missing.
+    for _, f in ipairs(loadFailures) do
+        out[#out + 1] = {
+            id = f.id or f.source, name = f.id or f.source,
+            description = "Failed to load: " .. tostring(f.error),
+            category = "failed", version = "",
+            kind = "failed", enabled = false,
+            triggerDesc = "load error", options = {},
+            failed = true, error = tostring(f.error),
         }
     end
     return out
+end
+
+-- For tests / diagnostics: { load = { {source,id?,error}... }, start = { id->err } }.
+function registry.failures()
+    return { load = loadFailures, start = startFailures }
 end
 
 -- For tests: total live handles across all enabled features.

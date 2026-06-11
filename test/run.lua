@@ -195,4 +195,42 @@ ok(fake.visibleChooser() ~= nil, "re-enabled feature works with a fresh ctx")
 registry.setEnabled("window_jump", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after re-enable cycle")
 
+-- T9: plugin quarantine -- one bad plugin must never take the platform down ----
+-- (a) a missing module is recorded, not thrown
+ok(registry.load("features._does_not_exist") == nil, "load returns nil for a missing module")
+ok(#registry.failures().load >= 1, "missing module recorded as a load failure")
+
+-- (b) an invalid manifest fails at register, still quarantined
+package.loaded["features._bad_manifest"] = { api = 1, id = "bad_manifest", name = "Bad" } -- no action/start
+ok(registry.load("features._bad_manifest") == nil, "load returns nil for an invalid manifest")
+
+-- (c) a feature that throws inside start(ctx) -- after creating a handle -- is
+--     quarantined: enable doesn't throw, the partial scope is torn down, and
+--     the failure is recorded + describable.
+package.loaded["features._bad_start"] = {
+    api = 1, id = "bad_start", name = "Bad Start",
+    start = function(ctx)
+        ctx.everySeconds(5, function() end)   -- a handle BEFORE the throw
+        error("boom in start")
+    end,
+}
+ok(registry.load("features._bad_start") ~= nil, "valid manifest with a throwing start registers fine")
+ok(pcall(registry.setEnabled, "bad_start", true), "enabling a broken feature does not throw")
+ok(registry.failures().start["bad_start"] ~= nil, "start failure recorded")
+ok(registry.liveHandleCount() == 0, "broken start's partial handle was torn down")
+ok(fake.liveHandles == 0, "no native resource leaked by the broken start")
+
+local d = registry.describe()
+local badRow, sawLoadFail = nil, false
+for _, e in ipairs(d) do
+    if e.id == "bad_start" then badRow = e end
+    if e.category == "failed" then sawLoadFail = true end
+end
+ok(badRow ~= nil and badRow.failed == true, "describe marks the failed feature")
+ok(sawLoadFail, "describe surfaces load failures as inert rows")
+
+-- (d) disabling clears the recorded failure
+registry.setEnabled("bad_start", false)
+ok(registry.failures().start["bad_start"] == nil, "disable clears the start failure")
+
 print("OK -- " .. passed .. " assertions passed")

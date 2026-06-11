@@ -54,10 +54,17 @@ private struct FeatureRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(feature.name)
-                Text(feature.triggerDesc)
+                HStack(spacing: 4) {
+                    if feature.failed {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                    Text(feature.name)
+                }
+                Text(feature.failed ? "Failed to load" : feature.triggerDesc)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(feature.failed ? .red : .secondary)
             }
             Spacer()
             Toggle("", isOn: Binding(
@@ -67,6 +74,7 @@ private struct FeatureRow: View {
             .toggleStyle(.switch)
             .controlSize(.small)
             .labelsHidden()
+            .disabled(feature.kind == "failed")   // a never-registered module can't be toggled
         }
         .padding(.vertical, 2)
     }
@@ -78,6 +86,15 @@ private struct FeatureDetail: View {
 
     var body: some View {
         Form {
+            if feature.failed {
+                Section {
+                    Label(
+                        feature.errorMessage.isEmpty ? "This feature failed to start." : feature.errorMessage,
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.red)
+                }
+            }
             Section {
                 Text(feature.description)
                     .foregroundStyle(.secondary)

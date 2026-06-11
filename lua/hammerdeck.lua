@@ -32,8 +32,10 @@ local CATALOG = {
     "features.window_jump",
 }
 
+-- Quarantined load: a single broken plugin is recorded and skipped (surfaced
+-- in the config UI) rather than aborting the whole app's boot.
 for _, modname in ipairs(CATALOG) do
-    registry.register(require(modname))
+    registry.load(modname)
 end
 
 -- First run only: enable everything so there's something to dogfood. After
