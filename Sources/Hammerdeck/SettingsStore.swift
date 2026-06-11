@@ -143,6 +143,13 @@ final class SettingsStore: ObservableObject {
         refresh()
     }
 
+    /// Hot-reload all features from disk: drops cached Lua modules, re-loads the
+    /// catalog, and re-binds whatever was enabled. Enabled-state/options persist.
+    func reload() {
+        _ = try? lua.eval("require('platform.registry').reload(); return true")
+        refresh()
+    }
+
     // MARK: - Trigger rebinding (delegates to the tested registry.setTrigger)
 
     /// Rebind an action feature. Returns nil on success, or a human-readable

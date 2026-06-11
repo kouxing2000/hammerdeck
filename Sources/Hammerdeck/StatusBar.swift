@@ -46,6 +46,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         settings.target = self
         menu.addItem(settings)
 
+        let reload = NSMenuItem(title: "Reload Features", action: #selector(reloadFeatures),
+                                keyEquivalent: "r")
+        reload.target = self
+        reload.toolTip = "Re-read feature scripts from disk without restarting"
+        menu.addItem(reload)
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Quit Hammerdeck", action: #selector(quit), keyEquivalent: "q")
@@ -61,6 +67,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func showSettings() {
         openSettings()
+    }
+
+    @objc private func reloadFeatures() {
+        store.reload()
     }
 
     @objc private func quit() {

@@ -20,6 +20,7 @@ local registry = {}
 
 local features = {}   -- id -> manifest
 local bound    = {}   -- id -> { ctx, scope } (when enabled)
+local catalog  = {}   -- the module-name list, remembered so reload() can re-run it
 
 -- Quarantine bookkeeping: a broken plugin must never take the whole app down.
 local loadFailures  = {}   -- list of { source, id?, error } -- never registered
@@ -59,6 +60,13 @@ function registry.load(source)
         return nil
     end
     return mod
+end
+
+-- Load a catalog (list of module names) under quarantine, and remember it so
+-- registry.reload() can re-run the same list. The bootstrap calls this once.
+function registry.loadCatalog(list)
+    catalog = list
+    for _, modname in ipairs(list) do registry.load(modname) end
 end
 
 function registry.all()
@@ -129,6 +137,35 @@ local function unbindFeature(m)
     b.scope.teardown()
     bound[m.id] = nil
     adapter.log(m.id .. ": stopped")
+end
+
+-- Remove a feature entirely: stop it if live, then drop its registration so it
+-- can be re-registered fresh. Settings (enabled-state, options, trigger
+-- override) are keyed by id and left untouched, so they survive a reload.
+function registry.unregister(id)
+    local m = features[id]
+    if not m then return false end
+    if bound[id] then unbindFeature(m) end
+    features[id] = nil
+    startFailures[id] = nil
+    return true
+end
+
+-- Hot reload: tear every feature down, drop the cached feature modules so
+-- `require` re-reads them from disk, then re-load the catalog and re-bind
+-- whatever was enabled. Enabled-state/options persist (they live in settings),
+-- so the user's selections survive. Returns { count, failures }.
+function registry.reload()
+    for _, m in ipairs(registry.all()) do registry.unregister(m.id) end
+    loadFailures = {}
+    for name in pairs(package.loaded) do
+        if tostring(name):match("^features%.") then package.loaded[name] = nil end
+    end
+    for _, modname in ipairs(catalog) do registry.load(modname) end
+    registry.startAll()
+    adapter.log("reloaded catalog: " .. #registry.all() .. " features, "
+        .. #loadFailures .. " failed")
+    return { count = #registry.all(), failures = #loadFailures }
 end
 
 function registry.setEnabled(id, on)

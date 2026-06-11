@@ -33,10 +33,10 @@ local CATALOG = {
 }
 
 -- Quarantined load: a single broken plugin is recorded and skipped (surfaced
--- in the config UI) rather than aborting the whole app's boot.
-for _, modname in ipairs(CATALOG) do
-    registry.load(modname)
-end
+-- in the config UI) rather than aborting the whole app's boot. loadCatalog also
+-- records the list so registry.reload() (menubar "Reload Features") can re-run
+-- it after you edit a feature on disk.
+registry.loadCatalog(CATALOG)
 
 -- First run only: enable everything so there's something to dogfood. After
 -- that, enabled-state is the user's (toggle via registry.setEnabled until the

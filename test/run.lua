@@ -31,9 +31,13 @@ local function minutesFromNow(min)
 end
 
 -- T1: all manifests register + validate --------------------------------------
-registry.register(require("features.sleep_schedule"))
-registry.register(require("features.rest_timer"))
-registry.register(require("features.window_jump"))
+-- loadCatalog (not three register() calls) so the catalog is recorded for the
+-- hot-reload test (T11), exactly as the real bootstrap does.
+registry.loadCatalog({
+    "features.sleep_schedule",
+    "features.rest_timer",
+    "features.window_jump",
+})
 ok(#registry.all() == 3, "3 features registered")
 
 -- T2: the manifest contract is enforced ----------------------------------------
@@ -309,5 +313,39 @@ ok(fires == 3, "the override key is no longer bound after clear")
 registry.setEnabled("rebind_probe", false)
 registry.setEnabled("rebind_other", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after trigger-rebind tests")
+
+-- T11: hot reload -- re-read the catalog from disk, keep enabled-state ---------
+-- Uses the real on-disk MVP modules (recorded as the catalog in T1), so the
+-- package.loaded invalidation + re-require-from-disk path runs for real.
+registry.setEnabled("window_jump", true)
+ok(registry.liveHandleCount() >= 1, "an enabled feature has a live binding before reload")
+
+local summary = registry.reload()
+ok(summary.count == 3, "reload re-registered exactly the catalog features")
+ok(summary.failures == 0, "reload reported no load failures")
+ok(registry.isEnabled("window_jump"), "enabled-state persisted across reload")
+ok(registry.liveHandleCount() >= 1, "reload re-bound the enabled feature")
+
+-- the freshly re-required feature actually works (closure state was rebuilt)
+fake.pressHotkey("tab")
+ok(fake.visibleChooser() ~= nil, "feature functions after a hot reload")
+fake.visibleChooser().userSelect(1)
+
+-- a feature left disabled is registered but not bound after reload
+local svcEnabled
+for _, d in ipairs(registry.describe()) do
+    if d.id == "sleep_schedule" then svcEnabled = d.enabled end
+end
+ok(svcEnabled == false, "a disabled feature stays disabled after reload")
+
+-- the synthetic probes from T9/T10 (not in the catalog) are gone after reload
+local stillHasProbe = false
+for _, d in ipairs(registry.describe()) do
+    if d.id == "rebind_probe" then stillHasProbe = true end
+end
+ok(not stillHasProbe, "non-catalog features are dropped by reload")
+
+registry.setEnabled("window_jump", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after hot-reload test")
 
 print("OK -- " .. passed .. " assertions passed")
