@@ -182,6 +182,13 @@ function adapter.appIcon(bundleID)
     return bundleID and ("icon:" .. bundleID) or nil
 end
 
+-- Clipboard ---------------------------------------------------------------------
+
+fake.pasteboard = nil   -- current general-pasteboard plain-text contents
+
+function adapter.pasteboardRead()       return fake.pasteboard end
+function adapter.pasteboardWrite(text)  fake.pasteboard = text end
+
 -- Input / system ------------------------------------------------------------------
 
 function adapter.now()

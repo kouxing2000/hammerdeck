@@ -62,6 +62,19 @@ function adapter.setSetting(key, value)
 end
 
 -- ---------------------------------------------------------------------------
+-- Clipboard (general pasteboard; no permission required)
+-- ---------------------------------------------------------------------------
+
+-- Returns the clipboard's plain-text contents, or nil if empty/non-text.
+function adapter.pasteboardRead()
+    return native.pasteboard_read()
+end
+
+function adapter.pasteboardWrite(text)
+    native.pasteboard_write(text)
+end
+
+-- ---------------------------------------------------------------------------
 -- Output / notifications
 -- ---------------------------------------------------------------------------
 

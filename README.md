@@ -25,6 +25,8 @@ myHammerSpoon:
   cycle-and-release UX.
 - **Idle Display Off** (service) -- turns the display off after a stretch of no
   activity, with a short warning first.
+- **Clean Clipboard** (action) -- rewrites the clipboard as trimmed plain text
+  (strips formatting); optionally turns newlines into commas.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

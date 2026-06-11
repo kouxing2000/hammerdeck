@@ -97,6 +97,10 @@ function M.make(m)
     function ctx.focusWindow(id)    return adapter.focusWindow(id) end
     function ctx.appIcon(bundleID)  return adapter.appIcon(bundleID) end
 
+    -- clipboard ----------------------------------------------------------------
+    function ctx.pasteboardRead()      return adapter.pasteboardRead() end
+    function ctx.pasteboardWrite(text) adapter.pasteboardWrite(text) end
+
     -- input / system state / system actions ------------------------------------
     function ctx.now()               return adapter.now() end
     function ctx.isModifierHeld(mod) return adapter.isModifierHeld(mod) end

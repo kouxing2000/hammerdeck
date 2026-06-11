@@ -387,4 +387,30 @@ ok(#fake.alerts == alertsBefore + 2, "returning to activity re-arms the warning"
 registry.setEnabled("idle_dimmer", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after idle_dimmer test")
 
+-- T13: clipboard_clean (action: rewrite clipboard as trimmed plain text) -------
+registry.register(require("features.clipboard_clean"))
+registry.setEnabled("clipboard_clean", true)
+
+-- plainText mode: trims (and the string round-trip strips formatting)
+fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "plainText"
+fake.pasteboard = "   padded text\t "
+fake.pressHotkey("c")
+ok(fake.pasteboard == "padded text", "plainText mode trims the clipboard")
+
+-- newlinesToCommas mode
+fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "newlinesToCommas"
+fake.pasteboard = "a\nb\r\nc"
+fake.pressHotkey("c")
+ok(fake.pasteboard == "a,b,c", "newlinesToCommas mode joins lines with commas")
+
+-- empty clipboard: alert, no write
+fake.pasteboard = ""
+local alertsBefore = #fake.alerts
+fake.pressHotkey("c")
+ok(#fake.alerts == alertsBefore + 1, "empty clipboard alerts")
+ok(fake.pasteboard == "", "empty clipboard left unchanged")
+
+registry.setEnabled("clipboard_clean", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipboard_clean test")
+
 print("OK -- " .. passed .. " assertions passed")

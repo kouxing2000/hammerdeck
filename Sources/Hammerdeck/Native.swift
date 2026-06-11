@@ -60,6 +60,9 @@ final class Native {
             // persistence
             "get_setting":  { L in MainActor.assumeIsolated { Native.shared.getSetting(L) } },
             "set_setting":  { L in MainActor.assumeIsolated { Native.shared.setSetting(L) } },
+            // clipboard (general pasteboard -- no permission required)
+            "pasteboard_read":  { L in MainActor.assumeIsolated { Native.shared.pasteboardRead(L) } },
+            "pasteboard_write": { L in MainActor.assumeIsolated { Native.shared.pasteboardWrite(L) } },
             // output
             "notify":       { L in MainActor.assumeIsolated { Native.shared.notify(L) } },
             "alert":        { L in MainActor.assumeIsolated { Native.shared.alert(L) } },
@@ -241,6 +244,25 @@ final class Native {
         default:
             return luaError(L, "set_setting: only bool/number/string/nil supported (key '\(key)')")
         }
+        return 0
+    }
+
+    // MARK: - Clipboard
+
+    private func pasteboardRead(_ L: OpaquePointer?) -> Int32 {
+        if let s = NSPasteboard.general.string(forType: .string) {
+            lua_pushstring(L, s)
+        } else {
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    private func pasteboardWrite(_ L: OpaquePointer?) -> Int32 {
+        guard let s = LuaState.string(L, 1) else { return luaError(L, "pasteboard_write: string required") }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(s, forType: .string)
         return 0
     }
 

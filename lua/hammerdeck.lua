@@ -31,6 +31,7 @@ local CATALOG = {
     "features.rest_timer",
     "features.window_jump",
     "features.idle_dimmer",
+    "features.clipboard_clean",
 }
 
 -- Quarantined load: a single broken plugin is recorded and skipped (surfaced
