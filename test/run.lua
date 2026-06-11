@@ -233,4 +233,81 @@ ok(sawLoadFail, "describe surfaces load failures as inert rows")
 registry.setEnabled("bad_start", false)
 ok(registry.failures().start["bad_start"] == nil, "disable clears the start failure")
 
+-- T10: trigger rebind -- bind ANY action to ANY trigger (the core promise) -----
+local triggers = require("platform.triggers")
+
+-- codec round-trips for every spec shape
+local function roundtrip(spec) return triggers.decode(triggers.encode(spec)) end
+local hk = roundtrip({ type = "hotkey", mods = { "cmd", "alt" }, key = "j" })
+ok(hk.type == "hotkey" and hk.key == "j" and #hk.mods == 2, "hotkey codec round-trips")
+ok(triggers.encode({ type = "hotkey", mods = { "cmd", "alt" }, key = "j" })
+    == triggers.encode({ type = "hotkey", mods = { "alt", "cmd" }, key = "j" }),
+    "hotkey encoding is canonical (mod order does not matter)")
+ok(roundtrip({ type = "schedule", everyMin = 25 }).everyMin == 25, "schedule-every codec round-trips")
+ok(roundtrip({ type = "schedule", at = "00:30" }).at == "00:30", "schedule-at codec round-trips")
+ok(roundtrip({ type = "event", event = "wake" }).event == "wake", "event codec round-trips")
+ok(triggers.decode("garbage") == nil, "decode rejects a malformed string")
+ok(triggers.decode("event|bogus") == nil, "decode rejects an unknown event")
+
+-- validate rejects malformed specs
+ok(not pcall(triggers.validate, { type = "hotkey" }), "validate rejects a hotkey with no key")
+ok(not pcall(triggers.validate, { type = "event", event = "nope" }), "validate rejects an unknown event")
+ok(not pcall(triggers.validate, { type = "schedule" }), "validate rejects a schedule with no when")
+
+-- live rebind on a synthetic probe (counter action, no chooser state to manage)
+local fires = 0
+package.loaded["features._rebind_probe"] = {
+    api = 1, id = "rebind_probe", name = "Rebind Probe",
+    defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "p" },
+    action = function() fires = fires + 1 end,
+}
+registry.load("features._rebind_probe")
+registry.setEnabled("rebind_probe", true)
+fake.pressHotkey("p")
+ok(fires == 1, "default trigger fires the action")
+ok(registry.setTrigger("rebind_probe", { type = "hotkey", mods = { "ctrl" }, key = "q" }) == true,
+    "setTrigger rebinds successfully")
+fake.pressHotkey("p")
+ok(fires == 1, "the old hotkey no longer fires after rebind")
+fake.pressHotkey("q")
+ok(fires == 2, "the new hotkey fires the rebound action")
+ok(fake.settings["hammerdeck.trigger.rebind_probe"] == "hotkey|ctrl|q",
+    "the override is persisted as an encoded string")
+
+-- conflict: a second enabled feature already owns ctrl+q
+local fires2 = 0
+package.loaded["features._rebind_other"] = {
+    api = 1, id = "rebind_other", name = "Other Probe",
+    defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "z" },
+    action = function() fires2 = fires2 + 1 end,
+}
+registry.load("features._rebind_other")
+registry.setEnabled("rebind_other", true)
+local okSet, reason = registry.setTrigger("rebind_other", { type = "hotkey", mods = { "ctrl" }, key = "q" })
+ok(okSet == false and reason ~= nil, "setTrigger refuses a hotkey already taken by an enabled feature")
+fake.pressHotkey("z")
+ok(fires2 == 1, "the rejected rebind left the original binding intact")
+
+-- a service has no rebindable trigger
+ok(not pcall(registry.setTrigger, "sleep_schedule", { type = "event", event = "wake" }),
+    "setTrigger rejects always-on service features")
+
+-- describe exposes the editable trigger + override flag
+local probeDesc
+for _, d in ipairs(registry.describe()) do if d.id == "rebind_probe" then probeDesc = d end end
+ok(probeDesc.trigger and probeDesc.trigger.key == "q", "describe exposes the current trigger spec")
+ok(probeDesc.triggerOverridden == true, "describe reports the override state")
+
+-- clearTrigger reverts to the manifest default
+registry.clearTrigger("rebind_probe")
+ok(fake.settings["hammerdeck.trigger.rebind_probe"] == nil, "clearTrigger removes the override")
+fake.pressHotkey("p")
+ok(fires == 3, "clearTrigger restored the default trigger")
+fake.pressHotkey("q")
+ok(fires == 3, "the override key is no longer bound after clear")
+
+registry.setEnabled("rebind_probe", false)
+registry.setEnabled("rebind_other", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after trigger-rebind tests")
+
 print("OK -- " .. passed .. " assertions passed")

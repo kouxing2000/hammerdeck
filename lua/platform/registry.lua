@@ -72,12 +72,13 @@ function registry.isEnabled(id)
     return adapter.getSetting(enabledKey(id), false) == true
 end
 
--- The feature's chosen trigger (user override falls back to its default).
--- TODO(M4): the "hammerdeck.trigger.<id>" override key is read here but has no
--- writer yet. The config UI should add registry.setTrigger(id, spec) =
--- unbind; setSetting(...); if enabled: bind.
+local function triggerKey(id) return "hammerdeck.trigger." .. id end
+
+-- The feature's chosen trigger: the user's override (stored encoded), else the
+-- manifest default. Writers are registry.setTrigger / clearTrigger below.
 local function triggerFor(m)
-    return adapter.getSetting("hammerdeck.trigger." .. m.id, nil) or m.defaultTrigger
+    local stored = adapter.getSetting(triggerKey(m.id), nil)
+    return (stored and triggers.decode(stored)) or m.defaultTrigger
 end
 
 local function bindFeature(m)
@@ -137,6 +138,54 @@ function registry.setEnabled(id, on)
     if on then bindFeature(m) else unbindFeature(m) end
 end
 
+-- Does `spec` collide with another ENABLED feature's trigger? Only hotkeys can
+-- conflict (many features may legitimately share a schedule or system event).
+-- Comparison is on the canonical encoding, so alt+cmd matches cmd+alt. Returns
+-- a human-readable reason string, or nil if there is no conflict.
+function registry.triggerConflict(id, spec)
+    if type(spec) ~= "table" or spec.type ~= "hotkey" then return nil end
+    local target = triggers.encode(spec)
+    for _, m in ipairs(registry.all()) do
+        if m.id ~= id and m.action and registry.isEnabled(m.id) then
+            local other = triggerFor(m)
+            if other and other.type == "hotkey" and triggers.encode(other) == target then
+                return "hotkey already bound to '" .. m.name .. "'"
+            end
+        end
+    end
+    return nil
+end
+
+-- Rebind an action feature to a new trigger spec -- the core "any trigger can
+-- fire any action" promise. Validates the spec, refuses a hotkey already taken
+-- by another enabled feature, persists the override (encoded), and live-rebinds
+-- if the feature is currently enabled. Returns true on success, or
+-- (false, reason) on a conflict.
+function registry.setTrigger(id, spec)
+    local m = features[id]
+    assert(m, "no such feature: " .. id)
+    assert(m.action, "only action features have a rebindable trigger: " .. id)
+    triggers.validate(spec)
+
+    local conflict = registry.triggerConflict(id, spec)
+    if conflict then return false, conflict end
+
+    if bound[id] then unbindFeature(m) end
+    adapter.setSetting(triggerKey(id), triggers.encode(spec))
+    if registry.isEnabled(id) then bindFeature(m) end
+    return true
+end
+
+-- Drop a user override, reverting the feature to its manifest default trigger.
+function registry.clearTrigger(id)
+    local m = features[id]
+    assert(m, "no such feature: " .. id)
+    if bound[id] then unbindFeature(m) end
+    adapter.setSetting(triggerKey(id), nil)
+    if registry.isEnabled(id) then bindFeature(m) end
+    return true
+end
+
 -- Bind every currently-enabled feature. Call once at startup.
 function registry.startAll()
     for _, m in ipairs(registry.all()) do
@@ -179,7 +228,7 @@ function registry.describe()
                 default = o.default, min = o.min, max = o.max, values = o.values,
             }
         end
-        out[#out + 1] = {
+        local row = {
             id = m.id, name = m.name, description = m.description or "",
             category = m.category, version = m.version or "",
             kind = m.start and "service" or "action",
@@ -189,6 +238,14 @@ function registry.describe()
             failed = startFailures[m.id] ~= nil,
             error = startFailures[m.id],
         }
+        -- Action features carry the editable trigger spec (current + default)
+        -- and whether it's a user override, so the config UI can drive a picker.
+        if m.action then
+            row.trigger = triggerFor(m)
+            row.defaultTrigger = m.defaultTrigger
+            row.triggerOverridden = adapter.getSetting(triggerKey(m.id), nil) ~= nil
+        end
+        out[#out + 1] = row
     end
     -- Modules that failed to even load/register: surface as inert "failed" rows
     -- so a broken plugin is visible in the UI rather than silently missing.
