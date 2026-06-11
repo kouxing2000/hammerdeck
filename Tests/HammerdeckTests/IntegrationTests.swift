@@ -114,10 +114,10 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 8,
-                       "disk discovery should find all 8 features")
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 9,
+                       "disk discovery should find all 9 features")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 8)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, 9)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_jump" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -232,7 +232,7 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('idle_dimmer')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 8)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 9)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("idle_dimmer", false)
@@ -244,6 +244,35 @@ final class IntegrationTests: XCTestCase {
         eval("_G.itBanner.setText('updated'); _G.itBanner.stop(); _G.itBanner = nil; return true")
         // Reaching here without a crash is the assertion: a real NSPanel was
         // created, mutated, and torn down through the bridge.
+    }
+
+    func testDataDirAndAppTrackingBridge() {
+        let dir = eval("return require('platform.adapter').dataDir()") as? String
+        XCTAssertEqual(dir?.hasSuffix("Application Support/Hammerdeck"), true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir ?? "/nonexistent"),
+                      "dataDir must create the directory on demand")
+
+        // File helpers round-trip through the adapter's io implementation.
+        let tmp = NSTemporaryDirectory() + "hammerdeck-it-files-\(getpid())"
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+        eval("""
+        local a = require('platform.adapter')
+        assert(a.mkdir('\(tmp)/sub'))
+        a.fileAppend('\(tmp)/sub/x.csv', 'header')
+        a.fileAppend('\(tmp)/sub/x.csv', 'row,1')
+        return a.fileRead('\(tmp)/sub/x.csv')
+        """)
+        XCTAssertEqual(try? host.lua.eval(
+            "return require('platform.adapter').fileRead('\(tmp)/sub/x.csv')") as? String,
+            "header\nrow,1\n")
+
+        // App-activation watcher registers + tears down through the real
+        // NSWorkspace notification center (no permission needed).
+        eval("_G.itAppWatch = require('platform.adapter').onAppActivated(function(_) end); return true")
+        eval("_G.itAppWatch.stop(); _G.itAppWatch = nil; return true")
+
+        XCTAssertNotNil(eval("return require('platform.adapter').frontmostApp()"),
+                        "some app is always frontmost")
     }
 
     func testChordRegistersARealPrefixHotkey() {

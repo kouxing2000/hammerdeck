@@ -216,6 +216,64 @@ function adapter.discoverFeatures(dir)
     return native.discover_features(dir)
 end
 
+-- Name of the frontmost application, or nil.
+function adapter.frontmostApp()
+    return native.frontmost_app()
+end
+
+-- Subscribe to app activations: fn(appName) fires whenever an application
+-- becomes frontmost. No permission required (NSWorkspace notification).
+function adapter.onAppActivated(fn)
+    return handleFor(native.on_app_activated(fn))
+end
+
+-- ---------------------------------------------------------------------------
+-- Data files (durable feature-owned storage; cacheDir may be purged by the OS)
+-- ---------------------------------------------------------------------------
+
+function adapter.dataDir()
+    return native.data_dir()
+end
+
+function adapter.mkdir(path)
+    return native.mkdir(path)
+end
+
+-- Plain text file helpers. Implemented with Lua's io here IN THE ADAPTER (the
+-- seam may touch the OS); features go through ctx so headless tests can fake
+-- the filesystem entirely.
+
+function adapter.fileRead(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local s = f:read("*a")
+    f:close()
+    return s
+end
+
+function adapter.fileWrite(path, text)
+    local f = io.open(path, "w")
+    if not f then return false end
+    f:write(text)
+    f:close()
+    return true
+end
+
+-- Appends line + "\n".
+function adapter.fileAppend(path, line)
+    local f = io.open(path, "a")
+    if not f then return false end
+    f:write(line .. "\n")
+    f:close()
+    return true
+end
+
+function adapter.fileExists(path)
+    local f = io.open(path, "r")
+    if f then f:close(); return true end
+    return false
+end
+
 -- ---------------------------------------------------------------------------
 -- Network / files / wallpaper
 -- ---------------------------------------------------------------------------

@@ -227,6 +227,45 @@ end
 fake.featureNames = {}   -- bare names the fake "filesystem" exposes to discovery
 function adapter.discoverFeatures(dir) return fake.featureNames end
 
+fake.frontmost = nil     -- preset by the test for frontmostApp()
+function adapter.frontmostApp() return fake.frontmost end
+
+fake.appWatchers = {}    -- {fn, stopped}
+function adapter.onAppActivated(fn)
+    local w = { fn = fn, stopped = false }
+    fake.appWatchers[#fake.appWatchers + 1] = w
+    alloc()
+    return { stop = function() freeOnce(w) end }
+end
+
+-- test-side driver: the user switches to app `name`
+function fake.activateApp(name)
+    fake.frontmost = name
+    for _, w in ipairs(fake.appWatchers) do
+        if not w.stopped then w.fn(name) end
+    end
+end
+
+-- Data files (in-memory filesystem) ----------------------------------------------
+
+fake.files  = {}   -- path -> content string
+fake.mkdirs = {}   -- recorded mkdir calls
+
+function adapter.dataDir() return "/fake/data" end
+
+function adapter.mkdir(path)
+    fake.mkdirs[#fake.mkdirs + 1] = path
+    return true
+end
+
+function adapter.fileRead(path)        return fake.files[path] end
+function adapter.fileWrite(path, text) fake.files[path] = text; return true end
+function adapter.fileAppend(path, line)
+    fake.files[path] = (fake.files[path] or "") .. line .. "\n"
+    return true
+end
+function adapter.fileExists(path)      return fake.files[path] ~= nil end
+
 -- Clipboard ---------------------------------------------------------------------
 
 fake.pasteboard = nil   -- current general-pasteboard plain-text contents

@@ -99,6 +99,16 @@ function M.make(m)
     function ctx.listWindows()      return adapter.listWindows() end
     function ctx.focusWindow(id)    return adapter.focusWindow(id) end
     function ctx.appIcon(bundleID)  return adapter.appIcon(bundleID) end
+    function ctx.frontmostApp()     return adapter.frontmostApp() end
+    function ctx.onAppActivated(fn) return track(adapter.onAppActivated(fn)) end
+
+    -- data files (durable feature-owned storage) ---------------------------------
+    function ctx.dataDir()                return adapter.dataDir() end
+    function ctx.mkdir(path)              return adapter.mkdir(path) end
+    function ctx.fileRead(path)           return adapter.fileRead(path) end
+    function ctx.fileWrite(path, text)    return adapter.fileWrite(path, text) end
+    function ctx.fileAppend(path, line)   return adapter.fileAppend(path, line) end
+    function ctx.fileExists(path)         return adapter.fileExists(path) end
 
     -- clipboard ----------------------------------------------------------------
     function ctx.pasteboardRead()      return adapter.pasteboardRead() end

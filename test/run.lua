@@ -706,4 +706,78 @@ ok(okPlain == false and whyPlain ~= nil, "a plain hotkey on a chord's prefix com
 registry.setEnabled("chordy", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after chord tests")
 
+-- T20: usage_stats (service: sessions + per-app focus time to CSV) ------------
+registry.register(require("features.usage_stats"))
+
+-- Re-pin the clock to a fresh morning so this test owns its day arithmetic.
+local pin20 = os.date("*t")
+pin20.hour, pin20.min, pin20.sec = 9, 0, 0
+fake.clockOffset = os.time(pin20) - os.time()
+fake.idle = 0
+
+local day20 = os.date("%Y-%m-%d", fake.now())
+local appsCsv = "/fake/data/usage/" .. day20:sub(1, 7) .. "/" .. day20 .. "-apps.csv"
+local sessCsv = "/fake/data/usage/" .. day20:sub(1, 7) .. "/" .. day20 .. ".csv"
+
+fake.frontmost = "Code"
+registry.setEnabled("usage_stats", true)
+
+-- focus time accrues to the frontmost app; switching apps flushes
+fake.clockOffset = fake.clockOffset + 120
+fake.activateApp("Safari")
+fake.clockOffset = fake.clockOffset + 60
+fake.fireTimers("every", 600)   -- the 10-min flush writes the apps CSV
+local csv = fake.files[appsCsv]
+ok(csv ~= nil and csv:match("^app,context,seconds\n"), "apps CSV written with header")
+ok(csv:match("\nCode,,120\n") and csv:match("\nSafari,,60\n"),
+    "both apps accrued their focus seconds (context column empty for now)")
+ok(csv:find("Code,,120") < csv:find("Safari,,60"), "rows sorted by time descending")
+
+-- a fully-idle interval is discarded; partial idle is subtracted
+fake.clockOffset = fake.clockOffset + 50
+fake.idle = 100                                    -- idle >= elapsed: discard
+fake.fireTimers("every", 600)
+ok(fake.files[appsCsv]:match("\nSafari,,60\n") ~= nil, "fully-idle interval added nothing")
+fake.idle = 10
+fake.clockOffset = fake.clockOffset + 40           -- 40s elapsed, 10s idle
+fake.fireTimers("every", 600)
+ok(fake.files[appsCsv]:match("\nSafari,,90\n") ~= nil, "partial idle subtracted (60+30)")
+fake.idle = 0
+
+-- locking records the session (wake -> lock, minutes rounded)
+fake.clockOffset = fake.clockOffset + 60
+fake.systemEvent("screenLock")
+local sess = fake.files[sessCsv]
+ok(sess ~= nil and sess:match("^wake_time,sleep_time,duration_min\n"),
+    "session CSV written with header")
+ok(sess:match(",6\n") ~= nil, "session duration recorded (330s -> 6 min)")
+
+-- locked time accrues to nothing; unlock starts a new session
+fake.clockOffset = fake.clockOffset + 600
+fake.systemEvent("screenUnlock")
+fake.clockOffset = fake.clockOffset + 45
+fake.systemEvent("screenLock")
+local _, sessLines = fake.files[sessCsv]:gsub("\n", "")
+ok(sessLines == 3, "second session appended; locked time not counted")
+ok(fake.files[appsCsv]:match("\nSafari,,195\n") ~= nil,
+    "post-unlock focus accrued to the frontmost app (90+60 at lock, +45)")
+
+-- sub-30s wake/lock blips are ignored
+fake.systemEvent("screenUnlock")
+fake.clockOffset = fake.clockOffset + 10
+fake.systemEvent("screenLock")
+local _, sessLines2 = fake.files[sessCsv]:gsub("\n", "")
+ok(sessLines2 == 3, "short session skipped")
+
+-- accumulated time survives a disable/re-enable (reloaded from the CSV)
+registry.setEnabled("usage_stats", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "usage_stats leaks nothing")
+fake.systemEvent("screenUnlock")   -- no live watchers: must be inert
+registry.setEnabled("usage_stats", true)
+fake.fireTimers("every", 600)
+ok(fake.files[appsCsv]:match("\nCode,,120\n") and fake.files[appsCsv]:match("\nSafari,,195\n"),
+    "today's totals restored from disk after re-enable")
+registry.setEnabled("usage_stats", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage_stats test")
+
 print("OK -- " .. passed .. " assertions passed")

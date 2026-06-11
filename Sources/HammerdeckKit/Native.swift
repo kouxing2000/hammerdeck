@@ -104,6 +104,12 @@ final class Native {
             "app_icon":     { L in MainActor.assumeIsolated { Native.shared.appIcon(L) } },
             // platform: discover feature modules on disk
             "discover_features": { L in MainActor.assumeIsolated { Native.shared.discoverFeatures(L) } },
+            // app focus tracking (NSWorkspace -- no permission required)
+            "frontmost_app":    { L in MainActor.assumeIsolated { Native.shared.frontmostApp(L) } },
+            "on_app_activated": { L in MainActor.assumeIsolated { Native.shared.onAppActivated(L) } },
+            // data files (feature-owned storage under Application Support)
+            "data_dir":         { L in MainActor.assumeIsolated { Native.shared.dataDir(L) } },
+            "mkdir":            { L in MainActor.assumeIsolated { Native.shared.mkdir(L) } },
             // input / system
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
@@ -654,6 +660,60 @@ final class Native {
 
     private func focusWindow(_ L: OpaquePointer?) -> Int32 {
         lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // MARK: - App focus tracking
+
+    private func frontmostApp(_ L: OpaquePointer?) -> Int32 {
+        if let name = NSWorkspace.shared.frontmostApplication?.localizedName {
+            lua_pushstring(L, name)
+        } else {
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    // on_app_activated(fn): fn(appName) fires whenever an application becomes
+    // frontmost. NSWorkspace notification -- no Accessibility needed.
+    private func onAppActivated(_ L: OpaquePointer?) -> Int32 {
+        let ref = lua.makeRef(at: 1)
+        let center = NSWorkspace.shared.notificationCenter
+        let token = center.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                       object: nil, queue: .main) { note in
+            let name = (note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                        as? NSRunningApplication)?.localizedName
+            MainActor.assumeIsolated {
+                Native.shared.lua.callRef(ref) { L in
+                    if let name { lua_pushstring(L, name) } else { lua_pushnil(L) }
+                    return 1
+                }
+            }
+        }
+        let id = registerResource { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    // MARK: - Data files (Application Support)
+
+    // App-owned durable data directory (distinct from cache_dir: the OS may
+    // purge caches; usage logs and other feature data must survive).
+    private func dataDir(_ L: OpaquePointer?) -> Int32 {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let dir = base.appendingPathComponent("Hammerdeck", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        lua_pushstring(L, dir.path)
+        return 1
+    }
+
+    private func mkdir(_ L: OpaquePointer?) -> Int32 {
+        guard let path = LuaState.string(L, 1) else { return luaError(L, "mkdir: path required") }
+        let ok = (try? FileManager.default.createDirectory(
+            atPath: path, withIntermediateDirectories: true)) != nil
+        lua_pushboolean(L, ok ? 1 : 0)
         return 1
     }
 
