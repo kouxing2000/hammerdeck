@@ -1,0 +1,6 @@
+# Vendored upstream Lua 5.4.7 -- not our code. Keep it out of GitHub language
+# stats and collapse it in diffs/reviews. See Sources/CLua/VENDOR.md.
+Sources/CLua/** linguist-vendored
+# Our own files in that dir are not upstream:
+Sources/CLua/VENDOR.md -linguist-vendored
+Sources/CLua/include/module.modulemap -linguist-vendored

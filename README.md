@@ -1,50 +1,92 @@
 # Hammerdeck
 
-A personal macOS **feature platform** built on Hammerspoon. Instead of writing
-Lua for every automation, you **toggle features on/off, set their options, and
-bind each to a shortcut, a schedule, or a system event** -- config-and-select,
-not code.
+A personal macOS **feature platform**: a native Swift app that **embeds a Lua
+engine** -- a focused, miniature Hammerspoon. Instead of writing Lua for every
+automation, you **toggle features on/off, set their options, and bind each to a
+shortcut, a schedule, or a system event** -- config-and-select, not code.
 
 > Working name. Rename the folder freely; nothing depends on it yet.
 
 ## Status
 
-Early scaffold. The core works end-to-end: a feature declares a **manifest**,
-the **registry** binds it, the **trigger layer** fires it, and everything reaches
-macOS through a single **adapter** seam (`platform/adapter.lua`) so the
-Hammerspoon backend stays swappable. One demo feature (`features/hello.lua`)
-proves the loop.
+**Milestone 1 done**: the native binary embeds Lua 5.4.7 and the Swift<->Lua
+bridge works end-to-end (Swift runs Lua; Lua calls back into Swift).
 
-## Try it (development, on stock Hammerspoon)
+**Platform v2 + MVP features done (2026-06-10)**: the plugin contract
+([`docs/PLUGIN_SYSTEM.md`](docs/PLUGIN_SYSTEM.md)) is implemented -- manifests
+with `api = 1`, ACTION vs SERVICE features, and a **scoped ctx** that tears down
+everything a feature created when it's disabled. Three real features are ported
+from myHammerSpoon:
 
-Add to your real `~/.hammerspoon/init.lua`:
+- **Sleep Schedule** (service) -- forced sleep with graduated warnings, one-time
+  snooze, weekend shift.
+- **Rest Timer** (service) -- idle-aware rest reminders with daily work stats.
+- **Window Jump** (action) -- searchable Alt-Tab, most-recently-used first,
+  cycle-and-release UX.
 
-```lua
-package.path = package.path .. ";" .. os.getenv("HOME") .. "/workspaces/git/hammerdeck/?.lua"
-require("init")
+**M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
+a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and
+`swift run` boots the real platform in the standalone binary: Carbon hotkeys,
+timers, sleep/wake/lock watchers, UserDefaults settings, and our own toast /
+banner / searchable-chooser panels (zero macOS permissions needed). Pending in
+Slice 2: AXUIElement window listing -- until then window_jump shows an alert.
+
+**Config UI done (same day)**: a menubar hammer icon (quick feature toggles,
+Settings..., Quit) and a SwiftUI settings window -- the **config-and-select
+surface**: every feature gets an on/off toggle and an options form
+auto-generated from its typed manifest options. No per-feature UI code; a new
+plugin gets its form for free. Option edits apply live (features read options
+through ctx.opt). Trigger rebinding UI is next.
+
+See [`docs/HANDOVER.md`](docs/HANDOVER.md) for the full status + milestone backlog.
+
+## Run & test
+
+```bash
+swift build       # compiles CLua (vendored Lua 5.4.7) + the Hammerdeck host
+swift run         # THE APP: menubar hammer icon appears; first run enables all
+lua test/run.lua  # headless platform + feature tests against a fake adapter
 ```
 
-Reload Hammerspoon, then press **Cmd+Alt+Ctrl+H** -- you should see a "Hammerdeck"
-notification. That's manifest -> registry -> trigger -> action working.
+Click the **hammer icon** in the menubar -> toggles per feature, "Settings…"
+opens the config window.
+`defaults delete Hammerdeck` resets everything to first-run.
+Smoke-boot without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 swift run`;
+print what the config UI renders: `HAMMERDECK_DUMP_CATALOG=1 swift run`.
 
 ## Design
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The one rule that protects
-every future option: **only `platform/adapter.lua` may call `hs.*`.** Everything
-else goes through the adapter, so "fork Hammerspoon vs. native Swift shell" later
-is a backend swap, not a rewrite.
+Native Swift host + embedded Lua. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The rule that protects every future option: **only the Swift bridge
+(`LuaState.swift`) and `lua/platform/adapter.lua` may touch native/OS APIs.**
+Everything else goes through the adapter, so the host stays swappable and features
+never see the backend.
 
 ## Layout
 
 ```
-init.lua              entry point: registers the catalog, binds enabled features
-platform/
-  adapter.lua         THE SEAM -- only file allowed to touch hs.*
-  manifest.lua        manifest schema + validation
-  triggers.lua        universal trigger layer (hotkey | schedule | event)
-  registry.lua        available/enabled features; binds trigger -> action
-features/
-  hello.lua           example feature / template
+Package.swift              SwiftPM: CLua (engine) + Hammerdeck (host executable)
+Sources/
+  CLua/                    vendored Lua 5.4.7 C source (see Sources/CLua/VENDOR.md)
+  Hammerdeck/
+    main.swift             entry point (M1 bridge demo)
+    LuaState.swift         the Swift<->Lua bridge -- the seam (Swift side)
+lua/                       embedded script payload
+  hammerdeck.lua           entry point: registers the catalog, binds enabled features
+  platform/
+    adapter.lua            THE SEAM (Lua side) -- the only Lua file touching the backend
+    ctx.lua                scoped, curated ctx -- the plugin API features receive
+    manifest.lua           manifest schema + validation (api v1, action|service)
+    triggers.lua           universal trigger layer (hotkey | schedule | event)
+    registry.lua           available/enabled features; lifecycle + scoped teardown
+  features/
+    sleep_schedule/        SERVICE feature: quitting-time enforcement
+    rest_timer/            SERVICE feature: idle-aware rest reminders
+    window_jump/           ACTION feature: searchable Alt-Tab
+test/
+  fake_adapter.lua         in-memory adapter (controllable clock)
+  run.lua                  headless test suite
 docs/
-  ARCHITECTURE.md
+  ARCHITECTURE.md  PLUGIN_SYSTEM.md  HANDOVER.md
+  COMPETITIVE_RESEARCH.md  STANDALONE_PRODUCT_IDEA.md
 ```

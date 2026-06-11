@@ -1,24 +1,41 @@
 -- platform/manifest.lua
 --
 -- A feature is a plain Lua table (its "manifest") that DECLARES what it is and
--- how it can be triggered -- it does not wire anything itself. The platform
--- reads the manifest to build the config UI and to bind triggers.
+-- how it runs -- it does not wire anything itself. The platform reads the
+-- manifest to build the config UI, bind triggers, and manage lifecycle.
+--
+-- Two kinds of feature (exactly one of `action` / `start`):
+--
+--   ACTION feature -- one-shot, fired by a trigger the registry binds:
+--     defaultTrigger = { type = "hotkey", mods = {"alt"}, key = "tab" },
+--     action = function(ctx) ... end,
+--
+--   SERVICE feature -- long-running; enable calls start(ctx), disable tears
+--   down everything the feature created through ctx (scoped cleanup), then
+--   calls the OPTIONAL stop(ctx) for semantic cleanup:
+--     start = function(ctx) ... end,
+--     stop  = function(ctx) ... end,   -- optional
 --
 -- Manifest shape:
 -- {
---   id          = "rest_timer",          -- unique, stable, used as settings key prefix
+--   api         = 1,                     -- ctx contract version (required)
+--   id          = "rest_timer",          -- unique, stable, settings key prefix
 --   name        = "Rest Timer",          -- shown in config UI
 --   description = "Reminds you to rest", -- shown in config UI
+--   version     = "1.0.0",               -- feature version (optional)
 --   category    = "health",              -- groups features in the UI
 --   options     = {                      -- typed -> the settings form generates itself
---     { key = "intervalMin", type = "int",    default = 25, label = "Interval (min)", min = 5, max = 90 },
---     { key = "message",     type = "string", default = "Time to rest", label = "Message" },
+--     { key = "intervalMin", type = "int", default = 25, label = "Interval (min)", min = 5, max = 90 },
 --   },
---   defaultTrigger = { type = "schedule", everyMin = 25 },  -- see triggers.lua for trigger types
---   action = function(ctx) ... end,       -- ctx.opt("intervalMin"), ctx.adapter, ctx.log
+--   defaultTrigger = ...,                -- ACTION features only
+--   action / start / stop = ...,         -- see above
 -- }
 
 local manifest = {}
+
+-- The ctx contract version this platform implements. Bump on breaking change
+-- to the ctx surface; loaders reject mismatched features with a clear error.
+manifest.API_VERSION = 1
 
 local VALID_OPTION_TYPES = {
     bool = true, int = true, string = true, enum = true, time = true, appList = true,
@@ -28,8 +45,26 @@ local VALID_OPTION_TYPES = {
 function manifest.validate(m)
     assert(type(m) == "table", "feature must return a table")
     assert(type(m.id) == "string" and m.id ~= "", "feature.id must be a non-empty string")
-    assert(type(m.name) == "string" and m.name ~= "", "feature '" .. tostring(m.id) .. "' needs a name")
-    assert(type(m.action) == "function", "feature '" .. m.id .. "' needs an action function")
+    assert(m.api == manifest.API_VERSION,
+        "feature '" .. m.id .. "' declares api=" .. tostring(m.api) ..
+        " but this platform implements api=" .. manifest.API_VERSION)
+    assert(type(m.name) == "string" and m.name ~= "", "feature '" .. m.id .. "' needs a name")
+
+    local hasAction = type(m.action) == "function"
+    local hasStart  = type(m.start) == "function"
+    assert(hasAction ~= hasStart,
+        "feature '" .. m.id .. "' must define exactly one of action(ctx) or start(ctx)")
+    if m.stop ~= nil then
+        assert(hasStart, "feature '" .. m.id .. "': stop(ctx) only makes sense with start(ctx)")
+        assert(type(m.stop) == "function", "feature '" .. m.id .. "': stop must be a function")
+    end
+    if m.defaultTrigger ~= nil then
+        assert(hasAction,
+            "feature '" .. m.id .. "': defaultTrigger requires action(ctx); " ..
+            "service features create their own bindings through ctx")
+        assert(type(m.defaultTrigger) == "table" and m.defaultTrigger.type,
+            "feature '" .. m.id .. "': defaultTrigger must be a trigger spec table")
+    end
 
     m.category = m.category or "general"
     m.options = m.options or {}

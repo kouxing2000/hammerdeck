@@ -1,29 +1,59 @@
-import CLua
+import AppKit
 
-// Milestone 1: prove the native host embeds Lua and that Lua can call back into
-// Swift. This is the skeleton the real adapter bridge grows from -- right now it
-// exposes a single `native_log` function and runs an inline Lua chunk.
+// Hammerdeck native host: boots the embedded Lua platform against the native
+// backend (Native.swift) and runs the app loop. No Hammerspoon anywhere.
 //
-// Next milestones: expose the full adapter surface (bindHotkey, everySeconds,
-// onSystemEvent, notify, settings) and load lua/init.lua instead of this inline
-// snippet; then add the SwiftUI menubar app + settings window.
+// M2 Slice 1: hotkeys, timers, system events, settings, toast/banner/chooser UI.
+// M2 Slice 2 (pending): AXUIElement window listing for window_jump.
+// M3 (pending): menubar presence, app bundle, real Notification Center, signing.
+
+// The app object must exist before any panel is created by feature start().
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
 
 let lua = LuaState()
+Native.shared.attach(lua)
+Native.shared.installBindings()
 
-// native_log(msg) -- Lua -> Swift call.
-lua.register("native_log") { L in
-    let msg = LuaState.string(L, 1) ?? "(nil)"
-    print("[lua→swift] \(msg)")
-    return 0   // no return values
-}
+// Locate the Lua payload: env override first (packaging, tests), then the
+// dev-checkout fallback derived from this source file's location.
+let luaDir: String = {
+    if let env = ProcessInfo.processInfo.environment["HAMMERDECK_LUA_DIR"] {
+        return env
+    }
+    return URL(fileURLWithPath: #filePath)          // .../Sources/Hammerdeck/main.swift
+        .deletingLastPathComponent()                 // .../Sources/Hammerdeck
+        .deletingLastPathComponent()                 // .../Sources
+        .deletingLastPathComponent()                 // repo root
+        .appendingPathComponent("lua").path
+}()
 
 do {
-    try lua.run("""
-        native_log("embedded Lua 5.4 is running")
-        native_log("2 + 2 = " .. (2 + 2))
-        for i = 1, 3 do native_log("tick " .. i) end
-    """)
-    print("[hammerdeck] milestone 1 ok: Swift ran Lua, Lua called Swift")
+    let escaped = luaDir.replacingOccurrences(of: "'", with: "\\'")
+    try lua.run("package.path = package.path .. ';\(escaped)/?.lua;\(escaped)/?/init.lua'")
+    try lua.runFile(luaDir + "/hammerdeck.lua")
 } catch {
-    print("[hammerdeck] FAILED: \(error)")
+    print("[hammerdeck] FAILED to boot the Lua platform: \(error)")
+    exit(1)
 }
+
+// Config UI: menubar entry point + the settings window (config-and-select).
+let store = SettingsStore(lua: lua)
+
+// Headless verification: dump the catalog the config UI renders, then exit.
+if ProcessInfo.processInfo.environment["HAMMERDECK_DUMP_CATALOG"] != nil {
+    store.refresh()
+    for f in store.features {
+        print("\(f.id) [\(f.category)/\(f.kind)] enabled=\(f.enabled) trigger=\(f.triggerDesc)")
+        for o in f.options {
+            print("  - \(o.key): \(o.type) (default: \(o.defaultValue ?? "nil"))"
+                  + (o.values.isEmpty ? "" : " values=\(o.values)"))
+        }
+    }
+    exit(0)
+}
+
+let settingsWindow = SettingsWindow(store: store)
+let statusBar = StatusBarController(store: store) { settingsWindow.show() }
+
+app.run()
