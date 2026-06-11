@@ -53,6 +53,14 @@ if ProcessInfo.processInfo.environment["HAMMERDECK_DUMP_CATALOG"] != nil {
     exit(0)
 }
 
+// Headless verification: dump the bindable hotkey names (and count), then exit.
+if ProcessInfo.processInfo.environment["HAMMERDECK_DUMP_KEYS"] != nil {
+    let names = HotkeyCenter.keyCodes.keys.sorted()
+    print("[hammerdeck] bindable keys: \(names.count)")
+    print(names.joined(separator: " "))
+    exit(0)
+}
+
 let settingsWindow = SettingsWindow(store: store)
 let statusBar = StatusBarController(store: store) { settingsWindow.show() }
 
