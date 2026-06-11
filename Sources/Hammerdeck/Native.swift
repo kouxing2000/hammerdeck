@@ -86,6 +86,8 @@ final class Native {
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
             "focus_window": { L in MainActor.assumeIsolated { Native.shared.focusWindow(L) } },
             "app_icon":     { L in MainActor.assumeIsolated { Native.shared.appIcon(L) } },
+            // platform: discover feature modules on disk
+            "discover_features": { L in MainActor.assumeIsolated { Native.shared.discoverFeatures(L) } },
             // input / system
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
@@ -434,6 +436,36 @@ final class Native {
     // permission. Stubbed so window_jump degrades gracefully until then.
     private func listWindows(_ L: OpaquePointer?) -> Int32 {
         lua_createtable(L, 0, 0)
+        return 1
+    }
+
+    // Returns the bare names of feature modules in `dir`: a "<name>/init.lua"
+    // subdirectory or a flat "<name>.lua" file each yields "<name>". The
+    // registry prefixes "features." and loads them. Drives autodiscovery +
+    // hot-plug (reload re-scans).
+    private func discoverFeatures(_ L: OpaquePointer?) -> Int32 {
+        guard let dir = LuaState.string(L, 1) else { return luaError(L, "discover_features: dir required") }
+        let fm = FileManager.default
+        var names = Set<String>()
+        if let entries = try? fm.contentsOfDirectory(atPath: dir) {
+            for entry in entries where !entry.hasPrefix(".") {
+                let full = (dir as NSString).appendingPathComponent(entry)
+                var isDir: ObjCBool = false
+                fm.fileExists(atPath: full, isDirectory: &isDir)
+                if isDir.boolValue {
+                    if fm.fileExists(atPath: (full as NSString).appendingPathComponent("init.lua")) {
+                        names.insert(entry)
+                    }
+                } else if entry.hasSuffix(".lua"), entry != "init.lua" {
+                    names.insert(String(entry.dropLast(4)))
+                }
+            }
+        }
+        lua_createtable(L, Int32(names.count), 0)
+        for (i, name) in names.sorted().enumerated() {
+            lua_pushstring(L, name)
+            lua_rawseti(L, -2, lua_Integer(i + 1))
+        }
         return 1
     }
 

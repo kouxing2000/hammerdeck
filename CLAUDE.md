@@ -79,8 +79,10 @@ is the source of truth.
 ACTION feature: copy `lua/features/window_jump/`. SERVICE feature: copy
 `lua/features/sleep_schedule/` (directory form; `init.lua` returns the
 manifest -- a flat `features/<name>.lua` file also works for trivial features).
-Add `"features.<name>"` to `CATALOG` in `lua/hammerdeck.lua`, then cover its
-main flow in `test/run.lua`.
+Features are **autodiscovered** by scanning `lua/features/` -- just drop the
+folder in (no catalog to edit; menubar "Reload Features" or a restart picks it
+up). Then cover its main flow in `test/run.lua` (register it there directly --
+the test harness uses its own catalog, not disk discovery).
 
 ## Status / roadmap
 

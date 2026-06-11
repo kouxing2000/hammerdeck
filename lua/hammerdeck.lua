@@ -23,22 +23,20 @@ local adapter  = require("platform.adapter")
 local registry = require("platform.registry")
 
 -- ---------------------------------------------------------------------------
--- Feature catalog. Add a line per feature module. (A future iteration will
--- auto-discover everything in features/ -- explicit list is fine to start.)
+-- Feature catalog: autodiscovered by scanning lua/features/ (drop in a folder,
+-- Reload, and it appears -- no list to maintain). Loads are quarantined, so one
+-- broken plugin is recorded + surfaced in the UI, not fatal to boot.
 -- ---------------------------------------------------------------------------
-local CATALOG = {
-    "features.sleep_schedule",
-    "features.rest_timer",
-    "features.window_jump",
-    "features.idle_dimmer",
-    "features.clipboard_clean",
-}
-
--- Quarantined load: a single broken plugin is recorded and skipped (surfaced
--- in the config UI) rather than aborting the whole app's boot. loadCatalog also
--- records the list so registry.reload() (menubar "Reload Features") can re-run
--- it after you edit a feature on disk.
-registry.loadCatalog(CATALOG)
+if here then
+    registry.loadFromDir(here .. "/features")
+else
+    -- Fallback only if this file's path couldn't be resolved (shouldn't happen
+    -- in a normal boot): a hand-maintained list keeps the app non-empty.
+    registry.loadCatalog({
+        "features.sleep_schedule", "features.rest_timer", "features.window_jump",
+        "features.idle_dimmer", "features.clipboard_clean",
+    })
+end
 
 -- First run only: enable everything so there's something to dogfood. After
 -- that, enabled-state is the user's (toggle via registry.setEnabled until the

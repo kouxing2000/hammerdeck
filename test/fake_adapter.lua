@@ -182,6 +182,9 @@ function adapter.appIcon(bundleID)
     return bundleID and ("icon:" .. bundleID) or nil
 end
 
+fake.featureNames = {}   -- bare names the fake "filesystem" exposes to discovery
+function adapter.discoverFeatures(dir) return fake.featureNames end
+
 -- Clipboard ---------------------------------------------------------------------
 
 fake.pasteboard = nil   -- current general-pasteboard plain-text contents

@@ -178,6 +178,12 @@ function adapter.appIcon(bundleID)
     return native.app_icon(bundleID)
 end
 
+-- Bare names of feature modules found in `dir` (the registry prefixes
+-- "features." and loads them). Platform-only -- not exposed through ctx.
+function adapter.discoverFeatures(dir)
+    return native.discover_features(dir)
+end
+
 -- ---------------------------------------------------------------------------
 -- Input / system state / system actions
 -- ---------------------------------------------------------------------------

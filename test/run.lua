@@ -413,4 +413,28 @@ ok(fake.pasteboard == "", "empty clipboard left unchanged")
 registry.setEnabled("clipboard_clean", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipboard_clean test")
 
+-- T14: feature autodiscovery -- scan the features dir instead of a fixed list --
+-- (the fake adapter exposes bare names; the real modules are on disk, so the
+--  re-require path works.)
+fake.featureNames = { "window_jump", "idle_dimmer", "clipboard_clean", "rest_timer", "sleep_schedule" }
+
+local discovered = registry.discover("ignored-by-fake")
+ok(#discovered == 5, "discover returns one module per feature on disk")
+ok(discovered[1] == "features.clipboard_clean", "discover sorts + prefixes module names")
+
+-- Switch to discovery mode and reload: it re-scans and ends with exactly the
+-- discovered set (this also drops the non-catalog test probes from T9/T10).
+registry.setFeatureDir("ignored-by-fake")
+local sum = registry.reload()
+ok(sum.count == 5 and sum.failures == 0, "reload in discovery mode loads the scanned features")
+
+-- Hot-plug: a name newly appearing in the scan shows up on the next reload;
+-- one that disappears is dropped.
+fake.featureNames = { "window_jump" }
+local sum2 = registry.reload()
+ok(sum2.count == 1, "reload re-scans -- a removed feature folder is dropped")
+ok(registry.describe()[1].id == "window_jump", "the surviving feature is the discovered one")
+
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after autodiscovery test")
+
 print("OK -- " .. passed .. " assertions passed")

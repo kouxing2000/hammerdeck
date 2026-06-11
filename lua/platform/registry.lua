@@ -21,6 +21,7 @@ local registry = {}
 local features = {}   -- id -> manifest
 local bound    = {}   -- id -> { ctx, scope } (when enabled)
 local catalog  = {}   -- the module-name list, remembered so reload() can re-run it
+local discoverDir = nil   -- when set, the catalog is re-scanned from disk on reload
 
 -- Quarantine bookkeeping: a broken plugin must never take the whole app down.
 local loadFailures  = {}   -- list of { source, id?, error } -- never registered
@@ -67,6 +68,29 @@ end
 function registry.loadCatalog(list)
     catalog = list
     for _, modname in ipairs(list) do registry.load(modname) end
+end
+
+-- Scan a directory for feature modules: a "<name>/init.lua" subdir or a flat
+-- "<name>.lua" file each yields the module name "features.<name>". Returns a
+-- sorted module-name list (the OS scan lives behind the adapter seam).
+function registry.discover(dir)
+    local mods = {}
+    for _, name in ipairs(adapter.discoverFeatures(dir) or {}) do
+        mods[#mods + 1] = "features." .. name
+    end
+    table.sort(mods)
+    return mods
+end
+
+-- Remember a directory to (re)discover features from. reload() re-scans it, so
+-- dropping in a new feature folder + Reload makes it appear (hot-plug).
+function registry.setFeatureDir(dir) discoverDir = dir end
+
+-- Discover + load every feature in `dir` (and remember it for reload). The
+-- bootstrap calls this instead of a hand-maintained catalog list.
+function registry.loadFromDir(dir)
+    registry.setFeatureDir(dir)
+    registry.loadCatalog(registry.discover(dir))
 end
 
 function registry.all()
@@ -161,6 +185,9 @@ function registry.reload()
     for name in pairs(package.loaded) do
         if tostring(name):match("^features%.") then package.loaded[name] = nil end
     end
+    -- In discovery mode, re-scan disk so added/removed feature folders take
+    -- effect on reload (true hot-plug); otherwise replay the explicit catalog.
+    if discoverDir then catalog = registry.discover(discoverDir) end
     for _, modname in ipairs(catalog) do registry.load(modname) end
     registry.startAll()
     adapter.log("reloaded catalog: " .. #registry.all() .. " features, "
