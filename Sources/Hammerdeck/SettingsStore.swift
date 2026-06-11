@@ -29,6 +29,54 @@ struct OptionInfo: Identifiable {
     }
 }
 
+// A trigger spec, mirroring the Lua trigger shape. Round-trips through the
+// registry: parsed from describe(), emitted as a Lua literal for setTrigger.
+struct TriggerSpec: Equatable {
+    var type: String          // hotkey | schedule | event
+    var mods: [String]        // hotkey
+    var key: String           // hotkey
+    var everyMin: Int?        // schedule (interval)
+    var at: String?           // schedule (daily HH:MM)
+    var event: String?        // event
+
+    init(type: String = "hotkey", mods: [String] = [], key: String = "",
+         everyMin: Int? = nil, at: String? = nil, event: String? = nil) {
+        self.type = type; self.mods = mods; self.key = key
+        self.everyMin = everyMin; self.at = at; self.event = event
+    }
+
+    init?(_ dict: [String: Any]?) {
+        guard let dict, let type = dict["type"] as? String else { return nil }
+        self.type = type
+        self.mods = (dict["mods"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.key = dict["key"] as? String ?? ""
+        self.everyMin = (dict["everyMin"] as? Double).map(Int.init)
+        self.at = dict["at"] as? String
+        self.event = dict["event"] as? String
+    }
+
+    /// Emit as a Lua table literal for registry.setTrigger (single quotes and
+    /// backslashes escaped so a hand-typed key can't break the chunk).
+    var luaLiteral: String {
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "\\", with: "\\\\")
+             .replacingOccurrences(of: "'", with: "\\'")
+        }
+        switch type {
+        case "hotkey":
+            let m = mods.map { "'\(esc($0))'" }.joined(separator: ",")
+            return "{type='hotkey',mods={\(m)},key='\(esc(key))'}"
+        case "schedule":
+            if let everyMin { return "{type='schedule',everyMin=\(everyMin)}" }
+            return "{type='schedule',at='\(esc(at ?? "00:00"))'}"
+        case "event":
+            return "{type='event',event='\(esc(event ?? "wake"))'}"
+        default:
+            return "{}"
+        }
+    }
+}
+
 struct FeatureInfo: Identifiable {
     let id: String
     let name: String
@@ -41,6 +89,9 @@ struct FeatureInfo: Identifiable {
     let options: [OptionInfo]
     let failed: Bool            // load or start error -- the feature is broken
     let errorMessage: String
+    let trigger: TriggerSpec?           // action features only: current spec
+    let defaultTrigger: TriggerSpec?    // action features only: manifest default
+    let triggerOverridden: Bool         // a user override is in effect
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
@@ -57,6 +108,9 @@ struct FeatureInfo: Identifiable {
             .compactMap(OptionInfo.init) ?? []
         self.failed = dict["failed"] as? Bool ?? false
         self.errorMessage = dict["error"] as? String ?? ""
+        self.trigger = TriggerSpec(dict["trigger"] as? [String: Any])
+        self.defaultTrigger = TriggerSpec(dict["defaultTrigger"] as? [String: Any])
+        self.triggerOverridden = dict["triggerOverridden"] as? Bool ?? false
     }
 }
 
@@ -86,6 +140,29 @@ final class SettingsStore: ObservableObject {
         } catch {
             print("[hammerdeck] settings: setEnabled failed: \(error)")
         }
+        refresh()
+    }
+
+    // MARK: - Trigger rebinding (delegates to the tested registry.setTrigger)
+
+    /// Rebind an action feature. Returns nil on success, or a human-readable
+    /// conflict reason if the registry refused (e.g. hotkey already taken).
+    func setTrigger(_ id: String, _ spec: TriggerSpec) -> String? {
+        let code = """
+        local ok, reason = require('platform.registry').setTrigger('\(id)', \(spec.luaLiteral))
+        return { ok = ok and true or false, reason = reason }
+        """
+        defer { refresh() }
+        guard let raw = try? lua.eval(code), let r = raw as? [String: Any] else {
+            return "could not apply trigger"
+        }
+        if (r["ok"] as? Bool) == true { return nil }
+        return (r["reason"] as? String) ?? "trigger conflict"
+    }
+
+    /// Drop the override, reverting to the manifest default trigger.
+    func clearTrigger(_ id: String) {
+        _ = try? lua.eval("require('platform.registry').clearTrigger('\(id)'); return true")
         refresh()
     }
 

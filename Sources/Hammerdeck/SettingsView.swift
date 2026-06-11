@@ -104,6 +104,15 @@ private struct FeatureDetail: View {
                     LabeledContent("Version", value: feature.version)
                 }
             }
+            // Action features get a trigger editor (services are always-on).
+            if feature.kind == "action", feature.trigger != nil {
+                Section("Bind trigger") {
+                    TriggerEditor(store: store, feature: feature)
+                        // Remount when the bound trigger changes so local edit
+                        // state re-seeds from the new current spec.
+                        .id("\(feature.id)|\(feature.triggerDesc)")
+                }
+            }
             if !feature.options.isEmpty {
                 Section("Options") {
                     ForEach(feature.options) { opt in
@@ -207,5 +216,140 @@ private struct OptionEditor: View {
                 }
             }
         )
+    }
+}
+
+// MARK: - Trigger editor (the rebind picker)
+
+private enum TriggerMode: String, CaseIterable, Identifiable {
+    case hotkey, scheduleEvery, scheduleAt, event
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .hotkey:        return "Hotkey"
+        case .scheduleEvery: return "Every N minutes"
+        case .scheduleAt:    return "Daily at"
+        case .event:         return "System event"
+        }
+    }
+}
+
+private let allMods: [(id: String, symbol: String)] =
+    [("cmd", "⌘"), ("alt", "⌥"), ("ctrl", "⌃"), ("shift", "⇧")]
+private let allEvents = ["sleep", "wake", "screenLock", "screenUnlock"]
+
+/// Edits an action feature's trigger and applies it via registry.setTrigger.
+/// Seeded once from feature.trigger; remounted by the parent (.id on the bound
+/// trigger description) whenever the live binding actually changes.
+private struct TriggerEditor: View {
+    @ObservedObject var store: SettingsStore
+    let feature: FeatureInfo
+
+    @State private var mode: TriggerMode
+    @State private var mods: Set<String>
+    @State private var key: String
+    @State private var everyMin: Int
+    @State private var at: String
+    @State private var event: String
+    @State private var conflict: String?
+
+    init(store: SettingsStore, feature: FeatureInfo) {
+        self.store = store
+        self.feature = feature
+        let t = feature.trigger ?? TriggerSpec()
+        let m: TriggerMode
+        switch t.type {
+        case "schedule": m = (t.everyMin != nil) ? .scheduleEvery : .scheduleAt
+        case "event":    m = .event
+        default:         m = .hotkey
+        }
+        _mode = State(initialValue: m)
+        _mods = State(initialValue: Set(t.mods))
+        _key = State(initialValue: t.key)
+        _everyMin = State(initialValue: t.everyMin ?? 25)
+        _at = State(initialValue: t.at ?? "09:00")
+        _event = State(initialValue: t.event ?? "wake")
+        _conflict = State(initialValue: nil)
+    }
+
+    var body: some View {
+        Picker("Type", selection: $mode) {
+            ForEach(TriggerMode.allCases) { Text($0.label).tag($0) }
+        }
+
+        switch mode {
+        case .hotkey:
+            LabeledContent("Modifiers") {
+                HStack(spacing: 4) {
+                    ForEach(allMods, id: \.id) { mod in
+                        Toggle(mod.symbol, isOn: Binding(
+                            get: { mods.contains(mod.id) },
+                            set: { on in if on { mods.insert(mod.id) } else { mods.remove(mod.id) } }
+                        ))
+                        .toggleStyle(.button)
+                    }
+                }
+            }
+            LabeledContent("Key") {
+                TextField("e.g. j", text: $key)
+                    .frame(width: 70)
+                    .multilineTextAlignment(.trailing)
+            }
+        case .scheduleEvery:
+            Stepper(value: $everyMin, in: 1...1440) {
+                LabeledContent("Interval", value: "\(everyMin) min")
+            }
+        case .scheduleAt:
+            LabeledContent("Daily at") {
+                TextField("HH:MM", text: $at)
+                    .frame(width: 70)
+                    .multilineTextAlignment(.trailing)
+            }
+        case .event:
+            Picker("Event", selection: $event) {
+                ForEach(allEvents, id: \.self) { Text($0).tag($0) }
+            }
+        }
+
+        if let conflict {
+            Label(conflict, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.callout)
+        }
+
+        HStack {
+            Button("Apply") { conflict = store.setTrigger(feature.id, buildSpec()) }
+                .disabled(applyDisabled)
+            if feature.triggerOverridden {
+                Button("Reset to default") {
+                    store.clearTrigger(feature.id)
+                    conflict = nil
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private var applyDisabled: Bool {
+        switch mode {
+        case .hotkey:     return key.trimmingCharacters(in: .whitespaces).isEmpty
+        case .scheduleAt: return at.range(of: #"^\d{1,2}:\d{2}$"#, options: .regularExpression) == nil
+        default:          return false
+        }
+    }
+
+    private func buildSpec() -> TriggerSpec {
+        switch mode {
+        case .hotkey:
+            let ordered = allMods.map(\.id).filter { mods.contains($0) }
+            return TriggerSpec(type: "hotkey", mods: ordered,
+                               key: key.trimmingCharacters(in: .whitespaces))
+        case .scheduleEvery:
+            return TriggerSpec(type: "schedule", everyMin: everyMin)
+        case .scheduleAt:
+            return TriggerSpec(type: "schedule", at: at)
+        case .event:
+            return TriggerSpec(type: "event", event: event)
+        }
     }
 }
