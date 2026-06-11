@@ -77,6 +77,27 @@ struct TriggerSpec: Equatable {
     }
 }
 
+// One named, independently triggerable entry point of a feature (a plugin may
+// declare several -- each gets its own trigger editor).
+struct ActionInfo: Identifiable {
+    let id: String
+    let label: String
+    let trigger: TriggerSpec?           // current (override or default)
+    let defaultTrigger: TriggerSpec?    // declared default (may be nil)
+    let triggerOverridden: Bool
+    let triggerDesc: String
+
+    init?(_ dict: [String: Any]) {
+        guard let id = dict["id"] as? String else { return nil }
+        self.id = id
+        self.label = dict["label"] as? String ?? id
+        self.trigger = TriggerSpec(dict["trigger"] as? [String: Any])
+        self.defaultTrigger = TriggerSpec(dict["defaultTrigger"] as? [String: Any])
+        self.triggerOverridden = dict["triggerOverridden"] as? Bool ?? false
+        self.triggerDesc = dict["triggerDesc"] as? String ?? ""
+    }
+}
+
 struct FeatureInfo: Identifiable {
     let id: String
     let name: String
@@ -89,9 +110,7 @@ struct FeatureInfo: Identifiable {
     let options: [OptionInfo]
     let failed: Bool            // load or start error -- the feature is broken
     let errorMessage: String
-    let trigger: TriggerSpec?           // action features only: current spec
-    let defaultTrigger: TriggerSpec?    // action features only: manifest default
-    let triggerOverridden: Bool         // a user override is in effect
+    let actions: [ActionInfo]   // one trigger editor per entry; empty for pure services
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
@@ -108,9 +127,9 @@ struct FeatureInfo: Identifiable {
             .compactMap(OptionInfo.init) ?? []
         self.failed = dict["failed"] as? Bool ?? false
         self.errorMessage = dict["error"] as? String ?? ""
-        self.trigger = TriggerSpec(dict["trigger"] as? [String: Any])
-        self.defaultTrigger = TriggerSpec(dict["defaultTrigger"] as? [String: Any])
-        self.triggerOverridden = dict["triggerOverridden"] as? Bool ?? false
+        self.actions = (dict["actions"] as? [Any])?
+            .compactMap { $0 as? [String: Any] }
+            .compactMap(ActionInfo.init) ?? []
     }
 }
 
@@ -152,11 +171,11 @@ final class SettingsStore: ObservableObject {
 
     // MARK: - Trigger rebinding (delegates to the tested registry.setTrigger)
 
-    /// Rebind an action feature. Returns nil on success, or a human-readable
-    /// conflict reason if the registry refused (e.g. hotkey already taken).
-    func setTrigger(_ id: String, _ spec: TriggerSpec) -> String? {
+    /// Rebind one action of a feature. Returns nil on success, or a
+    /// human-readable reason if the registry refused (e.g. hotkey already taken).
+    func setTrigger(_ id: String, _ actionId: String, _ spec: TriggerSpec) -> String? {
         let code = """
-        local ok, reason = require('platform.registry').setTrigger('\(id)', \(spec.luaLiteral))
+        local ok, reason = require('platform.registry').setTrigger('\(id)', '\(actionId)', \(spec.luaLiteral))
         return { ok = ok and true or false, reason = reason }
         """
         defer { refresh() }
@@ -167,9 +186,9 @@ final class SettingsStore: ObservableObject {
         return (r["reason"] as? String) ?? "trigger conflict"
     }
 
-    /// Drop the override, reverting to the manifest default trigger.
-    func clearTrigger(_ id: String) {
-        _ = try? lua.eval("require('platform.registry').clearTrigger('\(id)'); return true")
+    /// Drop one action's override, reverting to its declared default trigger.
+    func clearTrigger(_ id: String, _ actionId: String) {
+        _ = try? lua.eval("require('platform.registry').clearTrigger('\(id)', '\(actionId)'); return true")
         refresh()
     }
 

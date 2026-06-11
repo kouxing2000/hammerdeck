@@ -104,13 +104,16 @@ private struct FeatureDetail: View {
                     LabeledContent("Version", value: feature.version)
                 }
             }
-            // Action features get a trigger editor (services are always-on).
-            if feature.kind == "action", feature.trigger != nil {
-                Section("Bind trigger") {
-                    TriggerEditor(store: store, feature: feature)
+            // One trigger editor per declared action (a plugin may have several
+            // shortcuts). Pure services have none.
+            ForEach(feature.actions) { action in
+                Section(feature.actions.count == 1
+                        ? "Bind trigger"
+                        : "Trigger -- \(action.label)") {
+                    TriggerEditor(store: store, feature: feature, action: action)
                         // Remount when the bound trigger changes so local edit
                         // state re-seeds from the new current spec.
-                        .id("\(feature.id)|\(feature.triggerDesc)")
+                        .id("\(feature.id)|\(action.id)|\(action.triggerDesc)")
                 }
             }
             if !feature.options.isEmpty {
@@ -238,12 +241,13 @@ private let allMods: [(id: String, symbol: String)] =
     [("cmd", "⌘"), ("alt", "⌥"), ("ctrl", "⌃"), ("shift", "⇧")]
 private let allEvents = ["sleep", "wake", "screenLock", "screenUnlock"]
 
-/// Edits an action feature's trigger and applies it via registry.setTrigger.
-/// Seeded once from feature.trigger; remounted by the parent (.id on the bound
+/// Edits one action's trigger and applies it via registry.setTrigger.
+/// Seeded once from action.trigger; remounted by the parent (.id on the bound
 /// trigger description) whenever the live binding actually changes.
 private struct TriggerEditor: View {
     @ObservedObject var store: SettingsStore
     let feature: FeatureInfo
+    let action: ActionInfo
 
     @State private var mode: TriggerMode
     @State private var mods: Set<String>
@@ -253,10 +257,11 @@ private struct TriggerEditor: View {
     @State private var event: String
     @State private var conflict: String?
 
-    init(store: SettingsStore, feature: FeatureInfo) {
+    init(store: SettingsStore, feature: FeatureInfo, action: ActionInfo) {
         self.store = store
         self.feature = feature
-        let t = feature.trigger ?? TriggerSpec()
+        self.action = action
+        let t = action.trigger ?? TriggerSpec()
         let m: TriggerMode
         switch t.type {
         case "schedule": m = (t.everyMin != nil) ? .scheduleEvery : .scheduleAt
@@ -318,11 +323,11 @@ private struct TriggerEditor: View {
         }
 
         HStack {
-            Button("Apply") { conflict = store.setTrigger(feature.id, buildSpec()) }
+            Button("Apply") { conflict = store.setTrigger(feature.id, action.id, buildSpec()) }
                 .disabled(applyDisabled)
-            if feature.triggerOverridden {
+            if action.triggerOverridden {
                 Button("Reset to default") {
-                    store.clearTrigger(feature.id)
+                    store.clearTrigger(feature.id, action.id)
                     conflict = nil
                 }
             }

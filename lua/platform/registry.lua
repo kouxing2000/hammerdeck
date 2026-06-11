@@ -3,13 +3,15 @@
 -- The registry knows every available feature, which ones are enabled, and is
 -- responsible for a feature's lifecycle:
 --
---   ACTION feature:  enable -> bind its trigger to its action
---   SERVICE feature: enable -> start(ctx)
---   disable (both):  optional stop(ctx), then scope teardown -- every handle
---                    the feature created through ctx is stopped by the platform
+--   enable  -> start(ctx) if the feature is a service, then bind a trigger for
+--              each of its declared actions (a plugin may have several -- each
+--              independently rebindable)
+--   disable -> optional stop(ctx), then scope teardown -- every handle the
+--              feature created through ctx is stopped by the platform
 --
--- Enabled-state and per-feature option values persist via the adapter, keyed
--- by feature id, so a restart restores exactly what the user selected.
+-- Enabled-state, option values, and per-action trigger overrides persist via
+-- the adapter, keyed by feature id (+ action id), so a restart restores exactly
+-- what the user selected.
 
 local adapter  = require("platform.adapter")
 local manifest = require("platform.manifest")
@@ -104,37 +106,67 @@ function registry.isEnabled(id)
     return adapter.getSetting(enabledKey(id), false) == true
 end
 
-local function triggerKey(id) return "hammerdeck.trigger." .. id end
+local function triggerKey(id, actionId)
+    return "hammerdeck.trigger." .. id .. "." .. actionId
+end
 
--- The feature's chosen trigger: the user's override (stored encoded), else the
--- manifest default. Writers are registry.setTrigger / clearTrigger below.
-local function triggerFor(m)
-    local stored = adapter.getSetting(triggerKey(m.id), nil)
-    return (stored and triggers.decode(stored)) or m.defaultTrigger
+-- The stored (encoded) trigger override for one action, honoring the legacy
+-- pre-multi-action key "hammerdeck.trigger.<id>" for single-action features.
+local function storedTrigger(m, a)
+    local s = adapter.getSetting(triggerKey(m.id, a.id), nil)
+    if s == nil and a.id == "main" then
+        s = adapter.getSetting("hammerdeck.trigger." .. m.id, nil)
+    end
+    return s
+end
+
+-- One action's chosen trigger: the user's override, else its declared default.
+-- Writers are registry.setTrigger / clearTrigger below.
+local function triggerFor(m, a)
+    local stored = storedTrigger(m, a)
+    return (stored and triggers.decode(stored)) or a.defaultTrigger
+end
+
+-- Find an action by id; with actionId == nil, resolve the feature's sole
+-- action (the legacy single-action call shape). Raises on a miss.
+local function resolveAction(m, actionId)
+    assert(#m.actions > 0, "feature '" .. m.id .. "' has no rebindable actions")
+    if actionId == nil then
+        assert(#m.actions == 1,
+            "feature '" .. m.id .. "' has several actions; specify an actionId")
+        return m.actions[1]
+    end
+    for _, a in ipairs(m.actions) do
+        if a.id == actionId then return a end
+    end
+    error("feature '" .. m.id .. "' has no action '" .. tostring(actionId) .. "'")
 end
 
 local function bindFeature(m)
     if bound[m.id] then return end               -- already live
     startFailures[m.id] = nil                     -- a retry clears the prior failure
     local ctx, scope = ctxlib.make(m)
-    bound[m.id] = { ctx = ctx, scope = scope }
+    local b = { ctx = ctx, scope = scope, actionHandles = {} }
+    bound[m.id] = b
 
     -- Quarantine the feature's own start/bind code: a throw here (bad trigger
     -- spec, exception in start(ctx)) must not abort startAll() and strand the
     -- rest of the catalog. Fire-time errors in an action handler are contained
     -- separately at the bridge's callRef boundary.
     local ok, err = pcall(function()
-        if m.action then
-            local spec = triggerFor(m)
-            if not spec then
-                adapter.log(m.id .. ": enabled but has no trigger; skipping")
-                return
-            end
-            scope.adopt(triggers.bind(spec, function() m.action(ctx) end))
-            adapter.log(m.id .. ": bound (" .. spec.type .. ")")
-        else
+        if m.start then
             m.start(ctx)
             adapter.log(m.id .. ": started")
+        end
+        for _, a in ipairs(m.actions) do
+            local spec = triggerFor(m, a)
+            if spec then
+                b.actionHandles[a.id] =
+                    scope.adopt(triggers.bind(spec, function() a.run(ctx) end))
+                adapter.log(m.id .. "." .. a.id .. ": bound (" .. spec.type .. ")")
+            else
+                adapter.log(m.id .. "." .. a.id .. ": no trigger; manual only")
+            end
         end
     end)
 
@@ -202,51 +234,99 @@ function registry.setEnabled(id, on)
     if on then bindFeature(m) else unbindFeature(m) end
 end
 
--- Does `spec` collide with another ENABLED feature's trigger? Only hotkeys can
--- conflict (many features may legitimately share a schedule or system event).
+-- Does `spec` collide with the trigger of any other ENABLED action (across all
+-- features, and across sibling actions of the same feature)? Only hotkeys can
+-- conflict (many actions may legitimately share a schedule or system event).
 -- Comparison is on the canonical encoding, so alt+cmd matches cmd+alt. Returns
 -- a human-readable reason string, or nil if there is no conflict.
-function registry.triggerConflict(id, spec)
+-- Call shapes: (id, actionId, spec) or legacy (id, spec) for sole-action features.
+function registry.triggerConflict(id, actionId, spec)
+    if type(actionId) == "table" and spec == nil then
+        spec, actionId = actionId, nil
+    end
     if type(spec) ~= "table" or spec.type ~= "hotkey" then return nil end
+    if actionId == nil and features[id] then
+        local okA, a = pcall(resolveAction, features[id], nil)
+        if okA then actionId = a.id end
+    end
     local target = triggers.encode(spec)
     for _, m in ipairs(registry.all()) do
-        if m.id ~= id and m.action and registry.isEnabled(m.id) then
-            local other = triggerFor(m)
-            if other and other.type == "hotkey" and triggers.encode(other) == target then
-                return "hotkey already bound to '" .. m.name .. "'"
+        if registry.isEnabled(m.id) then
+            for _, a in ipairs(m.actions) do
+                if not (m.id == id and a.id == actionId) then
+                    local other = triggerFor(m, a)
+                    if other and other.type == "hotkey"
+                        and triggers.encode(other) == target then
+                        local who = m.name
+                        if #m.actions > 1 then who = who .. ": " .. a.label end
+                        return "hotkey already bound to '" .. who .. "'"
+                    end
+                end
             end
         end
     end
     return nil
 end
 
--- Rebind an action feature to a new trigger spec -- the core "any trigger can
--- fire any action" promise. Validates the spec, refuses a hotkey already taken
--- by another enabled feature, persists the override (encoded), and live-rebinds
--- if the feature is currently enabled. Returns true on success, or
--- (false, reason) on a conflict.
-function registry.setTrigger(id, spec)
+-- Stop one action's live binding (if any) and forget its handle.
+local function dropActionBinding(b, actionId)
+    if not b then return end
+    local h = b.actionHandles[actionId]
+    if h then h.stop() end
+    b.actionHandles[actionId] = nil
+end
+
+-- Rebind one action to a new trigger spec -- the core "any trigger can fire any
+-- action" promise. Validates the spec, refuses a hotkey already taken by
+-- another enabled action, persists the override (encoded, per action), and
+-- live-rebinds JUST that action (a running service and sibling actions are not
+-- disturbed). Returns true on success, or (false, reason) on refusal.
+-- Call shapes: setTrigger(id, actionId, spec) or legacy setTrigger(id, spec).
+function registry.setTrigger(id, actionId, spec)
+    if type(actionId) == "table" and spec == nil then
+        spec, actionId = actionId, nil
+    end
     local m = features[id]
     assert(m, "no such feature: " .. id)
-    assert(m.action, "only action features have a rebindable trigger: " .. id)
+    local a = resolveAction(m, actionId)
     triggers.validate(spec)
 
-    local conflict = registry.triggerConflict(id, spec)
+    local conflict = registry.triggerConflict(id, a.id, spec)
     if conflict then return false, conflict end
 
-    if bound[id] then unbindFeature(m) end
-    adapter.setSetting(triggerKey(id), triggers.encode(spec))
-    if registry.isEnabled(id) then bindFeature(m) end
+    local b = bound[id]
+    dropActionBinding(b, a.id)
+    adapter.setSetting(triggerKey(id, a.id), triggers.encode(spec))
+    if a.id == "main" then
+        adapter.setSetting("hammerdeck.trigger." .. id, nil)   -- retire the legacy key
+    end
+    if b then
+        local okBind, err = pcall(function()
+            b.actionHandles[a.id] =
+                b.scope.adopt(triggers.bind(spec, function() a.run(b.ctx) end))
+        end)
+        if not okBind then return false, "bind failed: " .. tostring(err) end
+    end
     return true
 end
 
--- Drop a user override, reverting the feature to its manifest default trigger.
-function registry.clearTrigger(id)
+-- Drop one action's user override, reverting it to its declared default
+-- trigger (which may be none -- the action then waits for a manual bind).
+-- Call shapes: clearTrigger(id, actionId) or legacy clearTrigger(id).
+function registry.clearTrigger(id, actionId)
     local m = features[id]
     assert(m, "no such feature: " .. id)
-    if bound[id] then unbindFeature(m) end
-    adapter.setSetting(triggerKey(id), nil)
-    if registry.isEnabled(id) then bindFeature(m) end
+    local a = resolveAction(m, actionId)
+    local b = bound[id]
+    dropActionBinding(b, a.id)
+    adapter.setSetting(triggerKey(id, a.id), nil)
+    if a.id == "main" then
+        adapter.setSetting("hammerdeck.trigger." .. id, nil)
+    end
+    if b and a.defaultTrigger then
+        b.actionHandles[a.id] =
+            b.scope.adopt(triggers.bind(a.defaultTrigger, function() a.run(b.ctx) end))
+    end
     return true
 end
 
@@ -267,9 +347,7 @@ end
 -- (no functions) -- the Swift settings window renders forms from this.
 -- ---------------------------------------------------------------------------
 
-local function describeTrigger(m)
-    if m.start then return "always-on service" end
-    local spec = triggerFor(m)
+local function specDesc(spec)
     if not spec then return "no trigger" end
     if spec.type == "hotkey" then
         return "hotkey: " .. table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
@@ -280,6 +358,12 @@ local function describeTrigger(m)
         return "event: " .. tostring(spec.event)
     end
     return tostring(spec.type)
+end
+
+local function describeTrigger(m)
+    if m.start then return "always-on service" end
+    if #m.actions == 1 then return specDesc(triggerFor(m, m.actions[1])) end
+    return #m.actions .. " actions"
 end
 
 function registry.describe()
@@ -302,13 +386,21 @@ function registry.describe()
             failed = startFailures[m.id] ~= nil,
             error = startFailures[m.id],
         }
-        -- Action features carry the editable trigger spec (current + default)
-        -- and whether it's a user override, so the config UI can drive a picker.
-        if m.action then
-            row.trigger = triggerFor(m)
-            row.defaultTrigger = m.defaultTrigger
-            row.triggerOverridden = adapter.getSetting(triggerKey(m.id), nil) ~= nil
+        -- Each action carries its editable trigger (current + default) and
+        -- whether a user override is in effect, so the config UI renders one
+        -- trigger picker per action. Empty list for pure services.
+        local actions = {}
+        for _, a in ipairs(m.actions) do
+            local current = triggerFor(m, a)
+            actions[#actions + 1] = {
+                id = a.id, label = a.label,
+                trigger = current,
+                defaultTrigger = a.defaultTrigger,
+                triggerOverridden = storedTrigger(m, a) ~= nil,
+                triggerDesc = specDesc(current),
+            }
         end
+        row.actions = actions
         out[#out + 1] = row
     end
     -- Modules that failed to even load/register: surface as inert "failed" rows

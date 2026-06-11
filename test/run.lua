@@ -275,8 +275,8 @@ fake.pressHotkey("p")
 ok(fires == 1, "the old hotkey no longer fires after rebind")
 fake.pressHotkey("q")
 ok(fires == 2, "the new hotkey fires the rebound action")
-ok(fake.settings["hammerdeck.trigger.rebind_probe"] == "hotkey|ctrl|q",
-    "the override is persisted as an encoded string")
+ok(fake.settings["hammerdeck.trigger.rebind_probe.main"] == "hotkey|ctrl|q",
+    "the override is persisted as an encoded string (per-action key)")
 
 -- conflict: a second enabled feature already owns ctrl+q
 local fires2 = 0
@@ -299,12 +299,15 @@ ok(not pcall(registry.setTrigger, "sleep_schedule", { type = "event", event = "w
 -- describe exposes the editable trigger + override flag
 local probeDesc
 for _, d in ipairs(registry.describe()) do if d.id == "rebind_probe" then probeDesc = d end end
-ok(probeDesc.trigger and probeDesc.trigger.key == "q", "describe exposes the current trigger spec")
-ok(probeDesc.triggerOverridden == true, "describe reports the override state")
+ok(probeDesc.actions[1].trigger and probeDesc.actions[1].trigger.key == "q",
+    "describe exposes the current trigger spec")
+ok(probeDesc.actions[1].triggerOverridden == true, "describe reports the override state")
 
 -- clearTrigger reverts to the manifest default
 registry.clearTrigger("rebind_probe")
-ok(fake.settings["hammerdeck.trigger.rebind_probe"] == nil, "clearTrigger removes the override")
+ok(fake.settings["hammerdeck.trigger.rebind_probe.main"] == nil
+    and fake.settings["hammerdeck.trigger.rebind_probe"] == nil,
+    "clearTrigger removes the override")
 fake.pressHotkey("p")
 ok(fires == 3, "clearTrigger restored the default trigger")
 fake.pressHotkey("q")
@@ -436,5 +439,75 @@ ok(sum2.count == 1, "reload re-scans -- a removed feature folder is dropped")
 ok(registry.describe()[1].id == "window_jump", "the surviving feature is the discovered one")
 
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after autodiscovery test")
+
+-- T15: multi-action features -- one plugin, several shortcuts ------------------
+local hits = { a = 0, b = 0 }
+local starts = 0
+package.loaded["features._multi"] = {
+    api = 1, id = "multi", name = "Multi",
+    start = function(ctx) starts = starts + 1 end,   -- service + actions combo
+    actions = {
+        { id = "alpha", label = "Alpha",
+          defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "1" },
+          run = function() hits.a = hits.a + 1 end },
+        { id = "beta", label = "Beta",
+          defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "2" },
+          run = function() hits.b = hits.b + 1 end },
+    },
+}
+registry.load("features._multi")
+registry.setEnabled("multi", true)
+ok(starts == 1, "service starts alongside its actions")
+fake.pressHotkey("1"); fake.pressHotkey("2")
+ok(hits.a == 1 and hits.b == 1, "both actions fire on their own hotkeys")
+
+-- per-action rebind: siblings and the running service are untouched
+ok(registry.setTrigger("multi", "beta", { type = "hotkey", mods = { "ctrl" }, key = "3" }) == true,
+    "one action rebinds")
+ok(starts == 1, "rebinding one action does not restart the service")
+fake.pressHotkey("2")
+ok(hits.b == 1, "the rebound action's old key is dead")
+fake.pressHotkey("3"); fake.pressHotkey("1")
+ok(hits.b == 2 and hits.a == 2, "new key fires; the sibling action is unaffected")
+ok(fake.settings["hammerdeck.trigger.multi.beta"] == "hotkey|ctrl|3",
+    "per-action override key persisted")
+
+-- sibling actions cannot collide on a hotkey
+local okSet2, why2 = registry.setTrigger("multi", "alpha", { type = "hotkey", mods = { "ctrl" }, key = "3" })
+ok(okSet2 == false and why2 ~= nil, "sibling actions cannot share a hotkey")
+
+-- new-shape manifest validation
+rejects({ api = 1, id = "x", name = "X", action = function() end,
+          actions = { { id = "a", run = function() end } } }, "action AND actions together")
+rejects({ api = 1, id = "x", name = "X",
+          actions = { { id = "a", run = function() end },
+                      { id = "a", run = function() end } } }, "duplicate action ids")
+rejects({ api = 1, id = "x", name = "X", actions = { { id = "a" } } }, "action without run")
+
+-- describe carries per-action trigger state
+local multiDesc
+for _, d in ipairs(registry.describe()) do if d.id == "multi" then multiDesc = d end end
+ok(#multiDesc.actions == 2 and multiDesc.actions[2].id == "beta"
+    and multiDesc.actions[2].trigger.key == "3"
+    and multiDesc.actions[2].triggerOverridden == true,
+    "describe exports per-action trigger state")
+ok(multiDesc.kind == "service" and multiDesc.triggerDesc == "always-on service",
+    "service+actions still reads as a service in the list")
+
+-- legacy stored key (pre-multi-action) is honored for single-action sugar
+package.loaded["features._legacy"] = {
+    api = 1, id = "legacy", name = "Legacy",
+    defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "8" },
+    action = function() hits.a = hits.a + 100 end,
+}
+registry.load("features._legacy")
+fake.settings["hammerdeck.trigger.legacy"] = "hotkey|ctrl|9"   -- old-style override
+registry.setEnabled("legacy", true)
+fake.pressHotkey("9")
+ok(hits.a == 102, "legacy hammerdeck.trigger.<id> override is honored for sugar features")
+
+registry.setEnabled("multi", false)
+registry.setEnabled("legacy", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after multi-action tests")
 
 print("OK -- " .. passed .. " assertions passed")

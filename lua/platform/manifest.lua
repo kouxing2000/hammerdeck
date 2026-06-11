@@ -4,17 +4,33 @@
 -- how it runs -- it does not wire anything itself. The platform reads the
 -- manifest to build the config UI, bind triggers, and manage lifecycle.
 --
--- Two kinds of feature (exactly one of `action` / `start`):
+-- A feature declares any of:
 --
---   ACTION feature -- one-shot, fired by a trigger the registry binds:
+--   ACTIONS -- named, independently triggerable entry points. Each gets its own
+--   user-rebindable trigger (this is how one plugin supports several shortcuts):
+--     actions = {
+--       { id = "start", label = "Start countdown",
+--         defaultTrigger = { type = "hotkey", mods = {"cmd","alt"}, key = "c" },
+--         run = function(ctx) ... end },
+--       { id = "pause", label = "Pause / resume", defaultTrigger = {...},
+--         run = function(ctx) ... end },
+--     }
+--   An action without a defaultTrigger is dormant until the user binds one.
+--
+--   SINGLE-ACTION SUGAR -- the common one-shortcut case, normalized internally
+--   to a one-entry `actions` list (id "main"):
 --     defaultTrigger = { type = "hotkey", mods = {"alt"}, key = "tab" },
 --     action = function(ctx) ... end,
 --
---   SERVICE feature -- long-running; enable calls start(ctx), disable tears
---   down everything the feature created through ctx (scoped cleanup), then
---   calls the OPTIONAL stop(ctx) for semantic cleanup:
+--   SERVICE -- long-running; enable calls start(ctx), disable tears down
+--   everything the feature created through ctx (scoped cleanup), then calls the
+--   OPTIONAL stop(ctx). A service MAY also declare `actions` (manual triggers
+--   that poke the running service, e.g. "refresh now"):
 --     start = function(ctx) ... end,
 --     stop  = function(ctx) ... end,   -- optional
+--
+-- Rules: at least one of actions/action/start; `action` (sugar) excludes both
+-- `actions` and `start` -- a service with shortcuts uses the explicit list.
 --
 -- Manifest shape:
 -- {
@@ -27,8 +43,7 @@
 --   options     = {                      -- typed -> the settings form generates itself
 --     { key = "intervalMin", type = "int", default = 25, label = "Interval (min)", min = 5, max = 90 },
 --   },
---   defaultTrigger = ...,                -- ACTION features only
---   action / start / stop = ...,         -- see above
+--   actions / defaultTrigger+action / start / stop = ...,   -- see above
 -- }
 
 local manifest = {}
@@ -41,7 +56,9 @@ local VALID_OPTION_TYPES = {
     bool = true, int = true, string = true, enum = true, time = true, appList = true,
 }
 
--- Validate a manifest table; raises on error. Returns the manifest unchanged.
+-- Validate a manifest table; raises on error. Normalizes in place (category and
+-- options defaults; the single-action sugar becomes a one-entry `actions` list
+-- with id "main") and returns the manifest.
 function manifest.validate(m)
     assert(type(m) == "table", "feature must return a table")
     assert(type(m.id) == "string" and m.id ~= "", "feature.id must be a non-empty string")
@@ -50,20 +67,50 @@ function manifest.validate(m)
         " but this platform implements api=" .. manifest.API_VERSION)
     assert(type(m.name) == "string" and m.name ~= "", "feature '" .. m.id .. "' needs a name")
 
-    local hasAction = type(m.action) == "function"
-    local hasStart  = type(m.start) == "function"
-    assert(hasAction ~= hasStart,
-        "feature '" .. m.id .. "' must define exactly one of action(ctx) or start(ctx)")
+    local hasAction  = type(m.action) == "function"
+    local hasActions = m.actions ~= nil
+    local hasStart   = type(m.start) == "function"
+    assert(hasAction or hasActions or hasStart,
+        "feature '" .. m.id .. "' must define actions, action(ctx), or start(ctx)")
+    assert(not (hasAction and hasActions),
+        "feature '" .. m.id .. "': declare either action (single sugar) or actions, not both")
+    assert(not (hasAction and hasStart),
+        "feature '" .. m.id .. "': a service with shortcuts uses actions = {...}, " ..
+        "not the single-action sugar")
     if m.stop ~= nil then
         assert(hasStart, "feature '" .. m.id .. "': stop(ctx) only makes sense with start(ctx)")
         assert(type(m.stop) == "function", "feature '" .. m.id .. "': stop must be a function")
     end
     if m.defaultTrigger ~= nil then
         assert(hasAction,
-            "feature '" .. m.id .. "': defaultTrigger requires action(ctx); " ..
-            "service features create their own bindings through ctx")
+            "feature '" .. m.id .. "': top-level defaultTrigger goes with the single-action " ..
+            "sugar; multi-action features put defaultTrigger on each actions entry")
         assert(type(m.defaultTrigger) == "table" and m.defaultTrigger.type,
             "feature '" .. m.id .. "': defaultTrigger must be a trigger spec table")
+    end
+
+    -- Normalize the sugar, then validate the (possibly synthesized) list.
+    if hasAction then
+        m.actions = { { id = "main", label = m.name,
+                        defaultTrigger = m.defaultTrigger, run = m.action } }
+    end
+    m.actions = m.actions or {}
+    assert(type(m.actions) == "table", "feature '" .. m.id .. "': actions must be a list")
+    local seen = {}
+    for _, a in ipairs(m.actions) do
+        assert(type(a) == "table", "feature '" .. m.id .. "': each action must be a table")
+        assert(type(a.id) == "string" and a.id ~= "",
+            "feature '" .. m.id .. "': every action needs a non-empty string id")
+        assert(not seen[a.id], "feature '" .. m.id .. "': duplicate action id '" .. a.id .. "'")
+        seen[a.id] = true
+        assert(type(a.run) == "function",
+            "feature '" .. m.id .. "': action '" .. a.id .. "' needs run(ctx)")
+        a.label = a.label or a.id
+        if a.defaultTrigger ~= nil then
+            assert(type(a.defaultTrigger) == "table" and a.defaultTrigger.type,
+                "feature '" .. m.id .. "': action '" .. a.id ..
+                "' defaultTrigger must be a trigger spec table")
+        end
     end
 
     m.category = m.category or "general"
