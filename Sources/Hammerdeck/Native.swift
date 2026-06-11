@@ -91,6 +91,11 @@ final class Native {
             "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
             "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
             "locate_mouse":  { L in MainActor.assumeIsolated { Native.shared.locateMouse(L) } },
+            // network / files / wallpaper
+            "http_get":      { L in MainActor.assumeIsolated { Native.shared.httpGet(L) } },
+            "download_file": { L in MainActor.assumeIsolated { Native.shared.downloadFile(L) } },
+            "set_wallpaper": { L in MainActor.assumeIsolated { Native.shared.setWallpaper(L) } },
+            "cache_dir":     { L in MainActor.assumeIsolated { Native.shared.cacheDir(L) } },
             "ask_choice_dismiss": { L in MainActor.assumeIsolated { Native.shared.askChoiceDismiss(L) } },
             // windows / apps (list/focus are M2 Slice 2 -- AXUIElement)
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
@@ -493,6 +498,87 @@ final class Native {
             progresses[id]?.setProgress(f)
         }
         return 0
+    }
+
+    // MARK: - Network / files / wallpaper
+
+    // Async GET; callback gets (status, body|nil). Body is decoded as UTF-8
+    // text (this surface is for JSON/HTML APIs -- binary payloads go through
+    // download_file, which never round-trips bytes into a Lua string).
+    private func httpGet(_ L: OpaquePointer?) -> Int32 {
+        guard let url = LuaState.string(L, 1), let u = URL(string: url) else {
+            return luaError(L, "http_get: url required")
+        }
+        let headers = (LuaState.any(L, 2) as? [String: Any]) ?? [:]
+        let ref = lua.makeRef(at: 3)
+        var req = URLRequest(url: u)
+        for (k, v) in headers {
+            if let s = v as? String { req.setValue(s, forHTTPHeaderField: k) }
+        }
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let body = data.flatMap { String(data: $0, encoding: .utf8) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    Native.shared.lua.callRef(ref) { L in
+                        lua_pushinteger(L, lua_Integer(status))
+                        if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
+                        return 2
+                    }
+                    Native.shared.lua.releaseRef(ref)
+                }
+            }
+        }.resume()
+        return 0
+    }
+
+    private func downloadFile(_ L: OpaquePointer?) -> Int32 {
+        guard let url = LuaState.string(L, 1), let u = URL(string: url),
+              let path = LuaState.string(L, 2) else {
+            return luaError(L, "download_file: url and path required")
+        }
+        let ref = lua.makeRef(at: 3)
+        URLSession.shared.downloadTask(with: u) { tmp, resp, _ in
+            var ok = false
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if let tmp, (200..<300).contains(status) {
+                let fm = FileManager.default
+                try? fm.removeItem(atPath: path)
+                ok = (try? fm.moveItem(at: tmp, to: URL(fileURLWithPath: path))) != nil
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    Native.shared.lua.callRef(ref) { L in
+                        lua_pushboolean(L, ok ? 1 : 0)
+                        return 1
+                    }
+                    Native.shared.lua.releaseRef(ref)
+                }
+            }
+        }.resume()
+        return 0
+    }
+
+    private func setWallpaper(_ L: OpaquePointer?) -> Int32 {
+        guard let path = LuaState.string(L, 1) else {
+            return luaError(L, "set_wallpaper: path required")
+        }
+        var ok = false
+        if let screen = NSScreen.main {
+            ok = (try? NSWorkspace.shared.setDesktopImageURL(
+                URL(fileURLWithPath: path), for: screen)) != nil
+        }
+        lua_pushboolean(L, ok ? 1 : 0)
+        return 1
+    }
+
+    private func cacheDir(_ L: OpaquePointer?) -> Int32 {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let dir = base.appendingPathComponent("Hammerdeck", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        lua_pushstring(L, dir.path)
+        return 1
     }
 
     // MARK: - Mouse locator (fire-and-forget, like alert)

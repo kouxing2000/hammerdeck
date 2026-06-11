@@ -249,6 +249,35 @@ function adapter.locateMouse(seconds)
     fake.mouseLocates[#fake.mouseLocates + 1] = seconds
 end
 
+-- Network / files / wallpaper ----------------------------------------------------
+
+fake.httpResponses = {}   -- url -> { status=, body= }; missing url -> (0, nil)
+fake.httpRequests  = {}   -- recorded { url, headers }
+fake.downloads     = {}   -- recorded { url, path }
+fake.downloadOk    = true
+fake.wallpapers    = {}   -- recorded setWallpaper paths
+
+function adapter.httpGet(url, headers, cb)
+    fake.httpRequests[#fake.httpRequests + 1] = { url = url, headers = headers }
+    local r = fake.httpResponses[url]
+    -- synchronous in tests (the native backend calls back async on main)
+    if r then cb(r.status, r.body) else cb(0, nil) end
+end
+
+function adapter.downloadFile(url, path, cb)
+    fake.downloads[#fake.downloads + 1] = { url = url, path = path }
+    cb(fake.downloadOk)
+end
+
+function adapter.setWallpaper(path)
+    fake.wallpapers[#fake.wallpapers + 1] = path
+    return true
+end
+
+function adapter.cacheDir()
+    return "/tmp/hammerdeck-fake-cache"
+end
+
 function adapter.systemSleep()      fake.actions.sleep = fake.actions.sleep + 1 end
 function adapter.lockScreen()       fake.actions.lock = fake.actions.lock + 1 end
 function adapter.displaySleep()     fake.actions.displaySleep = fake.actions.displaySleep + 1 end

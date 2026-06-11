@@ -104,6 +104,12 @@ function M.make(m)
     function ctx.pasteboardRead()      return adapter.pasteboardRead() end
     function ctx.pasteboardWrite(text) adapter.pasteboardWrite(text) end
 
+    -- network / files / wallpaper -----------------------------------------------
+    function ctx.httpGet(url, headers, cb)     adapter.httpGet(url, headers, cb) end
+    function ctx.downloadFile(url, path, cb)   adapter.downloadFile(url, path, cb) end
+    function ctx.setWallpaper(path)            return adapter.setWallpaper(path) end
+    function ctx.cacheDir()                    return adapter.cacheDir() end
+
     -- input / system state / system actions ------------------------------------
     function ctx.now()               return adapter.now() end
     function ctx.isModifierHeld(mod) return adapter.isModifierHeld(mod) end

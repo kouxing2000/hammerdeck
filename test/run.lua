@@ -565,4 +565,56 @@ ok(fake.mouseLocates[2] == 7, "duration option applies live")
 registry.setEnabled("mouse_circle", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after mouse_circle test")
 
+-- T18: json decoder + bing_daily (service + dormant refresh action) ------------
+local jsonlib = require("platform.json")
+local jd = jsonlib.decode
+ok(jd('{"a":1,"b":[true,false,"x"],"c":{"d":-2.5e2}}').c.d == -250, "json: nested object/array/number")
+ok(jd('[1,2,3]')[3] == 3, "json: plain array")
+ok(jd('"a\\"b\\n\\u0041\\ud83d\\ude00"') == 'a"b\nA\240\159\152\128', "json: escapes incl. surrogate pair")
+ok(jd('  true  ') == true, "json: bare literal with whitespace")
+ok(jd('{"a":}') == nil, "json: malformed -> nil")
+ok(jd('[1,2,]') == nil, "json: trailing comma -> nil")
+ok(jd('{"a":1} x') == nil, "json: trailing garbage -> nil")
+
+registry.register(require("features.bing_daily"))
+local bingApi = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1"
+fake.httpResponses[bingApi] = {
+    status = 200,
+    body = '{"images":[{"url":"/th?id=OHR.TestPic_1920x1080.jpg&rf=x.jpg&pid=hp"}]}',
+}
+registry.setEnabled("bing_daily", true)
+ok(fake.fireTimers("after", 5) == 1, "bing: boot refresh scheduled")
+ok(fake.httpRequests[#fake.httpRequests].headers["User-Agent"] ~= nil, "bing: sends a user agent")
+local dl = fake.downloads[#fake.downloads]
+ok(dl and dl.path == "/tmp/hammerdeck-fake-cache/OHR.TestPic_1920x1080.jpg",
+    "bing: downloads the picture into the app cache by id")
+ok(fake.wallpapers[#fake.wallpapers] == dl.path, "bing: sets the wallpaper")
+ok(fake.settings["hammerdeck.state.bing_daily.lastPic"] == "OHR.TestPic_1920x1080.jpg",
+    "bing: remembers the applied picture")
+
+-- same picture on the next poll: re-applied, NOT re-downloaded
+local dlCount = #fake.downloads
+fake.fireTimers("every", 3 * 3600)
+ok(#fake.downloads == dlCount, "bing: unchanged picture is not re-downloaded")
+ok(fake.wallpapers[#fake.wallpapers] == dl.path, "bing: unchanged picture is re-applied")
+
+-- the dormant refresh action works once bound
+ok(registry.setTrigger("bing_daily", "refresh",
+    { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "w" }) == true,
+    "bing: dormant refresh action binds")
+fake.httpResponses[bingApi].body =
+    '{"images":[{"url":"/th?id=OHR.NewPic_1920x1080.jpg&rf=y.jpg"}]}'
+fake.pressHotkey("w")
+ok(fake.downloads[#fake.downloads].path == "/tmp/hammerdeck-fake-cache/OHR.NewPic_1920x1080.jpg",
+    "bing: manual refresh downloads the new picture")
+
+-- a failed request leaves state untouched
+fake.httpResponses[bingApi] = { status = 500, body = nil }
+local wallCount = #fake.wallpapers
+fake.fireTimers("every", 3 * 3600)
+ok(#fake.wallpapers == wallCount, "bing: failed request changes nothing")
+
+registry.setEnabled("bing_daily", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after bing_daily test")
+
 print("OK -- " .. passed .. " assertions passed")

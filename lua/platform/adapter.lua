@@ -209,6 +209,31 @@ function adapter.discoverFeatures(dir)
 end
 
 -- ---------------------------------------------------------------------------
+-- Network / files / wallpaper
+-- ---------------------------------------------------------------------------
+
+-- Async GET; cb(status, body|nil). One-shot, NOT a handle: it cannot be
+-- cancelled, and the callback may arrive after the feature was disabled --
+-- any stopped ctx handles it touches are safe no-ops.
+function adapter.httpGet(url, headers, cb)
+    native.http_get(url, headers or {}, cb)
+end
+
+-- Async download straight to `path` (binary-safe); cb(ok).
+function adapter.downloadFile(url, path, cb)
+    native.download_file(url, path, cb)
+end
+
+function adapter.setWallpaper(path)
+    return native.set_wallpaper(path)
+end
+
+-- App-owned writable cache directory (created on demand).
+function adapter.cacheDir()
+    return native.cache_dir()
+end
+
+-- ---------------------------------------------------------------------------
 -- Input / system state / system actions
 -- ---------------------------------------------------------------------------
 
