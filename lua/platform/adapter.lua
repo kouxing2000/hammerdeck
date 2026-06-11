@@ -222,6 +222,12 @@ function adapter.isModifierHeld(mod)
     return native.is_modifier_held(mod)
 end
 
+-- Draw a crosshair around the pointer for `seconds` (fire-and-forget overlay;
+-- clicks pass through). Re-invoking replaces the live one.
+function adapter.locateMouse(seconds)
+    native.locate_mouse(seconds or 3)
+end
+
 function adapter.idleSeconds()
     return native.idle_seconds()
 end

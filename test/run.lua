@@ -553,4 +553,16 @@ ok(fake.liveProgressBar() == nil, "dismissed prompt starts nothing")
 registry.setEnabled("count_down", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after count_down test")
 
+-- T17: mouse_circle (locate pointer) -------------------------------------------
+registry.register(require("features.mouse_circle"))
+registry.setEnabled("mouse_circle", true)
+fake.pressHotkey("m")
+ok(#fake.mouseLocates == 1 and fake.mouseLocates[1] == 3,
+    "locate-pointer fires with the configured duration")
+fake.settings["hammerdeck.opt.mouse_circle.seconds"] = 7
+fake.pressHotkey("m")
+ok(fake.mouseLocates[2] == 7, "duration option applies live")
+registry.setEnabled("mouse_circle", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after mouse_circle test")
+
 print("OK -- " .. passed .. " assertions passed")

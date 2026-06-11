@@ -79,6 +79,7 @@ function M.make(m)
     function ctx.log(...) adapter.log("[" .. m.id .. "]", ...) end
     function ctx.notify(title, text) adapter.notify(title, text) end
     function ctx.alert(text) adapter.alert(text) end
+    function ctx.locateMouse(seconds) adapter.locateMouse(seconds) end
 
     -- bindings (all scope-tracked) --------------------------------------------
     function ctx.bindHotkey(mods, key, fn) return track(adapter.bindHotkey(mods, key, fn)) end

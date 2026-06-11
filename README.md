@@ -29,6 +29,8 @@ myHammerSpoon:
   (strips formatting); optionally turns newlines into commas.
 - **Countdown** (2 actions) -- ask for minutes, run a thin progress strip along
   the screen bottom, notify when time is up; pause/resume on its own shortcut.
+- **Locate Pointer** (action) -- crosshair around the mouse for a moment,
+  following it as it moves; clicks pass through.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

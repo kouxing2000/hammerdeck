@@ -25,6 +25,7 @@ final class Native {
     private var choosers: [Int32: ChooserPanel] = [:]
     private var progresses: [Int32: ProgressPanel] = [:]
     private var askTexts: [Int32: AskTextPanel] = [:]
+    private var mouseLocator: MouseLocatorPanel?
 
     func attach(_ lua: LuaState) { self.lua = lua }
 
@@ -89,6 +90,7 @@ final class Native {
             "ask_text_dismiss": { L in MainActor.assumeIsolated { Native.shared.askTextDismiss(L) } },
             "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
             "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
+            "locate_mouse":  { L in MainActor.assumeIsolated { Native.shared.locateMouse(L) } },
             "ask_choice_dismiss": { L in MainActor.assumeIsolated { Native.shared.askChoiceDismiss(L) } },
             // windows / apps (list/focus are M2 Slice 2 -- AXUIElement)
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
@@ -489,6 +491,17 @@ final class Native {
     private func progressSet(_ L: OpaquePointer?) -> Int32 {
         if let id = LuaState.int(L, 1).map(Int32.init), let f = LuaState.double(L, 2) {
             progresses[id]?.setProgress(f)
+        }
+        return 0
+    }
+
+    // MARK: - Mouse locator (fire-and-forget, like alert)
+
+    private func locateMouse(_ L: OpaquePointer?) -> Int32 {
+        let seconds = LuaState.double(L, 1) ?? 3
+        mouseLocator?.close()                       // re-invoke replaces the live one
+        mouseLocator = MouseLocatorPanel(seconds: seconds) {
+            Native.shared.mouseLocator = nil
         }
         return 0
     }

@@ -244,6 +244,11 @@ function adapter.idleSeconds()
     return fake.idle
 end
 
+fake.mouseLocates = {}   -- recorded locateMouse(seconds) calls
+function adapter.locateMouse(seconds)
+    fake.mouseLocates[#fake.mouseLocates + 1] = seconds
+end
+
 function adapter.systemSleep()      fake.actions.sleep = fake.actions.sleep + 1 end
 function adapter.lockScreen()       fake.actions.lock = fake.actions.lock + 1 end
 function adapter.displaySleep()     fake.actions.displaySleep = fake.actions.displaySleep + 1 end
