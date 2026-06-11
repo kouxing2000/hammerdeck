@@ -89,6 +89,28 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    /// Whether synthesized CGEvents actually reach our Carbon hotkeys in THIS
+    /// launch context. `AXIsProcessTrusted()` is necessary but not sufficient --
+    /// it can report true while event posting silently fails (some headless /
+    /// CI / remote-session launches of `swift test`). The synthesis tests gate
+    /// on this probe instead: register a temp hotkey on an unlikely key, post
+    /// it, and report whether it fired -- so an incapable environment SKIPS
+    /// rather than producing a misleading red.
+    private func canDeliverSynthesizedHotkeys() -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        var fired = false
+        guard let unbind = HotkeyCenter.shared.bind(mods: [], key: "f19", handler: { fired = true })
+        else { return false }
+        defer { unbind() }
+        let src = CGEventSource(stateID: .hidSystemState)
+        CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_F19), keyDown: true)?
+            .post(tap: .cghidEventTap)
+        CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_F19), keyDown: false)?
+            .post(tap: .cghidEventTap)
+        pumpAppEvents(0.3)
+        return fired
+    }
+
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
@@ -224,11 +246,29 @@ final class IntegrationTests: XCTestCase {
         // created, mutated, and torn down through the bridge.
     }
 
+    func testChordRegistersARealPrefixHotkey() {
+        host.store.setEnabled("clipboard_clean", true)
+        // Rebind onto a chord: ChordCenter registers the prefix via the real
+        // Carbon HotkeyCenter, so a live handle must exist.
+        let err = host.store.setTrigger(
+            "clipboard_clean", "main",
+            TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["b"]))
+        XCTAssertNil(err, "binding a chord should succeed")
+        XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
+                                    "the chord's prefix hotkey should be registered")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "hammerdeck.trigger.clipboard_clean.main"),
+                       "chord|cmd,shift|a|b", "the chord override persisted encoded")
+
+        host.store.clearTrigger("clipboard_clean", "main")   // back to its default hotkey
+        host.store.setEnabled("clipboard_clean", false)
+        XCTAssertEqual(registryNum("liveHandleCount()"), 0, "disable must leak nothing")
+    }
+
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)
 
     func testGlobalHotkeySynthesis() throws {
-        try XCTSkipUnless(AXIsProcessTrusted(),
-            "needs Accessibility (grant it to the terminal running `swift test`) to post CGEvents")
+        try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
+            "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
 
         host.store.setEnabled("clipboard_clean", true)
         UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.clipboard_clean.mode")
@@ -262,5 +302,58 @@ final class IntegrationTests: XCTestCase {
         pumpAppEvents(1.0)
         XCTAssertEqual(pb.string(forType: .string), "padded text",
                        "the synthesized hotkey should run the real action end to end")
+    }
+
+    /// The full chord path: a synthesized prefix hotkey arms ChordCenter, which
+    /// transiently registers the follow key; a second synthesized press of that
+    /// bare key fires the action. Proves the modal register/unregister dance
+    /// works against the real Carbon event queue -- not just the Lua wiring.
+    func testChordHotkeySynthesis() throws {
+        try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
+            "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
+
+        host.store.setEnabled("clipboard_clean", true)
+        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.clipboard_clean.mode")
+        // Bind the action to a chord: ⌘⇧A, then B.
+        let bindErr = host.store.setTrigger(
+            "clipboard_clean", "main",
+            TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["b"]))
+        XCTAssertNil(bindErr)
+
+        let pb = NSPasteboard.general
+        let saved = pb.string(forType: .string)
+        defer {
+            host.store.clearTrigger("clipboard_clean", "main")
+            host.store.setEnabled("clipboard_clean", false)
+            pb.clearContents()
+            if let saved { pb.setString(saved, forType: .string) }
+        }
+        pb.clearContents()
+        pb.setString("  padded text  ", forType: .string)
+
+        let src = CGEventSource(stateID: .hidSystemState)
+        func key(_ code: Int, down: Bool, flags: CGEventFlags) {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(code), keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+        }
+
+        // 1) The prefix ⌘⇧A -- arms the chord and registers the bare follow key.
+        key(kVK_Command, down: true, flags: [.maskCommand])
+        key(kVK_Shift, down: true, flags: [.maskCommand, .maskShift])
+        key(kVK_ANSI_A, down: true, flags: [.maskCommand, .maskShift])
+        key(kVK_ANSI_A, down: false, flags: [.maskCommand, .maskShift])
+        key(kVK_Shift, down: false, flags: [.maskCommand])
+        key(kVK_Command, down: false, flags: [])
+        // Let arm() run and register the bare 'b' BEFORE we press it.
+        pumpAppEvents(0.4)
+
+        // 2) The follow key B (no modifiers) -- completes the chord.
+        key(kVK_ANSI_B, down: true, flags: [])
+        key(kVK_ANSI_B, down: false, flags: [])
+        pumpAppEvents(0.8)
+
+        XCTAssertEqual(pb.string(forType: .string), "padded text",
+                       "the synthesized chord (⌘⇧A then B) should run the action end to end")
     }
 }

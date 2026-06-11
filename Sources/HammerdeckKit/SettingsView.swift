@@ -225,11 +225,12 @@ private struct OptionEditor: View {
 // MARK: - Trigger editor (the rebind picker)
 
 private enum TriggerMode: String, CaseIterable, Identifiable {
-    case hotkey, scheduleEvery, scheduleAt, event
+    case hotkey, chord, scheduleEvery, scheduleAt, event
     var id: String { rawValue }
     var label: String {
         switch self {
         case .hotkey:        return "Hotkey"
+        case .chord:         return "Chord"
         case .scheduleEvery: return "Every N minutes"
         case .scheduleAt:    return "Daily at"
         case .event:         return "System event"
@@ -252,6 +253,7 @@ private struct TriggerEditor: View {
     @State private var mode: TriggerMode
     @State private var mods: Set<String>
     @State private var key: String
+    @State private var follows: String       // chord: space-separated follow keys
     @State private var everyMin: Int
     @State private var at: String
     @State private var event: String
@@ -264,6 +266,7 @@ private struct TriggerEditor: View {
         let t = action.trigger ?? TriggerSpec()
         let m: TriggerMode
         switch t.type {
+        case "chord":    m = .chord
         case "schedule": m = (t.everyMin != nil) ? .scheduleEvery : .scheduleAt
         case "event":    m = .event
         default:         m = .hotkey
@@ -271,6 +274,7 @@ private struct TriggerEditor: View {
         _mode = State(initialValue: m)
         _mods = State(initialValue: Set(t.mods))
         _key = State(initialValue: t.key)
+        _follows = State(initialValue: t.follows.joined(separator: " "))
         _everyMin = State(initialValue: t.everyMin ?? 25)
         _at = State(initialValue: t.at ?? "09:00")
         _event = State(initialValue: t.event ?? "wake")
@@ -300,6 +304,31 @@ private struct TriggerEditor: View {
                     .frame(width: 70)
                     .multilineTextAlignment(.trailing)
             }
+        case .chord:
+            LabeledContent("Prefix modifiers") {
+                HStack(spacing: 4) {
+                    ForEach(allMods, id: \.id) { mod in
+                        Toggle(mod.symbol, isOn: Binding(
+                            get: { mods.contains(mod.id) },
+                            set: { on in if on { mods.insert(mod.id) } else { mods.remove(mod.id) } }
+                        ))
+                        .toggleStyle(.button)
+                    }
+                }
+            }
+            LabeledContent("Prefix key") {
+                TextField("e.g. a", text: $key)
+                    .frame(width: 70)
+                    .multilineTextAlignment(.trailing)
+            }
+            LabeledContent("Then keys") {
+                TextField("e.g. b c", text: $follows)
+                    .frame(width: 120)
+                    .multilineTextAlignment(.trailing)
+            }
+            Text("Press the prefix, then the follow keys in order (e.g. ⌘⇧A then B).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         case .scheduleEvery:
             Stepper(value: $everyMin, in: 1...1440) {
                 LabeledContent("Interval", value: "\(everyMin) min")
@@ -338,9 +367,17 @@ private struct TriggerEditor: View {
     private var applyDisabled: Bool {
         switch mode {
         case .hotkey:     return key.trimmingCharacters(in: .whitespaces).isEmpty
+        case .chord:      return key.trimmingCharacters(in: .whitespaces).isEmpty
+                              || followKeys.isEmpty
         case .scheduleAt: return at.range(of: #"^\d{1,2}:\d{2}$"#, options: .regularExpression) == nil
         default:          return false
         }
+    }
+
+    /// The chord follow sequence parsed from the space-separated field.
+    private var followKeys: [String] {
+        follows.split(whereSeparator: { $0 == " " || $0 == "," })
+            .map { $0.lowercased() }
     }
 
     private func buildSpec() -> TriggerSpec {
@@ -349,6 +386,11 @@ private struct TriggerEditor: View {
             let ordered = allMods.map(\.id).filter { mods.contains($0) }
             return TriggerSpec(type: "hotkey", mods: ordered,
                                key: key.trimmingCharacters(in: .whitespaces))
+        case .chord:
+            let ordered = allMods.map(\.id).filter { mods.contains($0) }
+            return TriggerSpec(type: "chord", mods: ordered,
+                               key: key.trimmingCharacters(in: .whitespaces),
+                               follows: followKeys)
         case .scheduleEvery:
             return TriggerSpec(type: "schedule", everyMin: everyMin)
         case .scheduleAt:

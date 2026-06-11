@@ -32,16 +32,18 @@ struct OptionInfo: Identifiable {
 // A trigger spec, mirroring the Lua trigger shape. Round-trips through the
 // registry: parsed from describe(), emitted as a Lua literal for setTrigger.
 struct TriggerSpec: Equatable {
-    var type: String          // hotkey | schedule | event
-    var mods: [String]        // hotkey
-    var key: String           // hotkey
+    var type: String          // hotkey | chord | schedule | event
+    var mods: [String]        // hotkey / chord (prefix)
+    var key: String           // hotkey / chord (prefix)
+    var follows: [String]     // chord (ordered follow-key sequence)
     var everyMin: Int?        // schedule (interval)
     var at: String?           // schedule (daily HH:MM)
     var event: String?        // event
 
     init(type: String = "hotkey", mods: [String] = [], key: String = "",
+         follows: [String] = [],
          everyMin: Int? = nil, at: String? = nil, event: String? = nil) {
-        self.type = type; self.mods = mods; self.key = key
+        self.type = type; self.mods = mods; self.key = key; self.follows = follows
         self.everyMin = everyMin; self.at = at; self.event = event
     }
 
@@ -50,6 +52,7 @@ struct TriggerSpec: Equatable {
         self.type = type
         self.mods = (dict["mods"] as? [Any])?.compactMap { $0 as? String } ?? []
         self.key = dict["key"] as? String ?? ""
+        self.follows = (dict["follows"] as? [Any])?.compactMap { $0 as? String } ?? []
         self.everyMin = (dict["everyMin"] as? Double).map(Int.init)
         self.at = dict["at"] as? String
         self.event = dict["event"] as? String
@@ -62,10 +65,12 @@ struct TriggerSpec: Equatable {
             s.replacingOccurrences(of: "\\", with: "\\\\")
              .replacingOccurrences(of: "'", with: "\\'")
         }
+        func list(_ xs: [String]) -> String { xs.map { "'\(esc($0))'" }.joined(separator: ",") }
         switch type {
         case "hotkey":
-            let m = mods.map { "'\(esc($0))'" }.joined(separator: ",")
-            return "{type='hotkey',mods={\(m)},key='\(esc(key))'}"
+            return "{type='hotkey',mods={\(list(mods))},key='\(esc(key))'}"
+        case "chord":
+            return "{type='chord',mods={\(list(mods))},key='\(esc(key))',follows={\(list(follows))}}"
         case "schedule":
             if let everyMin { return "{type='schedule',everyMin=\(everyMin)}" }
             return "{type='schedule',at='\(esc(at ?? "00:00"))'}"

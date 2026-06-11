@@ -30,6 +30,14 @@ function adapter.bindHotkey(mods, key, fn)
     return handleFor(native.bind_hotkey(mods or {}, key, fn))
 end
 
+-- A chord: mods+key is the PREFIX hotkey; `follows` is the ordered sequence of
+-- bare keys pressed after it (e.g. {"b"} for cmd+shift+a then b, or {"b","c"}).
+-- Permission-free: the prefix is a normal global hotkey, and the follow keys
+-- are registered transiently only while the prefix has armed the chord mode.
+function adapter.bindChord(mods, key, follows, fn)
+    return handleFor(native.bind_chord(mods or {}, key, follows or {}, fn))
+end
+
 function adapter.everySeconds(n, fn)
     return handleFor(native.timer_every(n, fn))
 end

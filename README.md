@@ -3,7 +3,8 @@
 A personal macOS **feature platform**: a native Swift app that **embeds a Lua
 engine** -- a focused, miniature Hammerspoon. Instead of writing Lua for every
 automation, you **toggle features on/off, set their options, and bind each to a
-shortcut, a schedule, or a system event** -- config-and-select, not code.
+shortcut, a chord (cmd+shift+a, then b), a schedule, or a system event** --
+config-and-select, not code.
 
 > Working name. Rename the folder freely; nothing depends on it yet.
 
@@ -87,7 +88,7 @@ lua/                       embedded script payload
     adapter.lua            THE SEAM (Lua side) -- the only Lua file touching the backend
     ctx.lua                scoped, curated ctx -- the plugin API features receive
     manifest.lua           manifest schema + validation (api v1, action|service)
-    triggers.lua           universal trigger layer (hotkey | schedule | event)
+    triggers.lua           universal trigger layer (hotkey | chord | schedule | event)
     registry.lua           available/enabled features; lifecycle + scoped teardown
   features/
     sleep_schedule/        SERVICE feature: quitting-time enforcement

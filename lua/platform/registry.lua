@@ -235,31 +235,32 @@ function registry.setEnabled(id, on)
 end
 
 -- Does `spec` collide with the trigger of any other ENABLED action (across all
--- features, and across sibling actions of the same feature)? Only hotkeys can
--- conflict (many actions may legitimately share a schedule or system event).
--- Comparison is on the canonical encoding, so alt+cmd matches cmd+alt. Returns
--- a human-readable reason string, or nil if there is no conflict.
+-- features, and across sibling actions of the same feature)? Only hotkey/chord
+-- triggers can conflict (many actions may legitimately share a schedule or
+-- system event); chords sharing a prefix but with distinct follow keys do NOT
+-- conflict -- that is the point of chords. See triggers.conflicts for the rules.
+-- Returns a human-readable reason string, or nil if there is no conflict.
 -- Call shapes: (id, actionId, spec) or legacy (id, spec) for sole-action features.
 function registry.triggerConflict(id, actionId, spec)
     if type(actionId) == "table" and spec == nil then
         spec, actionId = actionId, nil
     end
-    if type(spec) ~= "table" or spec.type ~= "hotkey" then return nil end
+    if type(spec) ~= "table" or not (spec.type == "hotkey" or spec.type == "chord") then
+        return nil
+    end
     if actionId == nil and features[id] then
         local okA, a = pcall(resolveAction, features[id], nil)
         if okA then actionId = a.id end
     end
-    local target = triggers.encode(spec)
     for _, m in ipairs(registry.all()) do
         if registry.isEnabled(m.id) then
             for _, a in ipairs(m.actions) do
                 if not (m.id == id and a.id == actionId) then
                     local other = triggerFor(m, a)
-                    if other and other.type == "hotkey"
-                        and triggers.encode(other) == target then
+                    if other and triggers.conflicts(spec, other) then
                         local who = m.name
                         if #m.actions > 1 then who = who .. ": " .. a.label end
-                        return "hotkey already bound to '" .. who .. "'"
+                        return "shortcut already bound to '" .. who .. "'"
                     end
                 end
             end
@@ -351,6 +352,9 @@ local function specDesc(spec)
     if not spec then return "no trigger" end
     if spec.type == "hotkey" then
         return "hotkey: " .. table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
+    elseif spec.type == "chord" then
+        local prefix = table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
+        return "chord: " .. prefix .. " then " .. table.concat(spec.follows or {}, " ")
     elseif spec.type == "schedule" then
         if spec.everyMin then return "schedule: every " .. spec.everyMin .. " min" end
         return "schedule: daily at " .. tostring(spec.at)

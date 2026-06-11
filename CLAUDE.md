@@ -38,8 +38,10 @@ the bridge + adapter, never reach past the seam.
   platform internals.
 - **lua/platform/manifest.lua** -- validates a feature's declared shape; resolves defaults.
 - **lua/platform/triggers.lua** -- declarative trigger spec -> live binding. Any
-  trigger can fire any action (the core idea). Types: hotkey, schedule
-  (everyMin / at), event (sleep|wake|screenLock|screenUnlock).
+  trigger can fire any action (the core idea). Types: hotkey, chord (prefix
+  hotkey + an ordered follow-key sequence, e.g. cmd+shift+a then b -- a modal
+  layer over Carbon in ChordCenter.swift, permission-free), schedule (everyMin /
+  at), event (sleep|wake|screenLock|screenUnlock).
 - **lua/platform/registry.lua** -- registers features, persists enabled-state +
   option values per id, runs lifecycle (bind trigger / start), scoped teardown.
 - **lua/platform/ctx.lua** -- builds the scoped, curated ctx (the plugin API);
@@ -49,7 +51,7 @@ the bridge + adapter, never reach past the seam.
   is a handle with `.stop()`.
 - **Sources/HammerdeckKit/LuaState.swift** -- the bridge mechanics: owns the
   Lua state, runs Lua, callback refs, table readers, `eval`.
-- **Sources/HammerdeckKit/Native.swift** (+ HotkeyCenter/Panels helpers) -- the
+- **Sources/HammerdeckKit/Native.swift** (+ HotkeyCenter/ChordCenter/Panels helpers) -- the
   seam (Swift side): the `native` table the adapter calls. The only place
   macOS-API surface should grow.
 - **Sources/HammerdeckKit/SettingsStore/SettingsView/StatusBar.swift** --

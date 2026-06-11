@@ -58,6 +58,7 @@ final class Native {
             "stop":         { L in MainActor.assumeIsolated { Native.shared.stop(L) } },
             // triggers
             "bind_hotkey":  { L in MainActor.assumeIsolated { Native.shared.bindHotkey(L) } },
+            "bind_chord":   { L in MainActor.assumeIsolated { Native.shared.bindChord(L) } },
             "timer_every":  { L in MainActor.assumeIsolated { Native.shared.timerEvery(L) } },
             "timer_after":  { L in MainActor.assumeIsolated { Native.shared.timerAfter(L) } },
             "timer_daily_at": { L in MainActor.assumeIsolated { Native.shared.timerDailyAt(L) } },
@@ -143,6 +144,26 @@ final class Native {
             return luaError(L, "bind_hotkey: could not register '\(mods.joined(separator: "+"))+\(key)'")
         }
         let id = registerResource { unbind(); Native.shared.lua.releaseRef(ref) }
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    // bind_chord(mods, key, follows, fn): prefix hotkey (mods+key) + an ordered
+    // follow-key sequence. Permission-free -- see ChordCenter.
+    private func bindChord(_ L: OpaquePointer?) -> Int32 {
+        let mods = LuaState.stringArray(L, 1)
+        guard let key = LuaState.string(L, 2) else {
+            return luaError(L, "bind_chord: key must be a string")
+        }
+        let follows = LuaState.stringArray(L, 3)
+        let ref = lua.makeRef(at: 4)
+        guard let chordId = ChordCenter.shared.bind(mods: mods, key: key, follows: follows,
+                                                    handler: { Native.shared.lua.callRef(ref) }) else {
+            lua.releaseRef(ref)
+            return luaError(L, "bind_chord: could not register chord "
+                + "'\(mods.joined(separator: "+"))+\(key) -> \(follows.joined(separator: " "))'")
+        }
+        let id = registerResource { ChordCenter.shared.unbind(chordId); Native.shared.lua.releaseRef(ref) }
         lua_pushinteger(L, lua_Integer(id))
         return 1
     }

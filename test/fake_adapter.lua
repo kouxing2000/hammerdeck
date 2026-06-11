@@ -16,6 +16,7 @@ fake.notifications = {}
 fake.alerts        = {}
 fake.timers        = {}   -- {kind="every"|"after"|"daily", n, fn, stopped}
 fake.hotkeys       = {}   -- {mods, key, fn, stopped}
+fake.chords        = {}   -- {mods, key, follows, fn, stopped}
 fake.watchers      = {}   -- {event, fn, stopped}
 fake.choosers      = {}   -- see adapter.chooser
 fake.dialogs       = {}   -- see adapter.askChoice
@@ -54,6 +55,13 @@ function adapter.bindHotkey(mods, key, fn)
     fake.hotkeys[#fake.hotkeys + 1] = h
     alloc()
     return { stop = function() freeOnce(h) end }
+end
+
+function adapter.bindChord(mods, key, follows, fn)
+    local c = { mods = mods, key = key, follows = follows, fn = fn, stopped = false }
+    fake.chords[#fake.chords + 1] = c
+    alloc()
+    return { stop = function() freeOnce(c) end }
 end
 
 function adapter.everySeconds(n, fn)
@@ -305,6 +313,38 @@ function fake.pressHotkey(key)
     for _, h in ipairs(fake.hotkeys) do
         if not h.stopped and h.key == key then h.fn() end
     end
+end
+
+local function sortedCopy(t)
+    local c = {}
+    for _, v in ipairs(t or {}) do c[#c + 1] = v end
+    table.sort(c)
+    return c
+end
+
+local function sameList(a, b, sortFirst)
+    if sortFirst then a, b = sortedCopy(a), sortedCopy(b) end
+    a, b = a or {}, b or {}
+    if #a ~= #b then return false end
+    for i = 1, #a do if a[i] ~= b[i] then return false end end
+    return true
+end
+
+-- Simulate pressing the chord prefix (mods+key) then the follow-key sequence
+-- `seq` (an array). Fires every live chord whose prefix combo matches (mods
+-- order-independent) and whose follow sequence equals `seq` (order matters).
+-- Returns how many fired.
+function fake.fireChord(mods, key, seq)
+    local fired = 0
+    for _, c in ipairs(fake.chords) do
+        if not c.stopped and c.key == key
+            and sameList(c.mods, mods, true)
+            and sameList(c.follows, seq, false) then
+            fired = fired + 1
+            c.fn()
+        end
+    end
+    return fired
 end
 
 function fake.systemEvent(event)
