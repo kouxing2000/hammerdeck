@@ -111,13 +111,23 @@ final class IntegrationTests: XCTestCase {
         return fired
     }
 
+    /// Whether the console session is behind the lock screen. AX window
+    /// listing and focused-window state are meaningless there (loginwindow
+    /// owns the session, lists nothing, and reports zero-size frames) --
+    /// environment-dependent tests skip instead of failing red when
+    /// `swift test` runs while the screen is locked.
+    private func sessionLocked() -> Bool {
+        let d = CGSessionCopyCurrentDictionary() as? [String: Any]
+        return (d?["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false
+    }
+
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 14,
-                       "disk discovery should find all 14 features")
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 15,
+                       "disk discovery should find all 15 features")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 14)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, 15)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_jump" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -185,6 +195,27 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(registryNum("liveHandleCount()"), 0)
     }
 
+    func testMenuQuickTriggerRunsTheAction() {
+        // The menubar quick-trigger path: store.runAction -> registry.runAction
+        // -> the feature's run(ctx), end to end on the real bridge.
+        host.store.setEnabled("clipboard_clean", true)
+        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.clipboard_clean.mode")
+        let pb = NSPasteboard.general
+        let saved = pb.string(forType: .string)
+        defer {
+            host.store.setEnabled("clipboard_clean", false)
+            pb.clearContents()
+            if let saved { pb.setString(saved, forType: .string) }
+        }
+        pb.clearContents()
+        pb.setString("   from the menu   ", forType: .string)
+        host.store.runAction("clipboard_clean", "main")
+        XCTAssertEqual(pb.string(forType: .string), "from the menu",
+                       "the quick trigger should run the real action")
+        // The action always pastes after 0.5s; the defer's setEnabled(false)
+        // tears the pending timer down long before it could fire.
+    }
+
     func testPasteboardBridge() {
         let pb = NSPasteboard.general
         let saved = pb.string(forType: .string)
@@ -232,7 +263,7 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('idle_dimmer')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 14)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 15)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("idle_dimmer", false)
@@ -318,6 +349,8 @@ final class IntegrationTests: XCTestCase {
     func testRealWindowListingViaAX() throws {
         try XCTSkipUnless(AXIsProcessTrusted(),
             "needs Accessibility (grant it to the terminal running `swift test`)")
+        try XCTSkipUnless(!sessionLocked(),
+            "screen is locked; AX lists no windows behind the lock")
 
         XCTAssertEqual(eval("return require('platform.adapter').axTrusted()") as? Bool, true)
 
@@ -403,8 +436,9 @@ final class IntegrationTests: XCTestCase {
         XCTAssertNotNil(mouse?["y"] as? Double)
 
         // Focused-window read: a table with a coherent screen reference, or
-        // nil (headless session) -- never a crash.
-        if AXIsProcessTrusted(),
+        // nil (headless session) -- never a crash. Skipped behind the lock
+        // screen, where loginwindow reports a zero-size focused window.
+        if AXIsProcessTrusted(), !sessionLocked(),
            let f = eval("return require('platform.adapter').focusedWindowFrame()") as? [String: Any] {
             XCTAssertGreaterThan(f["w"] as? Double ?? 0, 0)
             let idx = Int(f["screenIndex"] as? Double ?? 0)
@@ -432,6 +466,57 @@ final class IntegrationTests: XCTestCase {
 
         // file: icon tokens resolve from disk; a missing path is nil, not a crash.
         XCTAssertNil(ChooserPanel.icon(for: "file:/nonexistent/icon.png"))
+    }
+
+    /// Real Chrome-DB favicon extraction (the donor's mechanism, in Swift):
+    /// skips when no Chrome profile exists; when a domain is saved, the file
+    /// must be a verified PNG.
+    func testChromeFaviconExtraction() throws {
+        let dbPath = NSHomeDirectory()
+            + "/Library/Application Support/Google/Chrome/Default/Favicons"
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: dbPath),
+                          "no Chrome profile on this machine")
+        let tmp = NSTemporaryDirectory() + "hammerdeck-it-favicons-\(getpid())"
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+        eval("""
+        _G.itFav = nil
+        require('platform.adapter').extractFavicons('\(tmp)',
+            { 'github.com', 'no-such-domain-42.test' },
+            function(saved) _G.itFav = #saved end)
+        return true
+        """)
+        spinRunLoop(3.0)   // background copy + query, callback on main
+        let n = eval("return _G.itFav") as? Double
+        XCTAssertNotNil(n, "the extraction callback must fire")
+        if (n ?? 0) >= 1 {
+            let data = FileManager.default.contents(atPath: tmp + "/github.com.png")
+            XCTAssertEqual(data?.prefix(4), Data([0x89, 0x50, 0x4E, 0x47]),
+                           "an extracted favicon is a verified PNG")
+        }
+        eval("_G.itFav = nil; return true")
+    }
+
+    func testLogFileWrittenAndPruned() {
+        // Always-on file logging: a ctx.log line lands in today's file.
+        eval("require('platform.adapter').log('integration log probe'); return true")
+        let day = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
+            .string(from: Date())
+        let todayLog = Native.logsDir.appendingPathComponent(day + ".log").path
+        let content = (try? String(contentsOfFile: todayLog, encoding: .utf8)) ?? ""
+        XCTAssertTrue(content.contains("integration log probe"),
+                      "log lines must reach the daily file, not just stdout")
+
+        // Retention: ancient files are pruned, recent ones kept.
+        let fm = FileManager.default
+        let ancient = Native.logsDir.appendingPathComponent("2020-01-01.log")
+        fm.createFile(atPath: ancient.path, contents: Data("old".utf8))
+        Native.pruneOldLogs(keep: 14)
+        XCTAssertFalse(fm.fileExists(atPath: ancient.path) &&
+                       ((try? fm.contentsOfDirectory(atPath: Native.logsDir.path))?
+                           .filter { $0.hasSuffix(".log") }.count ?? 0) > 14,
+                       "files beyond the keep window are pruned")
+        try? fm.removeItem(at: ancient)   // tidy in case the dir held < keep files
+        XCTAssertTrue(fm.fileExists(atPath: todayLog), "today's log always survives")
     }
 
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)
@@ -469,9 +554,17 @@ final class IntegrationTests: XCTestCase {
         key(kVK_Command, down: false, flags: [.maskControl])
         key(kVK_Control, down: false, flags: [])
 
-        pumpAppEvents(1.0)
-        XCTAssertEqual(pb.string(forType: .string), "padded text",
-                       "the synthesized hotkey should run the real action end to end")
+        // Slice-pump until the action lands, then DISARM at once: the action
+        // always schedules a cmd+v at +0.5s, which must never fire into the
+        // user's frontmost app during a test run.
+        var landed = false
+        for _ in 0..<20 {
+            pumpAppEvents(0.05)
+            if pb.string(forType: .string) == "padded text" { landed = true; break }
+        }
+        host.store.setEnabled("clipboard_clean", false)   // cancels the pending paste
+        XCTAssertTrue(landed,
+                      "the synthesized hotkey should run the real action end to end")
     }
 
     /// The full chord path: a synthesized prefix hotkey arms ChordCenter, which
@@ -521,9 +614,14 @@ final class IntegrationTests: XCTestCase {
         // 2) The follow key B (no modifiers) -- completes the chord.
         key(kVK_ANSI_B, down: true, flags: [])
         key(kVK_ANSI_B, down: false, flags: [])
-        pumpAppEvents(0.8)
-
-        XCTAssertEqual(pb.string(forType: .string), "padded text",
-                       "the synthesized chord (⌘⇧A then B) should run the action end to end")
+        // Land-then-disarm (see testGlobalHotkeySynthesis).
+        var landed = false
+        for _ in 0..<16 {
+            pumpAppEvents(0.05)
+            if pb.string(forType: .string) == "padded text" { landed = true; break }
+        }
+        host.store.setEnabled("clipboard_clean", false)
+        XCTAssertTrue(landed,
+                      "the synthesized chord (⌘⇧A then B) should run the action end to end")
     }
 }

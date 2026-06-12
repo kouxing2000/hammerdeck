@@ -145,7 +145,11 @@ end
 local function bindFeature(m)
     if bound[m.id] then return end               -- already live
     startFailures[m.id] = nil                     -- a retry clears the prior failure
-    local ctx, scope = ctxlib.make(m)
+    local ctx, scope = ctxlib.make(m, function(actionId)
+        local okR, a = pcall(resolveAction, m, actionId)
+        if not okR then return nil end
+        return triggerFor(m, a)
+    end)
     local b = { ctx = ctx, scope = scope, actionHandles = {} }
     bound[m.id] = b
 
@@ -329,6 +333,38 @@ function registry.clearTrigger(id, actionId)
             b.scope.adopt(triggers.bind(a.defaultTrigger, function() a.run(b.ctx) end))
     end
     return true
+end
+
+-- Run one action of an ENABLED feature on demand (the menubar's quick
+-- triggers; also the only way to fire a dormant action that has no trigger
+-- bound). Returns true, or false + reason. Quarantined like trigger firing.
+function registry.runAction(id, actionId)
+    local m = features[id]
+    if not m then return false, "no such feature: " .. tostring(id) end
+    local b = bound[id]
+    if not b then return false, "feature not enabled: " .. id end
+    local okResolve, a = pcall(resolveAction, m, actionId)
+    if not okResolve then return false, tostring(a) end
+    local okRun, err = pcall(a.run, b.ctx)
+    if not okRun then
+        adapter.log(id .. "." .. a.id .. ": manual run failed: " .. tostring(err))
+        return false, tostring(err)
+    end
+    return true
+end
+
+-- The config UI calls this after writing hammerdeck.opt.<id>.<key>: an
+-- ENABLED feature that declared onOptionChange(ctx, key) reacts immediately
+-- (e.g. the usage widget hiding the moment its toggle flips) instead of on
+-- its next timer tick. Quarantined -- a throwing handler is logged, not fatal.
+function registry.optionChanged(id, key)
+    local m = features[id]
+    local b = bound[id]
+    if not (m and b and m.onOptionChange) then return end
+    local okCall, err = pcall(m.onOptionChange, b.ctx, key)
+    if not okCall then
+        adapter.log(id .. ": onOptionChange failed: " .. tostring(err))
+    end
 end
 
 -- Bind every currently-enabled feature. Call once at startup.

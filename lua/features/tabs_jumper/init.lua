@@ -11,10 +11,13 @@
 -- survives restarts. After a jump the landed URL is stamped immediately.
 --
 -- Favicons: cached as <cacheDir>/favicons/<domain>.png and shown next to
--- tabs; missing ones are fetched in the background (Google's favicon
--- service) and appear on the NEXT open -- the donor's Chrome-DB python
--- extraction is deliberately dropped (fragile, Chrome-only). Tabs without a
--- cached favicon show the browser's app icon.
+-- tabs; missing ones are fetched in the background and appear on the NEXT
+-- open. Chrome's local icon DB is tried first (the donor's mechanism: REAL
+-- icons, offline, covers sites that declare icons only via <link rel>),
+-- then the site's own /favicon.ico for whatever Chrome doesn't know (no
+-- third-party service ever sees the browsing domains). Cached files are
+-- magic-byte checked before use, so an HTML 200-for-404 page never renders
+-- as an icon.
 --
 -- Donor quirks dropped: the pinned "Filter Tabs" row (typing already
 -- filters) and Chrome shortcut-app windows (invisible windows are skipped,
@@ -24,20 +27,39 @@ local BROWSERS = {
     { name = "Google Chrome", bundle = "com.google.Chrome" },
     { name = "Safari", bundle = "com.apple.Safari" },
 }
+local BUNDLE_BY_NAME = {}
+for _, b in ipairs(BROWSERS) do BUNDLE_BY_NAME[b.name] = b.bundle end
 local POLL_SECONDS = 10
 local PRUNE_AGE = 30 * 24 * 3600
-local FAVICON_URL = "https://www.google.com/s2/favicons?domain=%s&sz=64"
+local FAVICON_URL = "https://%s/favicon.ico"
+
+-- Image magic bytes (PNG / ICO / GIF / JPEG / BMP / RIFF-WEBP): a cached
+-- favicon must start like an image or it is ignored (some sites answer
+-- /favicon.ico with an HTML page and status 200).
+local function looksLikeImage(bytes)
+    if not bytes or #bytes < 4 then return false end
+    local b4 = bytes:sub(1, 4)
+    return b4 == "\137PNG" or b4 == "\0\0\1\0" or b4:sub(1, 3) == "GIF8"
+        or bytes:byte(1) == 255 and bytes:byte(2) == 216   -- JPEG
+        or b4:sub(1, 2) == "BM" or b4 == "RIFF"
+end
 
 local json = require("platform.json")
+local getDomain = require("platform.urls").getDomain
 
--- "https://sub.host.tld/path" -> "sub.host.tld" (nil for non-http/local).
-local function getDomain(url)
-    if not url or url:sub(1, 4) ~= "http" then return nil end
-    local domain = (url .. "/"):match("://(.-)/")
-    if not domain then return nil end
-    domain = domain:gsub("[^%w%-_%.]", "")
-    if domain == "" or domain:find("localhost") then return nil end
-    return domain
+-- Which modifier should release-to-jump watch? Derived from the firing
+-- action's bound hotkey (no option to keep in sync with the trigger). nil
+-- when the action has no hotkey (menubar fire) -- pick with Enter instead.
+local MOD_PRIORITY = { "alt", "cmd", "ctrl", "shift" }
+local function cycleModifier(ctx, actionId)
+    local spec = ctx.actionTrigger(actionId)
+    if not (spec and spec.type == "hotkey") then return nil end
+    local has = {}
+    for _, m in ipairs(spec.mods or {}) do has[m] = true end
+    for _, m in ipairs(MOD_PRIORITY) do
+        if has[m] then return m end
+    end
+    return nil
 end
 
 local function jumperFor(ctx)
@@ -92,29 +114,61 @@ local function jumperFor(ctx)
 
     local function iconPath(domain) return iconsDir .. "/" .. domain .. ".png" end
 
+    -- Validity cache: domain -> true/false (checked once per enablement).
+    local iconValid = {}
+
     local function iconFor(url, bundle)
         local domain = getDomain(url)
-        if domain and ctx.fileExists(iconPath(domain)) then
-            return "file:" .. iconPath(domain)
+        if domain then
+            if iconValid[domain] == nil then
+                local p = iconPath(domain)
+                iconValid[domain] = ctx.fileExists(p)
+                    and looksLikeImage(ctx.fileRead(p)) or false
+            end
+            if iconValid[domain] then return "file:" .. iconPath(domain) end
         end
         return ctx.appIcon(bundle)
     end
 
-    -- Fetch missing favicons in the background (shown on the next open).
+    -- Fetch missing favicons in the background (shown on the next open):
+    -- Chrome's local icon DB first (REAL icons, offline, covers <link rel>
+    -- sites -- the donor's mechanism), then the site's own /favicon.ico for
+    -- whatever Chrome doesn't know (e.g. Safari-only sites).
     local function fetchMissingFavicons(urls)
         ctx.mkdir(iconsDir)
+        local missing, seen = {}, {}
         for _, url in ipairs(urls) do
             local domain = getDomain(url)
-            if domain and not st.fetching[domain]
+            if domain and not seen[domain] and not st.fetching[domain]
                 and not ctx.fileExists(iconPath(domain)) then
+                seen[domain] = true
                 st.fetching[domain] = true
-                ctx.downloadFile(FAVICON_URL:format(domain), iconPath(domain),
-                    function(okDl)
-                        st.fetching[domain] = nil
-                        if not okDl then ctx.log("favicon fetch failed: " .. domain) end
-                    end)
+                missing[#missing + 1] = domain
             end
         end
+        if #missing == 0 then return end
+        ctx.extractFavicons(iconsDir, missing, function(saved)
+            local got = {}
+            for _, d in ipairs(saved or {}) do
+                got[d] = true
+                iconValid[d] = nil          -- re-validate on next open
+                st.fetching[d] = nil
+            end
+            ctx.log("favicons: " .. #(saved or {}) .. "/" .. #missing
+                .. " from the Chrome icon DB")
+            for _, d in ipairs(missing) do
+                if not got[d] then
+                    ctx.downloadFile(FAVICON_URL:format(d), iconPath(d),
+                        function(okDl)
+                            st.fetching[d] = nil
+                            iconValid[d] = nil
+                            if not okDl then
+                                ctx.log("favicon fetch failed: " .. d)
+                            end
+                        end)
+                end
+            end
+        end)
     end
 
     -- Choices -----------------------------------------------------------------
@@ -199,11 +253,13 @@ local function jumperFor(ctx)
     end
 
     -- Release-to-jump: poll the cycle modifier while cycling (window_jump's
-    -- pattern, donor's autoJump).
+    -- pattern, donor's autoJump). st.cycleMod is derived from the trigger
+    -- that fired (set in open()).
     local function armAutoJump()
-        if st.altTimer or not ctx.isModifierHeld(ctx.opt("cycleModifier")) then return end
+        local mod = st.cycleMod
+        if not mod or st.altTimer or not ctx.isModifierHeld(mod) then return end
         st.altTimer = ctx.everySeconds(0.1, function()
-            if not ctx.isModifierHeld(ctx.opt("cycleModifier")) then
+            if not ctx.isModifierHeld(mod) then
                 stopAltTimer()
                 st.chooser.select(st.chooser.getSelectedRow())
             end
@@ -211,6 +267,12 @@ local function jumperFor(ctx)
     end
 
     local function showChooser()
+        -- Icons resolve at SHOW time: a favicon that landed after the last
+        -- tab relist upgrades its rows on the next open -- no relist needed
+        -- (otherwise cached choices keep their stale app-icon tokens).
+        for _, c in ipairs(st.choices) do
+            c.image = iconFor(c.subText, BUNDLE_BY_NAME[c.browser])
+        end
         st.chooser.setPlaceholder("Search tabs")
         st.chooser.setChoices(st.choices)
         st.chooser.setQuery(nil)
@@ -219,7 +281,8 @@ local function jumperFor(ctx)
         armAutoJump()
     end
 
-    function st.open(backward)
+    function st.open(actionId, backward)
+        st.cycleMod = cycleModifier(ctx, actionId)
         if not st.chooser then
             st.chooser = ctx.chooser {
                 searchSubText = true,
@@ -233,7 +296,9 @@ local function jumperFor(ctx)
 
         if st.chooser.isVisible() then
             -- Repeat invocation: cycle (wrap against the visible rows).
-            st.chooser.setPlaceholder("Release " .. ctx.opt("cycleModifier") .. " to jump")
+            st.chooser.setPlaceholder(st.cycleMod
+                and ("Release " .. st.cycleMod .. " to jump")
+                or "Press Enter to jump")
             local row = st.chooser.getSelectedRow() + (backward and -1 or 1)
             st.chooser.setSelectedRow(row)
             if st.chooser.getSelectedRow() ~= row then
@@ -293,23 +358,19 @@ return {
     name        = "Tab Jump",
     description = "Searchable switcher across all Chrome + Safari tabs, "
         .. "most recently used first, with favicons.",
-    version     = "1.0.0",
+    version     = "1.1.0",
     category    = "productivity",
 
-    options = {
-        { key = "cycleModifier", type = "enum", default = "alt",
-          values = { "alt", "cmd", "ctrl" },
-          label = "Modifier to hold while cycling" },
-    },
+    options = {},
 
     start = function(ctx) with(ctx) end,
 
     actions = {
         { id = "open", label = "Jump to a tab",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
-          run = function(ctx) with(ctx).open(false) end },
+          run = function(ctx) with(ctx).open("open", false) end },
         { id = "open_backward", label = "Cycle backward",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "`" },
-          run = function(ctx) with(ctx).open(true) end },
+          run = function(ctx) with(ctx).open("open_backward", true) end },
     },
 }

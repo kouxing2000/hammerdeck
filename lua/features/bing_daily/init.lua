@@ -10,6 +10,10 @@
 
 local json = require("platform.json")
 
+-- The picture changes once a day; the poll just needs to notice that within
+-- a few hours (and re-assert the wallpaper). Not worth a user option.
+local REFRESH_SECONDS = 3 * 3600
+
 local API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1"
 local USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     .. "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
@@ -54,18 +58,15 @@ return {
     name        = "Bing Daily Wallpaper",
     description = "Sets Bing's picture of the day as your wallpaper, "
         .. "refreshed on a schedule.",
-    version     = "1.0.0",
+    version     = "1.1.0",
     category    = "appearance",
 
-    options = {
-        { key = "refreshHours", type = "int", default = 3,
-          label = "Refresh every (hours)", min = 1, max = 24 },
-    },
+    options = {},
 
     start = function(ctx)
         ctx.afterSeconds(5, function() refresh(ctx) end)   -- shortly after boot
-        ctx.everySeconds(ctx.opt("refreshHours") * 3600, function() refresh(ctx) end)
-        ctx.log("started (every " .. ctx.opt("refreshHours") .. "h)")
+        ctx.everySeconds(REFRESH_SECONDS, function() refresh(ctx) end)
+        ctx.log("started (every " .. (REFRESH_SECONDS / 3600) .. "h)")
     end,
 
     actions = {

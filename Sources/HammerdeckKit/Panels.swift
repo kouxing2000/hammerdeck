@@ -347,7 +347,8 @@ final class CrosshairView: NSView {
 /// Typed payload for the usage widget -- the Lua side computes, Swift renders.
 /// Parsed from the table usage_stats passes across the bridge.
 struct UsageWidgetData {
-    struct AppRow { let name: String; let secs: Double }
+    struct ContextRow { let name: String; let secs: Double }
+    struct AppRow { let name: String; let secs: Double; let contexts: [ContextRow] }
     struct Day { let label: String; let secs: Double; let isToday: Bool }
     let total: Double
     let updated: String
@@ -365,7 +366,13 @@ struct UsageWidgetData {
         self.apps = ((dict["apps"] as? [Any]) ?? []).compactMap {
             guard let d = $0 as? [String: Any],
                   let n = d["app"] as? String, let s = d["secs"] as? Double else { return nil }
-            return AppRow(name: n, secs: s)
+            let contexts = ((d["contexts"] as? [Any]) ?? []).compactMap { c -> ContextRow? in
+                guard let cd = c as? [String: Any],
+                      let cn = cd["name"] as? String, let cs = cd["secs"] as? Double
+                else { return nil }
+                return ContextRow(name: cn, secs: cs)
+            }
+            return AppRow(name: n, secs: s, contexts: contexts)
         }
         self.week = ((dict["week"] as? [Any]) ?? []).compactMap {
             guard let d = $0 as? [String: Any],
@@ -393,8 +400,12 @@ final class UsageWidgetPanel {
     private static let pad: CGFloat = 14
     private static let margin: CGFloat = 10
 
-    init() {
-        let screen = NSScreen.main?.visibleFrame
+    /// screenIndex: 1 = primary; 2 = the second display when present (falls
+    /// back to primary on single-display setups).
+    init(screenIndex: Int = 1) {
+        let screens = NSScreen.screens
+        let target = (screenIndex >= 2 && screens.count >= 2) ? screens[1] : screens.first
+        let screen = target?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let rect = NSRect(x: screen.minX + Self.margin, y: screen.minY + Self.margin,
                           width: Self.width, height: Self.height)
@@ -464,7 +475,9 @@ final class UsageWidgetPanel {
             y += 70
         } else {
             let maxSecs = max(d.apps.first?.secs ?? 1, 1)
+            let chartReserve: CGFloat = 110   // divider + week section must fit
             for row in d.apps {
+                if y > Self.height - chartReserve - 34 { break }   // clip, don't overflow
                 _ = label(row.name, size: 12, weight: .medium, color: .labelColor,
                           x: Self.pad, y: y, width: w - 70)
                 _ = label(Self.formatTime(row.secs), size: 12, weight: .semibold,
@@ -474,7 +487,19 @@ final class UsageWidgetPanel {
                 bar(x: Self.pad, y: y, width: w, height: 4, color: trackColor, radius: 2)
                 bar(x: Self.pad, y: y, width: w * row.secs / maxSecs, height: 4,
                     color: accent, radius: 2)
-                y += 14
+                y += 8
+                // Context sub-rows: domain / project breakdown (donor parity).
+                for c in row.contexts {
+                    if y > Self.height - chartReserve - 14 { break }
+                    _ = label(c.name, size: 10, weight: .regular,
+                              color: .tertiaryLabelColor,
+                              x: Self.pad + 10, y: y, width: w - 70)
+                    _ = label(Self.formatTime(c.secs), size: 10, weight: .regular,
+                              color: .tertiaryLabelColor,
+                              x: Self.pad + w - 60, y: y, width: 60, align: .right)
+                    y += 13
+                }
+                y += 6
             }
         }
 

@@ -13,7 +13,8 @@
 -- SERVICE feature: the single poll timer goes through ctx, so disable tears it
 -- down -- no stop() needed.
 
-local POLL_INTERVAL = 5   -- seconds between idle checks
+local POLL_INTERVAL = 5    -- seconds between idle checks
+local WARN_SECONDS  = 10   -- warning lead time before the display sleeps
 
 return {
     api         = 1,
@@ -21,14 +22,12 @@ return {
     name        = "Idle Display Off",
     description = "Turns the display off after a period of no activity, "
         .. "with a short warning first.",
-    version     = "1.0.0",
+    version     = "1.1.0",
     category    = "health",
 
     options = {
         { key = "idleThresholdMin", type = "int", default = 5,
-          label = "Idle before warning (min)", min = 1, max = 60 },
-        { key = "warnSeconds", type = "int", default = 10,
-          label = "Warning lead time (sec)", min = 3, max = 60 },
+          label = "Idle before display off (min)", min = 1, max = 60 },
     },
 
     start = function(ctx)
@@ -53,7 +52,7 @@ return {
             end
 
             -- Lead time elapsed: sleep the display once.
-            if not s.dimmed and (ctx.now() - s.warnedAt) >= ctx.opt("warnSeconds") then
+            if not s.dimmed and (ctx.now() - s.warnedAt) >= WARN_SECONDS then
                 ctx.displaySleep()
                 ctx.log("display off at " .. math.floor(idle) .. "s idle")
                 s.dimmed = true

@@ -211,9 +211,9 @@ function adapter.progressBar()
     }
 end
 
-fake.usageWidgets = {}   -- {data, stopped}
-function adapter.usageWidget()
-    local w = { data = nil, stopped = false }
+fake.usageWidgets = {}   -- {data, screen, stopped}
+function adapter.usageWidget(screenIndex)
+    local w = { data = nil, screen = screenIndex or 1, stopped = false }
     fake.usageWidgets[#fake.usageWidgets + 1] = w
     alloc()
     return {
@@ -288,6 +288,9 @@ function adapter.setFocusedWindowFullscreen(on)
     return true
 end
 
+fake.windowTitle = nil   -- preset by tests for focusedWindowTitle()
+function adapter.focusedWindowTitle() return fake.windowTitle end
+
 function adapter.mousePosition()
     return { x = fake.mousePos.x, y = fake.mousePos.y }
 end
@@ -330,6 +333,21 @@ function adapter.mkdir(path)
     return true
 end
 
+fake.removedDataPaths = {}   -- recorded removeDataPath calls
+
+function adapter.removeDataPath(rel)
+    fake.removedDataPaths[#fake.removedDataPaths + 1] = rel
+    local prefix = "/fake/data/" .. rel
+    local removed = false
+    for path in pairs(fake.files) do
+        if path == prefix or path:sub(1, #prefix + 1) == prefix .. "/" then
+            fake.files[path] = nil
+            removed = true
+        end
+    end
+    return removed
+end
+
 function adapter.fileRead(path)        return fake.files[path] end
 function adapter.fileWrite(path, text) fake.files[path] = text; return true end
 function adapter.fileAppend(path, line)
@@ -340,10 +358,27 @@ function adapter.fileExists(path)      return fake.files[path] ~= nil end
 
 -- Clipboard ---------------------------------------------------------------------
 
-fake.pasteboard = nil   -- current general-pasteboard plain-text contents
+fake.pasteboard          = nil     -- current general-pasteboard plain-text contents
+fake.pasteboardChange    = 0       -- mirrors NSPasteboard.changeCount
+fake.pasteboardConcealed = false   -- current clip marked concealed/transient
 
 function adapter.pasteboardRead()       return fake.pasteboard end
-function adapter.pasteboardWrite(text)  fake.pasteboard = text end
+function adapter.pasteboardWrite(text)
+    fake.pasteboard = text
+    fake.pasteboardChange = fake.pasteboardChange + 1
+    fake.pasteboardConcealed = false
+end
+
+function adapter.pasteboardInfo()
+    return { change = fake.pasteboardChange, concealed = fake.pasteboardConcealed }
+end
+
+-- test-side driver: the user copies `text` (concealed = a password manager)
+function fake.copyText(text, concealed)
+    fake.pasteboard = text
+    fake.pasteboardConcealed = concealed == true
+    fake.pasteboardChange = fake.pasteboardChange + 1
+end
 
 -- Input / system ------------------------------------------------------------------
 
@@ -431,6 +466,22 @@ fake.activeUrls = {}   -- app -> the url its front tab is showing
 
 function adapter.browserActiveURL(app)
     return fake.activeUrls[app]
+end
+
+fake.chromeFavicons   = {}   -- set: domain -> true ("Chrome knows this icon")
+fake.extractedBatches = {}   -- recorded extractFavicons calls {outDir, domains}
+
+function adapter.extractFavicons(outDir, domains, cb)
+    fake.extractedBatches[#fake.extractedBatches + 1] =
+        { outDir = outDir, domains = domains }
+    local saved = {}
+    for _, d in ipairs(domains) do
+        if fake.chromeFavicons[d] then
+            fake.files[outDir .. "/" .. d .. ".png"] = "\137PNG\r\n\26\nfake"
+            saved[#saved + 1] = d
+        end
+    end
+    cb(saved)
 end
 
 function adapter.idleSeconds()

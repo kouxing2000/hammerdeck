@@ -12,7 +12,7 @@
 
 local POSTPONE_1     = "postpone 1 minute"
 local POSTPONE_5     = "postpone 5 minutes"
-local SCREENSAVER    = "Start Screen Protect"
+local SCREENSAVER    = "Start Screensaver"
 local LOCK_SCREEN    = "Lock Screen"
 local SYSTEM_SLEEP   = "System Sleep"
 
@@ -33,13 +33,13 @@ return {
     name        = "Rest Timer",
     description = "Reminds you to rest your eyes after a work interval; "
         .. "idle-aware, with daily work-time stats.",
-    version     = "1.0.0",
+    version     = "1.1.0",
     category    = "health",
 
     options = {
         { key = "workMin",             type = "int", default = 25, label = "Work interval (min)", min = 5, max = 90 },
         { key = "idleThresholdMin",    type = "int", default = 5,  label = "Idle pause threshold (min)", min = 1, max = 30 },
-        { key = "dialogIdleDismissMin", type = "int", default = 2, label = "Idle while dialog open = rested (min)", min = 1, max = 10 },
+        { key = "dialogIdleDismissMin", type = "int", default = 2, label = "Idle during dialog counts as rest (min)", min = 1, max = 10 },
     },
 
     start = function(ctx)
@@ -83,7 +83,10 @@ return {
             s.showRetryCount = 0
         end
 
-        startRestTimer = function(seconds, isPostpone)
+        -- announce: post the "rest eyes in N minutes" notification. Only
+        -- session boundaries (enable, wake/unlock) announce -- repeating it
+        -- on every mid-session cycle restart was noise.
+        startRestTimer = function(seconds, isPostpone, announce)
             if s.systemLocked then
                 ctx.log("startRestTimer: locked, skipping")
                 return
@@ -114,9 +117,11 @@ return {
             stopCycleTimers()
 
             if not isPostpone then
-                ctx.notify(
-                    "Start rest timer, rest eyes in " .. round(seconds / 60) .. " minutes",
-                    "Rest at " .. os.date("%X", now + seconds))
+                if announce then
+                    ctx.notify(
+                        "Rest eyes in " .. round(seconds / 60) .. " minutes",
+                        "Rest at " .. os.date("%X", now + seconds))
+                end
                 s.lastStartTime = now
             end
 
@@ -128,7 +133,7 @@ return {
         local function showRestDialog()
             local now = ctx.now()
             local workedMin = round((now - s.lastStartTime) / 60)
-            local headline = workedMin .. " minutes you have worked!"
+            local headline = "You have worked " .. workedMin .. " minutes!"
             ctx.alert(headline)
 
             -- Repair stats after system-time jumps.
@@ -140,8 +145,8 @@ return {
             s.dialog = ctx.askChoice {
                 title = headline .. " Time to rest",
                 infos = {
-                    "work : " .. durationInfo(s.workSeconds),
-                    "total : " .. durationInfo(now - s.lastStartWorkStamp),
+                    "Worked today: " .. durationInfo(s.workSeconds),
+                    "Elapsed today: " .. durationInfo(now - s.lastStartWorkStamp),
                 },
                 actions = { POSTPONE_1, POSTPONE_5, SCREENSAVER, LOCK_SCREEN, SYSTEM_SLEEP },
                 onChoose = function(choice)
@@ -243,14 +248,14 @@ return {
             if not s.systemLocked then return end
             ctx.log("unlock/wake, fresh cycle")
             s.systemLocked = false
-            startRestTimer()
+            startRestTimer(nil, false, true)
         end
         ctx.onSystemEvent("screenLock", onLocked)
         ctx.onSystemEvent("sleep", onLocked)
         ctx.onSystemEvent("screenUnlock", onUnlocked)
         ctx.onSystemEvent("wake", onUnlocked)
 
-        startRestTimer()
+        startRestTimer(nil, false, true)
         ctx.everySeconds(5, checkIdle)
     end,
 }

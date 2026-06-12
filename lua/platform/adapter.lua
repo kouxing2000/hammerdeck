@@ -82,6 +82,13 @@ function adapter.pasteboardWrite(text)
     native.pasteboard_write(text)
 end
 
+-- { change = <changeCount>, concealed = bool } -- change detection without
+-- reading contents; concealed marks password-manager/transient entries that
+-- a clipboard history must not record.
+function adapter.pasteboardInfo()
+    return native.pasteboard_info()
+end
+
 -- ---------------------------------------------------------------------------
 -- Output / notifications
 -- ---------------------------------------------------------------------------
@@ -192,10 +199,11 @@ function adapter.progressBar()
 end
 
 -- Desktop-pinned usage stats card (bottom-left, above wallpaper, below all
--- windows, click-through). Returns { setData(data), stop() }; data is the
--- typed table usage_stats computes (total/updated/avg/apps/week/weekTotal).
-function adapter.usageWidget()
-    local id = native.usage_widget_show()
+-- windows, click-through). screenIndex: 1 = primary (default), 2 = secondary
+-- when present. Returns { setData(data), stop() }; data is the typed table
+-- usage_stats computes (total/updated/avg/apps/week/weekTotal).
+function adapter.usageWidget(screenIndex)
+    local id = native.usage_widget_show(screenIndex or 1)
     return {
         setData = function(d) native.usage_widget_set(id, d) end,
         stop    = function() native.stop(id) end,
@@ -232,6 +240,11 @@ end
 -- { x,y,w,h, fullscreen, screenIndex, screen = {x,y,w,h} }.
 function adapter.focusedWindowFrame()
     return native.focused_window_frame()
+end
+
+-- Title of the focused window, or nil (no window / no permission).
+function adapter.focusedWindowTitle()
+    return native.focused_window_title()
 end
 
 function adapter.setFocusedWindowFrame(f)
@@ -292,6 +305,12 @@ end
 
 function adapter.mkdir(path)
     return native.mkdir(path)
+end
+
+-- Delete a file/dir UNDER dataDir (relative path, no traversal) -- the
+-- retention sweep's curated tool; there is deliberately no general delete.
+function adapter.removeDataPath(rel)
+    return native.remove_data_path(rel) == true
 end
 
 -- Plain text file helpers. Implemented with Lua's io here IN THE ADAPTER (the
@@ -433,6 +452,13 @@ end
 -- nil. Sync + cheap -- the curated "browser context" read.
 function adapter.browserActiveURL(app)
     return native.browser_active_url(app)
+end
+
+-- Pull real favicons for `domains` out of Chrome's local icon DB into
+-- outDir/<domain>.png (largest PNG per domain; existing files kept).
+-- Async; cb(savedDomains). Works offline -- the browser already has them.
+function adapter.extractFavicons(outDir, domains, cb)
+    native.extract_favicons(outDir, domains, cb)
 end
 
 -- Draw a crosshair around the pointer for `seconds` (fire-and-forget overlay;

@@ -79,6 +79,31 @@ fake.modifiers.alt = false
 fake.fireTimers("every", 0.1)                  -- modifier poll sees release
 ok(fake.focused[#fake.focused] == 33, "releasing the modifier picks the row")
 
+-- backward cycling (the donor's alt+`): wraps at the top
+fake.modifiers.alt = true
+fake.pressHotkey("tab")                        -- reopen (row 2)
+fake.pressHotkey("`")                          -- backward -> row 1
+ch = fake.visibleChooser()
+ok(ch.selectedRow == 1, "backward action cycles up")
+fake.pressHotkey("`")                          -- backward from 1 -> wrap to last
+ok(ch.selectedRow == 3, "backward wraps to the bottom")
+fake.modifiers.alt = false
+fake.fireTimers("every", 0.1)
+ok(fake.focused[#fake.focused] == 33, "release still picks after backward cycling")
+
+-- screen names render in the subtext on multi-display rows
+fake.windows = {
+    { id = 11, title = "W1", appName = "AppA", bundleID = "com.a", screenName = "Studio Display" },
+    { id = 22, title = "W2", appName = "AppB", bundleID = "com.b" },
+}
+fake.modifiers.alt = true
+fake.pressHotkey("tab")
+ch = fake.visibleChooser()
+ok(ch.choices[1].subText == "AppA (Studio Display)" and ch.choices[2].subText == "AppB",
+    "screen name appended to the subtext only when reported")
+ch.userSelect(1)
+fake.modifiers.alt = false
+
 registry.setEnabled("window_jump", false)
 ok(registry.liveHandleCount() == 0, "window_jump disable left no live handles")
 
@@ -182,10 +207,27 @@ ok(#desc == 3, "describe lists all 3 features")
 ok(desc[1].id == "rest_timer" and desc[1].kind == "service", "describe is sorted by id")
 local jumpDesc = desc[3]
 ok(jumpDesc.id == "window_jump" and jumpDesc.kind == "action", "window_jump is an action")
-ok(jumpDesc.triggerDesc == "hotkey: alt+tab", "action trigger described")
-ok(jumpDesc.options[1].key == "cycleModifier" and jumpDesc.options[1].type == "enum"
-    and #jumpDesc.options[1].values == 3,
+ok(jumpDesc.triggerDesc == "2 actions", "multi-action feature summarized in the list")
+ok(jumpDesc.actions[1].triggerDesc == "hotkey: alt+tab", "per-action trigger described")
+ok(#jumpDesc.options == 0,
+    "window_jump exports no options (cycle modifier derives from the trigger)")
+-- typed option export incl. enum values, on a synthetic probe
+package.loaded["features._enum_probe"] = {
+    api = 1, id = "enum_probe", name = "Enum Probe",
+    options = { { key = "mode", type = "enum", default = "a",
+                  values = { "a", "b", "c" }, label = "Mode" } },
+    defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "9" },
+    action = function() end,
+}
+registry.load("features._enum_probe")
+local probeDesc0 = nil
+for _, e in ipairs(registry.describe()) do
+    if e.id == "enum_probe" then probeDesc0 = e end
+end
+ok(probeDesc0.options[1].key == "mode" and probeDesc0.options[1].type == "enum"
+    and #probeDesc0.options[1].values == 3,
     "typed options (incl. enum values) exported for the form generator")
+registry.unregister("enum_probe")
 local sleepDesc = desc[2]
 ok(sleepDesc.kind == "service" and sleepDesc.triggerDesc == "always-on service",
     "service features described as always-on")
@@ -354,7 +396,7 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after hot-r
 -- T12: idle_dimmer (service: warn after idle, sleep display after lead time) ---
 registry.register(require("features.idle_dimmer"))
 fake.settings["hammerdeck.opt.idle_dimmer.idleThresholdMin"] = 5   -- 300s
-fake.settings["hammerdeck.opt.idle_dimmer.warnSeconds"] = 10
+-- (the 10s warning lead time is a constant now, not an option)
 local dimsBefore   = fake.actions.displaySleep
 local alertsBefore = #fake.alerts
 registry.setEnabled("idle_dimmer", true)
@@ -413,18 +455,17 @@ fake.pressHotkey("v")
 ok(#fake.alerts == alertsBefore + 1, "empty clipboard alerts")
 ok(fake.pasteboard == "", "empty clipboard left unchanged")
 
--- autoPaste option: clean, then a synthesized cmd+v after the settle timer
+-- one behavior: clean, then a synthesized cmd+v after the settle wait
+-- (immediate synthesis would merge with the still-held trigger modifiers)
 fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "plainText"
-fake.settings["hammerdeck.opt.clipboard_clean.autoPaste"] = true
 fake.pasteboard = "  pasted for you  "
 local keysBefore = #fake.keyEvents
 fake.pressHotkey("v")
 ok(fake.pasteboard == "pasted for you" and #fake.keyEvents == keysBefore,
-    "autoPaste cleans first, paste waits for the settle timer")
+    "cleans immediately; the paste waits for the settle timer")
 fake.fireTimers("after", 0.5)
 local pasteKey = fake.keyEvents[#fake.keyEvents]
-ok(pasteKey.key == "v" and pasteKey.mods[1] == "cmd", "then synthesizes cmd+v")
-fake.settings["hammerdeck.opt.clipboard_clean.autoPaste"] = nil
+ok(pasteKey.key == "v" and pasteKey.mods[1] == "cmd", "then pastes (cmd+v)")
 
 -- the "type" action types the cleaned clipboard as keystrokes
 fake.pasteboard = "  secret token\n"
@@ -804,6 +845,18 @@ ok(fake.liveUsageWidget() == nil, "widget hides when the option is switched off"
 fake.settings["hammerdeck.opt.usage_stats.showWidget"] = true
 fake.fireTimers("every", 60)
 ok(fake.liveUsageWidget() ~= nil, "widget re-shows when the option returns")
+
+-- the Settings store pings optionChanged on every write: the toggle applies
+-- INSTANTLY, no waiting for the 60s tick
+fake.settings["hammerdeck.opt.usage_stats.showWidget"] = false
+registry.optionChanged("usage_stats", "showWidget")
+ok(fake.liveUsageWidget() == nil, "onOptionChange hides the widget immediately")
+fake.settings["hammerdeck.opt.usage_stats.showWidget"] = true
+registry.optionChanged("usage_stats", "showWidget")
+ok(fake.liveUsageWidget() ~= nil, "and shows it back immediately")
+registry.optionChanged("usage_stats", "someOtherKey")      -- ignored key: no-op
+registry.optionChanged("count_down", "defaultMinutes")     -- no handler: no-op
+ok(fake.liveUsageWidget() ~= nil, "unrelated keys and handler-less features no-op")
 fake.settings["hammerdeck.opt.usage_stats.showWidget"] = nil
 
 -- accumulated time survives a disable/re-enable (reloaded from the CSV)
@@ -814,6 +867,54 @@ registry.setEnabled("usage_stats", true)
 fake.fireTimers("every", 600)
 ok(fake.files[appsCsv]:match("\nCode,,120\n") and fake.files[appsCsv]:match("\nSafari,,205\n"),
     "today's totals (incl. the blip's focus, flushed on disable) restored after re-enable")
+-- context enrichment: browser domain + editor project fill the CSV column
+fake.activeUrls["Google Chrome"] = "https://github.com/owner/repo"
+fake.activateApp("Google Chrome")              -- switch reads the context
+fake.clockOffset = fake.clockOffset + 90
+fake.activeUrls["Google Chrome"] = "https://news.site/page"
+fake.fireTimers("every", 30)                   -- tab switch: poll splits the slice
+fake.clockOffset = fake.clockOffset + 60
+fake.fireTimers("every", 600)                  -- flush + write
+local csvC = fake.files[appsCsv]
+ok(csvC:match("\nGoogle Chrome,github.com,90\n") ~= nil,
+    "browser context = active tab's domain (pre-switch slice)")
+ok(csvC:match("\nGoogle Chrome,news.site,60\n") ~= nil,
+    "the 30s context poll splits accrual on a tab change")
+
+fake.windowTitle = "main.swift — hammerdeck [SSH: devbox]"
+fake.activateApp("Code")
+fake.clockOffset = fake.clockOffset + 45
+fake.fireTimers("every", 600)
+ok(fake.files[appsCsv]:match("\nCode,hammerdeck,45\n") ~= nil,
+    "editor context = project from the window title, suffix stripped")
+
+-- widget aggregates per app and carries the top context sub-rows
+fake.fireTimers("every", 60)
+local wd = fake.liveUsageWidget().data
+local chromeRow
+for _, r in ipairs(wd.apps) do if r.app == "Google Chrome" then chromeRow = r end end
+ok(chromeRow and chromeRow.secs == 150 and #chromeRow.contexts == 2
+    and chromeRow.contexts[1].name == "github.com" and chromeRow.contexts[1].secs == 90,
+    "widget aggregates contexts under the app, sorted by time")
+fake.windowTitle = nil
+
+-- the widget screen option recreates the panel on the chosen display instantly
+ok(fake.liveUsageWidget().screen == 1, "widget defaults to the primary screen")
+fake.settings["hammerdeck.opt.usage_stats.screen"] = "secondary"
+registry.optionChanged("usage_stats", "screen")
+ok(fake.liveUsageWidget().screen == 2, "screen option moves the widget immediately")
+fake.settings["hammerdeck.opt.usage_stats.screen"] = nil
+
+-- retention: month dirs older than keepMonths are swept (once per day)
+local oldMonth = os.date("%Y-%m", fake.now() - 100 * 86400)   -- >3 months back
+local oldFile = "/fake/data/usage/" .. oldMonth .. "/" .. oldMonth .. "-15-apps.csv"
+fake.files[oldFile] = "app,context,seconds\nOldApp,,999\n"
+fake.settings["hammerdeck.opt.usage_stats.keepMonths"] = 2
+fake.fireTimers("every", 600)   -- flush cadence runs the daily sweep
+ok(fake.files[oldFile] == nil, "retention sweep deletes months past the keep window")
+ok(fake.files[appsCsv] ~= nil, "the current month survives the sweep")
+fake.settings["hammerdeck.opt.usage_stats.keepMonths"] = nil
+
 registry.setEnabled("usage_stats", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage_stats test")
 
@@ -912,12 +1013,13 @@ fake.pressHotkey("6")
 ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.otter.ai/",
     "no match opens the fallback URL")
 
--- the site is config, not code: repoint via options
-fake.settings["hammerdeck.opt.site_jump.site"] = "github.com"
+-- the site is config, not code: ONE option (the URL); the match pattern is
+-- its domain (www. stripped), so they can never drift apart
+fake.settings["hammerdeck.opt.site_jump.openURL"] = "https://www.github.com/"
 fake.pressHotkey("6")
 ok(fake.focusedTabs[#fake.focusedTabs] == "https://github.com/x",
-    "option change repoints the jump live")
-fake.settings["hammerdeck.opt.site_jump.site"] = nil
+    "option change repoints the jump live (domain derived, www. stripped)")
+fake.settings["hammerdeck.opt.site_jump.openURL"] = nil
 
 registry.setEnabled("site_jump", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after site_jump test")
@@ -1095,6 +1197,7 @@ fake.files[mruPath] = jsonlib.encode({
 })
 fake.runningApps["Google Chrome"] = true
 fake.runningApps["Safari"] = true
+fake.chromeFavicons["github.com"] = true   -- Chrome's icon DB knows github
 fake.browserTabsByApp = {
     ["Google Chrome"] = {
         { title = "Docs", url = "https://docs.example/d", winId = 1, tabIndex = 1, visible = true },
@@ -1116,13 +1219,20 @@ ok(tch ~= nil, "tab chooser opened")
 ok(#tch.choices == 3, "visible tabs listed; invisible shortcut-app window skipped")
 ok(tch.choices[1].text == "GitHub", "freshest MRU stamp sorts first")
 ok(tch.choices[2].text == "[Safari] Apple", "Safari tabs are prefixed and ranked by stamp")
-ok(tch.choices[1].image == "icon:com.google.Chrome",
+ok(tch.choices[1].image == "file:/tmp/hammerdeck-fake-cache/favicons/github.com.png",
+    "a Chrome-DB icon shows as soon as extraction lands (show-time resolution)")
+ok(tch.choices[3].image == "icon:com.google.Chrome",
     "no cached favicon -> the browser's app icon")
 ok(tch.selectedRow == 2, "the previous tab is preselected")
+ok(#fake.extractedBatches >= 1 and #fake.extractedBatches[1].domains >= 2,
+    "missing favicons go to Chrome's icon DB first")
 local dlSeen = {}
 for _, d in ipairs(fake.downloads) do dlSeen[d.path] = d.url end
-ok(dlSeen["/tmp/hammerdeck-fake-cache/favicons/github.com.png"] ~= nil,
-    "missing favicons are fetched in the background")
+ok(dlSeen["/tmp/hammerdeck-fake-cache/favicons/docs.example.png"]
+        == "https://docs.example/favicon.ico",
+    "domains Chrome doesn't know fall back to the site's own /favicon.ico")
+ok(dlSeen["/tmp/hammerdeck-fake-cache/favicons/github.com.png"] == nil,
+    "extracted domains are not re-downloaded")
 
 -- release the modifier: the armed auto-jump picks the selected row
 fake.modifiers.alt = false
@@ -1133,8 +1243,8 @@ ok(fake.files[mruPath]:find("apple.com", 1, true) ~= nil
     and fake.files[mruPath]:find("dead.example", 1, true) == nil,
     "the landed tab is stamped; 30-day-old entries were pruned")
 
--- a cached favicon becomes the choice image on the next (refreshed) open
-fake.files["/tmp/hammerdeck-fake-cache/favicons/github.com.png"] = "png"
+-- the extracted favicon upgrades the row on the next open (show-time icon
+-- re-resolution -- no relist needed)
 fake.frontmost = "Google Chrome"
 fake.activeUrls["Google Chrome"] = "https://news.example/today"
 fake.fireTimers("every", 10)   -- the MRU poll stamps + marks dirty
@@ -1166,5 +1276,83 @@ fake.modifiers.alt = false
 
 registry.setEnabled("tabs_jumper", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after tabs_jumper test")
+
+-- T27: registry.runAction -- the menubar's quick triggers ----------------------
+registry.register(require("features.clipboard_clean"))   -- dropped by T14's reload
+registry.setEnabled("clipboard_clean", true)
+fake.pasteboard = "  menu fired  "
+ok(registry.runAction("clipboard_clean", "main") == true, "runAction fires an enabled action")
+ok(fake.pasteboard == "menu fired", "the action really ran")
+local okRun, why = registry.runAction("clipboard_clean", "nope")
+ok(okRun == false and why:match("no action"), "unknown action refused with a reason")
+registry.setEnabled("clipboard_clean", false)
+okRun, why = registry.runAction("clipboard_clean", "main")
+ok(okRun == false and why:match("not enabled"), "disabled feature refused")
+ok(registry.runAction("ghost_feature") == false, "unknown feature refused")
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after runAction test")
+
+-- T28: clipboard_history (poll, conceal, dedup, cap, persist, pick-to-paste) --
+registry.register(require("features.clipboard_history"))
+registry.setEnabled("clipboard_history", true)
+local histPath = "/fake/data/clipboard_history/history.json"
+
+fake.copyText("alpha")
+fake.fireTimers("every", 0.8)
+ok(fake.files[histPath]:find("alpha", 1, true) ~= nil, "a copied entry is recorded + persisted")
+fake.copyText("beta")
+fake.fireTimers("every", 0.8)
+fake.copyText("the-password!", true)   -- concealed: password manager
+fake.fireTimers("every", 0.8)
+ok(fake.files[histPath]:find("the%-password") == nil,
+    "concealed clips are NEVER recorded (checked before reading)")
+fake.copyText("alpha")                 -- re-copy: dedup moves to front
+fake.fireTimers("every", 0.8)
+
+fake.pressHotkey("v", { "cmd", "shift" })
+local hch = fake.visibleChooser()
+ok(hch ~= nil and #hch.choices == 2, "history chooser opens, deduped")
+ok(hch.choices[1].text == "alpha" and hch.choices[2].text == "beta",
+    "newest first, re-copy bumped alpha to the front")
+
+-- selecting writes the clipboard and pastes (paste_on_select donor default)
+fake.copyText("other")                 -- clipboard currently holds something else
+fake.fireTimers("every", 0.8)
+fake.pressHotkey("v", { "cmd", "shift" })
+fake.visibleChooser().userSelect(3)    -- pick "beta" (other, alpha, beta)
+ok(fake.pasteboard == "beta", "selection puts the entry on the clipboard")
+fake.fireTimers("after", 0.15)
+local pk = fake.keyEvents[#fake.keyEvents]
+ok(pk.key == "v" and pk.mods[1] == "cmd", "and pastes it (cmd+v)")
+
+-- pasteOnSelect off: clipboard only
+fake.settings["hammerdeck.opt.clipboard_history.pasteOnSelect"] = false
+local keysBefore28 = #fake.keyEvents
+fake.pressHotkey("v", { "cmd", "shift" })
+fake.visibleChooser().userSelect(2)
+fake.fireTimers("after", 0.15)
+ok(#fake.keyEvents == keysBefore28, "pasteOnSelect off -> no synthesized paste")
+fake.settings["hammerdeck.opt.clipboard_history.pasteOnSelect"] = nil
+
+-- the cap drops the oldest
+fake.settings["hammerdeck.opt.clipboard_history.historySize"] = nil
+fake.settings["hammerdeck.opt.clipboard_history.historySize"] = 2
+fake.copyText("gamma")
+fake.fireTimers("every", 0.8)
+fake.pressHotkey("v", { "cmd", "shift" })
+ok(#fake.visibleChooser().choices == 2, "historySize caps the list")
+fake.visibleChooser().userSelect(1)
+fake.fireTimers("after", 0.15)
+fake.settings["hammerdeck.opt.clipboard_history.historySize"] = nil
+
+-- history survives a disable/re-enable (restored from disk)
+registry.setEnabled("clipboard_history", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clipboard_history leaks nothing")
+registry.setEnabled("clipboard_history", true)
+fake.pressHotkey("v", { "cmd", "shift" })
+ok(#fake.visibleChooser().choices >= 1, "history restored from disk after re-enable")
+fake.visibleChooser().userSelect(1)
+fake.fireTimers("after", 0.15)
+registry.setEnabled("clipboard_history", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipboard_history test")
 
 print("OK -- " .. passed .. " assertions passed")

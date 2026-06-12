@@ -91,6 +91,8 @@ return {
                             local minutes = tonumber(text)
                             if minutes and minutes > 0 then
                                 beginCountdown(s, minutes)
+                            elseif text and text ~= "" then
+                                ctx.alert("Not a number of minutes: " .. text)
                             end
                         end,
                     }

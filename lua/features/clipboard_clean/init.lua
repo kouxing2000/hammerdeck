@@ -1,21 +1,21 @@
 -- features/clipboard_clean
 --
--- "Clean Clipboard": rewrites the clipboard as trimmed plain text (which also
+-- "Paste as Plain Text" (id kept as clipboard_clean -- settings are keyed by
+-- id): rewrites the clipboard as trimmed plain text (which also
 -- strips any rich RTF/HTML formatting, since we read and write the *string*
 -- representation), optionally turning newlines into commas. Ported from
 -- myHammerSpoon modules/input/clipboardActions.lua -- now in FULL:
 --
---   main  (ctrl+cmd+v)  clean the clipboard; with the autoPaste option ON it
---                       then pastes for you (the donor's "paste simple
---                       format" -- synthesized cmd+v after a short settle).
+--   main  (ctrl+cmd+v)  paste as plain text: clean the clipboard, then a
+--                       synthesized cmd+v pastes it (the donor's "paste
+--                       simple format" -- one behavior, no switches).
 --   type  (ctrl+cmd+b)  TYPE the cleaned clipboard as keystrokes instead of
 --                       pasting (the donor's "type simple format" -- for
 --                       paste-blocking password fields and the like).
 --
 -- The donor's "format" binding (newlines -> commas + paste) is the
--- mode=newlinesToCommas option + autoPaste. Auto-paste/typing synthesize
--- keystrokes, which needs the Accessibility permission; autoPaste defaults
--- OFF so the zero-permission behavior is unchanged until you opt in.
+-- mode=newlinesToCommas option. Pasting/typing synthesize keystrokes, which
+-- needs the Accessibility permission.
 
 local PASTE_SETTLE_SECONDS = 0.5   -- donor's pause before the synthesized cmd+v
 
@@ -35,41 +35,53 @@ end
 return {
     api         = 1,
     id          = "clipboard_clean",
-    name        = "Clean Clipboard",
-    description = "Rewrites the clipboard as trimmed plain text (strips "
-        .. "formatting); can paste it for you, or type it as keystrokes.",
-    version     = "1.1.0",
+    name        = "Paste as Plain Text",
+    description = "Paste without formatting: strips fonts/colors/links from "
+        .. "the copied text and pastes it (or types it as keystrokes).",
+    version     = "1.2.0",
     category    = "productivity",
 
     options = {
         { key = "mode", type = "enum", default = "plainText",
           values = { "plainText", "newlinesToCommas" },
           label = "Transform" },
-        { key = "autoPaste", type = "bool", default = false,
-          label = "Paste automatically after cleaning" },
     },
 
     actions = {
         -- id "main" keeps the pre-multi-action stored trigger keys valid.
-        { id = "main", label = "Clean clipboard",
+        { id = "main", label = "Paste as plain text",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "v" },
           run = function(ctx)
               local text = cleaned(ctx)
               if not text then return end
               ctx.pasteboardWrite(text)
-              if ctx.opt("autoPaste") then
-                  ctx.afterSeconds(PASTE_SETTLE_SECONDS, function()
-                      ctx.keyStroke({ "cmd" }, "v")
-                  end)
-              else
-                  ctx.notify("Clipboard cleaned", "Plain text ready -- paste with Cmd-V")
+              -- Without the Accessibility grant macOS silently drops the
+              -- synthesized cmd+v; the clipboard IS cleaned, so say so
+              -- instead of appearing dead (and fire the system prompt).
+              if not ctx.axTrusted() then
+                  ctx.axPrompt()
+                  ctx.alert("Clipboard cleaned -- paste with cmd+v "
+                      .. "(grant Accessibility to paste automatically)")
+                  return
               end
+              -- The settle wait is load-bearing: the user is still holding
+              -- ctrl+cmd from the trigger; synthesizing cmd+v immediately
+              -- would merge into ctrl+cmd+v and re-trigger this action.
+              ctx.afterSeconds(PASTE_SETTLE_SECONDS, function()
+                  ctx.keyStroke({ "cmd" }, "v")
+              end)
           end },
         { id = "type", label = "Type clipboard as keystrokes",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "b" },
           run = function(ctx)
               local text = cleaned(ctx)
               if not text then return end
+              if not ctx.axTrusted() then
+                  ctx.axPrompt()
+                  ctx.alert("Typing needs the Accessibility permission -- "
+                      .. "grant Hammerdeck in System Settings, then try again")
+                  return
+              end
               ctx.typeText(text)
           end },
     },

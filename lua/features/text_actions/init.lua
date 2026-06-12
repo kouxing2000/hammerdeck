@@ -23,7 +23,7 @@ local YOUDAO_SETTLE_SECONDS = 0.75 -- donor's pause for the dict app to focus
 return {
     api         = 1,
     id          = "text_actions",
-    name        = "Text Actions",
+    name        = "Selection Actions",
     description = "Act on the selected text anywhere: open URLs, change case, "
         .. "calculate, look up in a dictionary. Transforms paste back in place.",
     version     = "1.0.0",
@@ -47,7 +47,7 @@ return {
                     if content == "" then
                         if not ctx.axTrusted() then
                             ctx.axPrompt()
-                            ctx.alert("Text Actions needs the Accessibility "
+                            ctx.alert("Selection Actions needs the Accessibility "
                                 .. "permission to read the selection -- grant it "
                                 .. "in System Settings, then try again")
                         else

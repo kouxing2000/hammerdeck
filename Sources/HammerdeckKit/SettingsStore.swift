@@ -197,6 +197,12 @@ final class SettingsStore: ObservableObject {
         refresh()
     }
 
+    /// Fire one action of an enabled feature on demand (menubar quick triggers).
+    func runAction(_ id: String, _ actionId: String) {
+        _ = try? lua.eval(
+            "require('platform.registry').runAction('\(id)', '\(actionId)'); return true")
+    }
+
     // MARK: - Option values (UserDefaults, same keys as ctx.opt)
 
     private func optKey(_ featureId: String, _ key: String) -> String {
@@ -226,11 +232,20 @@ final class SettingsStore: ObservableObject {
         default:              UserDefaults.standard.removeObject(forKey: key)
         }
         optionEpoch += 1
+        notifyOptionChanged(featureId, opt.key)
     }
 
     func resetOption(_ featureId: String, _ opt: OptionInfo) {
         UserDefaults.standard.removeObject(forKey: optKey(featureId, opt.key))
         optionEpoch += 1
+        notifyOptionChanged(featureId, opt.key)
+    }
+
+    /// Let an enabled feature react to the edit immediately (registry no-ops
+    /// for features without an onOptionChange handler).
+    private func notifyOptionChanged(_ featureId: String, _ key: String) {
+        _ = try? lua.eval(
+            "require('platform.registry').optionChanged('\(featureId)', '\(key)'); return true")
     }
 
     func isOptionOverridden(_ featureId: String, _ opt: OptionInfo) -> Bool {

@@ -81,6 +81,14 @@ function manifest.validate(m)
         assert(hasStart, "feature '" .. m.id .. "': stop(ctx) only makes sense with start(ctx)")
         assert(type(m.stop) == "function", "feature '" .. m.id .. "': stop must be a function")
     end
+    -- Optional: onOptionChange(ctx, key) fires when the user edits one of the
+    -- feature's options while it is ENABLED -- for features that act on a
+    -- cadence and want the new value to apply instantly instead of on the
+    -- next tick (ctx.opt always reads live either way).
+    if m.onOptionChange ~= nil then
+        assert(type(m.onOptionChange) == "function",
+            "feature '" .. m.id .. "': onOptionChange must be a function")
+    end
     if m.defaultTrigger ~= nil then
         assert(hasAction,
             "feature '" .. m.id .. "': top-level defaultTrigger goes with the single-action " ..

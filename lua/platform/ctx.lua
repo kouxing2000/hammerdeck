@@ -31,7 +31,10 @@ local function stateKey(id, k) return "hammerdeck.state." .. id .. "." .. k end
 --                            this for the trigger binding of action features)
 -- scope.teardown()        -- stop every live handle
 -- scope.liveCount()       -- live handles (used by tests to assert no leaks)
-function M.make(m)
+-- resolveTrigger(actionId) -- optional; injected by the registry so
+--                             ctx.actionTrigger can report an action's
+--                             currently-bound trigger without a require cycle
+function M.make(m, resolveTrigger)
     local live = {}   -- set: wrapper -> true
 
     local function track(raw)
@@ -62,6 +65,15 @@ function M.make(m)
 
     local ctx = {}
     ctx.featureId = m.id
+
+    -- The trigger spec currently bound to one of this feature's actions
+    -- (user override or declared default; nil for none / unknown action).
+    -- Lets behavior follow the binding -- e.g. window/tab switchers derive
+    -- which modifier their release-to-jump should watch from the actual
+    -- hotkey instead of asking the user twice.
+    function ctx.actionTrigger(actionId)
+        return resolveTrigger and resolveTrigger(actionId) or nil
+    end
 
     -- options (typed, user-overridable, manifest default fallback) ----------
     function ctx.opt(key)
@@ -95,7 +107,7 @@ function M.make(m)
     function ctx.askText(opts)   return track(adapter.askText(opts)) end
     function ctx.banner(text)    return track(adapter.banner(text)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
-    function ctx.usageWidget()   return track(adapter.usageWidget()) end
+    function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end
     -- enter a modal hotkey group (see platform/modal.lua); stop() exits
     function ctx.modal(spec)     return track(modal.enter(spec)) end
 
@@ -108,6 +120,7 @@ function M.make(m)
     function ctx.axTrusted()        return adapter.axTrusted() end
     function ctx.axPrompt()         return adapter.axPrompt() end
     function ctx.focusedWindowFrame()          return adapter.focusedWindowFrame() end
+    function ctx.focusedWindowTitle()          return adapter.focusedWindowTitle() end
     function ctx.setFocusedWindowFrame(f)      return adapter.setFocusedWindowFrame(f) end
     function ctx.setFocusedWindowFullscreen(b) return adapter.setFocusedWindowFullscreen(b) end
     function ctx.screenFrames()                return adapter.screenFrames() end
@@ -117,6 +130,7 @@ function M.make(m)
     -- data files (durable feature-owned storage) ---------------------------------
     function ctx.dataDir()                return adapter.dataDir() end
     function ctx.mkdir(path)              return adapter.mkdir(path) end
+    function ctx.removeDataPath(rel)      return adapter.removeDataPath(rel) end
     function ctx.fileRead(path)           return adapter.fileRead(path) end
     function ctx.fileWrite(path, text)    return adapter.fileWrite(path, text) end
     function ctx.fileAppend(path, line)   return adapter.fileAppend(path, line) end
@@ -125,6 +139,7 @@ function M.make(m)
     -- clipboard ----------------------------------------------------------------
     function ctx.pasteboardRead()      return adapter.pasteboardRead() end
     function ctx.pasteboardWrite(text) adapter.pasteboardWrite(text) end
+    function ctx.pasteboardInfo()      return adapter.pasteboardInfo() end
 
     -- network / files / wallpaper -----------------------------------------------
     function ctx.httpGet(url, headers, cb)     adapter.httpGet(url, headers, cb) end
@@ -148,6 +163,9 @@ function M.make(m)
         adapter.browserFocusTab(app, winId, tabIndex, cb)
     end
     function ctx.browserActiveURL(app) return adapter.browserActiveURL(app) end
+    function ctx.extractFavicons(outDir, domains, cb)
+        adapter.extractFavicons(outDir, domains, cb)
+    end
     function ctx.idleSeconds()       return adapter.idleSeconds() end
     function ctx.systemSleep()       adapter.systemSleep() end
     function ctx.lockScreen()        adapter.lockScreen() end

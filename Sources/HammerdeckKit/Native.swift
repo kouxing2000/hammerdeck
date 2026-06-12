@@ -1,5 +1,6 @@
 import AppKit
 import CLua
+import SQLite3
 
 /// The native backend: builds the `native` Lua table that
 /// `lua/platform/adapter.lua` targets. This file + the panels/hotkey helpers
@@ -71,6 +72,7 @@ final class Native {
             // clipboard (general pasteboard -- no permission required)
             "pasteboard_read":  { L in MainActor.assumeIsolated { Native.shared.pasteboardRead(L) } },
             "pasteboard_write": { L in MainActor.assumeIsolated { Native.shared.pasteboardWrite(L) } },
+            "pasteboard_info":  { L in MainActor.assumeIsolated { Native.shared.pasteboardInfo(L) } },
             // output
             "notify":       { L in MainActor.assumeIsolated { Native.shared.notify(L) } },
             "alert":        { L in MainActor.assumeIsolated { Native.shared.alert(L) } },
@@ -108,6 +110,7 @@ final class Native {
             "ax_trusted":   { L in MainActor.assumeIsolated { Native.shared.axTrusted(L) } },
             "ax_prompt":    { L in MainActor.assumeIsolated { Native.shared.axPrompt(L) } },
             "focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.focusedWindowFrame(L) } },
+            "focused_window_title": { L in MainActor.assumeIsolated { Native.shared.focusedWindowTitle(L) } },
             "set_focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFrame(L) } },
             "set_focused_window_fullscreen": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFullscreen(L) } },
             "screen_frames": { L in MainActor.assumeIsolated { Native.shared.screenFrames(L) } },
@@ -122,6 +125,7 @@ final class Native {
             // data files (feature-owned storage under Application Support)
             "data_dir":         { L in MainActor.assumeIsolated { Native.shared.dataDir(L) } },
             "mkdir":            { L in MainActor.assumeIsolated { Native.shared.mkdir(L) } },
+            "remove_data_path": { L in MainActor.assumeIsolated { Native.shared.removeDataPath(L) } },
             // input synthesis (CGEvent posting -- needs Accessibility)
             "key_stroke":   { L in MainActor.assumeIsolated { Native.shared.keyStroke(L) } },
             "type_text":    { L in MainActor.assumeIsolated { Native.shared.typeText(L) } },
@@ -133,6 +137,7 @@ final class Native {
             "browser_list_tabs": { L in MainActor.assumeIsolated { Native.shared.browserListTabs(L) } },
             "browser_focus_tab_at": { L in MainActor.assumeIsolated { Native.shared.browserFocusTabAt(L) } },
             "browser_active_url":   { L in MainActor.assumeIsolated { Native.shared.browserActiveUrl(L) } },
+            "extract_favicons":     { L in MainActor.assumeIsolated { Native.shared.extractFavicons(L) } },
             // input / system
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
@@ -145,8 +150,61 @@ final class Native {
 
     // MARK: - Core
 
+    // Logging goes to stdout AND a daily file under Application Support/
+    // Hammerdeck/logs/ -- stdout dies with the terminal; troubleshooting
+    // needs durable clues (the donor's fileLogger lesson).
+    private var logHandle: FileHandle?
+    private var logDay = ""
+    nonisolated static let logsDir: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        return base.appendingPathComponent("Hammerdeck/logs", isDirectory: true)
+    }()
+
+    private func appendLogLine(_ msg: String) {
+        let now = Date()
+        let day = Native.dayFormatter.string(from: now)
+        if logHandle == nil || day != logDay {
+            logHandle?.closeFile()
+            try? FileManager.default.createDirectory(at: Native.logsDir,
+                                                     withIntermediateDirectories: true)
+            let path = Native.logsDir.appendingPathComponent(day + ".log").path
+            if !FileManager.default.fileExists(atPath: path) {
+                FileManager.default.createFile(atPath: path, contents: nil)
+            }
+            logHandle = FileHandle(forWritingAtPath: path)
+            logHandle?.seekToEndOfFile()
+            logDay = day
+            Native.pruneOldLogs()   // retention rides the day rollover
+        }
+        let line = "[" + Native.timeFormatter.string(from: now) + "] " + msg + "\n"
+        if let data = line.data(using: .utf8) { logHandle?.write(data) }
+    }
+
+    /// Keep the newest `keep` daily log files; logging is always-on (clues
+    /// must exist BEFORE a bug is noticed), so retention is what bounds it.
+    nonisolated static func pruneOldLogs(keep: Int = 14) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: logsDir.path) else { return }
+        let logs = files.filter { $0.hasSuffix(".log") }.sorted()   // name order = date order
+        guard logs.count > keep else { return }
+        for f in logs.prefix(logs.count - keep) {
+            try? fm.removeItem(at: logsDir.appendingPathComponent(f))
+        }
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+
     private func log(_ L: OpaquePointer?) -> Int32 {
-        print("[hammerdeck]", LuaState.string(L, 1) ?? "(nil)")
+        let msg = LuaState.string(L, 1) ?? "(nil)"
+        print("[hammerdeck]", msg)
+        appendLogLine(msg)
         return 0
     }
 
@@ -331,6 +389,30 @@ final class Native {
         pb.clearContents()
         pb.setString(s, forType: .string)
         return 0
+    }
+
+    // The pasteboard types clipboard managers must not record -- password
+    // managers mark secrets Concealed; expansion utilities mark ephemera
+    // Transient (the nspasteboard.org convention, donor ClipboardTool's list).
+    private static let concealedTypes: Set<String> = [
+        "org.nspasteboard.ConcealedType",
+        "org.nspasteboard.TransientType",
+        "org.nspasteboard.AutoGeneratedType",
+        "de.petermaurer.TransientPasteboardType",
+        "com.typeit4me.clipping",
+        "Pasteboard generator type",
+    ]
+
+    // pasteboard_info() -> { change = <changeCount>, concealed = bool }.
+    // Lets a history poller detect changes WITHOUT reading the contents, and
+    // skip entries the source marked as secrets.
+    private func pasteboardInfo(_ L: OpaquePointer?) -> Int32 {
+        let pb = NSPasteboard.general
+        let concealed = pb.types?.contains { Native.concealedTypes.contains($0.rawValue) } ?? false
+        lua_createtable(L, 0, 2)
+        lua_pushinteger(L, lua_Integer(pb.changeCount)); lua_setfield(L, -2, "change")
+        lua_pushboolean(L, concealed ? 1 : 0);           lua_setfield(L, -2, "concealed")
+        return 1
     }
 
     // MARK: - Output
@@ -553,7 +635,7 @@ final class Native {
     // MARK: - Usage widget (desktop-pinned stats card)
 
     private func usageWidgetShow(_ L: OpaquePointer?) -> Int32 {
-        let panel = UsageWidgetPanel()
+        let panel = UsageWidgetPanel(screenIndex: LuaState.int(L, 1) ?? 1)
         let id = registerResource { panel.close() }
         widgets[id] = panel
         lua_pushinteger(L, lua_Integer(id))
@@ -696,8 +778,15 @@ final class Native {
             cgRows.append(CGRow(pid: pid_t(pid), bounds: bounds, z: cgRows.count))
         }
 
-        struct Row { let z: Int; let id: Int; let app: String; let title: String; let bundleID: String }
+        struct Row {
+            let z: Int; let id: Int; let app: String; let title: String
+            let bundleID: String; let screenName: String?
+        }
         var rows: [Row] = []
+        // Screen names only matter (and only render) on multi-display setups.
+        let screens = NSScreen.screens
+        let namedScreens: [(rect: CGRect, name: String)] = screens.count > 1
+            ? screens.map { (axRect($0.frame), $0.localizedName) } : []
         var seenPids = Set<pid_t>()
         for pid in cgRows.map(\.pid) where !seenPids.contains(pid) {
             seenPids.insert(pid)
@@ -739,22 +828,31 @@ final class Native {
                         && abs(r.bounds.height - size.height) < 2
                 }?.z ?? Int.max   // unmatched (e.g. minimized): list last
 
+                let frame = CGRect(origin: pos, size: size)
+                let screenName = namedScreens.first {
+                    $0.rect.contains(CGPoint(x: frame.midX, y: frame.midY))
+                }?.name
+
                 let id = nextWindowId
                 nextWindowId += 1
                 axWindowCache[id] = win
                 rows.append(Row(z: z, id: id, app: appName,
-                                title: title.isEmpty ? appName : title, bundleID: bundleID))
+                                title: title.isEmpty ? appName : title,
+                                bundleID: bundleID, screenName: screenName))
             }
         }
         rows.sort { $0.z < $1.z }
 
         lua_createtable(L, Int32(rows.count), 0)
         for (i, r) in rows.enumerated() {
-            lua_createtable(L, 0, 4)
+            lua_createtable(L, 0, 5)
             lua_pushinteger(L, lua_Integer(r.id)); lua_setfield(L, -2, "id")
             lua_pushstring(L, r.title);            lua_setfield(L, -2, "title")
             lua_pushstring(L, r.app);              lua_setfield(L, -2, "appName")
             lua_pushstring(L, r.bundleID);         lua_setfield(L, -2, "bundleID")
+            if let s = r.screenName {
+                lua_pushstring(L, s);              lua_setfield(L, -2, "screenName")
+            }
             lua_rawseti(L, -2, lua_Integer(i + 1))
         }
         return 1
@@ -840,6 +938,24 @@ final class Native {
         lua_pushboolean(L, fullscreen ? 1 : 0); lua_setfield(L, -2, "fullscreen")
         lua_pushinteger(L, lua_Integer(screenIndex + 1)); lua_setfield(L, -2, "screenIndex")
         pushRect(L, visible); lua_setfield(L, -2, "screen")
+        return 1
+    }
+
+    // focused_window_title() -> string|nil (needs Accessibility; nil without).
+    // Cheap single-attribute read -- usage_stats derives the editor project
+    // name from it.
+    private func focusedWindowTitle(_ L: OpaquePointer?) -> Int32 {
+        guard let win = focusedAXWindow() else {
+            lua_pushnil(L)
+            return 1
+        }
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+        if let title = titleRef as? String, !title.isEmpty {
+            lua_pushstring(L, title)
+        } else {
+            lua_pushnil(L)
+        }
         return 1
     }
 
@@ -1020,6 +1136,26 @@ final class Native {
         return 1
     }
 
+    // remove_data_path(relpath) -> bool. CURATED delete: only paths UNDER the
+    // app's data dir, relative, no traversal -- the retention sweep's tool,
+    // never a general rm.
+    private func removeDataPath(_ L: OpaquePointer?) -> Int32 {
+        guard let rel = LuaState.string(L, 1),
+              !rel.isEmpty, !rel.hasPrefix("/"), !rel.contains("..") else {
+            return luaError(L, "remove_data_path: a relative path under the data dir is required")
+        }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask).first?
+            .appendingPathComponent("Hammerdeck", isDirectory: true)
+        guard let target = base?.appendingPathComponent(rel) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let ok = (try? FileManager.default.removeItem(at: target)) != nil
+        lua_pushboolean(L, ok ? 1 : 0)
+        return 1
+    }
+
     private func appIcon(_ L: OpaquePointer?) -> Int32 {
         if let bundleID = LuaState.string(L, 1) {
             lua_pushstring(L, "appicon:" + bundleID)
@@ -1027,6 +1163,90 @@ final class Native {
             lua_pushnil(L)
         }
         return 1
+    }
+
+    // extract_favicons(outDir, domains, cb): pull REAL site icons from
+    // Chrome's local Favicons sqlite DB (the donor's extract_favicons.py,
+    // ported to Swift -- no python). The DB is copied first (Chrome holds a
+    // lock), the largest PNG per domain wins, PNG magic verified. Works
+    // offline and covers <link rel> icons the sites never serve at
+    // /favicon.ico. cb(savedDomains[]). Existing files are not overwritten.
+    private func extractFavicons(_ L: OpaquePointer?) -> Int32 {
+        guard let outDir = LuaState.string(L, 1) else {
+            return luaError(L, "extract_favicons: outDir required")
+        }
+        let domains = LuaState.stringArray(L, 2)
+        let ref = lua.makeRef(at: 3)
+        DispatchQueue.global(qos: .utility).async {
+            let saved = Self.extractFaviconsSync(outDir: outDir, domains: domains)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    Native.shared.lua.callRef(ref) { L in
+                        lua_createtable(L, Int32(saved.count), 0)
+                        for (i, d) in saved.enumerated() {
+                            lua_pushstring(L, d)
+                            lua_rawseti(L, -2, lua_Integer(i + 1))
+                        }
+                        return 1
+                    }
+                    Native.shared.lua.releaseRef(ref)
+                }
+            }
+        }
+        return 0
+    }
+
+    /// The donor's extract_favicons.py, in-process: copy the DB (Chrome holds
+    /// a lock), largest PNG per domain, magic verified. Pure helper, any queue.
+    private nonisolated static func extractFaviconsSync(outDir: String,
+                                                        domains: [String]) -> [String] {
+        let fm = FileManager.default
+        let dbPath = NSHomeDirectory()
+            + "/Library/Application Support/Google/Chrome/Default/Favicons"
+        guard fm.fileExists(atPath: dbPath) else { return [] }
+        // UUID, not pid: two overlapping extractions in this process must not
+        // share (and defer-delete) each other's DB copy.
+        let tmp = NSTemporaryDirectory() + "hammerdeck-favicons-\(UUID().uuidString).db"
+        defer { try? fm.removeItem(atPath: tmp) }
+        do { try fm.copyItem(atPath: dbPath, toPath: tmp) } catch { return [] }
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(tmp, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_close(db) }
+        // The host must END at the domain (next char "/" / ":" / end-of-url),
+        // so "github.com" never matches a lookalike like github.com.evil.io.
+        let sql = """
+        SELECT fb.image_data FROM icon_mapping im
+        JOIN favicons f ON im.icon_id = f.id
+        JOIN favicon_bitmaps fb ON f.id = fb.icon_id
+        WHERE im.page_url LIKE ? OR im.page_url LIKE ? OR im.page_url LIKE ?
+        ORDER BY fb.width * fb.height DESC LIMIT 1
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+        try? fm.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+        var saved: [String] = []
+        for domain in domains {
+            let out = outDir + "/" + domain + ".png"
+            guard !fm.fileExists(atPath: out) else { continue }
+            sqlite3_reset(stmt)
+            sqlite3_bind_text(stmt, 1, "%://\(domain)/%", -1, transient)
+            sqlite3_bind_text(stmt, 2, "%://\(domain):%", -1, transient)
+            sqlite3_bind_text(stmt, 3, "%://\(domain)", -1, transient)
+            if sqlite3_step(stmt) == SQLITE_ROW,
+               let blob = sqlite3_column_blob(stmt, 0) {
+                let n = Int(sqlite3_column_bytes(stmt, 0))
+                let data = Data(bytes: blob, count: n)
+                if n > 8, data.prefix(4) == Data([0x89, 0x50, 0x4E, 0x47]),
+                   (try? data.write(to: URL(fileURLWithPath: out))) != nil {
+                    saved.append(domain)
+                }
+            }
+        }
+        return saved
     }
 
     // MARK: - Input synthesis (CGEvent posting -- the system delivers these to
