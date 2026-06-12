@@ -34,6 +34,9 @@ myHammerSpoon:
   following it as it moves; clicks pass through.
 - **Bing Daily Wallpaper** (service + action) -- Bing's picture of the day as
   wallpaper on a schedule, with an optional "refresh now" shortcut.
+- **Usage Stats** (service) -- wake/sleep sessions and per-app focus time
+  (idle excluded) to daily CSVs, with a desktop widget pinned above the
+  wallpaper: today's top apps, bars, and a 7-day chart.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

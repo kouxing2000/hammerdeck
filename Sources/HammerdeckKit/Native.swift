@@ -25,6 +25,7 @@ final class Native {
     private var choosers: [Int32: ChooserPanel] = [:]
     private var progresses: [Int32: ProgressPanel] = [:]
     private var askTexts: [Int32: AskTextPanel] = [:]
+    private var widgets: [Int32: UsageWidgetPanel] = [:]
     private var mouseLocator: MouseLocatorPanel?
 
     func attach(_ lua: LuaState) { self.lua = lua }
@@ -47,6 +48,7 @@ final class Native {
         choosers[id] = nil
         progresses[id] = nil
         askTexts[id] = nil
+        widgets[id] = nil
     }
 
     // MARK: - Table registration
@@ -91,6 +93,8 @@ final class Native {
             "ask_text_dismiss": { L in MainActor.assumeIsolated { Native.shared.askTextDismiss(L) } },
             "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
             "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
+            "usage_widget_show": { L in MainActor.assumeIsolated { Native.shared.usageWidgetShow(L) } },
+            "usage_widget_set":  { L in MainActor.assumeIsolated { Native.shared.usageWidgetSet(L) } },
             "locate_mouse":  { L in MainActor.assumeIsolated { Native.shared.locateMouse(L) } },
             // network / files / wallpaper
             "http_get":      { L in MainActor.assumeIsolated { Native.shared.httpGet(L) } },
@@ -524,6 +528,24 @@ final class Native {
         if let id = LuaState.int(L, 1).map(Int32.init), let f = LuaState.double(L, 2) {
             progresses[id]?.setProgress(f)
         }
+        return 0
+    }
+
+    // MARK: - Usage widget (desktop-pinned stats card)
+
+    private func usageWidgetShow(_ L: OpaquePointer?) -> Int32 {
+        let panel = UsageWidgetPanel()
+        let id = registerResource { panel.close() }
+        widgets[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    private func usageWidgetSet(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init),
+              let dict = LuaState.any(L, 2) as? [String: Any],
+              let data = UsageWidgetData(dict) else { return 0 }
+        widgets[id]?.setData(data)
         return 0
     }
 

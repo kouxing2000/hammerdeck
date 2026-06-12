@@ -769,14 +769,32 @@ fake.systemEvent("screenLock")
 local _, sessLines2 = fake.files[sessCsv]:gsub("\n", "")
 ok(sessLines2 == 3, "short session skipped")
 
+-- desktop widget: fed on each refresh tick; option toggle shows/hides live
+local widget = fake.liveUsageWidget()
+ok(widget ~= nil, "widget shown by default (showWidget=true)")
+fake.fireTimers("every", 60)   -- the refresh tick pushes data
+ok(widget.data ~= nil and widget.data.total == 325,
+    "widget data total matches accrued time (120 + 195 + the 10s blip's focus)")
+ok(#widget.data.week == 7 and widget.data.week[7].today == true,
+    "widget gets a 7-day series ending today")
+ok(widget.data.apps[1].app == "Safari" and widget.data.apps[1].secs == 205,
+    "widget app rows sorted descending")
+fake.settings["hammerdeck.opt.usage_stats.showWidget"] = false
+fake.fireTimers("every", 60)
+ok(fake.liveUsageWidget() == nil, "widget hides when the option is switched off")
+fake.settings["hammerdeck.opt.usage_stats.showWidget"] = true
+fake.fireTimers("every", 60)
+ok(fake.liveUsageWidget() ~= nil, "widget re-shows when the option returns")
+fake.settings["hammerdeck.opt.usage_stats.showWidget"] = nil
+
 -- accumulated time survives a disable/re-enable (reloaded from the CSV)
 registry.setEnabled("usage_stats", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "usage_stats leaks nothing")
 fake.systemEvent("screenUnlock")   -- no live watchers: must be inert
 registry.setEnabled("usage_stats", true)
 fake.fireTimers("every", 600)
-ok(fake.files[appsCsv]:match("\nCode,,120\n") and fake.files[appsCsv]:match("\nSafari,,195\n"),
-    "today's totals restored from disk after re-enable")
+ok(fake.files[appsCsv]:match("\nCode,,120\n") and fake.files[appsCsv]:match("\nSafari,,205\n"),
+    "today's totals (incl. the blip's focus, flushed on disable) restored after re-enable")
 registry.setEnabled("usage_stats", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage_stats test")
 

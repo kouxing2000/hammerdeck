@@ -191,6 +191,17 @@ function adapter.progressBar()
     }
 end
 
+-- Desktop-pinned usage stats card (bottom-left, above wallpaper, below all
+-- windows, click-through). Returns { setData(data), stop() }; data is the
+-- typed table usage_stats computes (total/updated/avg/apps/week/weekTotal).
+function adapter.usageWidget()
+    local id = native.usage_widget_show()
+    return {
+        setData = function(d) native.usage_widget_set(id, d) end,
+        stop    = function() native.stop(id) end,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Windows / apps
 -- ---------------------------------------------------------------------------

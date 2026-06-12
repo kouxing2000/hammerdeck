@@ -94,6 +94,7 @@ function M.make(m)
     function ctx.askText(opts)   return track(adapter.askText(opts)) end
     function ctx.banner(text)    return track(adapter.banner(text)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
+    function ctx.usageWidget()   return track(adapter.usageWidget()) end
 
     -- windows / apps -----------------------------------------------------------
     function ctx.listWindows()      return adapter.listWindows() end

@@ -1,7 +1,8 @@
 -- features/usage_stats
 --
 -- Tracks computer usage to daily CSV files (ported from myHammerSpoon
--- modules/timers/usageTracker.lua):
+-- modules/timers/usageTracker.lua + usageWidget.lua -- the widget renders
+-- natively from snapshot() data; no HTML/webview):
 --   <dataDir>/usage/YYYY-MM/YYYY-MM-DD.csv        sessions (wake,sleep,minutes)
 --   <dataDir>/usage/YYYY-MM/YYYY-MM-DD-apps.csv   per-app focus time (seconds)
 --
@@ -19,8 +20,10 @@
 -- stop() records the open session so disable/quit doesn't lose the day.
 
 local FLUSH_SECONDS       = 10 * 60   -- write app time to disk this often
+local REFRESH_SECONDS     = 60        -- widget refresh cadence
 local MIN_SESSION_SECONDS = 30        -- ignore rapid wake/sleep blips
 local MIN_ENTRY_SECONDS   = 30        -- drop sub-30s apps from the CSV
+local TOP_APPS            = 5         -- widget shows this many rows
 local DAY_LABELS = { "S", "M", "T", "W", "T", "F", "S" }
 local IGNORE_APPS = { loginwindow = true }
 
@@ -36,6 +39,7 @@ local function start(ctx)
         appTime  = {},    -- app name -> seconds today
         appDate  = nil,   -- the day appTime belongs to
         dayCache = {},    -- date -> total secs (past days never change)
+        widget   = nil,   -- live desktop widget handle (when shown)
     }
     shared.st = st
 
@@ -160,6 +164,20 @@ local function start(ctx)
     end
     shared.flushAll = flushAll
 
+    -- Sync the desktop widget to the showWidget option (read live, so the
+    -- Settings toggle takes effect within a refresh tick) and feed it data.
+    local function refreshWidget()
+        local want = ctx.opt("showWidget") == true
+        if want and not st.widget then st.widget = ctx.usageWidget() end
+        if not want then
+            if st.widget then st.widget.stop(); st.widget = nil end
+            return
+        end
+        rollover()
+        flushCurrent()
+        st.widget.setData(snapshot(TOP_APPS))
+    end
+
     local function onWake()
         if st.wakeAt then return end
         local now = ctx.now()
@@ -212,6 +230,8 @@ local function start(ctx)
     ctx.onSystemEvent("sleep", recordSession)
     ctx.onSystemEvent("screenLock", recordSession)
     ctx.everySeconds(FLUSH_SECONDS, flushAll)
+    ctx.everySeconds(REFRESH_SECONDS, refreshWidget)
+    refreshWidget()
     ctx.log("started")
 end
 
@@ -220,18 +240,23 @@ return {
     id          = "usage_stats",
     name        = "Usage Stats",
     description = "Tracks wake/sleep sessions and per-app focus time to daily "
-        .. "CSV files (idle time excluded).",
+        .. "CSV files (idle time excluded), with an optional desktop widget.",
     version     = "1.0.0",
     category    = "productivity",
 
-    options = {},
+    options = {
+        { key = "showWidget", type = "bool", default = true,
+          label = "Show desktop widget" },
+    },
 
     start = start,
 
     stop = function(ctx)
-        -- Record the open session (which also writes pending app time) so
-        -- disabling or quitting doesn't lose the day's tail.
+        -- Record the open session, then flush regardless -- pending app time
+        -- must hit disk even when no session is open (e.g. disabled while the
+        -- screen is locked), or disabling loses the day's tail.
         if shared.recordSession then shared.recordSession() end
+        if shared.flushAll then shared.flushAll() end
         shared.recordSession, shared.flushAll, shared.snapshot, shared.st =
             nil, nil, nil, nil
     end,

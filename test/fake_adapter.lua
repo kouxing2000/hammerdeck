@@ -209,6 +209,24 @@ function adapter.progressBar()
     }
 end
 
+fake.usageWidgets = {}   -- {data, stopped}
+function adapter.usageWidget()
+    local w = { data = nil, stopped = false }
+    fake.usageWidgets[#fake.usageWidgets + 1] = w
+    alloc()
+    return {
+        setData = function(d) w.data = d end,
+        stop    = function() freeOnce(w) end,
+    }
+end
+
+function fake.liveUsageWidget()
+    for i = #fake.usageWidgets, 1, -1 do
+        if not fake.usageWidgets[i].stopped then return fake.usageWidgets[i] end
+    end
+    return nil
+end
+
 -- Windows / apps ---------------------------------------------------------------
 
 function adapter.listWindows()

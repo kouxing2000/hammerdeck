@@ -275,6 +275,28 @@ final class IntegrationTests: XCTestCase {
                         "some app is always frontmost")
     }
 
+    func testUsageWidgetPanelLifecycle() {
+        // A real desktop-level NSPanel is created, fed a full nested data
+        // table across the bridge (the any() crossing), updated, and torn
+        // down. Reaching the end without a crash is the assertion.
+        eval("_G.itWidget = require('platform.adapter').usageWidget(); return true")
+        eval("""
+        _G.itWidget.setData({
+            total = 5400, updated = '12:34', avg = 3600, weekTotal = 12600,
+            apps = { { app = 'Code', secs = 3600 }, { app = 'Safari', secs = 1800 } },
+            week = {
+                { label = 'S', secs = 0, today = false },
+                { label = 'M', secs = 7200, today = false },
+                { label = 'T', secs = 5400, today = true },
+            },
+        })
+        return true
+        """)
+        // Empty state renders too (no apps yet).
+        eval("_G.itWidget.setData({ total = 0, updated = '00:00', weekTotal = 0, apps = {}, week = {} }); return true")
+        eval("_G.itWidget.stop(); _G.itWidget = nil; return true")
+    }
+
     func testChordRegistersARealPrefixHotkey() {
         host.store.setEnabled("clipboard_clean", true)
         // Rebind onto a chord: ChordCenter registers the prefix via the real
