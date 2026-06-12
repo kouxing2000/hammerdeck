@@ -396,6 +396,45 @@ function adapter.focusBrowserTab(pattern, fallbackURL)
     return native.focus_browser_tab(pattern, fallbackURL) == true
 end
 
+-- Is an app with this localized name currently running?
+function adapter.isAppRunning(name)
+    return native.app_running(name) == true
+end
+
+-- ---------------------------------------------------------------------------
+-- Browser tabs (curated JXA templates; app must be "Google Chrome"/"Safari")
+-- ---------------------------------------------------------------------------
+
+local json -- platform.json, loaded lazily (avoids a cost when unused)
+
+-- All tabs of a RUNNING browser; cb(tabs|nil) where tabs is a list of
+-- { title, url, winId, tabIndex, visible }. Async (out-of-process script).
+function adapter.browserListTabs(app, cb)
+    native.browser_list_tabs(app, function(raw)
+        if not raw then return cb(nil) end
+        json = json or require("platform.json")
+        local doc = json.decode(raw)
+        cb(doc and doc.tabs or nil)
+    end)
+end
+
+-- Raise the window and activate the tab (ids from browserListTabs);
+-- cb(currentUrl|nil) -- nil means the tab moved/closed since listing.
+function adapter.browserFocusTab(app, winId, tabIndex, cb)
+    native.browser_focus_tab_at(app, winId, tabIndex, function(raw)
+        if not raw then return cb(nil) end
+        json = json or require("platform.json")
+        local doc = json.decode(raw)
+        cb(doc and doc.url or nil)
+    end)
+end
+
+-- The URL the browser is showing right now (front window's active tab), or
+-- nil. Sync + cheap -- the curated "browser context" read.
+function adapter.browserActiveURL(app)
+    return native.browser_active_url(app)
+end
+
 -- Draw a crosshair around the pointer for `seconds` (fire-and-forget overlay;
 -- clicks pass through). Re-invoking replaces the live one.
 function adapter.locateMouse(seconds)

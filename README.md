@@ -45,6 +45,8 @@ myHammerSpoon:
   toggle maximize/75%, or throw it to the next screen (pointer follows).
 - **Window Mode** (2 actions) -- a modal keyboard layer: enter the mode, tap
   WASD/HJKL/corner keys to arrange windows until Escape; undo/redo included.
+- **Tab Jump** (2 actions) -- searchable switcher across all Chrome + Safari
+  tabs, most recently used first, with favicons; release the modifier to jump.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

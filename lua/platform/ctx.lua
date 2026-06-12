@@ -142,6 +142,12 @@ function M.make(m)
     function ctx.focusBrowserTab(pattern, fallbackURL)
         return adapter.focusBrowserTab(pattern, fallbackURL)
     end
+    function ctx.isAppRunning(name)  return adapter.isAppRunning(name) end
+    function ctx.browserListTabs(app, cb)  adapter.browserListTabs(app, cb) end
+    function ctx.browserFocusTab(app, winId, tabIndex, cb)
+        adapter.browserFocusTab(app, winId, tabIndex, cb)
+    end
+    function ctx.browserActiveURL(app) return adapter.browserActiveURL(app) end
     function ctx.idleSeconds()       return adapter.idleSeconds() end
     function ctx.systemSleep()       adapter.systemSleep() end
     function ctx.lockScreen()        adapter.lockScreen() end

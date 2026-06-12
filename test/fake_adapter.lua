@@ -401,6 +401,38 @@ function adapter.focusBrowserTab(pattern, fallbackURL)
     return false
 end
 
+function adapter.isAppRunning(name)
+    return fake.runningApps[name] == true
+end
+
+-- Browser tab enumeration / jumping (tabs_jumper) -----------------------------
+
+fake.browserTabsByApp = {}   -- app -> list of {title,url,winId,tabIndex,visible}
+fake.tabJumps  = {}          -- recorded {app, winId, tabIndex}
+fake.jumpUrlOverride = nil   -- set to simulate drift; false = tab gone (nil cb)
+
+function adapter.browserListTabs(app, cb)
+    cb(fake.browserTabsByApp[app])
+end
+
+function adapter.browserFocusTab(app, winId, tabIndex, cb)
+    fake.tabJumps[#fake.tabJumps + 1] = { app = app, winId = winId, tabIndex = tabIndex }
+    if fake.jumpUrlOverride ~= nil then
+        if fake.jumpUrlOverride == false then return cb(nil) end
+        return cb(fake.jumpUrlOverride)
+    end
+    for _, t in ipairs(fake.browserTabsByApp[app] or {}) do
+        if t.winId == winId and t.tabIndex == tabIndex then return cb(t.url) end
+    end
+    cb(nil)
+end
+
+fake.activeUrls = {}   -- app -> the url its front tab is showing
+
+function adapter.browserActiveURL(app)
+    return fake.activeUrls[app]
+end
+
 function adapter.idleSeconds()
     return fake.idle
 end

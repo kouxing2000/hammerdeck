@@ -1,10 +1,10 @@
 -- platform/json.lua
 --
--- Minimal JSON *decoder* (no encoder) for API responses -- pure Lua, 5.4-
--- compatible, no dependencies. Known limitation: a JSON `null` becomes Lua
--- nil, so null object members vanish and a null inside an array truncates the
--- ipairs view at that point. Fine for the APIs we consume; don't feed it
--- documents where null position matters.
+-- Minimal JSON decoder + encoder -- pure Lua, 5.4-compatible, no
+-- dependencies. Decoder limitation: a JSON `null` becomes Lua nil, so null
+-- object members vanish and a null inside an array truncates the ipairs view
+-- at that point. Fine for the APIs we consume; don't feed it documents where
+-- null position matters. Encoder: see the section below for its table rules.
 
 local json = {}
 
@@ -122,6 +122,65 @@ function json.decode(s)
     if not ok then return nil, v end
     if s:find("[^ \t\r\n]", rest) then return nil, "json: trailing garbage" end
     return v
+end
+
+-- ---------------------------------------------------------------------------
+-- Minimal encoder (the counterpart: persist Lua state as JSON). Supports
+-- nil/bool/number/string and tables -- a table encodes as an ARRAY when
+-- #t > 0 or it is empty, else as an object with STRING keys (other key types
+-- raise). No cycles. Numbers must be finite.
+-- ---------------------------------------------------------------------------
+
+local ENC_ESCAPES = {
+    ['"'] = '\\"', ["\\"] = "\\\\",
+    ["\b"] = "\\b", ["\f"] = "\\f", ["\n"] = "\\n",
+    ["\r"] = "\\r", ["\t"] = "\\t",
+}
+
+local function encString(s)
+    return '"' .. s:gsub('[%z\1-\31"\\]', function(c)
+        return ENC_ESCAPES[c] or string.format("\\u%04x", c:byte())
+    end) .. '"'
+end
+
+local function encValue(v, depth)
+    if depth > 64 then error("json: nesting too deep (cycle?)", 0) end
+    local t = type(v)
+    if v == nil then return "null"
+    elseif t == "boolean" then return v and "true" or "false"
+    elseif t == "number" then
+        if v ~= v or v == math.huge or v == -math.huge then
+            error("json: non-finite number", 0)
+        end
+        if math.type and math.type(v) == "integer" then return tostring(v) end
+        return string.format("%.14g", v)
+    elseif t == "string" then return encString(v)
+    elseif t == "table" then
+        local n = #v
+        if n > 0 then
+            local out = {}
+            for i = 1, n do out[i] = encValue(v[i], depth + 1) end
+            return "[" .. table.concat(out, ",") .. "]"
+        end
+        local out = {}
+        for k, val in pairs(v) do
+            if type(k) ~= "string" then
+                error("json: object keys must be strings", 0)
+            end
+            out[#out + 1] = encString(k) .. ":" .. encValue(val, depth + 1)
+        end
+        if #out == 0 then return "[]" end   -- empty table reads back as array
+        table.sort(out)                     -- deterministic output
+        return "{" .. table.concat(out, ",") .. "}"
+    end
+    error("json: cannot encode a " .. t, 0)
+end
+
+-- Encode a Lua value. Returns the JSON string, or nil + error message.
+function json.encode(v)
+    local ok, s = pcall(encValue, v, 0)
+    if not ok then return nil, s end
+    return s
 end
 
 return json

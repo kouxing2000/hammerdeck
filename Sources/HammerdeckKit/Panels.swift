@@ -785,9 +785,16 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     }
 
     static func icon(for token: String) -> NSImage? {
-        guard token.hasPrefix("appicon:") else { return nil }
-        let bundleID = String(token.dropFirst("appicon:".count))
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        if token.hasPrefix("appicon:") {
+            let bundleID = String(token.dropFirst("appicon:".count))
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            else { return nil }
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
+        if token.hasPrefix("file:") {
+            // An image on disk (e.g. a cached favicon); nil when missing.
+            return NSImage(contentsOfFile: String(token.dropFirst("file:".count)))
+        }
+        return nil
     }
 }

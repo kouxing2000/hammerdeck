@@ -114,10 +114,10 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 13,
-                       "disk discovery should find all 13 features")
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 14,
+                       "disk discovery should find all 14 features")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 13)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, 14)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_jump" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -232,7 +232,7 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('idle_dimmer')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 13)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 14)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("idle_dimmer", false)
@@ -412,6 +412,26 @@ final class IntegrationTests: XCTestCase {
                           "screenIndex points into screenFrames()")
             XCTAssertNotNil((f["screen"] as? [String: Any])?["w"] as? Double)
         }
+    }
+
+    /// The browser-scripting seam is CURATED: a non-whitelisted app name must
+    /// be refused at the bridge (a Lua error), never reach a script. No real
+    /// browser is scripted in tests (that would launch apps / TCC prompts).
+    func testBrowserScriptingWhitelist() {
+        let r1 = try? host.lua.eval(
+            "return pcall(function() require('platform.adapter').browserListTabs('Evil App', function() end) end)")
+        XCTAssertEqual(r1 as? Bool, false, "non-whitelisted app must raise")
+        let r2 = try? host.lua.eval(
+            "return pcall(function() require('platform.adapter').browserFocusTab('Evil App', 1, 1, function() end) end)")
+        XCTAssertEqual(r2 as? Bool, false)
+        XCTAssertNil(eval("return require('platform.adapter').browserActiveURL('Evil App')"),
+                     "active-url for a non-whitelisted app is nil, not a script run")
+
+        XCTAssertEqual(eval("return require('platform.adapter').isAppRunning('NoSuchApp-77')") as? Bool,
+                       false)
+
+        // file: icon tokens resolve from disk; a missing path is nil, not a crash.
+        XCTAssertNil(ChooserPanel.icon(for: "file:/nonexistent/icon.png"))
     }
 
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)
