@@ -343,6 +343,21 @@ function adapter.activateApp(name)
     return false
 end
 
+fake.browserTabs   = {}   -- url strings (the fake browser's open tabs)
+fake.focusedTabs   = {}   -- recorded focused tab urls
+fake.openedNewTabs = {}   -- recorded fallback opens
+
+function adapter.focusBrowserTab(pattern, fallbackURL)
+    for _, url in ipairs(fake.browserTabs) do
+        if url:find(pattern, 1, true) then
+            fake.focusedTabs[#fake.focusedTabs + 1] = url
+            return true
+        end
+    end
+    fake.openedNewTabs[#fake.openedNewTabs + 1] = fallbackURL
+    return false
+end
+
 function adapter.idleSeconds()
     return fake.idle
 end

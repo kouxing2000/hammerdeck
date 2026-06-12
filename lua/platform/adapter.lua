@@ -357,6 +357,13 @@ function adapter.activateApp(name)
     return native.activate_app(name) == true
 end
 
+-- Focus the first browser tab whose URL contains `pattern`; open fallbackURL
+-- in a new tab when absent. Returns whether an existing tab was found.
+-- (Curated browser automation -- the AppleScript template lives in the seam.)
+function adapter.focusBrowserTab(pattern, fallbackURL)
+    return native.focus_browser_tab(pattern, fallbackURL) == true
+end
+
 -- Draw a crosshair around the pointer for `seconds` (fire-and-forget overlay;
 -- clicks pass through). Re-invoking replaces the live one.
 function adapter.locateMouse(seconds)

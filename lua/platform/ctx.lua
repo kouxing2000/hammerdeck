@@ -130,6 +130,9 @@ function M.make(m)
     function ctx.typeText(text)       adapter.typeText(text) end
     function ctx.openURL(url)         return adapter.openURL(url) end
     function ctx.activateApp(name)    return adapter.activateApp(name) end
+    function ctx.focusBrowserTab(pattern, fallbackURL)
+        return adapter.focusBrowserTab(pattern, fallbackURL)
+    end
     function ctx.idleSeconds()       return adapter.idleSeconds() end
     function ctx.systemSleep()       adapter.systemSleep() end
     function ctx.lockScreen()        adapter.lockScreen() end

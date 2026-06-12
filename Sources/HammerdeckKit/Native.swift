@@ -122,6 +122,7 @@ final class Native {
             // apps / urls
             "open_url":     { L in MainActor.assumeIsolated { Native.shared.openUrl(L) } },
             "activate_app": { L in MainActor.assumeIsolated { Native.shared.activateApp(L) } },
+            "focus_browser_tab": { L in MainActor.assumeIsolated { Native.shared.focusBrowserTab(L) } },
             // input / system
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
@@ -956,6 +957,61 @@ final class Native {
         } else {
             lua_pushboolean(L, 0)
         }
+        return 1
+    }
+
+    // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
+    // Chrome tab whose URL contains `pattern` to front; opens fallbackURL in a
+    // new tab when absent (the donor miscBindings "locate otter" flow,
+    // parameterized). CURATED AppleScript: the script is a fixed template in
+    // the seam -- features never run arbitrary osascript. First use triggers
+    // the macOS Automation permission prompt ("control Google Chrome").
+    private func focusBrowserTab(_ L: OpaquePointer?) -> Int32 {
+        guard let pattern = LuaState.string(L, 1), let fallback = LuaState.string(L, 2) else {
+            return luaError(L, "focus_browser_tab: pattern and fallbackURL required")
+        }
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "\\", with: "\\\\")
+             .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        // The donor's script shape: snapshot all tab URLs first, then act by
+        // indices (mutating window order while iterating live lists misbehaves).
+        let script = """
+        activate application "Google Chrome"
+        tell application "Google Chrome" to set windowTabList to URL of tabs of every window
+        set found to false
+        set windowIndex to 1
+        repeat with thisWindowsTabs in windowTabList
+            set tabIndex to 1
+            repeat with tabURL in thisWindowsTabs
+                if tabURL as text contains "\(esc(pattern))" then
+                    tell application "Google Chrome"
+                        set index of window windowIndex to 1
+                        set active tab index of window 1 to tabIndex
+                    end tell
+                    set found to true
+                    exit repeat
+                end if
+                set tabIndex to tabIndex + 1
+            end repeat
+            if found then exit repeat
+            set windowIndex to windowIndex + 1
+        end repeat
+        if not found then
+            tell application "Google Chrome" to make new tab at window 1 with properties {URL:"\(esc(fallback))"}
+        end if
+        return found
+        """
+        var errInfo: NSDictionary?
+        let result = NSAppleScript(source: script)?.executeAndReturnError(&errInfo)
+        if let errInfo {
+            // Chrome missing / Automation permission denied: degrade, log why.
+            print("[hammerdeck] focus_browser_tab failed: "
+                + ((errInfo[NSAppleScript.errorMessage] as? String) ?? "\(errInfo)"))
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        lua_pushboolean(L, result?.booleanValue == true ? 1 : 0)
         return 1
     }
 

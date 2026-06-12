@@ -878,4 +878,29 @@ ok(fake.alerts[#fake.alerts]:match("Nothing selected") ~= nil, "empty selection 
 registry.setEnabled("text_actions", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after text_actions test")
 
+-- T23: site_jump (focus the matching browser tab, or open it) ------------------
+registry.register(require("features.site_jump"))
+registry.setEnabled("site_jump", true)
+
+fake.browserTabs = { "https://github.com/x", "https://www.otter.ai/meetings" }
+fake.pressHotkey("6")
+ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
+    "matching tab focused (default site pattern)")
+ok(#fake.openedNewTabs == 0, "no new tab when one matches")
+
+fake.browserTabs = { "https://github.com/x" }
+fake.pressHotkey("6")
+ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.otter.ai/",
+    "no match opens the fallback URL")
+
+-- the site is config, not code: repoint via options
+fake.settings["hammerdeck.opt.site_jump.site"] = "github.com"
+fake.pressHotkey("6")
+ok(fake.focusedTabs[#fake.focusedTabs] == "https://github.com/x",
+    "option change repoints the jump live")
+fake.settings["hammerdeck.opt.site_jump.site"] = nil
+
+registry.setEnabled("site_jump", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after site_jump test")
+
 print("OK -- " .. passed .. " assertions passed")
