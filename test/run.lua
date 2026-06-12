@@ -413,6 +413,25 @@ fake.pressHotkey("v")
 ok(#fake.alerts == alertsBefore + 1, "empty clipboard alerts")
 ok(fake.pasteboard == "", "empty clipboard left unchanged")
 
+-- autoPaste option: clean, then a synthesized cmd+v after the settle timer
+fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "plainText"
+fake.settings["hammerdeck.opt.clipboard_clean.autoPaste"] = true
+fake.pasteboard = "  pasted for you  "
+local keysBefore = #fake.keyEvents
+fake.pressHotkey("v")
+ok(fake.pasteboard == "pasted for you" and #fake.keyEvents == keysBefore,
+    "autoPaste cleans first, paste waits for the settle timer")
+fake.fireTimers("after", 0.5)
+local pasteKey = fake.keyEvents[#fake.keyEvents]
+ok(pasteKey.key == "v" and pasteKey.mods[1] == "cmd", "then synthesizes cmd+v")
+fake.settings["hammerdeck.opt.clipboard_clean.autoPaste"] = nil
+
+-- the "type" action types the cleaned clipboard as keystrokes
+fake.pasteboard = "  secret token\n"
+fake.pressHotkey("b")
+ok(fake.typedTexts[#fake.typedTexts] == "secret token",
+    "type action types the trimmed clipboard as keystrokes")
+
 registry.setEnabled("clipboard_clean", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipboard_clean test")
 
