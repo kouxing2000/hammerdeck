@@ -41,6 +41,8 @@ myHammerSpoon:
   change case, calculate, dictionary lookup; transforms paste back in place.
 - **Jump to Site** (action) -- focus the browser tab for a configured site
   (or open it) with one shortcut.
+- **Window Arrange** (7 actions) -- snap the focused window to screen halves,
+  toggle maximize/75%, or throw it to the next screen (pointer follows).
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

@@ -253,6 +253,49 @@ function adapter.axPrompt()
     return fake.axTrusted
 end
 
+-- Focused-window frame surface (window_arrange) -----------------------------------
+
+fake.screenList     = { { x = 0, y = 0, w = 1440, h = 900 } }  -- visible frames
+fake.focusedWindow  = nil   -- {x,y,w,h, fullscreen?, screenIndex?} preset by tests
+fake.windowFrames   = {}    -- recorded setFocusedWindowFrame calls
+fake.fullscreenSets = {}    -- recorded setFocusedWindowFullscreen calls
+fake.mousePos       = { x = 0, y = 0 }
+
+function adapter.screenFrames() return fake.screenList end
+
+function adapter.focusedWindowFrame()
+    local w = fake.focusedWindow
+    if not w then return nil end
+    local idx = w.screenIndex or 1
+    return {
+        x = w.x, y = w.y, w = w.w, h = w.h,
+        fullscreen = w.fullscreen == true,
+        screenIndex = idx,
+        screen = fake.screenList[idx],
+    }
+end
+
+function adapter.setFocusedWindowFrame(f)
+    fake.windowFrames[#fake.windowFrames + 1] = f
+    local w = fake.focusedWindow
+    if w then w.x, w.y, w.w, w.h = f.x, f.y, f.w, f.h end
+    return true
+end
+
+function adapter.setFocusedWindowFullscreen(on)
+    fake.fullscreenSets[#fake.fullscreenSets + 1] = on
+    if fake.focusedWindow then fake.focusedWindow.fullscreen = on end
+    return true
+end
+
+function adapter.mousePosition()
+    return { x = fake.mousePos.x, y = fake.mousePos.y }
+end
+
+function adapter.setMousePosition(x, y)
+    fake.mousePos = { x = x, y = y }
+end
+
 fake.featureNames = {}   -- bare names the fake "filesystem" exposes to discovery
 function adapter.discoverFeatures(dir) return fake.featureNames end
 
@@ -419,9 +462,28 @@ function fake.fireTimers(kind, n)
     return fired
 end
 
-function fake.pressHotkey(key)
+-- Fire hotkeys bound to `key`. With `mods` given, only exact (order-free)
+-- modifier matches fire -- needed when the same key is bound under different
+-- modifier sets (e.g. cmd+alt+ctrl+left vs ctrl+alt+left).
+function fake.pressHotkey(key, mods)
+    local want = nil
+    if mods then
+        want = {}
+        for _, m in ipairs(mods) do want[#want + 1] = m end
+        table.sort(want)
+        want = table.concat(want, ",")
+    end
     for _, h in ipairs(fake.hotkeys) do
-        if not h.stopped and h.key == key then h.fn() end
+        if not h.stopped and h.key == key then
+            local fire = true
+            if want then
+                local have = {}
+                for _, m in ipairs(h.mods or {}) do have[#have + 1] = m end
+                table.sort(have)
+                fire = table.concat(have, ",") == want
+            end
+            if fire then h.fn() end
+        end
     end
 end
 

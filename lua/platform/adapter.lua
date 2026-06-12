@@ -223,6 +223,38 @@ function adapter.axTrusted()
     return native.ax_trusted() == true
 end
 
+-- ---------------------------------------------------------------------------
+-- Focused-window frame surface (Accessibility). ONE coordinate system:
+-- top-left-origin global points; screen rects are VISIBLE frames.
+-- ---------------------------------------------------------------------------
+
+-- nil when there is no focused window (or no permission); else
+-- { x,y,w,h, fullscreen, screenIndex, screen = {x,y,w,h} }.
+function adapter.focusedWindowFrame()
+    return native.focused_window_frame()
+end
+
+function adapter.setFocusedWindowFrame(f)
+    return native.set_focused_window_frame(f.x, f.y, f.w, f.h) == true
+end
+
+function adapter.setFocusedWindowFullscreen(on)
+    return native.set_focused_window_fullscreen(on == true) == true
+end
+
+-- Visible frame of every screen (primary first); screenIndex indexes this.
+function adapter.screenFrames()
+    return native.screen_frames()
+end
+
+function adapter.mousePosition()
+    return native.mouse_position()
+end
+
+function adapter.setMousePosition(x, y)
+    native.set_mouse_position(x, y)
+end
+
 -- Show the system Accessibility prompt if untrusted; returns trusted state.
 function adapter.axPrompt()
     return native.ax_prompt() == true

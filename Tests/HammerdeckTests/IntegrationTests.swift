@@ -114,10 +114,10 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 11,
-                       "disk discovery should find all 11 features")
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 12,
+                       "disk discovery should find all 12 features")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 11)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, 12)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_jump" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -232,7 +232,7 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('idle_dimmer')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 11)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 12)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("idle_dimmer", false)
@@ -385,6 +385,33 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(eval("return _G.itTyped") as? String, "hammerdeck-42",
                        "synthesized typing should land in our own panel and submit")
         eval("_G.itPrompt.stop(); _G.itPrompt = nil; _G.itTyped = nil; return true")
+    }
+
+    /// READ-ONLY pass over the window-frame surface: never sets a frame (that
+    /// would rearrange whatever window the user has focused). Geometry sanity:
+    /// everything crosses the seam in ONE coordinate system (top-left origin).
+    func testWindowFrameSurfaceReadOnly() throws {
+        let raw = eval("return require('platform.adapter').screenFrames()") as? [Any]
+        let screens = raw?.compactMap { $0 as? [String: Any] } ?? []
+        XCTAssertFalse(screens.isEmpty, "at least one screen exists")
+        let s0 = screens[0]
+        XCTAssertGreaterThan(s0["w"] as? Double ?? 0, 0)
+        XCTAssertGreaterThan(s0["h"] as? Double ?? 0, 0)
+
+        let mouse = eval("return require('platform.adapter').mousePosition()") as? [String: Any]
+        XCTAssertNotNil(mouse?["x"] as? Double)
+        XCTAssertNotNil(mouse?["y"] as? Double)
+
+        // Focused-window read: a table with a coherent screen reference, or
+        // nil (headless session) -- never a crash.
+        if AXIsProcessTrusted(),
+           let f = eval("return require('platform.adapter').focusedWindowFrame()") as? [String: Any] {
+            XCTAssertGreaterThan(f["w"] as? Double ?? 0, 0)
+            let idx = Int(f["screenIndex"] as? Double ?? 0)
+            XCTAssertTrue((1...screens.count).contains(idx),
+                          "screenIndex points into screenFrames()")
+            XCTAssertNotNil((f["screen"] as? [String: Any])?["w"] as? Double)
+        }
     }
 
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)

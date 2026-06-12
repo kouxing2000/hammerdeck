@@ -903,4 +903,77 @@ fake.settings["hammerdeck.opt.site_jump.site"] = nil
 registry.setEnabled("site_jump", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after site_jump test")
 
+-- T24: window_arrange (snap halves, max toggle, throw across screens) ---------
+registry.register(require("features.window_arrange"))
+registry.setEnabled("window_arrange", true)
+
+fake.screenList = {
+    { x = 0, y = 0, w = 1000, h = 800 },        -- primary
+    { x = 1000, y = 0, w = 2000, h = 1200 },    -- bigger secondary
+}
+local AC = { "cmd", "alt", "ctrl" }
+local function lastFrame() return fake.windowFrames[#fake.windowFrames] end
+
+-- halves snap against the window's own screen
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+fake.pressHotkey("left", AC)
+local lf = lastFrame()
+ok(lf.x == 0 and lf.y == 0 and lf.w == 500 and lf.h == 800, "left half snaps")
+fake.pressHotkey("right", AC)
+lf = lastFrame()
+ok(lf.x == 500 and lf.w == 500 and lf.h == 800, "right half snaps")
+fake.pressHotkey("down", AC)
+lf = lastFrame()
+ok(lf.y == 400 and lf.w == 1000 and lf.h == 400, "bottom half snaps")
+
+-- toggle: full-width window -> centered 75%; then -> maximize
+fake.pressHotkey("return", AC)             -- bottom half is full-width
+lf = lastFrame()
+ok(lf.x == 125 and lf.y == 100 and lf.w == 750 and lf.h == 600,
+    "full-dimension window toggles to centered 75%")
+fake.pressHotkey("return", AC)
+lf = lastFrame()
+ok(lf.x == 0 and lf.y == 0 and lf.w == 1000 and lf.h == 800,
+    "75% window toggles to maximized")
+
+-- fullscreen: exits, then retries after the settle timer
+fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1, fullscreen = true }
+local framesBefore = #fake.windowFrames
+fake.pressHotkey("return", AC)
+ok(fake.fullscreenSets[#fake.fullscreenSets] == false and #fake.windowFrames == framesBefore,
+    "fullscreen exits first, no frame change yet")
+fake.fireTimers("after", 0.5)
+lf = lastFrame()
+ok(lf.w == 750 and lf.h == 600, "the retry then applies the toggle")
+
+-- throw to the bigger screen: least-distortion scale (1.5), per-axis offsets
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+fake.mousePos = { x = 150, y = 200 }
+fake.pressHotkey("right", { "ctrl", "alt" })
+lf = lastFrame()
+ok(lf.w == 600 and lf.h == 450, "frame scales by the axis ratio closer to 1 (1.5)")
+ok(lf.x == 1200 and lf.y == 150, "position scales per axis onto the target screen")
+ok(fake.mousePos.x == 1150 and fake.mousePos.y == 200, "pointer carried at its offset")
+ok(fake.mouseLocates[#fake.mouseLocates] == 2, "pointer flashed after the throw")
+
+-- and back, wrapping
+fake.focusedWindow.screenIndex = 2
+fake.pressHotkey("left", { "ctrl", "alt" })
+ok(lastFrame().x >= 0 and lastFrame().x < 1000, "previous wraps back to the primary")
+
+-- a huge window clamps into the smaller target screen
+fake.focusedWindow = { x = 1000, y = 0, w = 2000, h = 1200, screenIndex = 2 }
+fake.pressHotkey("left", { "ctrl", "alt" })
+lf = lastFrame()
+ok(lf.x == 0 and lf.y == 0 and lf.w == 1000 and lf.h == 800,
+    "oversized throw clamps to the target screen")
+
+-- no focused window -> plain alert (trusted)
+fake.focusedWindow = nil
+fake.pressHotkey("left", AC)
+ok(fake.alerts[#fake.alerts]:match("No focused window") ~= nil, "no window alerts plainly")
+
+registry.setEnabled("window_arrange", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_arrange test")
+
 print("OK -- " .. passed .. " assertions passed")

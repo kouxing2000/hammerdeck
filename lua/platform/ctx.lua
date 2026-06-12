@@ -104,6 +104,12 @@ function M.make(m)
     function ctx.onAppActivated(fn) return track(adapter.onAppActivated(fn)) end
     function ctx.axTrusted()        return adapter.axTrusted() end
     function ctx.axPrompt()         return adapter.axPrompt() end
+    function ctx.focusedWindowFrame()          return adapter.focusedWindowFrame() end
+    function ctx.setFocusedWindowFrame(f)      return adapter.setFocusedWindowFrame(f) end
+    function ctx.setFocusedWindowFullscreen(b) return adapter.setFocusedWindowFullscreen(b) end
+    function ctx.screenFrames()                return adapter.screenFrames() end
+    function ctx.mousePosition()               return adapter.mousePosition() end
+    function ctx.setMousePosition(x, y)        adapter.setMousePosition(x, y) end
 
     -- data files (durable feature-owned storage) ---------------------------------
     function ctx.dataDir()                return adapter.dataDir() end

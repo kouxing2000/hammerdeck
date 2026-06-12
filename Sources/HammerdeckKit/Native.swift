@@ -107,6 +107,12 @@ final class Native {
             "focus_window": { L in MainActor.assumeIsolated { Native.shared.focusWindow(L) } },
             "ax_trusted":   { L in MainActor.assumeIsolated { Native.shared.axTrusted(L) } },
             "ax_prompt":    { L in MainActor.assumeIsolated { Native.shared.axPrompt(L) } },
+            "focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.focusedWindowFrame(L) } },
+            "set_focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFrame(L) } },
+            "set_focused_window_fullscreen": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFullscreen(L) } },
+            "screen_frames": { L in MainActor.assumeIsolated { Native.shared.screenFrames(L) } },
+            "mouse_position": { L in MainActor.assumeIsolated { Native.shared.mousePosition(L) } },
+            "set_mouse_position": { L in MainActor.assumeIsolated { Native.shared.setMousePosition(L) } },
             "app_icon":     { L in MainActor.assumeIsolated { Native.shared.appIcon(L) } },
             // platform: discover feature modules on disk
             "discover_features": { L in MainActor.assumeIsolated { Native.shared.discoverFeatures(L) } },
@@ -753,6 +759,150 @@ final class Native {
     private func axTrusted(_ L: OpaquePointer?) -> Int32 {
         lua_pushboolean(L, AXIsProcessTrusted() ? 1 : 0)
         return 1
+    }
+
+    // MARK: - Focused-window frame surface (window_arrange)
+    //
+    // ONE coordinate system crosses the seam: top-left-origin global points
+    // (what AX speaks). NSScreen frames are bottom-left-origin, so they are
+    // converted here -- the Lua side never sees a flipped y.
+
+    private func axRect(_ r: NSRect) -> CGRect {
+        let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+        return CGRect(x: r.minX, y: primaryMaxY - r.maxY, width: r.width, height: r.height)
+    }
+
+    private func focusedAXWindow() -> AXUIElement? {
+        guard AXIsProcessTrusted(),
+              let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+                AXUIElementCreateApplication(app.processIdentifier),
+                kAXFocusedWindowAttribute as CFString, &ref) == .success,
+              let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
+        return (ref as! AXUIElement)
+    }
+
+    private func axWindowFrame(_ win: AXUIElement) -> CGRect {
+        var pos = CGPoint.zero, size = CGSize.zero
+        var posRef: CFTypeRef?, sizeRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef) == .success,
+           let pv = posRef, CFGetTypeID(pv) == AXValueGetTypeID() {
+            AXValueGetValue((pv as! AXValue), .cgPoint, &pos)
+        }
+        if AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef) == .success,
+           let sv = sizeRef, CFGetTypeID(sv) == AXValueGetTypeID() {
+            AXValueGetValue((sv as! AXValue), .cgSize, &size)
+        }
+        return CGRect(origin: pos, size: size)
+    }
+
+    private func pushRect(_ L: OpaquePointer?, _ r: CGRect) {
+        lua_createtable(L, 0, 4)
+        lua_pushnumber(L, r.minX);   lua_setfield(L, -2, "x")
+        lua_pushnumber(L, r.minY);   lua_setfield(L, -2, "y")
+        lua_pushnumber(L, r.width);  lua_setfield(L, -2, "w")
+        lua_pushnumber(L, r.height); lua_setfield(L, -2, "h")
+    }
+
+    // focused_window_frame() -> nil | { x,y,w,h, fullscreen, screenIndex,
+    // screen = {x,y,w,h} } -- screen is the window's screen's VISIBLE frame
+    // (menubar/dock excluded, hs screen:frame() parity).
+    private func focusedWindowFrame(_ L: OpaquePointer?) -> Int32 {
+        guard let win = focusedAXWindow() else {
+            lua_pushnil(L)
+            return 1
+        }
+        let frame = axWindowFrame(win)
+
+        var fullscreen = false
+        var fsRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &fsRef) == .success {
+            fullscreen = (fsRef as? Bool) ?? false
+        }
+
+        // The window's screen: the one containing its midpoint, else the first.
+        let screens = NSScreen.screens
+        let mid = CGPoint(x: frame.midX, y: frame.midY)
+        var screenIndex = 0
+        for (i, s) in screens.enumerated() where axRect(s.frame).contains(mid) {
+            screenIndex = i
+            break
+        }
+        let visible = axRect(screens.isEmpty ? NSRect(x: 0, y: 0, width: 1440, height: 900)
+                                             : screens[screenIndex].visibleFrame)
+
+        pushRect(L, frame)
+        lua_pushboolean(L, fullscreen ? 1 : 0); lua_setfield(L, -2, "fullscreen")
+        lua_pushinteger(L, lua_Integer(screenIndex + 1)); lua_setfield(L, -2, "screenIndex")
+        pushRect(L, visible); lua_setfield(L, -2, "screen")
+        return 1
+    }
+
+    // set_focused_window_frame(x, y, w, h) -> bool
+    private func setFocusedWindowFrame(_ L: OpaquePointer?) -> Int32 {
+        guard let x = LuaState.double(L, 1), let y = LuaState.double(L, 2),
+              let w = LuaState.double(L, 3), let h = LuaState.double(L, 4),
+              let win = focusedAXWindow() else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        var pos = CGPoint(x: x, y: y)
+        var size = CGSize(width: w, height: h)
+        var ok = false
+        if let pv = AXValueCreate(.cgPoint, &pos), let sv = AXValueCreate(.cgSize, &size) {
+            // Size first, then position, then size again: apps clamp a frame
+            // against their current screen, so a cross-screen move applied as
+            // position-then-size (or size-then-position alone) can leave the
+            // size clamped to the OLD screen. The hs.window dance.
+            AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+            ok = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv) == .success
+            AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+        }
+        lua_pushboolean(L, ok ? 1 : 0)
+        return 1
+    }
+
+    // set_focused_window_fullscreen(bool) -> bool
+    private func setFocusedWindowFullscreen(_ L: OpaquePointer?) -> Int32 {
+        guard let win = focusedAXWindow() else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let on = LuaState.bool(L, 1)
+        let ok = AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString,
+                                              (on ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef)
+        lua_pushboolean(L, ok == .success ? 1 : 0)
+        return 1
+    }
+
+    // screen_frames() -> array of visible frames (top-left-origin), the order
+    // NSScreen.screens gives (primary first).
+    private func screenFrames(_ L: OpaquePointer?) -> Int32 {
+        let screens = NSScreen.screens
+        lua_createtable(L, Int32(screens.count), 0)
+        for (i, s) in screens.enumerated() {
+            pushRect(L, axRect(s.visibleFrame))
+            lua_rawseti(L, -2, lua_Integer(i + 1))
+        }
+        return 1
+    }
+
+    // mouse_position() -> {x, y} (top-left-origin, same space as frames).
+    private func mousePosition(_ L: OpaquePointer?) -> Int32 {
+        let p = CGEvent(source: nil)?.location ?? .zero
+        lua_createtable(L, 0, 2)
+        lua_pushnumber(L, p.x); lua_setfield(L, -2, "x")
+        lua_pushnumber(L, p.y); lua_setfield(L, -2, "y")
+        return 1
+    }
+
+    private func setMousePosition(_ L: OpaquePointer?) -> Int32 {
+        guard let x = LuaState.double(L, 1), let y = LuaState.double(L, 2) else {
+            return luaError(L, "set_mouse_position: x and y required")
+        }
+        CGWarpMouseCursorPosition(CGPoint(x: x, y: y))
+        return 0
     }
 
     // Shows the system "wants to control this computer" prompt when untrusted
