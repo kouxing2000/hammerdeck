@@ -58,7 +58,9 @@ the bridge + adapter, never reach past the seam.
   seam (Swift side): the `native` table the adapter calls. The only place
   macOS-API surface should grow.
 - **Sources/HammerdeckKit/SettingsStore/SettingsView/StatusBar.swift** --
-  config UI: menubar + SwiftUI settings window; forms are GENERATED from
+  config UI: menubar (QUICK TRIGGERS: every enabled feature's actions fire on
+  demand via registry.runAction; enable/disable lives in Settings only) +
+  SwiftUI settings window; forms are GENERATED from
   manifest options (never write per-feature UI code). Reads the catalog via
   `registry.describe()` over `LuaState.eval`; writes the same
   `hammerdeck.opt.*` defaults keys `ctx.opt` reads.
@@ -103,5 +105,6 @@ the test harness uses its own catalog, not disk discovery).
 
 ## Status / roadmap
 
-`docs/HANDOVER.md` is the living status + milestone backlog -- read it first.
+`docs/HANDOVER.md` is the ONE living status + backlog doc -- read it first
+(its doc map explains which docs are living / reference / frozen records).
 `docs/ARCHITECTURE.md` is the design rationale. Don't duplicate the backlog here.

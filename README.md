@@ -26,8 +26,8 @@ myHammerSpoon:
   cycle-and-release UX.
 - **Idle Display Off** (service) -- turns the display off after a stretch of no
   activity, with a short warning first.
-- **Clean Clipboard** (action) -- rewrites the clipboard as trimmed plain text
-  (strips formatting); optionally turns newlines into commas.
+- **Paste as Plain Text** (2 actions) -- paste without formatting (strips
+  fonts/colors/links); can also type the clipboard into paste-blocking fields.
 - **Countdown** (2 actions) -- ask for minutes, run a thin progress strip along
   the screen bottom, notify when time is up; pause/resume on its own shortcut.
 - **Locate Pointer** (action) -- crosshair around the mouse for a moment,
@@ -37,7 +37,7 @@ myHammerSpoon:
 - **Usage Stats** (service) -- wake/sleep sessions and per-app focus time
   (idle excluded) to daily CSVs, with a desktop widget pinned above the
   wallpaper: today's top apps, bars, and a 7-day chart.
-- **Text Actions** (action) -- act on the selected text anywhere: open URLs,
+- **Selection Actions** (action) -- act on the selected text anywhere: open URLs,
   change case, calculate, dictionary lookup; transforms paste back in place.
 - **Jump to Site** (action) -- focus the browser tab for a configured site
   (or open it) with one shortcut.
@@ -47,6 +47,8 @@ myHammerSpoon:
   WASD/HJKL/corner keys to arrange windows until Escape; undo/redo included.
 - **Tab Jump** (2 actions) -- searchable switcher across all Chrome + Safari
   tabs, most recently used first, with favicons; release the modifier to jump.
+- **Clipboard History** (service + action) -- searchable history of copied
+  text, pick to paste; password-manager entries are never recorded.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and
@@ -56,14 +58,17 @@ banner / searchable-chooser panels (zero macOS permissions needed). Window
 listing/focus is real (AXUIElement, MRU-ordered) -- the one optional
 permission: window_jump prompts for the Accessibility grant when missing.
 
-**Config UI done (same day)**: a menubar hammer icon (quick feature toggles,
-Settings..., Quit) and a SwiftUI settings window -- the **config-and-select
+**Config UI done (same day)**: a menubar hammer icon -- QUICK TRIGGERS: fire
+any enabled feature's actions on demand, including dormant ones with no
+hotkey bound (enable/disable lives in Settings) -- and a SwiftUI settings window -- the **config-and-select
 surface**: every feature gets an on/off toggle and an options form
 auto-generated from its typed manifest options. No per-feature UI code; a new
 plugin gets its form for free. Option edits apply live (features read options
-through ctx.opt). Trigger rebinding UI is next.
+through ctx.opt; onOptionChange lets stateful features react instantly).
+Trigger rebinding (hotkey / chord / schedule / event) ships with conflict
+detection and per-action editors.
 
-See [`docs/HANDOVER.md`](docs/HANDOVER.md) for the full status + milestone backlog.
+See [`docs/HANDOVER.md`](docs/HANDOVER.md) for current status + the open backlog.
 
 ## Run & test
 
@@ -73,8 +78,8 @@ swift run         # THE APP: menubar hammer icon appears; first run enables all
 lua test/run.lua  # headless platform + feature tests against a fake adapter
 ```
 
-Click the **hammer icon** in the menubar -> toggles per feature, "Settings…"
-opens the config window.
+Click the **hammer icon** in the menubar -> fire any enabled feature's
+actions; "Settings…" opens the config window (toggles, options, triggers).
 `defaults delete Hammerdeck` resets everything to first-run.
 Smoke-boot without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 swift run`;
 print what the config UI renders: `HAMMERDECK_DUMP_CATALOG=1 swift run`.
