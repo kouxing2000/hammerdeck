@@ -78,7 +78,16 @@ return {
             else
                 local windows = ctx.listWindows()
                 if #windows == 0 then
-                    ctx.alert("No windows available -- native window listing lands in M2 Slice 2")
+                    if not ctx.axTrusted() then
+                        -- Accessibility onboarding: fire the system prompt and
+                        -- explain; the user re-triggers once granted.
+                        ctx.axPrompt()
+                        ctx.alert("Window Jump needs the Accessibility permission "
+                            .. "-- enable Hammerdeck under System Settings > "
+                            .. "Privacy & Security > Accessibility, then try again")
+                    else
+                        ctx.alert("No windows to switch between")
+                    end
                     return
                 end
                 local choices = {}

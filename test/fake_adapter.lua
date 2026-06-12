@@ -140,7 +140,9 @@ function adapter.chooser(opts)
         if opts.onHide then opts.onHide() end
     end
     function h.setQuery(q)        c.query = q end
-    function h.stop()             freeOnce(c) end
+    -- Mirror the native chooser: close() orders the panel out, so a stopped
+    -- chooser is never "visible".
+    function h.stop()             c.visible = false; freeOnce(c) end
     -- test-side driver: pick row n as the user would
     function c.userSelect(n)      h.select(n) end
     return h
@@ -240,6 +242,15 @@ end
 
 function adapter.appIcon(bundleID)
     return bundleID and ("icon:" .. bundleID) or nil
+end
+
+fake.axTrusted = true   -- the fake "machine" has Accessibility by default
+fake.axPrompts = 0      -- recorded onboarding prompts
+
+function adapter.axTrusted() return fake.axTrusted end
+function adapter.axPrompt()
+    fake.axPrompts = fake.axPrompts + 1
+    return fake.axTrusted
 end
 
 fake.featureNames = {}   -- bare names the fake "filesystem" exposes to discovery

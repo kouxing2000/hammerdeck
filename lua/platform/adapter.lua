@@ -206,14 +206,26 @@ end
 -- Windows / apps
 -- ---------------------------------------------------------------------------
 
--- All standard windows, most-recently-focused first. Currently a stub on the
--- native backend (M2 Slice 2: AXUIElement + Accessibility permission).
+-- All standard windows, most-recently-focused first: { id, title, appName,
+-- bundleID } rows. Returns {} when the Accessibility permission is missing --
+-- check axTrusted()/axPrompt() to onboard.
 function adapter.listWindows()
     return native.list_windows()
 end
 
+-- Focus a window by an id from the MOST RECENT listWindows() call.
 function adapter.focusWindow(id)
     return native.focus_window(id)
+end
+
+-- Is this process trusted for Accessibility (window listing/focus)?
+function adapter.axTrusted()
+    return native.ax_trusted() == true
+end
+
+-- Show the system Accessibility prompt if untrusted; returns trusted state.
+function adapter.axPrompt()
+    return native.ax_prompt() == true
 end
 
 -- Opaque icon token usable as `image` in chooser choices.

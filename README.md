@@ -42,8 +42,9 @@ myHammerSpoon:
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and
 `swift run` boots the real platform in the standalone binary: Carbon hotkeys,
 timers, sleep/wake/lock watchers, UserDefaults settings, and our own toast /
-banner / searchable-chooser panels (zero macOS permissions needed). Pending in
-Slice 2: AXUIElement window listing -- until then window_jump shows an alert.
+banner / searchable-chooser panels (zero macOS permissions needed). Window
+listing/focus is real (AXUIElement, MRU-ordered) -- the one optional
+permission: window_jump prompts for the Accessibility grant when missing.
 
 **Config UI done (same day)**: a menubar hammer icon (quick feature toggles,
 Settings..., Quit) and a SwiftUI settings window -- the **config-and-select

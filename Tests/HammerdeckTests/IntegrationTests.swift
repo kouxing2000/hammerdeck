@@ -315,6 +315,31 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(registryNum("liveHandleCount()"), 0, "disable must leak nothing")
     }
 
+    func testRealWindowListingViaAX() throws {
+        try XCTSkipUnless(AXIsProcessTrusted(),
+            "needs Accessibility (grant it to the terminal running `swift test`)")
+
+        XCTAssertEqual(eval("return require('platform.adapter').axTrusted()") as? Bool, true)
+
+        let raw = eval("return require('platform.adapter').listWindows()") as? [Any]
+        let rows = raw?.compactMap { $0 as? [String: Any] } ?? []
+        XCTAssertFalse(rows.isEmpty, "a real desktop session has at least one window")
+        for row in rows.prefix(3) {
+            XCTAssertNotNil(row["id"] as? Double, "window rows carry an id")
+            XCTAssertFalse((row["title"] as? String ?? "").isEmpty, "windows carry a title")
+            XCTAssertFalse((row["appName"] as? String ?? "").isEmpty, "windows carry an app name")
+        }
+
+        // Focusing the frontmost window (row 1) is a visual no-op but exercises
+        // the full AXRaise + activate path against the cached element.
+        if let firstId = (rows.first?["id"] as? Double).map(Int.init) {
+            XCTAssertEqual(eval("return require('platform.adapter').focusWindow(\(firstId))") as? Bool,
+                           true, "focusing a listed window succeeds")
+        }
+        // A stale/unknown id is refused, not crashed.
+        XCTAssertEqual(eval("return require('platform.adapter').focusWindow(999999)") as? Bool, false)
+    }
+
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)
 
     func testGlobalHotkeySynthesis() throws {

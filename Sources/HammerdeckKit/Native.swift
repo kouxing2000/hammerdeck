@@ -102,9 +102,11 @@ final class Native {
             "set_wallpaper": { L in MainActor.assumeIsolated { Native.shared.setWallpaper(L) } },
             "cache_dir":     { L in MainActor.assumeIsolated { Native.shared.cacheDir(L) } },
             "ask_choice_dismiss": { L in MainActor.assumeIsolated { Native.shared.askChoiceDismiss(L) } },
-            // windows / apps (list/focus are M2 Slice 2 -- AXUIElement)
+            // windows / apps (AXUIElement -- needs the Accessibility permission)
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
             "focus_window": { L in MainActor.assumeIsolated { Native.shared.focusWindow(L) } },
+            "ax_trusted":   { L in MainActor.assumeIsolated { Native.shared.axTrusted(L) } },
+            "ax_prompt":    { L in MainActor.assumeIsolated { Native.shared.axPrompt(L) } },
             "app_icon":     { L in MainActor.assumeIsolated { Native.shared.appIcon(L) } },
             // platform: discover feature modules on disk
             "discover_features": { L in MainActor.assumeIsolated { Native.shared.discoverFeatures(L) } },
@@ -641,12 +643,118 @@ final class Native {
         return 0
     }
 
-    // MARK: - Windows / apps
+    // MARK: - Windows / apps (AXUIElement)
 
-    // M2 Slice 2: real window enumeration needs AXUIElement + the Accessibility
-    // permission. Stubbed so window_jump degrades gracefully until then.
+    // list_windows() -> Lua window handles, MRU-first. The Lua side never sees
+    // an AXUIElement: each call rebuilds `axWindowCache` (id -> element) and
+    // focus_window(id) resolves from it -- window_jump always lists right
+    // before focusing, so a one-listing cache is exactly the right lifetime.
+    private var axWindowCache: [Int: AXUIElement] = [:]
+    private var nextWindowId = 1
+
+    /// Real window enumeration: AXUIElement per app for titles + elements
+    /// (Accessibility permission only -- no Screen Recording, which CGWindowList
+    /// window NAMES would require), z-ordered via CGWindowList bounds matching
+    /// (front-to-back ~= focus recency, the same ordering hs.window.orderedWindows
+    /// gives the donor). Returns {} when the permission is missing -- features
+    /// check ax_trusted/ax_prompt to onboard.
     private func listWindows(_ L: OpaquePointer?) -> Int32 {
-        lua_createtable(L, 0, 0)
+        axWindowCache.removeAll()
+        guard AXIsProcessTrusted() else {
+            lua_createtable(L, 0, 0)
+            return 1
+        }
+
+        // Z-ordered (front to back) on-screen normal-layer windows.
+        let cgList = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                 kCGNullWindowID) as? [[String: Any]]) ?? []
+        struct CGRow { let pid: pid_t; let bounds: CGRect; let z: Int }
+        var cgRows: [CGRow] = []
+        for w in cgList {
+            guard (w[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = w[kCGWindowOwnerPID as String] as? Int,
+                  let bDict = w[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: bDict as CFDictionary)
+            else { continue }
+            cgRows.append(CGRow(pid: pid_t(pid), bounds: bounds, z: cgRows.count))
+        }
+
+        struct Row { let z: Int; let id: Int; let app: String; let title: String; let bundleID: String }
+        var rows: [Row] = []
+        var seenPids = Set<pid_t>()
+        for pid in cgRows.map(\.pid) where !seenPids.contains(pid) {
+            seenPids.insert(pid)
+            guard let runApp = NSRunningApplication(processIdentifier: pid) else { continue }
+            let appName = runApp.localizedName ?? "?"
+            let bundleID = runApp.bundleIdentifier ?? ""
+
+            var winsRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid),
+                                                kAXWindowsAttribute as CFString,
+                                                &winsRef) == .success,
+                  let axWins = winsRef as? [AXUIElement] else { continue }
+            for win in axWins {
+                var subroleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subroleRef)
+                guard (subroleRef as? String) == kAXStandardWindowSubrole as String else { continue }
+
+                var titleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+                let title = (titleRef as? String) ?? ""
+
+                // Match this AX window to its CG z-position by frame (both are
+                // top-left-origin screen coordinates; small tolerance for the
+                // odd subpixel disagreement).
+                var pos = CGPoint.zero, size = CGSize.zero
+                var posRef: CFTypeRef?, sizeRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef) == .success,
+                   let pv = posRef, CFGetTypeID(pv) == AXValueGetTypeID() {
+                    AXValueGetValue((pv as! AXValue), .cgPoint, &pos)
+                }
+                if AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef) == .success,
+                   let sv = sizeRef, CFGetTypeID(sv) == AXValueGetTypeID() {
+                    AXValueGetValue((sv as! AXValue), .cgSize, &size)
+                }
+                let z = cgRows.first { r in
+                    r.pid == pid
+                        && abs(r.bounds.minX - pos.x) < 2 && abs(r.bounds.minY - pos.y) < 2
+                        && abs(r.bounds.width - size.width) < 2
+                        && abs(r.bounds.height - size.height) < 2
+                }?.z ?? Int.max   // unmatched (e.g. minimized): list last
+
+                let id = nextWindowId
+                nextWindowId += 1
+                axWindowCache[id] = win
+                rows.append(Row(z: z, id: id, app: appName,
+                                title: title.isEmpty ? appName : title, bundleID: bundleID))
+            }
+        }
+        rows.sort { $0.z < $1.z }
+
+        lua_createtable(L, Int32(rows.count), 0)
+        for (i, r) in rows.enumerated() {
+            lua_createtable(L, 0, 4)
+            lua_pushinteger(L, lua_Integer(r.id)); lua_setfield(L, -2, "id")
+            lua_pushstring(L, r.title);            lua_setfield(L, -2, "title")
+            lua_pushstring(L, r.app);              lua_setfield(L, -2, "appName")
+            lua_pushstring(L, r.bundleID);         lua_setfield(L, -2, "bundleID")
+            lua_rawseti(L, -2, lua_Integer(i + 1))
+        }
+        return 1
+    }
+
+    private func axTrusted(_ L: OpaquePointer?) -> Int32 {
+        lua_pushboolean(L, AXIsProcessTrusted() ? 1 : 0)
+        return 1
+    }
+
+    // Shows the system "wants to control this computer" prompt when untrusted
+    // (the Accessibility onboarding hook for features that need windows).
+    private func axPrompt(_ L: OpaquePointer?) -> Int32 {
+        // The literal key (== kAXTrustedCheckOptionPrompt, stable API contract);
+        // the constant itself is a global var Swift 6 flags as concurrency-unsafe.
+        let opts = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        lua_pushboolean(L, AXIsProcessTrustedWithOptions(opts) ? 1 : 0)
         return 1
     }
 
@@ -680,8 +788,20 @@ final class Native {
         return 1
     }
 
+    // focus_window(id): raise the window and activate its app. The id must
+    // come from the most recent list_windows() call.
     private func focusWindow(_ L: OpaquePointer?) -> Int32 {
-        lua_pushboolean(L, 0)
+        guard let id = LuaState.int(L, 1), let win = axWindowCache[id] else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+        var pid: pid_t = 0
+        if AXUIElementGetPid(win, &pid) == .success {
+            NSRunningApplication(processIdentifier: pid)?.activate()
+        }
+        lua_pushboolean(L, 1)
         return 1
     }
 

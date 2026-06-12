@@ -798,4 +798,26 @@ ok(fake.files[appsCsv]:match("\nCode,,120\n") and fake.files[appsCsv]:match("\nS
 registry.setEnabled("usage_stats", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage_stats test")
 
+-- T21: Accessibility onboarding (window_jump with no windows) ------------------
+registry.setEnabled("window_jump", true)
+fake.windows = {}
+
+-- untrusted: fires the system prompt + explains
+fake.axTrusted = false
+local alertsBefore, promptsBefore = #fake.alerts, fake.axPrompts
+fake.pressHotkey("tab")
+ok(fake.axPrompts == promptsBefore + 1, "untrusted empty list fires the AX prompt")
+ok(#fake.alerts == alertsBefore + 1 and fake.alerts[#fake.alerts]:match("Accessibility"),
+    "the alert explains the Accessibility grant")
+ok(fake.visibleChooser() == nil, "no chooser opens without windows")
+
+-- trusted but genuinely no windows: plain message, no prompt
+fake.axTrusted = true
+fake.pressHotkey("tab")
+ok(fake.axPrompts == promptsBefore + 1, "trusted empty list does not re-prompt")
+ok(fake.alerts[#fake.alerts]:match("No windows"), "trusted empty list says so plainly")
+
+registry.setEnabled("window_jump", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after AX onboarding test")
+
 print("OK -- " .. passed .. " assertions passed")

@@ -102,6 +102,8 @@ function M.make(m)
     function ctx.appIcon(bundleID)  return adapter.appIcon(bundleID) end
     function ctx.frontmostApp()     return adapter.frontmostApp() end
     function ctx.onAppActivated(fn) return track(adapter.onAppActivated(fn)) end
+    function ctx.axTrusted()        return adapter.axTrusted() end
+    function ctx.axPrompt()         return adapter.axPrompt() end
 
     -- data files (durable feature-owned storage) ---------------------------------
     function ctx.dataDir()                return adapter.dataDir() end
