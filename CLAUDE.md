@@ -42,6 +42,9 @@ the bridge + adapter, never reach past the seam.
   hotkey + an ordered follow-key sequence, e.g. cmd+shift+a then b -- a modal
   layer over Carbon in ChordCenter.swift, permission-free), schedule (everyMin /
   at), event (sleep|wake|screenLock|screenUnlock).
+- **lua/platform/modal.lua** -- modal hotkey groups (enter a keyboard mode:
+  bare-key hotkeys live until Escape/exit; banner legend). Pure Lua over
+  adapter primitives; reach it via ctx.modal().
 - **lua/platform/registry.lua** -- registers features, persists enabled-state +
   option values per id, runs lifecycle (bind trigger / start), scoped teardown.
 - **lua/platform/ctx.lua** -- builds the scoped, curated ctx (the plugin API);

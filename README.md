@@ -43,6 +43,8 @@ myHammerSpoon:
   (or open it) with one shortcut.
 - **Window Arrange** (7 actions) -- snap the focused window to screen halves,
   toggle maximize/75%, or throw it to the next screen (pointer follows).
+- **Window Mode** (2 actions) -- a modal keyboard layer: enter the mode, tap
+  WASD/HJKL/corner keys to arrange windows until Escape; undo/redo included.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and

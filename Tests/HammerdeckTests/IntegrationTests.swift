@@ -114,10 +114,10 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 12,
-                       "disk discovery should find all 12 features")
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 13,
+                       "disk discovery should find all 13 features")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 12)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, 13)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_jump" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -232,7 +232,7 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('idle_dimmer')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 12)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 13)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("idle_dimmer", false)

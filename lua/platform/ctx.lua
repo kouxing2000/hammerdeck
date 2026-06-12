@@ -19,6 +19,7 @@
 
 local adapter  = require("platform.adapter")
 local manifest = require("platform.manifest")
+local modal    = require("platform.modal")
 
 local M = {}
 
@@ -95,6 +96,8 @@ function M.make(m)
     function ctx.banner(text)    return track(adapter.banner(text)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget()   return track(adapter.usageWidget()) end
+    -- enter a modal hotkey group (see platform/modal.lua); stop() exits
+    function ctx.modal(spec)     return track(modal.enter(spec)) end
 
     -- windows / apps -----------------------------------------------------------
     function ctx.listWindows()      return adapter.listWindows() end

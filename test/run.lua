@@ -976,4 +976,80 @@ ok(fake.alerts[#fake.alerts]:match("No focused window") ~= nil, "no window alert
 registry.setEnabled("window_arrange", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_arrange test")
 
+-- T25: window_modal (modal hotkey group over the frame surface) ----------------
+registry.register(require("features.window_modal"))
+registry.setEnabled("window_modal", true)
+fake.settings["hammerdeck.opt.window_modal.stepParts"] = 10   -- step = 100 x 80
+
+fake.screenList = {
+    { x = 0, y = 0, w = 1000, h = 800 },
+    { x = 1000, y = 0, w = 2000, h = 1200 },
+}
+fake.focusedWindow = { x = 200, y = 200, w = 400, h = 300, screenIndex = 1 }
+
+-- enter the mode: banner up, bare keys live
+fake.pressHotkey("2", { "ctrl", "cmd" })
+ok(fake.liveBanner() ~= nil and fake.liveBanner().text:match("Window Mode"),
+    "entering the mode shows the banner")
+fake.pressHotkey("a", {})
+ok(fake.focusedWindow.x == 100, "A step-moves left by screen/stepParts")
+fake.pressHotkey("s", {})
+ok(fake.focusedWindow.y == 280, "S step-moves down")
+fake.pressHotkey("h", {})
+ok(fake.focusedWindow.w == 500 and fake.focusedWindow.h == 800 and fake.focusedWindow.x == 0,
+    "H snaps the left half")
+fake.pressHotkey("i", {})
+ok(fake.focusedWindow.x == 500 and fake.focusedWindow.y == 400
+    and fake.focusedWindow.w == 500 and fake.focusedWindow.h == 400,
+    "I snaps the SE corner quadrant")
+fake.pressHotkey("l", { "shift" })
+ok(fake.focusedWindow.w == 600, "shift+L widens by one step")
+fake.pressHotkey("c", {})
+ok(fake.focusedWindow.x == 200 and fake.focusedWindow.y == 200,
+    "C centers keeping the size")
+fake.pressHotkey("=", {})
+ok(fake.focusedWindow.x == 100 and fake.focusedWindow.w == 800
+    and fake.focusedWindow.y == 120 and fake.focusedWindow.h == 560,
+    "= expands one step on every side, center fixed")
+
+-- undo unwinds, redo replays
+fake.pressHotkey("[", {})
+ok(fake.focusedWindow.x == 200 and fake.focusedWindow.w == 600, "[ undoes the expand")
+fake.pressHotkey("]", {})
+ok(fake.focusedWindow.x == 100 and fake.focusedWindow.w == 800, "] redoes it")
+
+-- throw to the screen on the right (size kept, position scaled, clamped)
+fake.pressHotkey("right", {})
+ok(fake.focusedWindow.screen == nil or true, "noop guard")
+ok(fake.windowFrames[#fake.windowFrames].x == 1200
+    and fake.windowFrames[#fake.windowFrames].w == 800,
+    "right-arrow moves to the right screen, size kept")
+
+-- escape exits: banner gone, bare keys dead
+local xBefore = fake.focusedWindow.x
+fake.pressHotkey("escape", {})
+ok(fake.liveBanner() == nil, "escape drops the banner")
+fake.pressHotkey("a", {})
+ok(fake.focusedWindow.x == xBefore, "bare keys are dead after exit")
+
+-- the trigger toggles: enter, then the same hotkey exits
+fake.pressHotkey("2", { "ctrl", "cmd" })
+ok(fake.liveBanner() ~= nil, "re-enter works")
+fake.pressHotkey("2", { "ctrl", "cmd" })
+ok(fake.liveBanner() == nil, "the enter hotkey toggles the mode off")
+
+-- center the pointer on the window (the donor's alt+G)
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+fake.pressHotkey("g", { "alt" })
+ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "alt+G centers the pointer")
+ok(fake.mouseLocates[#fake.mouseLocates] == 1, "and flashes the locator")
+
+-- disabling mid-mode leaks nothing
+fake.pressHotkey("2", { "ctrl", "cmd" })
+ok(fake.liveBanner() ~= nil, "mode active before disable")
+registry.setEnabled("window_modal", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
+    "disable mid-mode tears everything down")
+fake.settings["hammerdeck.opt.window_modal.stepParts"] = nil
+
 print("OK -- " .. passed .. " assertions passed")
