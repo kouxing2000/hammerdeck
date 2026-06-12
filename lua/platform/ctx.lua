@@ -126,6 +126,10 @@ function M.make(m)
     -- input / system state / system actions ------------------------------------
     function ctx.now()               return adapter.now() end
     function ctx.isModifierHeld(mod) return adapter.isModifierHeld(mod) end
+    function ctx.keyStroke(mods, key) adapter.keyStroke(mods, key) end
+    function ctx.typeText(text)       adapter.typeText(text) end
+    function ctx.openURL(url)         return adapter.openURL(url) end
+    function ctx.activateApp(name)    return adapter.activateApp(name) end
     function ctx.idleSeconds()       return adapter.idleSeconds() end
     function ctx.systemSleep()       adapter.systemSleep() end
     function ctx.lockScreen()        adapter.lockScreen() end

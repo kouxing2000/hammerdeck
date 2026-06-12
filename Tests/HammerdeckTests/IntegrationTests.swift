@@ -114,10 +114,10 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 9,
-                       "disk discovery should find all 9 features")
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 10,
+                       "disk discovery should find all 10 features")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 9)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, 10)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_jump" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -232,7 +232,7 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('idle_dimmer')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 9)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 10)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("idle_dimmer", false)
@@ -338,6 +338,53 @@ final class IntegrationTests: XCTestCase {
         }
         // A stale/unknown id is refused, not crashed.
         XCTAssertEqual(eval("return require('platform.adapter').focusWindow(999999)") as? Bool, false)
+    }
+
+    /// Closed-loop typing synthesis: type_text + key_stroke are posted system-
+    /// wide, and our own AskTextPanel (keyable) is frontmost -- so the text we
+    /// synthesize lands in OUR field and Enter submits it back through the
+    /// bridge. Proves the #3 text_actions seam end to end without touching
+    /// any other app.
+    func testTypeTextSynthesisIntoOwnPanel() throws {
+        try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
+            "this environment cannot deliver synthesized events")
+
+        // activate_app: a bogus name is refused, not crashed (safe everywhere).
+        XCTAssertEqual(eval("return require('platform.adapter').activateApp('NoSuchApp-42')") as? Bool,
+                       false)
+
+        eval("""
+        _G.itTyped = 'pending'
+        _G.itPrompt = require('platform.adapter').askText {
+            title = 'integration', placeholder = '', default = '',
+            onSubmit = function(text) _G.itTyped = text end,
+        }
+        return true
+        """)
+        NSApp.activate(ignoringOtherApps: true)
+        pumpAppEvents(0.4)   // let the panel become key
+
+        // SAFETY GATE: typed events go to whatever holds keyboard focus
+        // SYSTEM-wide. NSApp.keyWindow alone is an in-process notion -- the
+        // window server can still be routing keys to another app (it does for
+        // a bundle-less test runner, which macOS won't truly activate). Only
+        // type when the system agrees we are the active app AND our panel is
+        // key; otherwise the text would land in the user's frontmost window.
+        guard NSRunningApplication.current.isActive, NSApp.keyWindow is KeyablePanel else {
+            eval("_G.itPrompt.stop(); _G.itPrompt = nil; _G.itTyped = nil; return true")
+            throw XCTSkip("test runner cannot take system keyboard focus here; "
+                + "refusing to type into another app (covered by "
+                + "testGlobalHotkeySynthesis's shared posting path)")
+        }
+
+        eval("require('platform.adapter').typeText('hammerdeck-42'); return true")
+        pumpAppEvents(0.3)
+        eval("require('platform.adapter').keyStroke({}, 'return'); return true")
+        pumpAppEvents(0.5)
+
+        XCTAssertEqual(eval("return _G.itTyped") as? String, "hammerdeck-42",
+                       "synthesized typing should land in our own panel and submit")
+        eval("_G.itPrompt.stop(); _G.itPrompt = nil; _G.itTyped = nil; return true")
     }
 
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)

@@ -820,4 +820,62 @@ ok(fake.alerts[#fake.alerts]:match("No windows"), "trusted empty list says so pl
 registry.setEnabled("window_jump", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after AX onboarding test")
 
+-- T22: text_actions (selection capture -> open/transform/paste back) ----------
+registry.register(require("features.text_actions"))
+registry.setEnabled("text_actions", true)
+
+local function invokeOnSelection(text)
+    fake.pasteboard = nil
+    fake.pressHotkey("o")
+    local last = fake.keyEvents[#fake.keyEvents]
+    ok(last.key == "c" and last.mods[1] == "cmd", "invocation synthesizes cmd+c")
+    fake.pasteboard = text            -- the "copied selection" arrives
+    fake.fireTimers("after", 0.15)    -- the settle timer reads it
+end
+
+-- a URL selection opens directly, no picker
+invokeOnSelection("  https://example.test/page  ")
+ok(fake.openedUrls[#fake.openedUrls] == "https://example.test/page",
+    "URL selection opens (trimmed), no picker")
+ok(fake.openDialog() == nil, "no picker for URLs")
+
+-- lowercase pastes back over the selection
+invokeOnSelection("Hello WORLD")
+local dlg = fake.openDialog()
+ok(dlg ~= nil and #dlg.actions == 4, "picker offers the four ported actions")
+dlg.choose("lowercase")
+ok(fake.pasteboard == "hello world", "lowercase result lands on the clipboard")
+ok(fake.keyEvents[#fake.keyEvents].key == "v", "and is pasted back (cmd+v)")
+
+-- calculate evaluates the selection in a math-only sandbox
+invokeOnSelection("6*7")
+fake.openDialog().choose("Calculate")
+ok(fake.pasteboard == "6*7=42", "calculate pastes expr=result")
+invokeOnSelection("os.exit()")
+fake.openDialog().choose("Calculate")
+ok(fake.pasteboard == "os.exit()", "sandbox: non-math globals are nil (eval fails, alert)")
+ok(fake.alerts[#fake.alerts]:match("Calculation failed") ~= nil, "failed eval alerts")
+
+-- dictionary: not running -> alert; running -> activate, type, return
+invokeOnSelection("ubiquitous")
+fake.openDialog().choose("Dictionary")
+ok(fake.alerts[#fake.alerts]:match("not running") ~= nil, "dict app absent alerts")
+fake.runningApps["网易有道词典"] = true
+invokeOnSelection("ubiquitous")
+fake.openDialog().choose("Dictionary")
+fake.fireTimers("after", 0.75)
+ok(fake.activatedApps[#fake.activatedApps] == "网易有道词典", "dict app activated")
+ok(fake.typedTexts[#fake.typedTexts] == "ubiquitous"
+    and fake.keyEvents[#fake.keyEvents].key == "return",
+    "phrase typed into the dict + return")
+
+-- empty selection: trusted -> plain alert (no AX prompt)
+fake.pressHotkey("o")
+fake.pasteboard = nil
+fake.fireTimers("after", 0.15)
+ok(fake.alerts[#fake.alerts]:match("Nothing selected") ~= nil, "empty selection says so")
+
+registry.setEnabled("text_actions", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after text_actions test")
+
 print("OK -- " .. passed .. " assertions passed")

@@ -316,6 +316,33 @@ function adapter.isModifierHeld(mod)
     return fake.modifiers[mod] == true
 end
 
+fake.keyEvents  = {}   -- recorded keyStroke calls: {mods, key}
+fake.typedTexts = {}   -- recorded typeText strings
+fake.openedUrls = {}   -- recorded openURL calls
+fake.runningApps   = {}   -- set: name -> true (preset by tests)
+fake.activatedApps = {}   -- recorded successful activateApp names
+
+function adapter.keyStroke(mods, key)
+    fake.keyEvents[#fake.keyEvents + 1] = { mods = mods or {}, key = key }
+end
+
+function adapter.typeText(text)
+    fake.typedTexts[#fake.typedTexts + 1] = text
+end
+
+function adapter.openURL(url)
+    fake.openedUrls[#fake.openedUrls + 1] = url
+    return true
+end
+
+function adapter.activateApp(name)
+    if fake.runningApps[name] then
+        fake.activatedApps[#fake.activatedApps + 1] = name
+        return true
+    end
+    return false
+end
+
 function adapter.idleSeconds()
     return fake.idle
 end

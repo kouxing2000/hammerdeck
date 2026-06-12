@@ -336,6 +336,27 @@ function adapter.isModifierHeld(mod)
     return native.is_modifier_held(mod)
 end
 
+-- Input synthesis (delivered to the frontmost app; needs Accessibility).
+-- keyStroke: one modified press, e.g. ({"cmd"}, "c"). typeText: type a
+-- unicode string as keystrokes.
+function adapter.keyStroke(mods, key)
+    native.key_stroke(mods or {}, key)
+end
+
+function adapter.typeText(text)
+    native.type_text(text)
+end
+
+-- Open a URL in the default handler (browser etc.).
+function adapter.openURL(url)
+    return native.open_url(url) == true
+end
+
+-- Bring a RUNNING app (by localized name) frontmost; false if not running.
+function adapter.activateApp(name)
+    return native.activate_app(name) == true
+end
+
 -- Draw a crosshair around the pointer for `seconds` (fire-and-forget overlay;
 -- clicks pass through). Re-invoking replaces the live one.
 function adapter.locateMouse(seconds)

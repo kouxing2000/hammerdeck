@@ -116,6 +116,12 @@ final class Native {
             // data files (feature-owned storage under Application Support)
             "data_dir":         { L in MainActor.assumeIsolated { Native.shared.dataDir(L) } },
             "mkdir":            { L in MainActor.assumeIsolated { Native.shared.mkdir(L) } },
+            // input synthesis (CGEvent posting -- needs Accessibility)
+            "key_stroke":   { L in MainActor.assumeIsolated { Native.shared.keyStroke(L) } },
+            "type_text":    { L in MainActor.assumeIsolated { Native.shared.typeText(L) } },
+            // apps / urls
+            "open_url":     { L in MainActor.assumeIsolated { Native.shared.openUrl(L) } },
+            "activate_app": { L in MainActor.assumeIsolated { Native.shared.activateApp(L) } },
             // input / system
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
@@ -864,6 +870,91 @@ final class Native {
             lua_pushstring(L, "appicon:" + bundleID)
         } else {
             lua_pushnil(L)
+        }
+        return 1
+    }
+
+    // MARK: - Input synthesis (CGEvent posting -- the system delivers these to
+    // the frontmost app; macOS requires the Accessibility permission)
+
+    private static func carbonFlags(_ mods: [String]) -> CGEventFlags {
+        var flags: CGEventFlags = []
+        for m in mods {
+            switch m.lowercased() {
+            case "cmd", "command":  flags.insert(.maskCommand)
+            case "alt", "option":   flags.insert(.maskAlternate)
+            case "ctrl", "control": flags.insert(.maskControl)
+            case "shift":           flags.insert(.maskShift)
+            default: break
+            }
+        }
+        return flags
+    }
+
+    // key_stroke(mods, key): one modified key press (e.g. cmd+c) to the
+    // frontmost app. Key names are HotkeyCenter's (US-positional).
+    private func keyStroke(_ L: OpaquePointer?) -> Int32 {
+        let mods = LuaState.stringArray(L, 1)
+        guard let key = LuaState.string(L, 2),
+              let code = HotkeyCenter.keyCodes[key.lowercased()] else {
+            return luaError(L, "key_stroke: unknown key '\(LuaState.string(L, 2) ?? "?")'")
+        }
+        let flags = Native.carbonFlags(mods)
+        let src = CGEventSource(stateID: .combinedSessionState)
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(code), keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+        }
+        return 0
+    }
+
+    // type_text(text): type a unicode string into the frontmost app (no
+    // layout/keycode mapping needed -- the donor's hs.eventtap.keyStrokes).
+    private func typeText(_ L: OpaquePointer?) -> Int32 {
+        guard let text = LuaState.string(L, 1) else {
+            return luaError(L, "type_text: text required")
+        }
+        let src = CGEventSource(stateID: .combinedSessionState)
+        // Chunked: keyboardSetUnicodeString reliably carries ~20 UTF-16 units.
+        let units = Array(text.utf16)
+        var i = 0
+        while i < units.count {
+            let chunk = Array(units[i..<min(i + 20, units.count)])
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)
+                e?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
+                e?.post(tap: .cghidEventTap)
+            }
+            i += 20
+        }
+        return 0
+    }
+
+    // MARK: - Apps / URLs
+
+    private func openUrl(_ L: OpaquePointer?) -> Int32 {
+        guard let s = LuaState.string(L, 1), let url = URL(string: s) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        lua_pushboolean(L, NSWorkspace.shared.open(url) ? 1 : 0)
+        return 1
+    }
+
+    // activate_app(name): bring a RUNNING app (by localized name) frontmost.
+    // Returns false when it is not running (donor semantics -- no launching).
+    private func activateApp(_ L: OpaquePointer?) -> Int32 {
+        guard let name = LuaState.string(L, 1) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        if let app = NSWorkspace.shared.runningApplications.first(
+            where: { $0.localizedName == name }) {
+            app.activate()
+            lua_pushboolean(L, 1)
+        } else {
+            lua_pushboolean(L, 0)
         }
         return 1
     }

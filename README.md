@@ -37,6 +37,8 @@ myHammerSpoon:
 - **Usage Stats** (service) -- wake/sleep sessions and per-app focus time
   (idle excluded) to daily CSVs, with a desktop widget pinned above the
   wallpaper: today's top apps, bars, and a 7-day chart.
+- **Text Actions** (action) -- act on the selected text anywhere: open URLs,
+  change case, calculate, dictionary lookup; transforms paste back in place.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and
