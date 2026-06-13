@@ -413,7 +413,8 @@ function registry.describe()
         for _, o in ipairs(m.options or {}) do
             opts[#opts + 1] = {
                 key = o.key, type = o.type, label = o.label or o.key,
-                default = o.default, min = o.min, max = o.max, values = o.values,
+                default = o.default, min = o.min, max = o.max,
+                values = o.values, labels = o.labels, multiline = o.multiline,
             }
         end
         local row = {

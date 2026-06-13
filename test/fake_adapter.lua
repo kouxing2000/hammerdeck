@@ -253,7 +253,7 @@ function adapter.axPrompt()
     return fake.axTrusted
 end
 
--- Focused-window frame surface (window_arrange) -----------------------------------
+-- Focused-window frame surface (window_snap) -----------------------------------
 
 fake.screenList     = { { x = 0, y = 0, w = 1440, h = 900 } }  -- visible frames
 fake.focusedWindow  = nil   -- {x,y,w,h, fullscreen?, screenIndex?} preset by tests
@@ -440,7 +440,7 @@ function adapter.isAppRunning(name)
     return fake.runningApps[name] == true
 end
 
--- Browser tab enumeration / jumping (tabs_jumper) -----------------------------
+-- Browser tab enumeration / jumping (tab_switcher) -----------------------------
 
 fake.browserTabsByApp = {}   -- app -> list of {title,url,winId,tabIndex,visible}
 fake.tabJumps  = {}          -- recorded {app, winId, tabIndex}

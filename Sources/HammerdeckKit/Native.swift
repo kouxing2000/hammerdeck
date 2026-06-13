@@ -746,7 +746,7 @@ final class Native {
 
     // list_windows() -> Lua window handles, MRU-first. The Lua side never sees
     // an AXUIElement: each call rebuilds `axWindowCache` (id -> element) and
-    // focus_window(id) resolves from it -- window_jump always lists right
+    // focus_window(id) resolves from it -- window_switcher always lists right
     // before focusing, so a one-listing cache is exactly the right lifetime.
     private var axWindowCache: [Int: AXUIElement] = [:]
     private var nextWindowId = 1
@@ -863,7 +863,7 @@ final class Native {
         return 1
     }
 
-    // MARK: - Focused-window frame surface (window_arrange)
+    // MARK: - Focused-window frame surface (window_snap)
     //
     // ONE coordinate system crosses the seam: top-left-origin global points
     // (what AX speaks). NSScreen frames are bottom-left-origin, so they are
@@ -1389,7 +1389,7 @@ final class Native {
         return 1
     }
 
-    // MARK: - Browser tabs (curated JXA templates -- tabs_jumper)
+    // MARK: - Browser tabs (curated JXA templates -- tab_switcher)
     //
     // Only these two browsers are scriptable here; the app-name argument is
     // validated against this whitelist before it goes anywhere near a script.

@@ -33,8 +33,8 @@ else
     -- Fallback only if this file's path couldn't be resolved (shouldn't happen
     -- in a normal boot): a hand-maintained list keeps the app non-empty.
     registry.loadCatalog({
-        "features.sleep_schedule", "features.rest_timer", "features.window_jump",
-        "features.idle_dimmer", "features.clipboard_clean",
+        "features.sleep_schedule", "features.break_reminder", "features.window_switcher",
+        "features.display_off", "features.clipboard_clean",
     })
 end
 

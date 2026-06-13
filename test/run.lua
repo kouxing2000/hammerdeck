@@ -35,8 +35,8 @@ end
 -- hot-reload test (T11), exactly as the real bootstrap does.
 registry.loadCatalog({
     "features.sleep_schedule",
-    "features.rest_timer",
-    "features.window_jump",
+    "features.break_reminder",
+    "features.window_switcher",
 })
 ok(#registry.all() == 3, "3 features registered")
 
@@ -54,16 +54,16 @@ rejects({ api = 1, id = "x", name = "X", start = function() end,
 rejects({ api = 1, id = "x", name = "X", action = function() end,
     options = { { key = "k", type = "nope" } } }, "unknown option type")
 
--- T3: window_jump (action feature: open, select; cycle on repeat) -------------
+-- T3: window_switcher (action feature: open, select; cycle on repeat) -------------
 fake.windows = {
     { id = 11, title = "Current Window",  appName = "AppA", bundleID = "com.a" },
     { id = 22, title = "Previous Window", appName = "AppB", bundleID = "com.b" },
     { id = 33, title = "Older Window",    appName = "AppC", bundleID = "com.c" },
 }
-registry.setEnabled("window_jump", true)
+registry.setEnabled("window_switcher", true)
 fake.pressHotkey("tab")
 local ch = fake.visibleChooser()
-ok(ch ~= nil, "window_jump opened a chooser")
+ok(ch ~= nil, "window_switcher opened a chooser")
 ok(#ch.choices == 3, "chooser lists all windows")
 ok(ch.selectedRow == 2, "chooser preselects the previous window")
 ok(ch.choices[1].image == "icon:com.a", "choices carry app icons")
@@ -104,8 +104,8 @@ ok(ch.choices[1].subText == "AppA (Studio Display)" and ch.choices[2].subText ==
 ch.userSelect(1)
 fake.modifiers.alt = false
 
-registry.setEnabled("window_jump", false)
-ok(registry.liveHandleCount() == 0, "window_jump disable left no live handles")
+registry.setEnabled("window_switcher", false)
+ok(registry.liveHandleCount() == 0, "window_switcher disable left no live handles")
 
 -- T4: sleep_schedule (service feature, graduated phases) -----------------------
 fake.settings["hammerdeck.opt.sleep_schedule.weekendShiftMin"] = 0
@@ -155,10 +155,10 @@ ok(fake.liveBanner() == nil, "phase 3 cleared the banner")
 registry.setEnabled("sleep_schedule", false)
 ok(registry.liveHandleCount() == 0, "sleep_schedule disable left no live handles")
 
--- T5: rest_timer (service feature: cycle, busy-retry, dialog, lock/unlock) -----
+-- T5: break_reminder (service feature: cycle, busy-retry, dialog, lock/unlock) -----
 local notificationsBefore = #fake.notifications
-registry.setEnabled("rest_timer", true)
-ok(#fake.notifications == notificationsBefore + 1, "rest_timer announces the cycle")
+registry.setEnabled("break_reminder", true)
+ok(#fake.notifications == notificationsBefore + 1, "break_reminder announces the cycle")
 ok(fake.fireTimers("every", 5) == 1, "idle-check timer is live")
 
 fake.clockOffset = fake.clockOffset + 25 * 60  -- the work interval passes
@@ -186,17 +186,17 @@ fake.systemEvent("screenUnlock")               -- unlock starts a fresh cycle
 ok(#fake.notifications == nBefore + 1, "unlock starts a fresh announced cycle")
 
 fake.idle = 0
-local stateBefore = tonumber(fake.settings["hammerdeck.state.rest_timer.workSeconds"] or 0)
+local stateBefore = tonumber(fake.settings["hammerdeck.state.break_reminder.workSeconds"] or 0)
 fake.fireTimers("every", 5)
-local stateAfter = tonumber(fake.settings["hammerdeck.state.rest_timer.workSeconds"] or 0)
+local stateAfter = tonumber(fake.settings["hammerdeck.state.break_reminder.workSeconds"] or 0)
 ok(stateAfter == stateBefore + 5, "active tick accrues persisted work stats")
 
 fake.idle = 6 * 60                             -- long idle pauses
 fake.fireTimers("every", 5)
 ok(fake.fireTimers("after") == 0, "long idle cancelled the rest timer")
 
-registry.setEnabled("rest_timer", false)
-ok(registry.liveHandleCount() == 0, "rest_timer disable left no live handles")
+registry.setEnabled("break_reminder", false)
+ok(registry.liveHandleCount() == 0, "break_reminder disable left no live handles")
 
 -- T6: nothing leaks globally ----------------------------------------------------
 ok(fake.liveHandles == 0, "fake adapter reports zero live native resources")
@@ -204,18 +204,19 @@ ok(fake.liveHandles == 0, "fake adapter reports zero live native resources")
 -- T7: catalog description for the config UI --------------------------------------
 local desc = registry.describe()
 ok(#desc == 3, "describe lists all 3 features")
-ok(desc[1].id == "rest_timer" and desc[1].kind == "service", "describe is sorted by id")
+ok(desc[1].id == "break_reminder" and desc[1].kind == "service", "describe is sorted by id")
 local jumpDesc = desc[3]
-ok(jumpDesc.id == "window_jump" and jumpDesc.kind == "action", "window_jump is an action")
+ok(jumpDesc.id == "window_switcher" and jumpDesc.kind == "action", "window_switcher is an action")
 ok(jumpDesc.triggerDesc == "2 actions", "multi-action feature summarized in the list")
 ok(jumpDesc.actions[1].triggerDesc == "hotkey: alt+tab", "per-action trigger described")
 ok(#jumpDesc.options == 0,
-    "window_jump exports no options (cycle modifier derives from the trigger)")
+    "window_switcher exports no options (cycle modifier derives from the trigger)")
 -- typed option export incl. enum values, on a synthetic probe
 package.loaded["features._enum_probe"] = {
     api = 1, id = "enum_probe", name = "Enum Probe",
     options = { { key = "mode", type = "enum", default = "a",
-                  values = { "a", "b", "c" }, label = "Mode" } },
+                  values = { "a", "b", "c" }, labels = { "Ay", "Bee", "Cee" },
+                  label = "Mode" } },
     defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "9" },
     action = function() end,
 }
@@ -227,7 +228,24 @@ end
 ok(probeDesc0.options[1].key == "mode" and probeDesc0.options[1].type == "enum"
     and #probeDesc0.options[1].values == 3,
     "typed options (incl. enum values) exported for the form generator")
+ok(probeDesc0.options[1].labels and probeDesc0.options[1].labels[2] == "Bee",
+    "enum display labels exported parallel to values")
 registry.unregister("enum_probe")
+
+-- labels must be a list parallel to values (and enum-only)
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,
+    options = { { key = "m", type = "enum", values = { "a", "b" }, labels = { "Only one" } } } }),
+    "enum labels length must match values")
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,
+    options = { { key = "m", type = "string", labels = { "a" } } } }),
+    "labels are rejected on a non-enum option")
+-- multiline is a string-only boolean flag
+ok(pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,
+    options = { { key = "s", type = "string", multiline = true } } }),
+    "multiline accepted on a string option")
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,
+    options = { { key = "n", type = "int", multiline = true } } }),
+    "multiline is rejected on a non-string option")
 local sleepDesc = desc[2]
 ok(sleepDesc.kind == "service" and sleepDesc.triggerDesc == "always-on service",
     "service features described as always-on")
@@ -235,10 +253,10 @@ ok(#sleepDesc.options == 6, "sleep_schedule exports all 6 options")
 ok(sleepDesc.enabled == false, "describe reflects enabled state")
 
 -- T8: re-enable works with fresh state ------------------------------------------
-registry.setEnabled("window_jump", true)
+registry.setEnabled("window_switcher", true)
 fake.pressHotkey("tab")
 ok(fake.visibleChooser() ~= nil, "re-enabled feature works with a fresh ctx")
-registry.setEnabled("window_jump", false)
+registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after re-enable cycle")
 
 -- T9: plugin quarantine -- one bad plugin must never take the platform down ----
@@ -362,13 +380,13 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after trigg
 -- T11: hot reload -- re-read the catalog from disk, keep enabled-state ---------
 -- Uses the real on-disk MVP modules (recorded as the catalog in T1), so the
 -- package.loaded invalidation + re-require-from-disk path runs for real.
-registry.setEnabled("window_jump", true)
+registry.setEnabled("window_switcher", true)
 ok(registry.liveHandleCount() >= 1, "an enabled feature has a live binding before reload")
 
 local summary = registry.reload()
 ok(summary.count == 3, "reload re-registered exactly the catalog features")
 ok(summary.failures == 0, "reload reported no load failures")
-ok(registry.isEnabled("window_jump"), "enabled-state persisted across reload")
+ok(registry.isEnabled("window_switcher"), "enabled-state persisted across reload")
 ok(registry.liveHandleCount() >= 1, "reload re-bound the enabled feature")
 
 -- the freshly re-required feature actually works (closure state was rebuilt)
@@ -390,16 +408,16 @@ for _, d in ipairs(registry.describe()) do
 end
 ok(not stillHasProbe, "non-catalog features are dropped by reload")
 
-registry.setEnabled("window_jump", false)
+registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after hot-reload test")
 
--- T12: idle_dimmer (service: warn after idle, sleep display after lead time) ---
-registry.register(require("features.idle_dimmer"))
-fake.settings["hammerdeck.opt.idle_dimmer.idleThresholdMin"] = 5   -- 300s
+-- T12: display_off (service: warn after idle, sleep display after lead time) ---
+registry.register(require("features.display_off"))
+fake.settings["hammerdeck.opt.display_off.idleThresholdMin"] = 5   -- 300s
 -- (the 10s warning lead time is a constant now, not an option)
 local dimsBefore   = fake.actions.displaySleep
 local alertsBefore = #fake.alerts
-registry.setEnabled("idle_dimmer", true)
+registry.setEnabled("display_off", true)
 
 -- active: no warning, no display sleep
 fake.idle = 10
@@ -429,8 +447,8 @@ fake.idle = 6 * 60
 fake.fireTimers("every", 5)
 ok(#fake.alerts == alertsBefore + 2, "returning to activity re-arms the warning")
 
-registry.setEnabled("idle_dimmer", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after idle_dimmer test")
+registry.setEnabled("display_off", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after display_off test")
 
 -- T13: clipboard_clean (action: rewrite clipboard as trimmed plain text) -------
 registry.register(require("features.clipboard_clean"))
@@ -479,11 +497,11 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipb
 -- T14: feature autodiscovery -- scan the features dir instead of a fixed list --
 -- (the fake adapter exposes bare names; the real modules are on disk, so the
 --  re-require path works.)
-fake.featureNames = { "window_jump", "idle_dimmer", "clipboard_clean", "rest_timer", "sleep_schedule" }
+fake.featureNames = { "window_switcher", "display_off", "clipboard_clean", "break_reminder", "sleep_schedule" }
 
 local discovered = registry.discover("ignored-by-fake")
 ok(#discovered == 5, "discover returns one module per feature on disk")
-ok(discovered[1] == "features.clipboard_clean", "discover sorts + prefixes module names")
+ok(discovered[1] == "features.break_reminder", "discover sorts + prefixes module names")
 
 -- Switch to discovery mode and reload: it re-scans and ends with exactly the
 -- discovered set (this also drops the non-catalog test probes from T9/T10).
@@ -493,10 +511,10 @@ ok(sum.count == 5 and sum.failures == 0, "reload in discovery mode loads the sca
 
 -- Hot-plug: a name newly appearing in the scan shows up on the next reload;
 -- one that disappears is dropped.
-fake.featureNames = { "window_jump" }
+fake.featureNames = { "window_switcher" }
 local sum2 = registry.reload()
 ok(sum2.count == 1, "reload re-scans -- a removed feature folder is dropped")
-ok(registry.describe()[1].id == "window_jump", "the surviving feature is the discovered one")
+ok(registry.describe()[1].id == "window_switcher", "the surviving feature is the discovered one")
 
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after autodiscovery test")
 
@@ -915,11 +933,25 @@ ok(fake.files[oldFile] == nil, "retention sweep deletes months past the keep win
 ok(fake.files[appsCsv] ~= nil, "the current month survives the sweep")
 fake.settings["hammerdeck.opt.usage_stats.keepMonths"] = nil
 
+-- CSV injection guard: an app name with a comma is quoted on write and parsed
+-- back on reload, instead of shifting the context/seconds columns
+fake.windowTitle = nil
+fake.activateApp("Excel, Inc.")
+fake.clockOffset = fake.clockOffset + 40
+fake.fireTimers("every", 600)
+ok(fake.files[appsCsv]:match('\n"Excel, Inc%.",,40\n') ~= nil,
+    "an app name with a comma is CSV-quoted on write")
+registry.setEnabled("usage_stats", false)   -- stop() flushes the tail
+registry.setEnabled("usage_stats", true)     -- re-enable reloads from the CSV
+fake.fireTimers("every", 600)
+ok(fake.files[appsCsv]:match('\n"Excel, Inc%.",') ~= nil,
+    "the quoted app round-trips through reload (parsed back, not column-shifted)")
+
 registry.setEnabled("usage_stats", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage_stats test")
 
--- T21: Accessibility onboarding (window_jump with no windows) ------------------
-registry.setEnabled("window_jump", true)
+-- T21: Accessibility onboarding (window_switcher with no windows) ------------------
+registry.setEnabled("window_switcher", true)
 fake.windows = {}
 
 -- untrusted: fires the system prompt + explains
@@ -937,7 +969,7 @@ fake.pressHotkey("tab")
 ok(fake.axPrompts == promptsBefore + 1, "trusted empty list does not re-prompt")
 ok(fake.alerts[#fake.alerts]:match("No windows"), "trusted empty list says so plainly")
 
-registry.setEnabled("window_jump", false)
+registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after AX onboarding test")
 
 -- T22: text_actions (selection capture -> open/transform/paste back) ----------
@@ -998,35 +1030,83 @@ ok(fake.alerts[#fake.alerts]:match("Nothing selected") ~= nil, "empty selection 
 registry.setEnabled("text_actions", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after text_actions test")
 
--- T23: site_jump (focus the matching browser tab, or open it) ------------------
-registry.register(require("features.site_jump"))
-registry.setEnabled("site_jump", true)
+-- T23: site_switcher (a list of favorite sites in a searchable chooser; pick a row
+-- -- click, Enter, or cmd+<n> -- to focus that site's tab, or open it) --------
+registry.register(require("features.site_switcher"))
+registry.setEnabled("site_switcher", true)
+local CC = { "ctrl", "cmd" }
 
+-- several sites: the shortcut pops a chooser listing them (domain text, url sub)
+fake.settings["hammerdeck.opt.site_switcher.sites"] =
+    "https://www.otter.ai/\nhttps://github.com/\n"
 fake.browserTabs = { "https://github.com/x", "https://www.otter.ai/meetings" }
-fake.pressHotkey("6")
+fake.pressHotkey("6", CC)
+local ch = fake.visibleChooser()
+ok(ch ~= nil and #ch.choices == 2
+    and ch.choices[1].text == "otter.ai"
+    and ch.choices[1].subText == "https://www.otter.ai/"
+    and ch.choices[2].text == "github.com",
+    "the shortcut pops a chooser of the sites (domain text, url subtext)")
+ch.userSelect(1)
 ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
-    "matching tab focused (default site pattern)")
-ok(#fake.openedNewTabs == 0, "no new tab when one matches")
+    "picking row 1 focuses the first site's tab")
+ok(fake.visibleChooser() == nil, "the chooser closes after a pick")
 
+-- a later row (what cmd+2 / arrow+Enter resolves to) jumps to its site
+fake.pressHotkey("6", CC)
+fake.visibleChooser().userSelect(2)
+ok(fake.focusedTabs[#fake.focusedTabs] == "https://github.com/x",
+    "picking row 2 focuses the second site's tab")
+
+-- dismissing the chooser (Escape -> onSelect(nil)) jumps nothing
+local focusedCount = #fake.focusedTabs
+fake.pressHotkey("6", CC)
+fake.visibleChooser().userSelect(0)   -- out-of-range = dismissed
+ok(#fake.focusedTabs == focusedCount, "dismissing the chooser jumps nothing")
+
+-- a single configured site skips the list and jumps straight (donor behavior)
+fake.settings["hammerdeck.opt.site_switcher.sites"] = "https://github.com/"
 fake.browserTabs = { "https://github.com/x" }
-fake.pressHotkey("6")
+fake.pressHotkey("6", CC)
+ok(fake.visibleChooser() == nil
+    and fake.focusedTabs[#fake.focusedTabs] == "https://github.com/x",
+    "one site needs no list -- jumps straight")
+
+-- no match opens the fallback URL in a new tab
+fake.settings["hammerdeck.opt.site_switcher.sites"] = "https://www.otter.ai/"
+fake.browserTabs = { "https://github.com/x" }
+fake.pressHotkey("6", CC)
 ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.otter.ai/",
     "no match opens the fallback URL")
 
--- the site is config, not code: ONE option (the URL); the match pattern is
--- its domain (www. stripped), so they can never drift apart
-fake.settings["hammerdeck.opt.site_jump.openURL"] = "https://www.github.com/"
-fake.pressHotkey("6")
-ok(fake.focusedTabs[#fake.focusedTabs] == "https://github.com/x",
-    "option change repoints the jump live (domain derived, www. stripped)")
-fake.settings["hammerdeck.opt.site_jump.openURL"] = nil
+-- a scheme-less entry is normalized to https:// so it actually navigates
+-- (the "opened bing.com" dead-tab bug)
+fake.settings["hammerdeck.opt.site_switcher.sites"] = "bing.com"
+fake.browserTabs = {}
+fake.pressHotkey("6", CC)
+ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://bing.com",
+    "a scheme-less site gets https:// before opening (no more dead tab)")
 
-registry.setEnabled("site_jump", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after site_jump test")
+-- the legacy single-URL key seeds the one site when the list is empty
+fake.settings["hammerdeck.opt.site_switcher.sites"] = nil
+fake.settings["hammerdeck.opt.site_switcher.openURL"] = "https://www.otter.ai/"
+fake.browserTabs = { "https://www.otter.ai/meetings" }
+fake.pressHotkey("6", CC)
+ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
+    "the legacy openURL migrates as the one site when the list is empty")
+fake.settings["hammerdeck.opt.site_switcher.openURL"] = nil
 
--- T24: window_arrange (snap halves, max toggle, throw across screens) ---------
-registry.register(require("features.window_arrange"))
-registry.setEnabled("window_arrange", true)
+-- no sites at all -> a clear hint, not silence
+fake.pressHotkey("6", CC)
+ok(fake.alerts[#fake.alerts]:match("No sites yet") ~= nil,
+    "empty config alerts instead of doing nothing")
+
+registry.setEnabled("site_switcher", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after site_switcher test")
+
+-- T24: window_snap (snap halves, max toggle, throw across screens) ---------
+registry.register(require("features.window_snap"))
+registry.setEnabled("window_snap", true)
 
 fake.screenList = {
     { x = 0, y = 0, w = 1000, h = 800 },        -- primary
@@ -1094,8 +1174,8 @@ fake.focusedWindow = nil
 fake.pressHotkey("left", AC)
 ok(fake.alerts[#fake.alerts]:match("No focused window") ~= nil, "no window alerts plainly")
 
-registry.setEnabled("window_arrange", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_arrange test")
+registry.setEnabled("window_snap", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_snap test")
 
 -- T25: window_modal (modal hotkey group over the frame surface) ----------------
 registry.register(require("features.window_modal"))
@@ -1173,7 +1253,7 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
     "disable mid-mode tears everything down")
 fake.settings["hammerdeck.opt.window_modal.stepParts"] = nil
 
--- T26: tabs_jumper (cross-browser tab switcher, MRU-first) ----------------------
+-- T26: tab_switcher (cross-browser tab switcher, MRU-first) ----------------------
 local jsonlib = require("platform.json")
 
 -- the new encoder round-trips what the feature persists
@@ -1184,9 +1264,9 @@ ok(decT.b["https://x.y/z?a=1"] == 123 and decT.n == 1.5 and decT.s == 'q"q',
 ok(jsonlib.encode({ 1, 2, 3 }) == "[1,2,3]", "arrays encode as arrays")
 ok(jsonlib.encode(function() end) == nil, "unencodable values return nil, not a throw")
 
-registry.register(require("features.tabs_jumper"))
+registry.register(require("features.tab_switcher"))
 
-local mruPath = "/fake/data/tabs_jumper/mru.json"
+local mruPath = "/fake/data/tab_switcher/mru.json"
 local nowT = fake.now()
 fake.files[mruPath] = jsonlib.encode({
     ["Google Chrome"] = {
@@ -1209,7 +1289,7 @@ fake.browserTabsByApp = {
     },
 }
 
-registry.setEnabled("tabs_jumper", true)
+registry.setEnabled("tab_switcher", true)
 ok(fake.files[mruPath]:find("dead.example") == nil or true, "noop guard")
 
 fake.modifiers.alt = true
@@ -1274,8 +1354,8 @@ ok(fake.alerts[#fake.alerts]:match("moved") ~= nil, "a vanished tab alerts to re
 fake.jumpUrlOverride = nil
 fake.modifiers.alt = false
 
-registry.setEnabled("tabs_jumper", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after tabs_jumper test")
+registry.setEnabled("tab_switcher", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after tab_switcher test")
 
 -- T27: registry.runAction -- the menubar's quick triggers ----------------------
 registry.register(require("features.clipboard_clean"))   -- dropped by T14's reload

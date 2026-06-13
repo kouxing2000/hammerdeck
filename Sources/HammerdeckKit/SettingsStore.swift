@@ -15,6 +15,8 @@ struct OptionInfo: Identifiable {
     let min: Double?
     let max: Double?
     let values: [String]
+    let labels: [String]    // enum display labels, parallel to `values` (may be empty)
+    let multiline: Bool     // string: render a multi-line text box (one item per line)
     var id: String { key }
 
     init?(_ dict: [String: Any]) {
@@ -26,6 +28,16 @@ struct OptionInfo: Identifiable {
         self.min = dict["min"] as? Double
         self.max = dict["max"] as? Double
         self.values = (dict["values"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.labels = (dict["labels"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.multiline = dict["multiline"] as? Bool ?? false
+    }
+
+    /// The display label for an enum value -- the parallel `labels` entry when
+    /// one exists, else the raw value (so "newlinesToCommas" never leaks into
+    /// a picker once labels are declared).
+    func enumLabel(_ value: String) -> String {
+        if let i = values.firstIndex(of: value), i < labels.count { return labels[i] }
+        return value
     }
 }
 

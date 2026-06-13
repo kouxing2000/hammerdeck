@@ -35,7 +35,7 @@
 -- Manifest shape:
 -- {
 --   api         = 1,                     -- ctx contract version (required)
---   id          = "rest_timer",          -- unique, stable, settings key prefix
+--   id          = "break_reminder",          -- unique, stable, settings key prefix
 --   name        = "Rest Timer",          -- shown in config UI
 --   description = "Reminds you to rest", -- shown in config UI
 --   version     = "1.0.0",               -- feature version (optional)
@@ -127,6 +127,23 @@ function manifest.validate(m)
         assert(type(o.key) == "string", "option in '" .. m.id .. "' needs a key")
         assert(VALID_OPTION_TYPES[o.type], "option '" .. o.key .. "' in '" .. m.id ..
             "' has unknown type '" .. tostring(o.type) .. "'")
+        -- Optional display labels for an enum: a list parallel to `values`,
+        -- shown in the Settings picker instead of the raw stored value.
+        if o.labels ~= nil then
+            assert(o.type == "enum", "option '" .. o.key .. "' in '" .. m.id ..
+                "': labels only apply to an enum")
+            assert(type(o.labels) == "table" and #o.labels == #(o.values or {}),
+                "option '" .. o.key .. "' in '" .. m.id ..
+                "': labels must be a list the same length as values")
+        end
+        -- Optional: render a string option as a multi-line text box (a list
+        -- entered one item per line, e.g. site_switcher's sites).
+        if o.multiline ~= nil then
+            assert(o.type == "string", "option '" .. o.key .. "' in '" .. m.id ..
+                "': multiline only applies to a string")
+            assert(type(o.multiline) == "boolean", "option '" .. o.key .. "' in '" ..
+                m.id .. "': multiline must be true/false")
+        end
     end
     return m
 end

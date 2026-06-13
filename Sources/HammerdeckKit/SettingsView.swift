@@ -150,8 +150,11 @@ private struct OptionEditor: View {
                 .help("Reset to default")
             }
         }
-        // Read fresh values after every write (store bumps optionEpoch).
-        .id("\(opt.key)-\(store.optionEpoch)")
+        // NB: do NOT key this view on store.optionEpoch -- the editors read
+        // live through their bindings and re-render on @Published changes, so a
+        // remount is unneeded AND it steals focus from a TextField/TextEditor on
+        // every keystroke (the value write bumps optionEpoch). Stable identity
+        // (ForEach keys by opt.key) keeps focus while typing.
     }
 
     @ViewBuilder
@@ -168,13 +171,21 @@ private struct OptionEditor: View {
             }
         case "enum":
             Picker(opt.label, selection: stringBinding) {
-                ForEach(opt.values, id: \.self) { Text($0).tag($0) }
+                ForEach(opt.values, id: \.self) { Text(opt.enumLabel($0)).tag($0) }
             }
         case "time":
             LabeledContent(opt.label) {
                 TextField("HH:MM", text: timeBinding)
                     .frame(width: 70)
                     .multilineTextAlignment(.trailing)
+            }
+        case "string" where opt.multiline:
+            VStack(alignment: .leading, spacing: 4) {
+                Text(opt.label)
+                TextEditor(text: stringBinding)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 90)
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
             }
         case "string":
             LabeledContent(opt.label) {

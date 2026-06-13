@@ -21,7 +21,7 @@ the bridge + adapter, never reach past the seam.
 > as a backend by owner decision. `adapter.lua` targets the `native.*` table
 > that `Sources/HammerdeckKit/Native.swift` injects; `swift run` boots
 > `lua/hammerdeck.lua` (features autodiscovered from `lua/features/`).
-> Window listing is REAL now (AXUIElement; window_jump prompts for the
+> Window listing is REAL now (AXUIElement; window_switcher prompts for the
 > Accessibility grant when missing). See docs/HANDOVER.md.
 
 ## Layers (top depends on bottom only)
@@ -95,7 +95,7 @@ is the source of truth.
 
 ## Adding a feature
 
-ACTION feature: copy `lua/features/window_jump/`. SERVICE feature: copy
+ACTION feature: copy `lua/features/window_switcher/`. SERVICE feature: copy
 `lua/features/sleep_schedule/` (directory form; `init.lua` returns the
 manifest -- a flat `features/<name>.lua` file also works for trivial features).
 Features are **autodiscovered** by scanning `lua/features/` -- just drop the

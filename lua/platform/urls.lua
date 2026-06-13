@@ -1,6 +1,6 @@
 -- platform/urls.lua
 --
--- Tiny shared URL helpers (used by tabs_jumper and usage_stats).
+-- Tiny shared URL helpers (used by tab_switcher and usage_stats).
 
 local urls = {}
 

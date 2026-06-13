@@ -128,7 +128,7 @@ final class IntegrationTests: XCTestCase {
                        "disk discovery should find all 15 features")
         host.store.refresh()
         XCTAssertGreaterThanOrEqual(host.store.features.count, 15)
-        XCTAssertTrue(host.store.features.contains { $0.id == "window_jump" })
+        XCTAssertTrue(host.store.features.contains { $0.id == "window_switcher" })
 
         // Multi-action shape survives the any() bridge crossing.
         let countDown = host.store.features.first { $0.id == "count_down" }
@@ -259,14 +259,14 @@ final class IntegrationTests: XCTestCase {
     }
 
     func testHotReloadPreservesEnabledState() {
-        host.store.setEnabled("idle_dimmer", true)
+        host.store.setEnabled("display_off", true)
         host.store.reload()
-        XCTAssertEqual(eval("return require('platform.registry').isEnabled('idle_dimmer')") as? Bool,
+        XCTAssertEqual(eval("return require('platform.registry').isEnabled('display_off')") as? Bool,
                        true, "enabled-state must survive a reload")
         XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 15)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
-        host.store.setEnabled("idle_dimmer", false)
+        host.store.setEnabled("display_off", false)
         XCTAssertEqual(registryNum("liveHandleCount()"), 0)
     }
 

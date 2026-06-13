@@ -1,4 +1,4 @@
--- features/window_jump
+-- features/window_switcher
 --
 -- Alt-Tab replacement: searchable window switcher ordered by focus recency
 -- (ported from myHammerSpoon modules/window/windowsJumper.lua). Invoke once to
@@ -7,26 +7,15 @@
 -- name on multi-display setups.
 --
 -- Deliberately NOT ported from the donor: browser favicon composites and
--- URL-domain subtext -- tab-level switching is tabs_jumper's job now.
+-- URL-domain subtext -- tab-level switching is tab_switcher's job now.
 
 -- Closure state shared across invocations and BOTH actions; rebuilt when ctx
 -- changes (a disable -> enable cycle invalidated the old handles).
 local st = nil
 
--- Which modifier should release-to-pick watch? Derived from the firing
--- action's bound hotkey (no option to keep in sync with the trigger). nil
--- when the action has no hotkey (menubar fire) -- pick with Enter instead.
-local MOD_PRIORITY = { "alt", "cmd", "ctrl", "shift" }
-local function cycleModifier(ctx, actionId)
-    local spec = ctx.actionTrigger(actionId)
-    if not (spec and spec.type == "hotkey") then return nil end
-    local has = {}
-    for _, m in ipairs(spec.mods or {}) do has[m] = true end
-    for _, m in ipairs(MOD_PRIORITY) do
-        if has[m] then return m end
-    end
-    return nil
-end
+-- Release-to-pick watches the modifier of the hotkey that fired this action
+-- (shared with tab_switcher; nil when fired without a hotkey -> pick on Enter).
+local cycleModifier = require("platform.hotkeys").cycleModifier
 
 local function jump(ctx, actionId, backward)
     if not st or st.ctx ~= ctx then
@@ -53,7 +42,7 @@ local function jump(ctx, actionId, backward)
         -- Wrap against the VISIBLE rows (a search query may have filtered
         -- the list): the chooser rejects an out-of-range row, which we
         -- detect to wrap around.
-        local mod = cycleModifier(ctx, actionId)
+        local mod = cycleModifier(ctx.actionTrigger(actionId))
         st.chooser.setPlaceholder(mod and ("Release " .. mod .. " to switch")
             or "Press Enter to switch")
         local row = st.chooser.getSelectedRow() + (backward and -1 or 1)
@@ -109,8 +98,8 @@ end
 
 return {
     api         = 1,
-    id          = "window_jump",
-    name        = "Window Jump",
+    id          = "window_switcher",
+    name        = "Window Switcher",
     description = "Searchable Alt-Tab: switch windows across all apps, "
         .. "most recently used first.",
     version     = "1.2.0",
@@ -120,7 +109,7 @@ return {
 
     actions = {
         -- id "main" keeps pre-multi-action stored trigger keys valid.
-        { id = "main", label = "Jump to a window",
+        { id = "main", label = "Switch to a window",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "tab" },
           run = function(ctx) jump(ctx, "main", false) end },
         { id = "open_backward", label = "Cycle backward",

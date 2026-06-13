@@ -1,4 +1,4 @@
--- features/rest_timer
+-- features/break_reminder
 --
 -- Rest-eyes reminder with idle awareness (ported from myHammerSpoon
 -- modules/timers/restTimer.lua). After a work interval, shows a rest dialog
@@ -29,8 +29,8 @@ end
 
 return {
     api         = 1,
-    id          = "rest_timer",
-    name        = "Rest Timer",
+    id          = "break_reminder",
+    name        = "Break Reminder",
     description = "Reminds you to rest your eyes after a work interval; "
         .. "idle-aware, with daily work-time stats.",
     version     = "1.1.0",

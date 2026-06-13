@@ -35,6 +35,53 @@ local EDITOR_APPS  = { ["Code"] = true, ["Cursor"] = true }
 
 local getDomain = require("platform.urls").getDomain
 
+-- CSV (RFC 4180) for the apps file. An app name ("Excel, Inc.") or a
+-- title-derived context can contain a comma; quote any field with a comma,
+-- quote, or newline and double its internal quotes, so a row never shifts
+-- columns on reload. seconds is always a clean integer (never quoted), so
+-- readDayTotal's trailing ",(%d+)$" still finds the total.
+local function csvField(s)
+    if s:find('[",\n]') then
+        return '"' .. s:gsub('"', '""') .. '"'
+    end
+    return s
+end
+
+-- Parse one apps-CSV data row -> app, context (number) seconds; nil if
+-- malformed. Honors quoted fields with escaped ("") quotes.
+local function parseAppsRow(line)
+    local fields, i, n = {}, 1, #line
+    while i <= n do
+        local field
+        if line:sub(i, i) == '"' then
+            i = i + 1
+            local buf = {}
+            while i <= n do
+                local c = line:sub(i, i)
+                if c == '"' then
+                    if line:sub(i + 1, i + 1) == '"' then
+                        buf[#buf + 1] = '"'; i = i + 2
+                    else
+                        i = i + 1; break
+                    end
+                else
+                    buf[#buf + 1] = c; i = i + 1
+                end
+            end
+            field = table.concat(buf)
+        else
+            local j = line:find(",", i, true) or (n + 1)
+            field = line:sub(i, j - 1)
+            i = j
+        end
+        fields[#fields + 1] = field
+        if line:sub(i, i) == "," then i = i + 1 end
+    end
+    local secs = tonumber(fields[3])
+    if not (fields[1] and secs) then return nil end
+    return fields[1], fields[2] or "", secs
+end
+
 -- start() publishes its closures here so the manifest-level stop() can reach
 -- them (same shared-upvalue pattern as count_down's cross-action state).
 local shared = {}
@@ -100,7 +147,8 @@ local function start(ctx)
         local out = { "app,context,seconds" }
         for _, r in ipairs(rows) do
             if r.secs >= MIN_ENTRY_SECONDS then
-                out[#out + 1] = r.app .. "," .. r.context .. "," .. math.floor(r.secs)
+                out[#out + 1] = csvField(r.app) .. "," .. csvField(r.context)
+                    .. "," .. math.floor(r.secs)
             end
         end
         ctx.fileWrite(appsPath(d), table.concat(out, "\n") .. "\n")
@@ -126,9 +174,9 @@ local function start(ctx)
             if first then
                 first = false
             else
-                local app, context, value = line:match("^(.-),(.-),(%d+)$")
-                if app and value then
-                    st.appTime[app .. "\t" .. (context or "")] = tonumber(value)
+                local app, context, value = parseAppsRow(line)
+                if app then
+                    st.appTime[app .. "\t" .. context] = value
                 end
             end
         end
@@ -337,6 +385,7 @@ return {
           label = "Show desktop widget" },
         { key = "screen", type = "enum", default = "primary",
           values = { "primary", "secondary" },
+          labels = { "Main display", "Second display" },
           label = "Widget screen" },
         { key = "keepMonths", type = "int", default = 0, min = 0, max = 24,
           label = "Keep history (months, 0 = forever)" },

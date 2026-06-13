@@ -33,23 +33,32 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         // Quick triggers: one item per action of each enabled feature.
         // Single-action features get one row; multi-action features a submenu.
+        // Each row shows its bound shortcut inline (right of the name); an
+        // action with no shortcut shows nothing and is still click-to-run.
+        var rows: [Row] = []
         var anyTrigger = false
         for feature in store.features where feature.enabled && !feature.actions.isEmpty {
             anyTrigger = true
             if feature.actions.count == 1, let action = feature.actions.first {
-                menu.addItem(triggerItem(feature: feature, action: action,
-                                         title: feature.name))
+                let mi = triggerItem(feature: feature, action: action, title: feature.name)
+                menu.addItem(mi)
+                rows.append(Row(item: mi, label: feature.name, shortcut: shortcutText(action)))
             } else {
                 let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
                 let sub = NSMenu()
+                var subRows: [Row] = []
                 for action in feature.actions {
-                    sub.addItem(triggerItem(feature: feature, action: action,
-                                            title: action.label))
+                    let mi = triggerItem(feature: feature, action: action, title: action.label)
+                    sub.addItem(mi)
+                    subRows.append(Row(item: mi, label: action.label, shortcut: shortcutText(action)))
                 }
+                alignShortcuts(subRows)
                 parent.submenu = sub
                 menu.addItem(parent)
+                rows.append(Row(item: parent, label: feature.name, shortcut: nil))
             }
         }
+        alignShortcuts(rows)
         if !anyTrigger {
             let hint = NSMenuItem(title: "No triggerable features enabled",
                                   action: nil, keyEquivalent: "")
@@ -88,9 +97,90 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let mi = NSMenuItem(title: title, action: #selector(runAction(_:)), keyEquivalent: "")
         mi.target = self
         mi.representedObject = [feature.id, action.id]
-        // The bound shortcut (or "no trigger") rides along as the tooltip.
-        mi.toolTip = action.triggerDesc
+        // The shortcut now shows inline (alignShortcuts). Only a no-shortcut
+        // action needs a hint, so its bare row doesn't read as broken.
+        if shortcutText(action) == nil {
+            mi.toolTip = "Runs on demand — bind a shortcut in Settings"
+        }
         return mi
+    }
+
+    // One menu row awaiting shortcut alignment.
+    private struct Row { let item: NSMenuItem; let label: String; let shortcut: String? }
+
+    private static let menuFont = NSFont.menuFont(ofSize: 0)
+
+    /// Right-align the shortcut column for rows that share one menu: the
+    /// shortcut starts at a tab stop just past the widest label, so the combos
+    /// line up like a native menu. Display-only (attributedTitle, not a
+    /// keyEquivalent), so it never double-fires the global hotkey.
+    private func alignShortcuts(_ rows: [Row]) {
+        let font = Self.menuFont
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        var maxLabel: CGFloat = 0
+        for r in rows where r.shortcut != nil {
+            maxLabel = max(maxLabel, (r.label as NSString).size(withAttributes: attrs).width)
+        }
+        guard maxLabel > 0 else { return }   // nothing in this menu has a shortcut
+        let para = NSMutableParagraphStyle()
+        para.tabStops = [NSTextTab(textAlignment: .left, location: maxLabel + 28)]
+        for r in rows {
+            guard let sc = r.shortcut else { continue }
+            let title = NSMutableAttributedString(string: r.label, attributes: [
+                .font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: para,
+            ])
+            title.append(NSAttributedString(string: "\t" + sc, attributes: [
+                .font: font, .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: para,
+            ]))
+            r.item.attributedTitle = title
+        }
+    }
+
+    // Apple-order modifier glyphs (⌃⌥⇧⌘) for a hotkey/chord's mods.
+    private func modGlyphs(_ mods: [String]) -> String {
+        let has = Set(mods.map { $0.lowercased() })
+        var s = ""
+        if has.contains("ctrl") || has.contains("control") { s += "⌃" }
+        if has.contains("alt") || has.contains("option")   { s += "⌥" }
+        if has.contains("shift")                            { s += "⇧" }
+        if has.contains("cmd") || has.contains("command")  { s += "⌘" }
+        return s
+    }
+
+    private func keyGlyph(_ key: String) -> String {
+        switch key.lowercased() {
+        case "tab":                 return "⇥"
+        case "return", "enter":     return "↩"
+        case "space":               return "␣"
+        case "delete", "backspace": return "⌫"
+        case "escape", "esc":       return "⎋"
+        case "left":                return "←"
+        case "right":               return "→"
+        case "up":                  return "↑"
+        case "down":                return "↓"
+        default:                    return key.count == 1 ? key.uppercased() : key
+        }
+    }
+
+    /// The inline label for an action's CURRENT trigger, or nil when it has
+    /// none (a dormant, menu-only action).
+    private func shortcutText(_ a: ActionInfo) -> String? {
+        guard let t = a.trigger else { return nil }
+        switch t.type {
+        case "hotkey":
+            return modGlyphs(t.mods) + keyGlyph(t.key)
+        case "chord":
+            let follows = t.follows.map(keyGlyph).joined(separator: " ")
+            return modGlyphs(t.mods) + keyGlyph(t.key) + " " + follows
+        case "schedule":
+            if let m = t.everyMin { return "every \(m)m" }
+            return "at \(t.at ?? "")"
+        case "event":
+            return "on \(t.event ?? "")"
+        default:
+            return nil
+        }
     }
 
     @objc private func runAction(_ sender: NSMenuItem) {

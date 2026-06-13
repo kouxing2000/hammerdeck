@@ -21,10 +21,10 @@ myHammerSpoon:
 
 - **Sleep Schedule** (service) -- forced sleep with graduated warnings, one-time
   snooze, weekend shift.
-- **Rest Timer** (service) -- idle-aware rest reminders with daily work stats.
-- **Window Jump** (action) -- searchable Alt-Tab, most-recently-used first,
+- **Break Reminder** (service) -- idle-aware rest reminders with daily work stats.
+- **Window Switcher** (action) -- searchable Alt-Tab, most-recently-used first,
   cycle-and-release UX.
-- **Idle Display Off** (service) -- turns the display off after a stretch of no
+- **Turn Off Display When Idle** (service) -- turns the display off after a stretch of no
   activity, with a short warning first.
 - **Paste as Plain Text** (2 actions) -- paste without formatting (strips
   fonts/colors/links); can also type the clipboard into paste-blocking fields.
@@ -37,15 +37,15 @@ myHammerSpoon:
 - **Usage Stats** (service) -- wake/sleep sessions and per-app focus time
   (idle excluded) to daily CSVs, with a desktop widget pinned above the
   wallpaper: today's top apps, bars, and a 7-day chart.
-- **Selection Actions** (action) -- act on the selected text anywhere: open URLs,
+- **Text Actions** (action) -- act on the selected text anywhere: open URLs,
   change case, calculate, dictionary lookup; transforms paste back in place.
-- **Jump to Site** (action) -- focus the browser tab for a configured site
+- **Site Switcher** (action) -- focus the browser tab for a configured site
   (or open it) with one shortcut.
-- **Window Arrange** (7 actions) -- snap the focused window to screen halves,
+- **Window Snap** (7 actions) -- snap the focused window to screen halves,
   toggle maximize/75%, or throw it to the next screen (pointer follows).
 - **Window Mode** (2 actions) -- a modal keyboard layer: enter the mode, tap
   WASD/HJKL/corner keys to arrange windows until Escape; undo/redo included.
-- **Tab Jump** (2 actions) -- searchable switcher across all Chrome + Safari
+- **Tab Switcher** (2 actions) -- searchable switcher across all Chrome + Safari
   tabs, most recently used first, with favicons; release the modifier to jump.
 - **Clipboard History** (service + action) -- searchable history of copied
   text, pick to paste; password-manager entries are never recorded.
@@ -56,7 +56,7 @@ a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and
 timers, sleep/wake/lock watchers, UserDefaults settings, and our own toast /
 banner / searchable-chooser panels (zero macOS permissions needed). Window
 listing/focus is real (AXUIElement, MRU-ordered) -- the one optional
-permission: window_jump prompts for the Accessibility grant when missing.
+permission: window_switcher prompts for the Accessibility grant when missing.
 
 **Config UI done (same day)**: a menubar hammer icon -- QUICK TRIGGERS: fire
 any enabled feature's actions on demand, including dormant ones with no
@@ -111,8 +111,8 @@ lua/                       embedded script payload
     registry.lua           available/enabled features; lifecycle + scoped teardown
   features/
     sleep_schedule/        SERVICE feature: quitting-time enforcement
-    rest_timer/            SERVICE feature: idle-aware rest reminders
-    window_jump/           ACTION feature: searchable Alt-Tab
+    break_reminder/            SERVICE feature: idle-aware rest reminders
+    window_switcher/           ACTION feature: searchable Alt-Tab
 test/
   fake_adapter.lua         in-memory adapter (controllable clock)
   run.lua                  headless test suite

@@ -1,4 +1,4 @@
--- features/tabs_jumper
+-- features/tab_switcher
 --
 -- The flagship: a searchable switcher across ALL browser tabs (Chrome +
 -- Safari), most-recently-focused first (ported from myHammerSpoon
@@ -7,7 +7,7 @@
 -- raises the window, and switches to the tab.
 --
 -- MRU: every 10s the active browser tab's URL is stamped; stamps persist to
--- <dataDir>/tabs_jumper/mru.json (pruned at 30 days) so the ordering
+-- <dataDir>/tab_switcher/mru.json (pruned at 30 days) so the ordering
 -- survives restarts. After a jump the landed URL is stamped immediately.
 --
 -- Favicons: cached as <cacheDir>/favicons/<domain>.png and shown next to
@@ -46,21 +46,9 @@ end
 
 local json = require("platform.json")
 local getDomain = require("platform.urls").getDomain
-
--- Which modifier should release-to-jump watch? Derived from the firing
--- action's bound hotkey (no option to keep in sync with the trigger). nil
--- when the action has no hotkey (menubar fire) -- pick with Enter instead.
-local MOD_PRIORITY = { "alt", "cmd", "ctrl", "shift" }
-local function cycleModifier(ctx, actionId)
-    local spec = ctx.actionTrigger(actionId)
-    if not (spec and spec.type == "hotkey") then return nil end
-    local has = {}
-    for _, m in ipairs(spec.mods or {}) do has[m] = true end
-    for _, m in ipairs(MOD_PRIORITY) do
-        if has[m] then return m end
-    end
-    return nil
-end
+-- Release-to-jump watches the modifier of the hotkey that fired this action
+-- (shared with window_switcher; nil when fired without a hotkey -> pick on Enter).
+local cycleModifier = require("platform.hotkeys").cycleModifier
 
 local function jumperFor(ctx)
     local st = {
@@ -74,7 +62,7 @@ local function jumperFor(ctx)
         refreshing = false,
     }
 
-    local dataDir = ctx.dataDir() .. "/tabs_jumper"
+    local dataDir = ctx.dataDir() .. "/tab_switcher"
     local mruPath = dataDir .. "/mru.json"
     local iconsDir = ctx.cacheDir() .. "/favicons"
 
@@ -252,7 +240,7 @@ local function jumperFor(ctx)
         if st.altTimer then st.altTimer.stop(); st.altTimer = nil end
     end
 
-    -- Release-to-jump: poll the cycle modifier while cycling (window_jump's
+    -- Release-to-jump: poll the cycle modifier while cycling (window_switcher's
     -- pattern, donor's autoJump). st.cycleMod is derived from the trigger
     -- that fired (set in open()).
     local function armAutoJump()
@@ -282,7 +270,7 @@ local function jumperFor(ctx)
     end
 
     function st.open(actionId, backward)
-        st.cycleMod = cycleModifier(ctx, actionId)
+        st.cycleMod = cycleModifier(ctx.actionTrigger(actionId))
         if not st.chooser then
             st.chooser = ctx.chooser {
                 searchSubText = true,
@@ -354,8 +342,8 @@ end
 
 return {
     api         = 1,
-    id          = "tabs_jumper",
-    name        = "Tab Jump",
+    id          = "tab_switcher",
+    name        = "Tab Switcher",
     description = "Searchable switcher across all Chrome + Safari tabs, "
         .. "most recently used first, with favicons.",
     version     = "1.1.0",
@@ -366,7 +354,7 @@ return {
     start = function(ctx) with(ctx) end,
 
     actions = {
-        { id = "open", label = "Jump to a tab",
+        { id = "open", label = "Switch to a tab",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
           run = function(ctx) with(ctx).open("open", false) end },
         { id = "open_backward", label = "Cycle backward",

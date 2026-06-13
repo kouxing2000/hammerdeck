@@ -23,7 +23,7 @@ local YOUDAO_SETTLE_SECONDS = 0.75 -- donor's pause for the dict app to focus
 return {
     api         = 1,
     id          = "text_actions",
-    name        = "Selection Actions",
+    name        = "Text Actions",
     description = "Act on the selected text anywhere: open URLs, change case, "
         .. "calculate, look up in a dictionary. Transforms paste back in place.",
     version     = "1.0.0",

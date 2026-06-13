@@ -1,4 +1,4 @@
--- features/window_arrange
+-- features/window_snap
 --
 -- Arrange the focused window (ported from myHammerSpoon
 -- modules/window/windowManagement.lua): snap to screen halves, toggle
@@ -128,8 +128,8 @@ local MODS = { "cmd", "alt", "ctrl" }
 
 return {
     api         = 1,
-    id          = "window_arrange",
-    name        = "Window Arrange",
+    id          = "window_snap",
+    name        = "Window Snap",
     description = "Snap the focused window to screen halves, toggle "
         .. "maximize, or throw it to the next screen (pointer follows).",
     version     = "1.0.0",

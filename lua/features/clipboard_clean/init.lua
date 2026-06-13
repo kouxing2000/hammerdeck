@@ -44,6 +44,7 @@ return {
     options = {
         { key = "mode", type = "enum", default = "plainText",
           values = { "plainText", "newlinesToCommas" },
+          labels = { "Plain text", "Newlines to commas" },
           label = "Transform" },
     },
 

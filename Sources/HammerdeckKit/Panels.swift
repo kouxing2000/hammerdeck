@@ -568,6 +568,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private let searchSubText: Bool
     private let onSelect: (Int?) -> Void
     private let onHide: () -> Void
+    private var keyMonitor: Any?         // cmd+1..9 quick-pick, live while shown
 
     private static let width: CGFloat = 560
     private static let rowHeight: CGFloat = 34
@@ -648,12 +649,43 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(searchField)
         if selectedRow() == 0 { selectFirstValid() }
+        installQuickKeys()
     }
 
     func hide() {
         guard panel.isVisible else { return }
+        removeQuickKeys()
         panel.orderOut(nil)
         onHide()
+    }
+
+    // MARK: quick-pick (cmd+1..9 fires the Nth visible row)
+
+    /// While the chooser is key, cmd+<digit> selects and triggers that row of
+    /// the CURRENT (filtered) list -- the digits shown in the left gutter. A
+    /// local monitor (not a keyEquivalent) keeps it from colliding with typing.
+    private func installQuickKeys() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.panel.isVisible, self.panel.isKeyWindow,
+                  event.modifierFlags.contains(.command),
+                  let ch = event.charactersIgnoringModifiers, let d = Int(ch),
+                  d >= 1, d <= 9 else { return event }
+            self.quickPick(d)
+            return nil   // consume even when no such row, so it never beeps/types
+        }
+    }
+
+    private func removeQuickKeys() {
+        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+    }
+
+    /// Fire the n-th visible row (1-based). No-op when there is no such row, or
+    /// when that row is an info row (valid=false) -- matching click/keyboard,
+    /// which also refuse to select info rows.
+    private func quickPick(_ n: Int) {
+        guard n >= 1, n <= filtered.count, entries[filtered[n - 1]].valid else { return }
+        select(n)
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -676,12 +708,14 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     }
 
     func close() {
+        removeQuickKeys()
         panel.orderOut(nil)
     }
 
     // MARK: internals
 
     private func finish(_ originalIndex: Int?) {
+        removeQuickKeys()
         if panel.isVisible { panel.orderOut(nil) }
         onSelect(originalIndex)
         onHide()
@@ -738,7 +772,19 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let e = entries[filtered[row]]
         let cell = NSView()
-        var x: CGFloat = 8
+        // Left gutter holds the quick-pick hint (cmd+1..9) for the first nine
+        // SELECTABLE rows, so the keyboard shortcut is discoverable, not hidden.
+        // Info rows (valid=false) get no hint -- cmd+N won't fire them.
+        let gutter: CGFloat = 24
+        if row < 9 && e.valid {
+            let hint = NSTextField(labelWithString: "⌘\(row + 1)")
+            hint.font = .systemFont(ofSize: 10, weight: .medium)
+            hint.textColor = .tertiaryLabelColor
+            hint.alignment = .center
+            hint.frame = NSRect(x: 0, y: 10, width: gutter, height: 14)
+            cell.addSubview(hint)
+        }
+        var x: CGFloat = gutter
 
         if let token = e.iconToken, let icon = ChooserPanel.icon(for: token) {
             let iv = NSImageView(frame: NSRect(x: x, y: 5, width: 24, height: 24))

@@ -1,4 +1,4 @@
--- features/idle_dimmer
+-- features/display_off
 --
 -- Turns the display off after a stretch of no input (ported from myHammerSpoon
 -- modules/timers/idleDimmer.lua). Polls idle time; once past the threshold it
@@ -18,8 +18,8 @@ local WARN_SECONDS  = 10   -- warning lead time before the display sleeps
 
 return {
     api         = 1,
-    id          = "idle_dimmer",
-    name        = "Idle Display Off",
+    id          = "display_off",
+    name        = "Turn Off Display When Idle",
     description = "Turns the display off after a period of no activity, "
         .. "with a short warning first.",
     version     = "1.1.0",
