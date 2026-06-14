@@ -11,9 +11,11 @@ payload (the feature platform). They meet at one bridge.
 
 ## The one inviolable rule
 
-**Only the Swift bridge (`Sources/HammerdeckKit/LuaState.swift`) and the Lua
-seam (`lua/platform/adapter.lua`) may touch native / OS APIs.** Features and
-every other platform module go through the adapter. This keeps the host
+**Only the Swift bridge (`Sources/HammerdeckKit/LuaState.swift` +
+`Native.swift`) and the Lua seam (`lua/platform/adapter.lua`) may touch
+native / OS APIs.** New OS surface grows in `Native.swift` (+ its
+HotkeyCenter/ChordCenter/Panels helpers); features and every other platform
+module go through the adapter. This keeps the host
 swappable and the layers clean. If you need a native call elsewhere, add it to
 the bridge + adapter, never reach past the seam.
 
@@ -41,15 +43,17 @@ the bridge + adapter, never reach past the seam.
   trigger can fire any action (the core idea). Types: hotkey, chord (prefix
   hotkey + an ordered follow-key sequence, e.g. cmd+shift+a then b -- a modal
   layer over Carbon in ChordCenter.swift, permission-free), schedule (everyMin /
-  at), event (sleep|wake|screenLock|screenUnlock).
+  at), event (sleep|wake|screenLock|screenUnlock|screenChanged).
 - **lua/platform/modal.lua** -- modal hotkey groups (enter a keyboard mode:
   bare-key hotkeys live until Escape/exit; banner legend). Pure Lua over
   adapter primitives; reach it via ctx.modal().
 - **lua/platform/registry.lua** -- registers features, persists enabled-state +
   option values per id, runs lifecycle (bind trigger / start), scoped teardown.
 - **lua/platform/ctx.lua** -- builds the scoped, curated ctx (the plugin API);
-  every handle a feature creates is tracked and stopped on disable. Contract
-  design: `docs/PLUGIN_SYSTEM.md`.
+  every handle a feature creates is tracked and stopped on disable. A feature
+  that declares `capabilities = {"commands"}` gets privileged cross-feature
+  reach injected here (`ctx.commands()` / `ctx.runCommand()`, least-privilege --
+  powers the command palette). Contract design: `docs/PLUGIN_SYSTEM.md`.
 - **lua/platform/adapter.lua** -- the seam (Lua side); every binding it returns
   is a handle with `.stop()`.
 - **Sources/HammerdeckKit/LuaState.swift** -- the bridge mechanics: owns the
@@ -79,13 +83,23 @@ lua test/run.lua  # headless platform + feature tests (fake adapter, run after L
 swift test        # integration tests on the REAL bridge (run after Swift/seam changes)
 ```
 
-The hotkey end-to-end test (`testGlobalHotkeySynthesis`) self-skips unless the
-terminal running `swift test` has the Accessibility permission (it posts real
-CGEvents). Everything else runs anywhere.
+`swift test` is QUIET by default: the 6 tests that show real panels or
+synthesize system keystrokes are SKIPPED -- otherwise they flash dialogs and
+type into whatever app the user has focused. Run the full set ONLY when the user
+is away from the keyboard: `HAMMERDECK_UI_TESTS=1 swift test` (the
+CGEvent-synthesis ones additionally need Accessibility on the terminal). All
+other integration tests run anywhere.
 
 Smoke test without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 swift run`.
 Settings live in the `Hammerdeck` defaults domain (`defaults read Hammerdeck`;
 `defaults delete Hammerdeck` resets to first-run).
+
+Visual check (real pixels -- the one thing tests can't do): `scripts/app.sh
+start` opens a debug Lua control channel; `scripts/control.sh '<lua>'` drives
+the live app (e.g. open the palette) and `scripts/shot.sh out.png` screenshots
+it for you to read. The capturing terminal needs Screen Recording, or the
+panels are missing from the image. Don't restart the user's running instance or
+run the UI tests while they may be at the keyboard -- ask first.
 
 Lua syntax check: `luac -p lua/**/*.lua`. Note the version skew: the test suite
 runs on Homebrew Lua (currently 5.5) while the embedded engine is vendored
@@ -105,6 +119,8 @@ the test harness uses its own catalog, not disk discovery).
 
 ## Status / roadmap
 
-`docs/HANDOVER.md` is the ONE living status + backlog doc -- read it first
-(its doc map explains which docs are living / reference / frozen records).
-`docs/ARCHITECTURE.md` is the design rationale. Don't duplicate the backlog here.
+`docs/ORIENTATION.md` is the step-back visual map (architecture, catalog,
+roadmap) -- start there for the big picture. `docs/HANDOVER.md` is the ONE
+living status + backlog doc -- read it for the truth (its doc map explains
+which docs are living / reference / archived). `docs/ARCHITECTURE.md` is the
+design rationale. Don't duplicate the backlog here.

@@ -49,6 +49,8 @@ myHammerSpoon:
   tabs, most recently used first, with favicons; release the modifier to jump.
 - **Clipboard History** (service + action) -- searchable history of copied
   text, pick to paste; password-manager entries are never recorded.
+- **Command Palette** (action) -- one hotkey opens a fuzzy launcher over every
+  enabled feature's actions; most-used float to the top.
 
 **M2 Slice 1 done (2026-06-10): NO Hammerspoon, anywhere.** Dropped entirely as
 a backend -- `adapter.lua` targets the `native.*` bridge (`Native.swift`), and
@@ -86,11 +88,15 @@ print what the config UI renders: `HAMMERDECK_DUMP_CATALOG=1 swift run`.
 
 ## Design
 
-Native Swift host + embedded Lua. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Native Swift host + embedded Lua, meeting at one seam. The big picture (layer
+chart, catalog, roadmap) lives in [`docs/ORIENTATION.md`](docs/ORIENTATION.md);
+the rationale + adding-a-feature guide in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 The rule that protects every future option: **only the Swift bridge
-(`LuaState.swift`) and `lua/platform/adapter.lua` may touch native/OS APIs.**
-Everything else goes through the adapter, so the host stays swappable and features
-never see the backend.
+(`LuaState.swift` + `Native.swift`) and `lua/platform/adapter.lua` may touch
+native/OS APIs.** Everything else goes through that seam, so the host stays
+swappable and features never see the backend.
 
 ## Layout
 
@@ -98,9 +104,12 @@ never see the backend.
 Package.swift              SwiftPM: CLua (engine) + Hammerdeck (host executable)
 Sources/
   CLua/                    vendored Lua 5.4.7 C source (see Sources/CLua/VENDOR.md)
-  Hammerdeck/
-    main.swift             entry point (M1 bridge demo)
+  HammerdeckKit/           host library (imported by tests)
     LuaState.swift         the Swift<->Lua bridge -- the seam (Swift side)
+    Native.swift           the native.* table -- the ONLY place OS surface grows
+    Boot / Panels / StatusBar / SettingsView / DebugControl ...
+  Hammerdeck/
+    main.swift             thin launcher -> hammerdeckMain()
 lua/                       embedded script payload
   hammerdeck.lua           entry point: registers the catalog, binds enabled features
   platform/
@@ -117,6 +126,7 @@ test/
   fake_adapter.lua         in-memory adapter (controllable clock)
   run.lua                  headless test suite
 docs/
-  ARCHITECTURE.md  PLUGIN_SYSTEM.md  HANDOVER.md
-  COMPETITIVE_RESEARCH.md  STANDALONE_PRODUCT_IDEA.md
+  ORIENTATION.md  HANDOVER.md  ARCHITECTURE.md  PLUGIN_SYSTEM.md
+  PLUGIN_IDEAS.md  spoons-index.json
+  archive/         frozen records (migration, parity, product research, palette spec)
 ```
