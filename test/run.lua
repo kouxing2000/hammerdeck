@@ -1578,4 +1578,44 @@ ok(boomCount == 4, "a throwing action is contained, not silently swallowed (stil
 registry.setEnabled("boom", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after error-surfacing test")
 
+-- T31: modal auto-repeat -- hold a `repeats` key to fire it steadily, key-up
+-- (or exit) stops it. Carbon gives no native repeat, so modal.lua builds it
+-- from the press+release edges and a delay/tick timer pair.
+local modal = require("platform.modal")
+local repHits, plainHits = 0, 0
+local m = modal.enter {
+    name = "RepeatTest",
+    bindings = {
+        { key = "w", repeats = true, fn = function() repHits = repHits + 1 end },
+        { key = "f", fn = function() plainHits = plainHits + 1 end },
+    },
+}
+
+fake.pressHotkey("w", {})
+ok(repHits == 1, "press fires a repeating key once immediately")
+ok(fake.fireTimers("every", 0.04) == 0, "no steady tick until the hold delay elapses")
+
+fake.fireTimers("after", 0.3)                  -- hold delay elapses -> tick arms
+ok(repHits == 1, "the delay itself does not fire the action again")
+fake.fireTimers("every", 0.04)
+ok(repHits == 2, "after the delay, each tick fires the action")
+fake.fireTimers("every", 0.04)
+ok(repHits == 3, "and keeps firing while held")
+
+fake.releaseHotkey("w", {})                    -- key up cancels the repeat
+local heldTo = repHits
+ok(fake.fireTimers("every", 0.04) == 0, "release cancels the steady tick")
+ok(repHits == heldTo, "no further fires after release")
+
+fake.pressHotkey("f", {})
+ok(plainHits == 1, "a non-repeating key still fires")
+ok(fake.fireTimers("after", 0.3) == 0 and fake.fireTimers("every", 0.04) == 0,
+    "a non-repeating key arms no repeat timers")
+
+-- holding a key, then exiting the mode, must not leak the repeat timers
+fake.pressHotkey("w", {})
+fake.fireTimers("after", 0.3)                  -- tick armed and live
+m.stop()
+ok(fake.liveHandles == 0, "exiting mid-hold tears down the repeat timers")
+
 print("OK -- " .. passed .. " assertions passed")

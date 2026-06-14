@@ -10,6 +10,7 @@ final class HotkeyCenter {
     static let shared = HotkeyCenter()
 
     private var handlers: [UInt32: () -> Void] = [:]
+    private var releaseHandlers: [UInt32: () -> Void] = [:]
     private var refs: [UInt32: EventHotKeyRef] = [:]
     private var nextId: UInt32 = 1
     private var installed = false
@@ -19,25 +20,39 @@ final class HotkeyCenter {
     private func installHandlerIfNeeded() {
         guard !installed else { return }
         installed = true
-        var spec = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        // Subscribe to BOTH press and release. Carbon does not auto-repeat a
+        // registered hotkey -- one press, one release, however long it's held;
+        // callers that want hold/repeat behaviour build it from the release
+        // edge (modal.lua auto-repeat, hold_to_quit).
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                          eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                          eventKind: UInt32(kEventHotKeyReleased)),
+        ]
         InstallEventHandler(GetEventDispatcherTarget(), { _, event, _ -> OSStatus in
+            guard let event else { return noErr }
             var hkID = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject),
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+            let released = GetEventKind(event) == UInt32(kEventHotKeyReleased)
             // Carbon dispatches on the main thread.
             MainActor.assumeIsolated {
-                HotkeyCenter.shared.handlers[hkID.id]?()
+                if released {
+                    HotkeyCenter.shared.releaseHandlers[hkID.id]?()
+                } else {
+                    HotkeyCenter.shared.handlers[hkID.id]?()
+                }
             }
             return noErr
-        }, 1, &spec, nil, nil)
+        }, 2, &specs, nil, nil)
     }
 
-    /// Returns an unregister closure, or nil if the key is unknown.
-    func bind(mods: [String], key: String, handler: @escaping () -> Void) -> (() -> Void)? {
+    /// Returns an unregister closure, or nil if the key is unknown. `onRelease`,
+    /// if given, fires on the key-up edge of the same combo.
+    func bind(mods: [String], key: String, handler: @escaping () -> Void,
+              onRelease: (() -> Void)? = nil) -> (() -> Void)? {
         guard let keyCode = HotkeyCenter.keyCodes[key.lowercased()] else { return nil }
         installHandlerIfNeeded()
 
@@ -61,12 +76,14 @@ final class HotkeyCenter {
         guard status == noErr, let hotkeyRef = ref else { return nil }
 
         handlers[id] = handler
+        if let onRelease { releaseHandlers[id] = onRelease }
         refs[id] = hotkeyRef
         return { [weak self] in
             guard let self, let r = self.refs[id] else { return }
             UnregisterEventHotKey(r)
             self.refs[id] = nil
             self.handlers[id] = nil
+            self.releaseHandlers[id] = nil
         }
     }
 

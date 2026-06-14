@@ -50,8 +50,8 @@ local function makeTimer(kind, n, fn)
     return t, { stop = function() freeOnce(t) end }
 end
 
-function adapter.bindHotkey(mods, key, fn)
-    local h = { mods = mods, key = key, fn = fn, stopped = false }
+function adapter.bindHotkey(mods, key, fn, onRelease)
+    local h = { mods = mods, key = key, fn = fn, onRelease = onRelease, stopped = false }
     fake.hotkeys[#fake.hotkeys + 1] = h
     alloc()
     return { stop = function() freeOnce(h) end }
@@ -568,6 +568,30 @@ function fake.pressHotkey(key, mods)
                 fire = table.concat(have, ",") == want
             end
             if fire then h.fn() end
+        end
+    end
+end
+
+-- Fire the key-UP edge: invokes the onRelease handler of matching hotkeys (for
+-- testing hold / auto-repeat). Same matching rules as fake.pressHotkey.
+function fake.releaseHotkey(key, mods)
+    local want = nil
+    if mods then
+        want = {}
+        for _, m in ipairs(mods) do want[#want + 1] = m end
+        table.sort(want)
+        want = table.concat(want, ",")
+    end
+    for _, h in ipairs(fake.hotkeys) do
+        if not h.stopped and h.key == key and h.onRelease then
+            local fire = true
+            if want then
+                local have = {}
+                for _, m in ipairs(h.mods or {}) do have[#have + 1] = m end
+                table.sort(have)
+                fire = table.concat(have, ",") == want
+            end
+            if fire then h.onRelease() end
         end
     end
 end

@@ -98,7 +98,7 @@ function M.make(m, resolveTrigger, extra)
     function ctx.locateMouse(seconds) adapter.locateMouse(seconds) end
 
     -- bindings (all scope-tracked) --------------------------------------------
-    function ctx.bindHotkey(mods, key, fn) return track(adapter.bindHotkey(mods, key, fn)) end
+    function ctx.bindHotkey(mods, key, fn, onRelease) return track(adapter.bindHotkey(mods, key, fn, onRelease)) end
     function ctx.everySeconds(n, fn)       return track(adapter.everySeconds(n, fn)) end
     function ctx.afterSeconds(n, fn)       return track(adapter.afterSeconds(n, fn)) end
     function ctx.dailyAt(timeStr, fn)      return track(adapter.dailyAt(timeStr, fn)) end

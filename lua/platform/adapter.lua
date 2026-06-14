@@ -25,9 +25,11 @@ end
 -- Triggers / bindings
 -- ---------------------------------------------------------------------------
 
--- mods: table like {"cmd","alt"}; key: string like "h"; fn: function
-function adapter.bindHotkey(mods, key, fn)
-    return handleFor(native.bind_hotkey(mods or {}, key, fn))
+-- mods: table like {"cmd","alt"}; key: string like "h"; fn: function fired on
+-- press. onRelease (optional): fired on the key-up edge -- the basis for
+-- hold/auto-repeat (Carbon delivers no repeats while a key is held).
+function adapter.bindHotkey(mods, key, fn, onRelease)
+    return handleFor(native.bind_hotkey(mods or {}, key, fn, onRelease))
 end
 
 -- A chord: mods+key is the PREFIX hotkey; `follows` is the ordered sequence of

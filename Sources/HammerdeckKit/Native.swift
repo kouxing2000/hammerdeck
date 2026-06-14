@@ -224,13 +224,23 @@ final class Native {
             return luaError(L, "bind_hotkey: key must be a string")
         }
         let ref = lua.makeRef(at: 3)
+        // Optional 4th arg: a key-release callback (for hold / auto-repeat).
+        let hasRelease = lua_type(L, 4) == LUA_TFUNCTION
+        let releaseRef = hasRelease ? lua.makeRef(at: 4) : 0
+        let onRelease: (() -> Void)? = hasRelease
+            ? { Native.shared.lua.callRef(releaseRef) } : nil
         guard let unbind = HotkeyCenter.shared.bind(mods: mods, key: key, handler: {
             Native.shared.lua.callRef(ref)
-        }) else {
+        }, onRelease: onRelease) else {
             lua.releaseRef(ref)
+            if hasRelease { lua.releaseRef(releaseRef) }
             return luaError(L, "bind_hotkey: could not register '\(mods.joined(separator: "+"))+\(key)'")
         }
-        let id = registerResource { unbind(); Native.shared.lua.releaseRef(ref) }
+        let id = registerResource {
+            unbind()
+            Native.shared.lua.releaseRef(ref)
+            if hasRelease { Native.shared.lua.releaseRef(releaseRef) }
+        }
         lua_pushinteger(L, lua_Integer(id))
         return 1
     }
