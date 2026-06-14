@@ -56,6 +56,13 @@ local VALID_OPTION_TYPES = {
     bool = true, int = true, string = true, enum = true, time = true, appList = true,
 }
 
+-- Privileged ctx extensions a feature may opt into via `capabilities = {...}`.
+-- The registry only injects the matching ctx methods for features that declare
+-- the capability (principle of least privilege): `commands` grants
+-- ctx.commands() / ctx.runCommand() -- the cross-feature reach the command
+-- palette needs and a normal feature must never have.
+local KNOWN_CAPABILITIES = { commands = true }
+
 -- Validate a manifest table; raises on error. Normalizes in place (category and
 -- options defaults; the single-action sugar becomes a one-entry `actions` list
 -- with id "main") and returns the manifest.
@@ -121,6 +128,17 @@ function manifest.validate(m)
         end
     end
 
+    if m.capabilities ~= nil then
+        assert(type(m.capabilities) == "table",
+            "feature '" .. m.id .. "': capabilities must be a list of strings")
+        for _, cap in ipairs(m.capabilities) do
+            assert(type(cap) == "string",
+                "feature '" .. m.id .. "': each capability must be a string")
+            assert(KNOWN_CAPABILITIES[cap],
+                "feature '" .. m.id .. "': unknown capability '" .. tostring(cap) .. "'")
+        end
+    end
+
     m.category = m.category or "general"
     m.options = m.options or {}
     for _, o in ipairs(m.options) do
@@ -146,6 +164,15 @@ function manifest.validate(m)
         end
     end
     return m
+end
+
+-- Does this manifest declare the named capability? (registry uses this to
+-- decide whether to inject the matching privileged ctx methods.)
+function manifest.hasCapability(m, name)
+    for _, cap in ipairs(m.capabilities or {}) do
+        if cap == name then return true end
+    end
+    return false
 end
 
 -- Return the default value for an option key from a manifest.

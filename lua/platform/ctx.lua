@@ -34,7 +34,10 @@ local function stateKey(id, k) return "hammerdeck.state." .. id .. "." .. k end
 -- resolveTrigger(actionId) -- optional; injected by the registry so
 --                             ctx.actionTrigger can report an action's
 --                             currently-bound trigger without a require cycle
-function M.make(m, resolveTrigger)
+-- extra -- optional table of capability-gated methods (e.g. commands /
+--          runCommand) the registry injects ONLY for features that declared the
+--          matching capability; copied verbatim onto ctx (see manifest.lua).
+function M.make(m, resolveTrigger, extra)
     local live = {}   -- set: wrapper -> true
 
     local function track(raw)
@@ -171,6 +174,14 @@ function M.make(m, resolveTrigger)
     function ctx.lockScreen()        adapter.lockScreen() end
     function ctx.displaySleep()      adapter.displaySleep() end
     function ctx.startScreensaver()  adapter.startScreensaver() end
+
+    -- capability-gated extras (stateless; no scope handle to track) ------------
+    if extra then
+        for k, v in pairs(extra) do
+            assert(ctx[k] == nil, "capability method '" .. k .. "' shadows a core ctx method")
+            ctx[k] = v
+        end
+    end
 
     return ctx, scope
 end

@@ -71,5 +71,9 @@ public func hammerdeckMain() {
     let statusBar = StatusBarController(store: store) { settingsWindow.show() }
     _ = statusBar
 
+    // Debug-only: a file-polled Lua control channel for visual verification
+    // (off unless HAMMERDECK_CONTROL_DIR is set; the launcher sets it).
+    DebugControl.startIfRequested(lua)
+
     app.run()
 }

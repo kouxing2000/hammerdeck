@@ -25,6 +25,10 @@ local bound    = {}   -- id -> { ctx, scope } (when enabled)
 local catalog  = {}   -- the module-name list, remembered so reload() can re-run it
 local discoverDir = nil   -- when set, the catalog is re-scanned from disk on reload
 
+-- Defined below (after specDesc, whose trigger-formatting it reuses). Injected
+-- into the ctx of features holding the "commands" capability as ctx.commands().
+local buildCommandList
+
 -- Quarantine bookkeeping: a broken plugin must never take the whole app down.
 local loadFailures  = {}   -- list of { source, id?, error } -- never registered
 local startFailures = {}   -- id -> error string -- registered but failed to start
@@ -145,11 +149,21 @@ end
 local function bindFeature(m)
     if bound[m.id] then return end               -- already live
     startFailures[m.id] = nil                     -- a retry clears the prior failure
+    -- Capability gate: only a feature that declared `commands` gets the
+    -- cross-feature reach (the palette). runCommand IS runAction -- the palette
+    -- inherits its "enabled? exists? pcall-wrapped" guards for free.
+    local extra = nil
+    if manifest.hasCapability(m, "commands") then
+        extra = {
+            commands   = function() return buildCommandList(m.id) end,
+            runCommand = function(id, actionId) return registry.runAction(id, actionId) end,
+        }
+    end
     local ctx, scope = ctxlib.make(m, function(actionId)
         local okR, a = pcall(resolveAction, m, actionId)
         if not okR then return nil end
         return triggerFor(m, a)
-    end)
+    end, extra)
     local b = { ctx = ctx, scope = scope, actionHandles = {} }
     bound[m.id] = b
 
@@ -398,6 +412,31 @@ local function specDesc(spec)
         return "event: " .. tostring(spec.event)
     end
     return tostring(spec.type)
+end
+
+-- Flatten the catalog into a command list for a "commands"-capability holder:
+-- one entry per action of every OTHER ENABLED feature (self excluded -- the
+-- palette never lists its own opener). Backs ctx.commands(); rebuilt on each
+-- call, so it always reflects the live enabled/rebound state. Stable order
+-- (registry.all() is id-sorted; actions stay in declared order).
+function buildCommandList(selfId)
+    local out = {}
+    for _, m in ipairs(registry.all()) do
+        if m.id ~= selfId and registry.isEnabled(m.id) then
+            for _, a in ipairs(m.actions) do
+                out[#out + 1] = {
+                    featureId   = m.id,
+                    featureName = m.name,
+                    actionId    = a.id,
+                    -- single-action features read better as the feature name;
+                    -- multi-action ones need the per-action label to disambiguate.
+                    label       = (#m.actions > 1) and a.label or m.name,
+                    triggerDesc = specDesc(triggerFor(m, a)),
+                }
+            end
+        end
+    end
+    return out
 end
 
 local function describeTrigger(m)

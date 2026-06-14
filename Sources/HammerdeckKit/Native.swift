@@ -529,6 +529,50 @@ final class Native {
         return 0
     }
 
+    // MARK: - UI introspection (TEST-ONLY)
+    //
+    // A read-only window into the live native panels, for `swift test`. This is
+    // deliberately NOT surfaced through the adapter / ctx: a feature must never
+    // be able to enumerate or drive another feature's panels (same
+    // least-privilege reasoning as the `commands` capability gate). Tests reach
+    // it via `@testable import HammerdeckKit`; the headless Lua suite uses the
+    // fake adapter's own chooser introspection instead. Keeping it here means
+    // the "real panel" assertions an agent/CI needs live in one obvious place.
+
+    /// A snapshot of one live chooser panel's state. `id` is stable across a
+    /// feature's repeat invocations (a feature reuses its chooser), so a test
+    /// can follow a single chooser through opens/closes.
+    struct ChooserSnapshot {
+        let id: Int32
+        let visible: Bool
+        let isKey: Bool
+        let placeholder: String
+        let rowCount: Int
+        let selectedRow: Int
+        let entries: [String]
+    }
+
+    /// Every live chooser's state, id-sorted.
+    func chooserSnapshots() -> [ChooserSnapshot] {
+        choosers.map { id, p in
+            ChooserSnapshot(id: id, visible: p.isVisible, isKey: p.isKey,
+                            placeholder: p.placeholder, rowCount: p.visibleRowCount,
+                            selectedRow: p.selectedRow(), entries: p.visibleEntryTexts)
+        }.sorted { $0.id < $1.id }
+    }
+
+    /// Just the visible choosers (the common assertion target).
+    func visibleChoosers() -> [ChooserSnapshot] {
+        chooserSnapshots().filter(\.visible)
+    }
+
+    /// Drive a chooser's selection as the user would (fires its onSelect), by
+    /// the id a snapshot reported -- so a test can pick a row without
+    /// synthesizing a keystroke or a click. `row` is 1-based into the visible list.
+    func selectChooserRow(id: Int32, row: Int) {
+        choosers[id]?.select(row)
+    }
+
     // MARK: - askChoice (one-shot dialog built on ChooserPanel)
 
     private func askChoice(_ L: OpaquePointer?) -> Int32 {

@@ -690,6 +690,20 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     var isVisible: Bool { panel.isVisible }
 
+    // MARK: test introspection (read-only; surfaced via Native.chooserSnapshots)
+    // Not part of the Lua/feature contract -- see the note on that method.
+
+    /// Whether this panel currently holds key focus. The signal the
+    /// focus-handoff test asserts on when one chooser opens another.
+    var isKey: Bool { panel.isKeyWindow }
+    /// The search-field placeholder -- lets a test tell choosers apart by purpose
+    /// ("Run a command" vs "Search windows") without depending on ids.
+    var placeholder: String { searchField.placeholderString ?? "" }
+    /// Visible (post-filter) row count.
+    var visibleRowCount: Int { filtered.count }
+    /// The visible rows' primary text, in display order.
+    var visibleEntryTexts: [String] { filtered.map { entries[$0].text } }
+
     /// 1-based selected row in the current (filtered) list; 0 = none.
     func selectedRow() -> Int {
         return tableView.selectedRow >= 0 ? tableView.selectedRow + 1 : 0

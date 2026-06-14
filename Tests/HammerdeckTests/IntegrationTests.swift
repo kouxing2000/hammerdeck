@@ -124,10 +124,10 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 15,
-                       "disk discovery should find all 15 features")
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 16,
+                       "disk discovery should find all 16 features")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 15)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, 16)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_switcher" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -216,6 +216,106 @@ final class IntegrationTests: XCTestCase {
         // tears the pending timer down long before it could fire.
     }
 
+    // MARK: - Real native panels, driven in-process (no global hotkey)
+
+    /// Probe: can borderless panels actually take key focus in THIS launch
+    /// context? Some headless / CI launches order panels front but never confer
+    /// key focus. Like `canDeliverSynthesizedHotkeys`, this lets the *focus*
+    /// claim skip while the structural (visible/hidden) assertions still run.
+    private func canPanelsBecomeKey() -> Bool {
+        eval("""
+        _G.itKeyProbe = require('platform.adapter').chooser({ onSelect = function() end })
+        _G.itKeyProbe.setChoices({ { text = "probe" } })
+        _G.itKeyProbe.setPlaceholder("itKeyProbe")
+        _G.itKeyProbe.show()
+        return true
+        """)
+        pumpAppEvents(0.2)
+        let key = Native.shared.visibleChoosers()
+            .first { $0.placeholder == "itKeyProbe" }?.isKey ?? false
+        eval("_G.itKeyProbe.stop(); _G.itKeyProbe = nil; return true")
+        pumpAppEvents(0.1)
+        return key
+    }
+
+    /// The command_palette focus-handoff: open the palette (via the runAction
+    /// path -- no global hotkey, so no Accessibility needed), pick a command
+    /// that opens its OWN chooser, and assert the palette yields and the new
+    /// chooser comes up + takes focus. This is the bit neither test layer could
+    /// see before. Drives + inspects the REAL NSPanels via Native introspection.
+    func testCommandPaletteFocusHandoff() {
+        // A throwaway feature whose action just opens a chooser -- deterministic,
+        // unlike window_switcher (which needs Accessibility + real windows).
+        eval("""
+        package.loaded["features._it_picker"] = {
+          api = 1, id = "it_picker", name = "IT Picker",
+          action = function(ctx)
+            local ch = ctx.chooser({ onSelect = function() end })
+            ch.setPlaceholder("IT Picker Open")
+            ch.setChoices({ { text = "alpha" }, { text = "beta" } })
+            ch.show()
+          end,
+        }
+        require('platform.registry').load('features._it_picker')
+        return true
+        """)
+        defer {
+            host.store.setEnabled("it_picker", false)
+            host.store.setEnabled("command_palette", false)
+            eval("require('platform.registry').unregister('it_picker'); return true")
+            pumpAppEvents(0.1)
+            XCTAssertEqual(registryNum("liveHandleCount()"), 0, "panel test must leak nothing")
+        }
+
+        host.store.setEnabled("it_picker", true)
+        host.store.setEnabled("command_palette", true)
+
+        // Open the palette in-process (same path as a menubar quick trigger).
+        host.store.runAction("command_palette", "main")
+        pumpAppEvents(0.2)
+
+        let palettes = Native.shared.visibleChoosers().filter { $0.placeholder == "Run a command" }
+        XCTAssertEqual(palettes.count, 1, "the palette opened exactly one chooser")
+        guard let palette = palettes.first else { return }
+        XCTAssertTrue(palette.entries.contains("IT Picker"),
+                      "palette lists the enabled feature's command; got \(palette.entries)")
+
+        // Pick the it_picker row as the user would.
+        guard let idx = palette.entries.firstIndex(of: "IT Picker") else {
+            return XCTFail("IT Picker row not found")
+        }
+        Native.shared.selectChooserRow(id: palette.id, row: idx + 1)
+
+        // The palette dismisses synchronously; the command runs on the next tick
+        // (ctx.afterSeconds(0, ...)) so the two panels never fight for focus.
+        func paletteVisible() -> Bool {
+            Native.shared.chooserSnapshots().first { $0.id == palette.id }?.visible ?? false
+        }
+        XCTAssertFalse(paletteVisible(), "selecting a command dismisses the palette immediately")
+
+        spinRunLoop(0.15)
+        pumpAppEvents(0.3)
+
+        // The handed-off chooser (it_picker's) is now the visible one.
+        let opened = Native.shared.visibleChoosers().filter { $0.placeholder == "IT Picker Open" }
+        XCTAssertEqual(opened.count, 1, "the selected command opened its own chooser")
+        XCTAssertEqual(opened.first?.rowCount, 2, "with its own rows")
+        XCTAssertNotEqual(opened.first?.id, palette.id, "a distinct panel from the palette")
+        XCTAssertFalse(paletteVisible(), "the palette stays gone after the hand-off")
+
+        // Focus actually moved -- the contention bug this whole exercise targets.
+        if canPanelsBecomeKey() {
+            XCTAssertTrue(opened.first?.isKey ?? false,
+                          "the handed-off chooser took key focus (no focus contention)")
+        } else {
+            print("[it] skipping key-focus assertion: panels cannot become key in this context")
+        }
+
+        // Order the handed-off chooser out so it does not linger between tests.
+        if let q = opened.first { Native.shared.selectChooserRow(id: q.id, row: 0) }
+        pumpAppEvents(0.1)
+    }
+
     func testPasteboardBridge() {
         let pb = NSPasteboard.general
         let saved = pb.string(forType: .string)
@@ -263,7 +363,7 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('display_off')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 15)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 16)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("display_off", false)

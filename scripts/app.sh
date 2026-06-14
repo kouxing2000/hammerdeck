@@ -17,6 +17,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_DIR="$HOME/Library/Application Support/Hammerdeck/run"
 PIDFILE="$RUN_DIR/hammerdeck.pid"
 OUTLOG="$RUN_DIR/stdout.log"
+CONTROL_DIR="$RUN_DIR/control"   # debug Lua control channel (scripts/control.sh)
 
 mkdir -p "$RUN_DIR"
 
@@ -57,7 +58,9 @@ cmd_start() {
     fi
 
     echo "----- $(date '+%Y-%m-%d %H:%M:%S') start -----" >>"$OUTLOG"
-    nohup "$bin" "$@" >>"$OUTLOG" 2>&1 &
+    mkdir -p "$CONTROL_DIR"
+    rm -f "$CONTROL_DIR/cmd.lua" "$CONTROL_DIR/result.txt"
+    HAMMERDECK_CONTROL_DIR="$CONTROL_DIR" nohup "$bin" "$@" >>"$OUTLOG" 2>&1 &
     local newpid=$!
     echo "$newpid" >"$PIDFILE"
     sleep 1
