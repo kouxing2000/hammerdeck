@@ -147,7 +147,7 @@ function M.make(m, resolveTrigger, extra)
     -- network / files / wallpaper -----------------------------------------------
     function ctx.httpGet(url, headers, cb)     adapter.httpGet(url, headers, cb) end
     function ctx.downloadFile(url, path, cb)   adapter.downloadFile(url, path, cb) end
-    function ctx.setWallpaper(path)            return adapter.setWallpaper(path) end
+    function ctx.setWallpaper(path, mode)      return adapter.setWallpaper(path, mode) end
     function ctx.cacheDir()                    return adapter.cacheDir() end
 
     -- input / system state / system actions ------------------------------------

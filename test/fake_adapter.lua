@@ -500,6 +500,7 @@ fake.httpRequests  = {}   -- recorded { url, headers }
 fake.downloads     = {}   -- recorded { url, path }
 fake.downloadOk    = true
 fake.wallpapers    = {}   -- recorded setWallpaper paths
+fake.wallpaperModes = {}  -- recorded setWallpaper modes (parallel to wallpapers)
 
 function adapter.httpGet(url, headers, cb)
     fake.httpRequests[#fake.httpRequests + 1] = { url = url, headers = headers }
@@ -513,8 +514,9 @@ function adapter.downloadFile(url, path, cb)
     cb(fake.downloadOk)
 end
 
-function adapter.setWallpaper(path)
+function adapter.setWallpaper(path, mode)
     fake.wallpapers[#fake.wallpapers + 1] = path
+    fake.wallpaperModes[#fake.wallpaperModes + 1] = mode
     return true
 end
 

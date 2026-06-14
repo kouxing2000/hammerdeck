@@ -36,8 +36,9 @@ local function refresh(ctx)
             or ("bing_" .. tostring(ctx.now()))
         local path = ctx.cacheDir() .. "/" .. id
 
+        local applyTo = ctx.opt("applyTo")
         if ctx.getState("lastPic") == id then
-            ctx.setWallpaper(path)   -- same picture; make sure it's applied
+            ctx.setWallpaper(path, applyTo)   -- same picture; make sure it's applied
             return
         end
         ctx.downloadFile(picUrl, path, function(ok)
@@ -46,7 +47,7 @@ local function refresh(ctx)
                 return
             end
             ctx.setState("lastPic", id)
-            ctx.setWallpaper(path)
+            ctx.setWallpaper(path, applyTo)
             ctx.log("wallpaper updated: " .. id)
         end)
     end)
@@ -61,7 +62,12 @@ return {
     version     = "1.1.0",
     category    = "appearance",
 
-    options = {},
+    options = {
+        { key = "applyTo", type = "enum", default = "all",
+          values = { "all", "primary" },
+          labels = { "All displays", "Main display only" },
+          label = "Apply wallpaper to" },
+    },
 
     start = function(ctx)
         ctx.afterSeconds(5, function() refresh(ctx) end)   -- shortly after boot

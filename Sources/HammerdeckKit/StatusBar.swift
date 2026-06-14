@@ -37,7 +37,25 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         // action with no shortcut shows nothing and is still click-to-run.
         var rows: [Row] = []
         var anyTrigger = false
+
+        // Pin the Command Palette at the very top -- it is the "run anything"
+        // launcher over all the others, so it reads as the primary entry,
+        // separated from the per-feature quick triggers below.
+        if let palette = store.features.first(where: {
+            $0.id == "command_palette" && $0.enabled
+        }), let action = palette.actions.first {
+            let mi = triggerItem(feature: palette, action: action, title: palette.name)
+            menu.addItem(mi)
+            // Align on its own: it sits in its own section above the separator,
+            // so its shortcut column must not be computed jointly with the
+            // quick-trigger rows below it.
+            alignShortcuts([Row(item: mi, label: palette.name, shortcut: shortcutText(action))])
+            menu.addItem(.separator())
+            anyTrigger = true
+        }
+
         for feature in store.features where feature.enabled && !feature.actions.isEmpty {
+            if feature.id == "command_palette" { continue }   // pinned above
             anyTrigger = true
             if feature.actions.count == 1, let action = feature.actions.first {
                 let mi = triggerItem(feature: feature, action: action, title: feature.name)

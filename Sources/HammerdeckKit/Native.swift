@@ -757,10 +757,18 @@ final class Native {
         guard let path = LuaState.string(L, 1) else {
             return luaError(L, "set_wallpaper: path required")
         }
-        var ok = false
-        if let screen = NSScreen.main {
-            ok = (try? NSWorkspace.shared.setDesktopImageURL(
-                URL(fileURLWithPath: path), for: screen)) != nil
+        // mode "primary" => only the main display; anything else (incl. nil)
+        // => every screen. Default is all -- a multi-display setup otherwise
+        // leaves the other monitors on their old wallpaper.
+        let mode = LuaState.string(L, 2)
+        let url = URL(fileURLWithPath: path)
+        let ws = NSWorkspace.shared
+        let targets = (mode == "primary")
+            ? (NSScreen.main.map { [$0] } ?? [])
+            : NSScreen.screens
+        var ok = !targets.isEmpty
+        for screen in targets {
+            if (try? ws.setDesktopImageURL(url, for: screen)) == nil { ok = false }
         }
         lua_pushboolean(L, ok ? 1 : 0)
         return 1

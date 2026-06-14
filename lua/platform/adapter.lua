@@ -364,8 +364,9 @@ function adapter.downloadFile(url, path, cb)
     native.download_file(url, path, cb)
 end
 
-function adapter.setWallpaper(path)
-    return native.set_wallpaper(path)
+-- mode: "primary" sets only the main display; nil/"all" sets every screen.
+function adapter.setWallpaper(path, mode)
+    return native.set_wallpaper(path, mode)
 end
 
 -- App-owned writable cache directory (created on demand).

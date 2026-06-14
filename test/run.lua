@@ -667,6 +667,8 @@ local dl = fake.downloads[#fake.downloads]
 ok(dl and dl.path == "/tmp/hammerdeck-fake-cache/OHR.TestPic_1920x1080.jpg",
     "bing: downloads the picture into the app cache by id")
 ok(fake.wallpapers[#fake.wallpapers] == dl.path, "bing: sets the wallpaper")
+ok(fake.wallpaperModes[#fake.wallpaperModes] == "all",
+    "bing: applyTo defaults to all displays")
 ok(fake.settings["hammerdeck.state.bing_daily.lastPic"] == "OHR.TestPic_1920x1080.jpg",
     "bing: remembers the applied picture")
 
@@ -682,9 +684,13 @@ ok(registry.setTrigger("bing_daily", "refresh",
     "bing: dormant refresh action binds")
 fake.httpResponses[bingApi].body =
     '{"images":[{"url":"/th?id=OHR.NewPic_1920x1080.jpg&rf=y.jpg"}]}'
+fake.settings["hammerdeck.opt.bing_daily.applyTo"] = "primary"
 fake.pressHotkey("w")
 ok(fake.downloads[#fake.downloads].path == "/tmp/hammerdeck-fake-cache/OHR.NewPic_1920x1080.jpg",
     "bing: manual refresh downloads the new picture")
+ok(fake.wallpaperModes[#fake.wallpaperModes] == "primary",
+    "bing: applyTo='primary' threads through to setWallpaper")
+fake.settings["hammerdeck.opt.bing_daily.applyTo"] = nil
 
 -- a failed request leaves state untouched
 fake.httpResponses[bingApi] = { status = 500, body = nil }
