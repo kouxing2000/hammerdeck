@@ -24,7 +24,10 @@ local adapter = require("platform.adapter")
 
 local triggers = {}
 
-local VALID_EVENTS = { sleep = true, wake = true, screenLock = true, screenUnlock = true }
+local VALID_EVENTS = {
+    sleep = true, wake = true, screenLock = true, screenUnlock = true,
+    screenChanged = true,   -- display added/removed/rearranged
+}
 
 -- Validate a trigger spec (used before persisting a user rebind). Throws on a
 -- malformed spec; returns true on success.

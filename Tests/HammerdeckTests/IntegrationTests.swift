@@ -89,6 +89,30 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    /// Pump the event queue until `cond` holds or `timeout` elapses. Returns
+    /// whether it became true. Condition-based waiting beats a fixed sleep for
+    /// async panel/timer work -- a constant delay races under machine load.
+    @discardableResult
+    private func waitUntil(_ timeout: TimeInterval = 3.0, _ cond: () -> Bool) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while Date() < deadline {
+            if cond() { return true }
+            pumpAppEvents(0.02)
+        }
+        return cond()
+    }
+
+    /// Tests that show real on-screen panels or synthesize system-wide
+    /// keystrokes are disruptive while someone is using the machine -- dialogs
+    /// flash, and synthesized text lands in whatever app is focused. They run
+    /// only on explicit opt-in so a routine `swift test` stays quiet:
+    ///   HAMMERDECK_UI_TESTS=1 swift test
+    private func requireUITests() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HAMMERDECK_UI_TESTS"] == "1",
+            "UI/synthesis test -- set HAMMERDECK_UI_TESTS=1 to run "
+            + "(shows real panels / posts real keystrokes)")
+    }
+
     /// Whether synthesized CGEvents actually reach our Carbon hotkeys in THIS
     /// launch context. `AXIsProcessTrusted()` is necessary but not sufficient --
     /// it can report true while event posting silently fails (some headless /
@@ -243,7 +267,8 @@ final class IntegrationTests: XCTestCase {
     /// that opens its OWN chooser, and assert the palette yields and the new
     /// chooser comes up + takes focus. This is the bit neither test layer could
     /// see before. Drives + inspects the REAL NSPanels via Native introspection.
-    func testCommandPaletteFocusHandoff() {
+    func testCommandPaletteFocusHandoff() throws {
+        try requireUITests()
         // A throwaway feature whose action just opens a chooser -- deterministic,
         // unlike window_switcher (which needs Accessibility + real windows).
         eval("""
@@ -272,7 +297,8 @@ final class IntegrationTests: XCTestCase {
 
         // Open the palette in-process (same path as a menubar quick trigger).
         host.store.runAction("command_palette", "main")
-        pumpAppEvents(0.2)
+        waitUntil { Native.shared.visibleChoosers().contains {
+            $0.placeholder == "Run a command" && $0.entries.contains("IT Picker") } }
 
         let palettes = Native.shared.visibleChoosers().filter { $0.placeholder == "Run a command" }
         XCTAssertEqual(palettes.count, 1, "the palette opened exactly one chooser")
@@ -293,10 +319,10 @@ final class IntegrationTests: XCTestCase {
         }
         XCTAssertFalse(paletteVisible(), "selecting a command dismisses the palette immediately")
 
-        spinRunLoop(0.15)
-        pumpAppEvents(0.3)
+        // The deferred command opens it_picker's own chooser on the next tick.
+        waitUntil { Native.shared.visibleChoosers().contains {
+            $0.placeholder == "IT Picker Open" && $0.rowCount == 2 } }
 
-        // The handed-off chooser (it_picker's) is now the visible one.
         let opened = Native.shared.visibleChoosers().filter { $0.placeholder == "IT Picker Open" }
         XCTAssertEqual(opened.count, 1, "the selected command opened its own chooser")
         XCTAssertEqual(opened.first?.rowCount, 2, "with its own rows")
@@ -370,7 +396,8 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(registryNum("liveHandleCount()"), 0)
     }
 
-    func testBannerPanelLifecycle() {
+    func testBannerPanelLifecycle() throws {
+        try requireUITests()
         eval("_G.itBanner = require('platform.adapter').banner('integration'); return true")
         eval("_G.itBanner.setText('updated'); _G.itBanner.stop(); _G.itBanner = nil; return true")
         // Reaching here without a crash is the assertion: a real NSPanel was
@@ -406,7 +433,8 @@ final class IntegrationTests: XCTestCase {
                         "some app is always frontmost")
     }
 
-    func testUsageWidgetPanelLifecycle() {
+    func testUsageWidgetPanelLifecycle() throws {
+        try requireUITests()
         // A real desktop-level NSPanel is created, fed a full nested data
         // table across the bridge (the any() crossing), updated, and torn
         // down. Reaching the end without a crash is the assertion.
@@ -479,6 +507,7 @@ final class IntegrationTests: XCTestCase {
     /// bridge. Proves the #3 text_actions seam end to end without touching
     /// any other app.
     func testTypeTextSynthesisIntoOwnPanel() throws {
+        try requireUITests()
         try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
             "this environment cannot deliver synthesized events")
 
@@ -622,6 +651,7 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)
 
     func testGlobalHotkeySynthesis() throws {
+        try requireUITests()
         try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
             "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
 
@@ -672,6 +702,7 @@ final class IntegrationTests: XCTestCase {
     /// bare key fires the action. Proves the modal register/unregister dance
     /// works against the real Carbon event queue -- not just the Lua wiring.
     func testChordHotkeySynthesis() throws {
+        try requireUITests()
         try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
             "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
 

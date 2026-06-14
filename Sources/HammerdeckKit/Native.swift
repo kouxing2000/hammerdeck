@@ -329,6 +329,16 @@ final class Native {
                 MainActor.assumeIsolated { fire() }
             }
             cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+        case "screenChanged":
+            // Display added/removed/rearranged (and resolution changes). Lets a
+            // feature react to a monitor being plugged in -- e.g. re-assert the
+            // wallpaper on the new screen instantly instead of on the next poll.
+            let center = NotificationCenter.default
+            let token = center.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                           object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { fire() }
+            }
+            cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
         default:
             lua.releaseRef(ref)
             return luaError(L, "on_system_event: unknown event '\(event)'")

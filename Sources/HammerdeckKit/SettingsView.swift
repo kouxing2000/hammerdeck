@@ -251,7 +251,7 @@ private enum TriggerMode: String, CaseIterable, Identifiable {
 
 private let allMods: [(id: String, symbol: String)] =
     [("cmd", "⌘"), ("alt", "⌥"), ("ctrl", "⌃"), ("shift", "⇧")]
-private let allEvents = ["sleep", "wake", "screenLock", "screenUnlock"]
+private let allEvents = ["sleep", "wake", "screenLock", "screenUnlock", "screenChanged"]
 
 /// Edits one action's trigger and applies it via registry.setTrigger.
 /// Seeded once from action.trigger; remounted by the parent (.id on the bound

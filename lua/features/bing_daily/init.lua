@@ -4,15 +4,17 @@
 -- Polls Bing's image API on a schedule, downloads new pictures into the app
 -- cache (the donor saved them to ~/.Trash!), and sets the desktop image.
 --
--- SERVICE (refresh timer) + ACTION ("refresh now", dormant by default --
--- bind a shortcut in Settings if you want one): the first feature using the
+-- SERVICE (apply-on-enable + re-assert on display change) + ACTION
+-- ("refresh now") whose DEFAULT trigger is a 3h schedule (rebindable in
+-- Settings -- e.g. to a daily time): the first feature using the
 -- service-plus-actions combo.
 
 local json = require("platform.json")
 
--- The picture changes once a day; the poll just needs to notice that within
--- a few hours (and re-assert the wallpaper). Not worth a user option.
-local REFRESH_SECONDS = 3 * 3600
+-- The picture changes once a day; a 3h cadence catches it within hours and
+-- re-asserts the wallpaper. This is the refresh action's DEFAULT schedule
+-- trigger (rebindable in Settings), not a hidden timer.
+local REFRESH_MINUTES = 3 * 60
 
 local API_URL = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1"
 local USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -69,15 +71,26 @@ return {
           label = "Apply wallpaper to" },
     },
 
+    -- A minimal service: apply once shortly after enable/boot so the wallpaper
+    -- is current immediately (a schedule trigger only fires AFTER its first
+    -- interval, never on bind). The recurring refresh is the action's declared
+    -- schedule trigger below -- visible and rebindable, per the platform's
+    -- "bind each to a schedule" model.
     start = function(ctx)
-        ctx.afterSeconds(5, function() refresh(ctx) end)   -- shortly after boot
-        ctx.everySeconds(REFRESH_SECONDS, function() refresh(ctx) end)
-        ctx.log("started (every " .. (REFRESH_SECONDS / 3600) .. "h)")
+        ctx.afterSeconds(5, function() refresh(ctx) end)
+        -- A display plugged in / rearranged: re-assert the already-downloaded
+        -- picture onto all screens immediately (no network), so a new monitor
+        -- gets the wallpaper at once instead of waiting for the next poll.
+        ctx.onSystemEvent("screenChanged", function()
+            local id = ctx.getState("lastPic")
+            if id then ctx.setWallpaper(ctx.cacheDir() .. "/" .. id, ctx.opt("applyTo")) end
+        end)
+        ctx.log("started")
     end,
 
     actions = {
         { id = "refresh", label = "Refresh wallpaper now",
-          -- Dormant: bind a shortcut in Settings to use it.
+          defaultTrigger = { type = "schedule", everyMin = REFRESH_MINUTES },
           run = function(ctx) refresh(ctx) end },
     },
 }

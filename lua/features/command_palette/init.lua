@@ -11,13 +11,49 @@
 -- those two methods for capability holders. A normal feature never sees, let
 -- alone runs, another feature.
 
+local json = require("platform.json")
+
 -- Closure state, reused across invocations; rebuilt when ctx changes (a
 -- disable -> enable cycle invalidated the old chooser handle).
 local st = nil
 
+-- Frecency: a persisted count of how often each command was run, so the ones
+-- you reach for surface to the top. Keyed by feature + action.
+local function cmdKey(featureId, actionId) return featureId .. "\0" .. actionId end
+
+local function loadCounts(ctx)
+    local raw = ctx.getState("counts")
+    if type(raw) == "string" then
+        local t = json.decode(raw)
+        if type(t) == "table" then return t end
+    end
+    return {}
+end
+
+local function bumpCount(ctx, featureId, actionId)
+    local counts = loadCounts(ctx)
+    local k = cmdKey(featureId, actionId)
+    counts[k] = (counts[k] or 0) + 1
+    ctx.setState("counts", json.encode(counts))
+end
+
 local function buildChoices(ctx)
-    local choices = {}
+    local counts = loadCounts(ctx)
+    local cmds = {}
     for _, cmd in ipairs(ctx.commands()) do
+        cmd._count = counts[cmdKey(cmd.featureId, cmd.actionId)] or 0
+        cmds[#cmds + 1] = cmd
+    end
+    -- Most-run first; ties fall back to a stable name order so the list does
+    -- not jump around between opens.
+    table.sort(cmds, function(a, b)
+        if a._count ~= b._count then return a._count > b._count end
+        if a.featureName ~= b.featureName then return a.featureName < b.featureName end
+        return a.label < b.label
+    end)
+
+    local choices = {}
+    for _, cmd in ipairs(cmds) do
         local sub = cmd.featureName
         if ctx.opt("showShortcuts") and cmd.triggerDesc
             and cmd.triggerDesc ~= "" and cmd.triggerDesc ~= "no trigger" then
@@ -39,7 +75,8 @@ local function openPalette(ctx)
         st.chooser = ctx.chooser {
             searchSubText = true,        -- also match the feature name in the subtitle
             onSelect = function(choice)
-                if not choice then return end   -- Escape / dismissed
+                if not choice or not choice.id then return end   -- Escape / info row
+                bumpCount(ctx, choice.id, choice.actionId)        -- frecency
                 -- Run AFTER the panel has yielded the key window, so commands
                 -- that open their OWN chooser (window_switcher, tab_switcher)
                 -- don't contend with the palette's panel for focus.

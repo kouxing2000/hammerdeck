@@ -75,5 +75,16 @@ public func hammerdeckMain() {
     // (off unless HAMMERDECK_CONTROL_DIR is set; the launcher sets it).
     DebugControl.startIfRequested(lua)
 
+    // Clean teardown on quit: stop every feature (unbind hotkeys, watchers,
+    // timers, panels) before the process exits, instead of relying on the OS to
+    // reclaim native resources implicitly.
+    NotificationCenter.default.addObserver(
+        forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+    ) { _ in
+        MainActor.assumeIsolated {
+            _ = try? Native.shared.lua.eval("require('platform.registry').stopAll(); return true")
+        }
+    }
+
     app.run()
 }

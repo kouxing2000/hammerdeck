@@ -671,6 +671,20 @@ ok(fake.wallpaperModes[#fake.wallpaperModes] == "all",
     "bing: applyTo defaults to all displays")
 ok(fake.settings["hammerdeck.state.bing_daily.lastPic"] == "OHR.TestPic_1920x1080.jpg",
     "bing: remembers the applied picture")
+do
+    local bingRow
+    for _, d in ipairs(registry.describe()) do if d.id == "bing_daily" then bingRow = d end end
+    ok(bingRow and bingRow.actions[1].trigger and bingRow.actions[1].trigger.everyMin == 180,
+        "bing: refresh action defaults to a 3h schedule trigger (visible + rebindable)")
+end
+
+-- a display change re-applies the CACHED wallpaper, no network round-trip
+local reqBefore = #fake.httpRequests
+local dlBefore = #fake.downloads
+fake.systemEvent("screenChanged")
+ok(fake.wallpapers[#fake.wallpapers] == dl.path
+    and #fake.httpRequests == reqBefore and #fake.downloads == dlBefore,
+    "bing: a screen change re-applies the cached wallpaper without hitting the network")
 
 -- same picture on the next poll: re-applied, NOT re-downloaded
 local dlCount = #fake.downloads
@@ -678,10 +692,11 @@ fake.fireTimers("every", 3 * 3600)
 ok(#fake.downloads == dlCount, "bing: unchanged picture is not re-downloaded")
 ok(fake.wallpapers[#fake.wallpapers] == dl.path, "bing: unchanged picture is re-applied")
 
--- the dormant refresh action works once bound
+-- the refresh action carries a default schedule trigger; rebinding to a hotkey
+-- (this also drops the schedule timer, so subsequent refreshes fire on the key)
 ok(registry.setTrigger("bing_daily", "refresh",
     { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "w" }) == true,
-    "bing: dormant refresh action binds")
+    "bing: refresh action rebinds to a hotkey")
 fake.httpResponses[bingApi].body =
     '{"images":[{"url":"/th?id=OHR.NewPic_1920x1080.jpg&rf=y.jpg"}]}'
 fake.settings["hammerdeck.opt.bing_daily.applyTo"] = "primary"
@@ -692,10 +707,10 @@ ok(fake.wallpaperModes[#fake.wallpaperModes] == "primary",
     "bing: applyTo='primary' threads through to setWallpaper")
 fake.settings["hammerdeck.opt.bing_daily.applyTo"] = nil
 
--- a failed request leaves state untouched
+-- a failed request leaves state untouched (refresh now fires on the hotkey)
 fake.httpResponses[bingApi] = { status = 500, body = nil }
 local wallCount = #fake.wallpapers
-fake.fireTimers("every", 3 * 3600)
+fake.pressHotkey("w")
 ok(#fake.wallpapers == wallCount, "bing: failed request changes nothing")
 
 registry.setEnabled("bing_daily", false)
@@ -1508,6 +1523,8 @@ local pchNo = fake.visibleChooser()
 local subNo = {}
 for _, c in ipairs(pchNo.choices) do subNo[c.text] = c.subText end
 ok(subNo["Cmd A"] == "Cmd A", "showShortcuts off drops the trigger from the subtitle")
+ok(pchNo.choices[1].text == "Do two",
+    "frecency: the previously-run command sorts to the top")
 pchNo.userSelect(0)   -- dismiss
 fake.settings["hammerdeck.opt.command_palette.showShortcuts"] = nil
 
@@ -1538,5 +1555,27 @@ registry.setEnabled("cmd_plain", false)
 registry.setEnabled("command_palette", false)
 registry.setEnabled("cmd_off", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after command_palette test")
+
+-- T30: fire-time error surfacing -- repeated failures raise ONE visible alert --
+local boomCount = 0
+package.loaded["features._boom"] = {
+    api = 1, id = "boom", name = "Boom Feature",
+    defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "0" },
+    action = function() boomCount = boomCount + 1; error("kaboom") end,
+}
+registry.load("features._boom")
+registry.setEnabled("boom", true)
+local alertsBoom = #fake.alerts
+fake.pressHotkey("0")   -- failure 1
+fake.pressHotkey("0")   -- failure 2
+ok(#fake.alerts == alertsBoom, "early failures stay quiet (logged only)")
+fake.pressHotkey("0")   -- failure 3 -> alert
+ok(#fake.alerts == alertsBoom + 1 and fake.alerts[#fake.alerts]:match("keeps failing"),
+    "the third consecutive failure raises one visible alert")
+fake.pressHotkey("0")   -- failure 4 -> no more spam
+ok(#fake.alerts == alertsBoom + 1, "further failures do not spam additional alerts")
+ok(boomCount == 4, "a throwing action is contained, not silently swallowed (still ran each time)")
+registry.setEnabled("boom", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after error-surfacing test")
 
 print("OK -- " .. passed .. " assertions passed")

@@ -131,6 +131,39 @@ local function triggerFor(m, a)
     return (stored and triggers.decode(stored)) or a.defaultTrigger
 end
 
+-- Fire-time error surfacing. A trigger fires an action's run(ctx) on its own
+-- (schedule/event/hotkey) -- the user isn't watching, so a throw only reaching
+-- the log is easy to miss. Count consecutive failures per action; on the Nth in
+-- a row, surface one visible alert (then stay quiet until a success resets it,
+-- so a persistently broken feature doesn't spam). Success clears the streak.
+local fireFailures = {}   -- "id.actionId" -> consecutive failure count
+local FAIL_ALERT_AFTER = 3
+
+local function fireKey(m, a) return m.id .. "." .. a.id end
+
+-- Run an action's handler from a trigger, contained: a throw is caught, logged,
+-- counted, and (on a sustained streak) alerted -- never propagated to the bridge.
+-- The trigger-fired streak is a separate channel from the manual menubar path
+-- (registry.runAction) on purpose: a manual run neither increments nor resets
+-- it, so its failures surface via runAction's return value, not this alert.
+local function runActionGuarded(m, a, ctx)
+    local key = fireKey(m, a)
+    local ok, err = pcall(a.run, ctx)
+    if ok then
+        fireFailures[key] = nil
+        return
+    end
+    local n = (fireFailures[key] or 0) + 1
+    fireFailures[key] = n
+    adapter.log(m.id .. "." .. a.id .. ": fire failed (" .. n .. "): " .. tostring(err))
+    if n == FAIL_ALERT_AFTER then
+        local who = m.name or m.id
+        if #m.actions > 1 then who = who .. " -- " .. (a.label or a.id) end
+        adapter.alert(who .. " keeps failing:\n" .. tostring(err)
+            .. "\n\nSee \"Open Logs\" in the menubar for details.")
+    end
+end
+
 -- Find an action by id; with actionId == nil, resolve the feature's sole
 -- action (the legacy single-action call shape). Raises on a miss.
 local function resolveAction(m, actionId)
@@ -180,7 +213,7 @@ local function bindFeature(m)
             local spec = triggerFor(m, a)
             if spec then
                 b.actionHandles[a.id] =
-                    scope.adopt(triggers.bind(spec, function() a.run(ctx) end))
+                    scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, ctx) end))
                 adapter.log(m.id .. "." .. a.id .. ": bound (" .. spec.type .. ")")
             else
                 adapter.log(m.id .. "." .. a.id .. ": no trigger; manual only")
@@ -202,6 +235,7 @@ end
 
 local function unbindFeature(m)
     startFailures[m.id] = nil
+    for _, a in ipairs(m.actions) do fireFailures[fireKey(m, a)] = nil end
     local b = bound[m.id]
     if not b then return end
     if m.stop then
@@ -322,7 +356,7 @@ function registry.setTrigger(id, actionId, spec)
     if b then
         local okBind, err = pcall(function()
             b.actionHandles[a.id] =
-                b.scope.adopt(triggers.bind(spec, function() a.run(b.ctx) end))
+                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end))
         end)
         if not okBind then return false, "bind failed: " .. tostring(err) end
     end
@@ -344,7 +378,7 @@ function registry.clearTrigger(id, actionId)
     end
     if b and a.defaultTrigger then
         b.actionHandles[a.id] =
-            b.scope.adopt(triggers.bind(a.defaultTrigger, function() a.run(b.ctx) end))
+            b.scope.adopt(triggers.bind(a.defaultTrigger, function() runActionGuarded(m, a, b.ctx) end))
     end
     return true
 end
