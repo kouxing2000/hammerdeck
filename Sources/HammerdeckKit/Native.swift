@@ -119,6 +119,8 @@ final class Native {
             "app_icon":     { L in MainActor.assumeIsolated { Native.shared.appIcon(L) } },
             // platform: discover feature modules on disk
             "discover_features": { L in MainActor.assumeIsolated { Native.shared.discoverFeatures(L) } },
+            // platform: the user's enabled macOS system shortcuts (read-only)
+            "system_hotkeys": { L in MainActor.assumeIsolated { Native.shared.systemHotkeys(L) } },
             // app focus tracking (NSWorkspace -- no permission required)
             "frontmost_app":    { L in MainActor.assumeIsolated { Native.shared.frontmostApp(L) } },
             "on_app_activated": { L in MainActor.assumeIsolated { Native.shared.onAppActivated(L) } },
@@ -503,7 +505,8 @@ final class Native {
             ChooserEntry(text: d["text"] as? String ?? "",
                          subText: d["subText"] as? String,
                          iconToken: d["image"] as? String,
-                         valid: (d["valid"] as? Bool) ?? true)
+                         valid: (d["valid"] as? Bool) ?? true,
+                         shortcut: d["shortcut"] as? String)
         }
         panel.setChoices(entries)
         return 0
@@ -1136,6 +1139,104 @@ final class Native {
         }
         return 1
     }
+
+    // MARK: - System shortcuts (read-only)
+
+    // system_hotkeys(): the user's currently-enabled macOS system shortcuts,
+    // returned as hotkey-shaped specs { mods = {...}, key = "...", name = "..." }
+    // so the config UI can warn before a binding collides with Spotlight,
+    // input-source switching, Mission Control, etc. macOS owns these
+    // (com.apple.symbolichotkeys) -- we only READ them, never rebind.
+    private func systemHotkeys(_ L: OpaquePointer?) -> Int32 {
+        let entries = Native.readSymbolicHotkeys()
+        lua_createtable(L, Int32(entries.count), 0)
+        for (i, e) in entries.enumerated() {
+            lua_createtable(L, 0, 3)
+            lua_createtable(L, Int32(e.mods.count), 0)
+            for (j, m) in e.mods.enumerated() {
+                lua_pushstring(L, m)
+                lua_rawseti(L, -2, lua_Integer(j + 1))
+            }
+            lua_setfield(L, -2, "mods")
+            lua_pushstring(L, e.key);  lua_setfield(L, -2, "key")
+            lua_pushstring(L, e.name); lua_setfield(L, -2, "name")
+            lua_rawseti(L, -2, lua_Integer(i + 1))
+        }
+        return 1
+    }
+
+    /// Parse ~/Library/Preferences/com.apple.symbolichotkeys.plist into the
+    /// enabled shortcuts we can represent (mods + a key our keyCodes map knows).
+    /// Each plist entry is { enabled, value = { parameters = (char, keyCode,
+    /// modifierMask) } }; modifierMask uses the Cocoa NSEvent flag bits.
+    static func readSymbolicHotkeys() -> [(mods: [String], key: String, name: String)] {
+        guard let raw = CFPreferencesCopyAppValue("AppleSymbolicHotKeys" as CFString,
+                                                  "com.apple.symbolichotkeys" as CFString)
+                as? [String: Any] else { return [] }
+        var out: [(mods: [String], key: String, name: String)] = []
+        for (idStr, v) in raw {
+            guard let entry = v as? [String: Any] else { continue }
+            let enabled: Bool = (entry["enabled"] as? Bool)
+                ?? ((entry["enabled"] as? NSNumber)?.intValue != 0 ? true : false)
+            guard enabled,
+                  let value = entry["value"] as? [String: Any],
+                  let params = value["parameters"] as? [Any], params.count >= 3,
+                  let keyCode = (params[1] as? NSNumber)?.intValue,
+                  let mask = (params[2] as? NSNumber)?.intValue,
+                  let keyName = Native.codeToKeyName[keyCode]
+            else { continue }
+            var mods: [String] = []
+            if mask & 0x100000 != 0 { mods.append("cmd") }
+            if mask & 0x080000 != 0 { mods.append("alt") }
+            if mask & 0x040000 != 0 { mods.append("ctrl") }
+            if mask & 0x020000 != 0 { mods.append("shift") }
+            let name = Native.symbolicHotkeyNames[Int(idStr) ?? -1] ?? "a macOS system shortcut"
+            out.append((mods: mods, key: keyName, name: name))
+        }
+        return out
+    }
+
+    /// Reverse of HotkeyCenter.keyCodes (positional code -> a key name our
+    /// trigger specs use). Canonical spellings win over their aliases so the
+    /// emitted key string matches what the editor stores (e.g. "return", not
+    /// "enter") for the conflict comparison.
+    static let codeToKeyName: [Int: String] = {
+        let preferred: Set<String> = ["return", "delete", "escape", "space", "tab",
+                                      "left", "right", "up", "down"]
+        var map: [Int: String] = [:]
+        for (name, code) in HotkeyCenter.keyCodes {
+            if let cur = map[code] {
+                if preferred.contains(name) && !preferred.contains(cur) { map[code] = name }
+            } else {
+                map[code] = name
+            }
+        }
+        return map
+    }()
+
+    /// Friendly names for the well-known symbolic-hotkey ids, for the warning
+    /// text. Detection works without these (id absent -> generic wording); they
+    /// only make the message specific ("Spotlight" vs "a macOS system shortcut").
+    static let symbolicHotkeyNames: [Int: String] = [
+        32: "Mission Control",
+        33: "Application Windows",
+        36: "Show Desktop",
+        28: "Save screenshot to file",
+        29: "Copy screenshot to clipboard",
+        30: "Save screenshot of area to file",
+        31: "Copy screenshot of area to clipboard",
+        60: "Select previous input source",
+        61: "Select next input source",
+        64: "Spotlight",
+        65: "Spotlight (Finder window)",
+        79: "Move to space on the left",
+        81: "Move to space on the right",
+        118: "Switch to Desktop 1",
+        160: "Launchpad",
+        162: "Quick Note",
+        175: "Notification Center",
+        184: "Screenshot and recording options",
+    ]
 
     // focus_window(id): raise the window and activate its app. The id must
     // come from the most recent list_windows() call.

@@ -203,6 +203,36 @@ final class SettingsStore: ObservableObject {
         return (r["reason"] as? String) ?? "trigger conflict"
     }
 
+    /// Advisory (soft) conflicts for a candidate hotkey/chord binding: macOS
+    /// system shortcuts it collides with, plus common app shortcuts it would
+    /// shadow. Distinct from setTrigger's hard, in-app conflict (which blocks).
+    /// Empty when clear; the caller still lets the user apply.
+    func shortcutAdvisories(_ spec: TriggerSpec) -> [String] {
+        guard spec.type == "hotkey" || spec.type == "chord" else { return [] }
+        let code = "return require('platform.triggers').advisories(\(spec.luaLiteral))"
+        guard let raw = try? lua.eval(code), let list = raw as? [Any] else { return [] }
+        return list.compactMap { $0 as? String }
+    }
+
+    /// Read-only hard-conflict check: does `spec` collide with another ENABLED
+    /// Hammerdeck action? Returns the reason, or nil. Mirrors what setTrigger
+    /// would refuse -- used to render a row's live status WITHOUT mutating
+    /// anything (setTrigger persists; this doesn't).
+    func triggerConflict(_ id: String, _ actionId: String, _ spec: TriggerSpec) -> String? {
+        let code = "local r = require('platform.registry')"
+            + ".triggerConflict('\(id)', '\(actionId)', \(spec.luaLiteral)); return r or false"
+        guard let raw = try? lua.eval(code), let s = raw as? String else { return nil }
+        return s
+    }
+
+    /// Swap two actions' triggers (the Shortcut Map drag-to-swap). Atomic and
+    /// conflict-safe in the registry. Refreshes the catalog after.
+    func swapTriggers(_ idA: String, _ actionA: String, _ idB: String, _ actionB: String) {
+        _ = try? lua.eval(
+            "require('platform.registry').swapTriggers('\(idA)', '\(actionA)', '\(idB)', '\(actionB)'); return true")
+        refresh()
+    }
+
     /// Drop one action's override, reverting to its declared default trigger.
     func clearTrigger(_ id: String, _ actionId: String) {
         _ = try? lua.eval("require('platform.registry').clearTrigger('\(id)', '\(actionId)'); return true")

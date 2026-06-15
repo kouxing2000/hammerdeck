@@ -269,6 +269,7 @@ private struct TriggerEditor: View {
     @State private var at: String
     @State private var event: String
     @State private var conflict: String?
+    @State private var advisories: [String] = []   // soft system/common-app warnings
 
     init(store: SettingsStore, feature: FeatureInfo, action: ActionInfo) {
         self.store = store
@@ -362,6 +363,15 @@ private struct TriggerEditor: View {
                 .font(.callout)
         }
 
+        // Soft, advisory warnings (system / common-app collisions). Unlike a
+        // hard conflict these never block Apply -- the user may still want the
+        // key; they just see what it costs.
+        ForEach(advisories, id: \.self) { warning in
+            Label(warning, systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+        }
+
         HStack {
             Button("Apply") { conflict = store.setTrigger(feature.id, action.id, buildSpec()) }
                 .disabled(applyDisabled)
@@ -373,6 +383,20 @@ private struct TriggerEditor: View {
             }
             Spacer()
         }
+        // Recompute advisories on appear and on every edit (mode/mods/key/
+        // follows). store.shortcutAdvisories evals Lua, so debounce by keying
+        // on a cheap signature string rather than recomputing each render.
+        .task(id: editSignature) { refreshAdvisories() }
+    }
+
+    /// A cheap key that changes whenever the candidate binding changes.
+    private var editSignature: String {
+        "\(mode.rawValue)|\(mods.sorted().joined(separator: "+"))|\(key)|\(follows)"
+    }
+
+    private func refreshAdvisories() {
+        advisories = (mode == .hotkey || mode == .chord)
+            ? store.shortcutAdvisories(buildSpec()) : []
     }
 
     private var applyDisabled: Bool {

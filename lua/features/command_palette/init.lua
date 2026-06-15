@@ -55,14 +55,21 @@ local function buildChoices(ctx)
 
     local choices = {}
     for _, cmd in ipairs(cmds) do
-        local sub = cmd.featureName
-        if ctx.opt("showShortcuts") and cmd.triggerDesc
-            and cmd.triggerDesc ~= "" and cmd.triggerDesc ~= "no trigger" then
-            sub = sub .. "  --  " .. cmd.triggerDesc
+        -- Source feature as dim context, but only when it adds information --
+        -- for single-action features the label already IS the feature name, so
+        -- repeating it is noise.
+        local source = nil
+        if cmd.featureName and cmd.featureName ~= cmd.label then
+            source = cmd.featureName
+        end
+        local shortcut = nil
+        if ctx.opt("showShortcuts") and cmd.triggerGlyph and cmd.triggerGlyph ~= "" then
+            shortcut = cmd.triggerGlyph
         end
         choices[#choices + 1] = {
             text     = cmd.label,        -- action label is the primary line
-            subText  = sub,              -- feature name (+ its shortcut)
+            subText  = source,           -- dim source-feature context column
+            shortcut = shortcut,         -- trigger preview, flush-right
             id       = cmd.featureId,    -- carried back on select
             actionId = cmd.actionId,
         }
@@ -118,6 +125,9 @@ return {
           label = "Show each command's shortcut in the subtitle" },
     },
 
-    defaultTrigger = { type = "hotkey", mods = { "cmd", "alt" }, key = "space" },
+    -- ⇧⌘Space: a Spotlight-style Space launcher that avoids the taken combos
+    -- (⌘Space Spotlight, ⌥⌘Space Finder search, ⌃Space/⌃⌥Space input source,
+    -- ⌃⌘Space emoji) -- so our own conflict warning stays clean out of the box.
+    defaultTrigger = { type = "hotkey", mods = { "cmd", "shift" }, key = "space" },
     action = function(ctx) openPalette(ctx) end,
 }

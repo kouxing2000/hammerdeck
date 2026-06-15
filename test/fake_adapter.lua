@@ -98,6 +98,11 @@ function adapter.setSetting(key, value)
     fake.settings[key] = value
 end
 
+-- System shortcuts the editor warns against; tests can populate fake.systemHotkeys.
+function adapter.systemHotkeys()
+    return fake.systemHotkeys or {}
+end
+
 -- Output ------------------------------------------------------------------------
 
 function adapter.notify(title, text)

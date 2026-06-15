@@ -67,7 +67,13 @@ the bridge + adapter, never reach past the seam.
   SwiftUI settings window; forms are GENERATED from
   manifest options (never write per-feature UI code). Reads the catalog via
   `registry.describe()` over `LuaState.eval`; writes the same
-  `hammerdeck.opt.*` defaults keys `ctx.opt` reads.
+  `hammerdeck.opt.*` defaults keys `ctx.opt` reads. Menubar shortcuts render
+  via native `keyEquivalent` -- the ONLY thing that sits flush-right with the
+  submenu arrows (an `attributedTitle` shortcut can't reach that column; it
+  always floats a fixed gap short). The global hotkey already fires the action,
+  so `runAction` ignores keyboard-origin invocations (`NSApp.currentEvent` is a
+  key/flags event) to avoid double-firing; non-key triggers (schedule/chord/
+  event) have no key form and show no menu shortcut.
 - **Sources/Hammerdeck/main.swift** -- thin launcher only (calls
   `hammerdeckMain()`); all logic lives in the Kit so tests can import it.
 - **Tests/HammerdeckTests/** -- integration tests against the REAL bridge

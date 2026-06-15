@@ -552,6 +552,7 @@ struct ChooserEntry {
     let subText: String?
     let iconToken: String?   // "appicon:<bundleID>"
     let valid: Bool          // false = info row, not selectable
+    var shortcut: String? = nil  // trigger/shortcut preview, rendered flush-right
 }
 
 /// hs.chooser-equivalent: a floating search field + list. onSelect receives the
@@ -570,7 +571,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private let onHide: () -> Void
     private var keyMonitor: Any?         // cmd+1..9 quick-pick, live while shown
 
-    private static let width: CGFloat = 560
+    private static let width: CGFloat = 680
     private static let rowHeight: CGFloat = 34
     private static let searchHeight: CGFloat = 36
 
@@ -807,21 +808,42 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         }
         x += 32
 
+        // Three columns: title (flexible, left), source feature (dim context),
+        // and the trigger/shortcut preview flush to the right edge. Each is its
+        // own label so the shortcut stays right-aligned and never gets eaten by a
+        // long feature name truncating ahead of it.
+        // 28pt is the proven-safe right margin under the table's .inset style
+        // (content past width-28 gets clipped by the inset).
+        let rightMargin: CGFloat = 28
+        let shortcutW: CGFloat = 100   // compact glyphs (⇧⌘V, every 180m)
+        let shortcutX = ChooserPanel.width - rightMargin - shortcutW
+        let sourceW: CGFloat = 150
+        let sourceX = shortcutX - 12 - sourceW
+
         let title = NSTextField(labelWithString: e.text)
         title.font = .systemFont(ofSize: 14)
         title.textColor = e.valid ? .labelColor : .secondaryLabelColor
         title.lineBreakMode = .byTruncatingTail
-        title.frame = NSRect(x: x, y: 8, width: ChooserPanel.width - x - 180, height: 18)
+        title.frame = NSRect(x: x, y: 8, width: sourceX - 12 - x, height: 18)
         cell.addSubview(title)
 
         if let sub = e.subText, !sub.isEmpty {
             let subLabel = NSTextField(labelWithString: sub)
             subLabel.font = .systemFont(ofSize: 11)
-            subLabel.textColor = .secondaryLabelColor
-            subLabel.alignment = .right
+            subLabel.textColor = .tertiaryLabelColor
             subLabel.lineBreakMode = .byTruncatingTail
-            subLabel.frame = NSRect(x: ChooserPanel.width - 188, y: 9, width: 160, height: 16)
+            subLabel.frame = NSRect(x: sourceX, y: 9, width: sourceW, height: 16)
             cell.addSubview(subLabel)
+        }
+
+        if let sc = e.shortcut, !sc.isEmpty {
+            let scLabel = NSTextField(labelWithString: sc)
+            scLabel.font = .systemFont(ofSize: 11)
+            scLabel.textColor = .secondaryLabelColor
+            scLabel.alignment = .right
+            scLabel.lineBreakMode = .byTruncatingTail
+            scLabel.frame = NSRect(x: shortcutX, y: 9, width: shortcutW, height: 16)
+            cell.addSubview(scLabel)
         }
         return cell
     }

@@ -373,6 +373,21 @@ ok(fires == 3, "clearTrigger restored the default trigger")
 fake.pressHotkey("q")
 ok(fires == 3, "the override key is no longer bound after clear")
 
+-- swapTriggers exchanges two actions' shortcuts (the Shortcut Map drag-to-swap).
+-- probe is ctrl+p, other is alt+z; after the swap they trade.
+local pf, of = fires, fires2
+ok(registry.swapTriggers("rebind_probe", "main", "rebind_other", "main") == true,
+    "swapTriggers returns true")
+ok(fake.settings["hammerdeck.trigger.rebind_probe.main"] == "hotkey|alt|z",
+    "probe took the other's hotkey (persisted)")
+ok(fake.settings["hammerdeck.trigger.rebind_other.main"] == "hotkey|ctrl|p",
+    "other took the probe's hotkey (persisted)")
+fake.pressHotkey("z", { "alt" })
+ok(fires == pf + 1, "after swap, probe fires on alt+z (the other's old key)")
+fake.pressHotkey("p", { "ctrl" })
+ok(fires2 == of + 1, "after swap, other fires on ctrl+p (the probe's old key)")
+ok(fires == pf + 1, "probe no longer fires on ctrl+p")
+
 registry.setEnabled("rebind_probe", false)
 registry.setEnabled("rebind_other", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after trigger-rebind tests")
@@ -1495,18 +1510,20 @@ registry.setEnabled("cmd_a", true)
 registry.setEnabled("cmd_b", true)
 registry.setEnabled("command_palette", true)
 
-fake.pressHotkey("space", { "cmd", "alt" })
+fake.pressHotkey("space", { "cmd", "shift" })
 local pch = fake.visibleChooser()
 ok(pch ~= nil, "palette opened a chooser")
 -- cmd_a (1) + cmd_b (2) = 3 rows; the palette excludes itself, disabled cmd_off excluded
 ok(#pch.choices == 3, "lists enabled features' actions; self + disabled excluded")
-local sub = {}
-for _, c in ipairs(pch.choices) do sub[c.text] = c.subText end
-ok(sub["Cmd A"], "a single-action feature shows its name as the command")
-ok(sub["Do one"] and sub["Do two"], "a multi-action feature contributes one row per action")
-ok(sub["Cmd A"]:match("ctrl%+5"), "showShortcuts puts the trigger in the subtitle")
-ok(sub["Do one"]:match("ctrl%+7"), "a bound multi-action row shows its own shortcut")
-ok(sub["Do two"] == "Cmd B", "an unbound action shows just the feature name")
+local sub, sc, seen = {}, {}, {}
+for _, c in ipairs(pch.choices) do sub[c.text] = c.subText; sc[c.text] = c.shortcut; seen[c.text] = true end
+ok(seen["Cmd A"], "a single-action feature shows its name as the command")
+ok(seen["Do one"] and seen["Do two"], "a multi-action feature contributes one row per action")
+ok(sub["Cmd A"] == nil, "a single-action feature omits the redundant source column")
+ok(sc["Cmd A"] == "⌃5", "showShortcuts puts the compact trigger glyph in the shortcut column")
+ok(sub["Do one"] == "Cmd B" and sub["Do two"] == "Cmd B", "multi-action rows show their source feature")
+ok(sc["Do one"] == "⌃7", "a bound multi-action row shows its own shortcut")
+ok(sc["Do two"] == nil, "an unbound action has no shortcut")
 
 -- selecting a row runs that command -- on the next tick, after the panel yields
 local target
@@ -1518,11 +1535,12 @@ ok(palHits.two == 1, "the deferred command actually ran via ctx.runCommand")
 
 -- showShortcuts off -> bare feature name, no trigger suffix
 fake.settings["hammerdeck.opt.command_palette.showShortcuts"] = false
-fake.pressHotkey("space", { "cmd", "alt" })
+fake.pressHotkey("space", { "cmd", "shift" })
 local pchNo = fake.visibleChooser()
-local subNo = {}
-for _, c in ipairs(pchNo.choices) do subNo[c.text] = c.subText end
-ok(subNo["Cmd A"] == "Cmd A", "showShortcuts off drops the trigger from the subtitle")
+local subNo, scNo = {}, {}
+for _, c in ipairs(pchNo.choices) do subNo[c.text] = c.subText; scNo[c.text] = c.shortcut end
+ok(scNo["Cmd A"] == nil, "showShortcuts off drops the shortcut column")
+ok(subNo["Do one"] == "Cmd B", "source feature stays regardless of showShortcuts")
 ok(pchNo.choices[1].text == "Do two",
     "frecency: the previously-run command sorts to the top")
 pchNo.userSelect(0)   -- dismiss
@@ -1531,7 +1549,7 @@ fake.settings["hammerdeck.opt.command_palette.showShortcuts"] = nil
 -- empty catalog: a single non-selectable info row instead of a blank panel
 registry.setEnabled("cmd_a", false)
 registry.setEnabled("cmd_b", false)
-fake.pressHotkey("space", { "cmd", "alt" })
+fake.pressHotkey("space", { "cmd", "shift" })
 local pchEmpty = fake.visibleChooser()
 ok(pchEmpty ~= nil and #pchEmpty.choices == 1 and pchEmpty.choices[1].valid == false,
     "empty catalog shows a single info row")
@@ -1617,5 +1635,38 @@ fake.pressHotkey("w", {})
 fake.fireTimers("after", 0.3)                  -- tick armed and live
 m.stop()
 ok(fake.liveHandles == 0, "exiting mid-hold tears down the repeat timers")
+
+-- T: shortcut advisories (soft system / common-app collision warnings) --------
+-- `triggers` is the module required at T10 above.
+local function hasWarn(list, needle)
+    for _, s in ipairs(list) do if s:find(needle, 1, true) then return true end end
+    return false
+end
+
+-- curated macOS factory defaults (present even with an empty live read)
+fake.systemHotkeys = {}
+ok(hasWarn(triggers.advisories({ type = "hotkey", mods = { "cmd" }, key = "space" }), "Spotlight"),
+    "cmd+space warns about Spotlight")
+ok(hasWarn(triggers.advisories({ type = "hotkey", mods = { "cmd", "alt" }, key = "space" }),
+    "Finder search"), "cmd+alt+space warns about Finder search")
+-- the command palette's shipped default must be clean out of the box
+ok(#triggers.advisories({ type = "hotkey", mods = { "cmd", "shift" }, key = "space" }) == 0,
+    "command palette default (shift+cmd+space) is conflict-free")
+-- common-app shadow (case-insensitive on the typed key)
+ok(hasWarn(triggers.advisories({ type = "hotkey", mods = { "cmd" }, key = "W" }), "Close Window"),
+    "cmd+W warns it shadows Close Window")
+-- a free, ergonomic combo is clean
+ok(#triggers.advisories({ type = "hotkey", mods = { "ctrl", "alt", "cmd" }, key = "j" }) == 0,
+    "ctrl+alt+cmd+j has no advisories")
+-- a chord prefix that collides still warns (the prefix is a real global hotkey)
+ok(hasWarn(triggers.advisories({ type = "chord", mods = { "cmd" }, key = "space", follows = { "b" } }),
+    "Spotlight"), "a chord whose prefix is cmd+space warns about Spotlight")
+-- non-keyboard triggers never produce advisories
+ok(#triggers.advisories({ type = "schedule", everyMin = 5 }) == 0, "schedule trigger: no advisories")
+-- the live read is honored: a user-customized system shortcut is detected
+fake.systemHotkeys = { { mods = { "ctrl", "shift" }, key = "k", name = "My Custom Action" } }
+ok(hasWarn(triggers.advisories({ type = "hotkey", mods = { "ctrl", "shift" }, key = "k" }),
+    "My Custom Action"), "live-read system shortcut is detected")
+fake.systemHotkeys = {}
 
 print("OK -- " .. passed .. " assertions passed")

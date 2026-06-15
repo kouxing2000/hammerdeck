@@ -12,10 +12,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let store: SettingsStore
     private let openSettings: () -> Void
+    private let openShortcutMap: () -> Void
 
-    init(store: SettingsStore, openSettings: @escaping () -> Void) {
+    init(store: SettingsStore, openSettings: @escaping () -> Void,
+         openShortcutMap: @escaping () -> Void) {
         self.store = store
         self.openSettings = openSettings
+        self.openShortcutMap = openShortcutMap
         self.item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
 
@@ -33,23 +36,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         // Quick triggers: one item per action of each enabled feature.
         // Single-action features get one row; multi-action features a submenu.
-        // Each row shows its bound shortcut inline (right of the name); an
-        // action with no shortcut shows nothing and is still click-to-run.
-        var rows: [Row] = []
+        // A bound hotkey shows as a real, flush-right key-equivalent (display
+        // only -- see menuHasKeyEquivalent); non-hotkey triggers show nothing.
         var anyTrigger = false
 
-        // Pin the Command Palette at the very top -- it is the "run anything"
-        // launcher over all the others, so it reads as the primary entry,
-        // separated from the per-feature quick triggers below.
+        // Pin the Command Palette at the very top -- the "run anything" launcher
+        // over all the others, separated from the per-feature quick triggers.
         if let palette = store.features.first(where: {
             $0.id == "command_palette" && $0.enabled
         }), let action = palette.actions.first {
-            let mi = triggerItem(feature: palette, action: action, title: palette.name)
-            menu.addItem(mi)
-            // Align on its own: it sits in its own section above the separator,
-            // so its shortcut column must not be computed jointly with the
-            // quick-trigger rows below it.
-            alignShortcuts([Row(item: mi, label: palette.name, shortcut: shortcutText(action))])
+            menu.addItem(triggerItem(feature: palette, action: action, title: palette.name))
             menu.addItem(.separator())
             anyTrigger = true
         }
@@ -58,25 +54,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             if feature.id == "command_palette" { continue }   // pinned above
             anyTrigger = true
             if feature.actions.count == 1, let action = feature.actions.first {
-                let mi = triggerItem(feature: feature, action: action, title: feature.name)
-                menu.addItem(mi)
-                rows.append(Row(item: mi, label: feature.name, shortcut: shortcutText(action)))
+                menu.addItem(triggerItem(feature: feature, action: action, title: feature.name))
             } else {
                 let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
                 let sub = NSMenu()
-                var subRows: [Row] = []
                 for action in feature.actions {
-                    let mi = triggerItem(feature: feature, action: action, title: action.label)
-                    sub.addItem(mi)
-                    subRows.append(Row(item: mi, label: action.label, shortcut: shortcutText(action)))
+                    sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
                 }
-                alignShortcuts(subRows)
                 parent.submenu = sub
                 menu.addItem(parent)
-                rows.append(Row(item: parent, label: feature.name, shortcut: nil))
             }
         }
-        alignShortcuts(rows)
         if !anyTrigger {
             let hint = NSMenuItem(title: "No triggerable features enabled",
                                   action: nil, keyEquivalent: "")
@@ -85,6 +73,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+
+        let shortcutMap = NSMenuItem(title: "Shortcut Map…", action: #selector(showShortcutMap),
+                                     keyEquivalent: "")
+        shortcutMap.target = self
+        shortcutMap.toolTip = "See every shortcut at once, spot conflicts, and rebind in a grid"
+        menu.addItem(shortcutMap)
 
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings),
                                   keyEquivalent: ",")
@@ -115,99 +109,70 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let mi = NSMenuItem(title: title, action: #selector(runAction(_:)), keyEquivalent: "")
         mi.target = self
         mi.representedObject = [feature.id, action.id]
-        // The shortcut now shows inline (alignShortcuts). Only a no-shortcut
-        // action needs a hint, so its bare row doesn't read as broken.
-        if shortcutText(action) == nil {
+        // Show a bound hotkey as a real key-equivalent so it sits flush-right in
+        // the native shortcut column. It is DISPLAY ONLY: menuHasKeyEquivalent
+        // refuses to fire any quick-trigger item, so the global hotkey stays the
+        // single source of truth (no double-trigger). Only "hotkey" triggers map
+        // to a single key-equivalent; chord/schedule/event have no key form and
+        // show no hint (still click-to-run).
+        if let t = action.trigger, t.type == "hotkey", let ke = Self.keyEquivalent(for: t.key) {
+            mi.keyEquivalent = ke
+            mi.keyEquivalentModifierMask = Self.modifierMask(t.mods)
+        } else if action.trigger == nil {
             mi.toolTip = "Runs on demand — bind a shortcut in Settings"
         }
         return mi
     }
 
-    // One menu row awaiting shortcut alignment.
-    private struct Row { let item: NSMenuItem; let label: String; let shortcut: String? }
+    // MARK: trigger -> native key-equivalent
 
-    private static let menuFont = NSFont.menuFont(ofSize: 0)
-
-    /// Right-align the shortcut column for rows that share one menu: the
-    /// shortcut starts at a tab stop just past the widest label, so the combos
-    /// line up like a native menu. Display-only (attributedTitle, not a
-    /// keyEquivalent), so it never double-fires the global hotkey.
-    private func alignShortcuts(_ rows: [Row]) {
-        let font = Self.menuFont
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        var maxLabel: CGFloat = 0
-        for r in rows where r.shortcut != nil {
-            maxLabel = max(maxLabel, (r.label as NSString).size(withAttributes: attrs).width)
-        }
-        guard maxLabel > 0 else { return }   // nothing in this menu has a shortcut
-        let para = NSMutableParagraphStyle()
-        para.tabStops = [NSTextTab(textAlignment: .left, location: maxLabel + 28)]
-        for r in rows {
-            guard let sc = r.shortcut else { continue }
-            let title = NSMutableAttributedString(string: r.label, attributes: [
-                .font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: para,
-            ])
-            title.append(NSAttributedString(string: "\t" + sc, attributes: [
-                .font: font, .foregroundColor: NSColor.secondaryLabelColor,
-                .paragraphStyle: para,
-            ]))
-            r.item.attributedTitle = title
-        }
-    }
-
-    // Apple-order modifier glyphs (⌃⌥⇧⌘) for a hotkey/chord's mods.
-    private func modGlyphs(_ mods: [String]) -> String {
-        let has = Set(mods.map { $0.lowercased() })
-        var s = ""
-        if has.contains("ctrl") || has.contains("control") { s += "⌃" }
-        if has.contains("alt") || has.contains("option")   { s += "⌥" }
-        if has.contains("shift")                            { s += "⇧" }
-        if has.contains("cmd") || has.contains("command")  { s += "⌘" }
-        return s
-    }
-
-    private func keyGlyph(_ key: String) -> String {
+    /// The key-equivalent character for a trigger key name, or nil when the key
+    /// has no single-character form. Modifiers are carried separately.
+    private static func keyEquivalent(for key: String) -> String? {
         switch key.lowercased() {
-        case "tab":                 return "⇥"
-        case "return", "enter":     return "↩"
-        case "space":               return "␣"
-        case "delete", "backspace": return "⌫"
-        case "escape", "esc":       return "⎋"
-        case "left":                return "←"
-        case "right":               return "→"
-        case "up":                  return "↑"
-        case "down":                return "↓"
-        default:                    return key.count == 1 ? key.uppercased() : key
+        case "space":               return " "
+        case "tab":                 return "\t"
+        case "return", "enter":     return "\r"
+        case "delete", "backspace": return "\u{8}"
+        case "escape", "esc":       return "\u{1b}"
+        case "up":                  return String(UnicodeScalar(0xF700)!)
+        case "down":                return String(UnicodeScalar(0xF701)!)
+        case "left":                return String(UnicodeScalar(0xF702)!)
+        case "right":               return String(UnicodeScalar(0xF703)!)
+        default:                    return key.count == 1 ? key.lowercased() : nil
         }
     }
 
-    /// The inline label for an action's CURRENT trigger, or nil when it has
-    /// none (a dormant, menu-only action).
-    private func shortcutText(_ a: ActionInfo) -> String? {
-        guard let t = a.trigger else { return nil }
-        switch t.type {
-        case "hotkey":
-            return modGlyphs(t.mods) + keyGlyph(t.key)
-        case "chord":
-            let follows = t.follows.map(keyGlyph).joined(separator: " ")
-            return modGlyphs(t.mods) + keyGlyph(t.key) + " " + follows
-        case "schedule":
-            if let m = t.everyMin { return "every \(m)m" }
-            return "at \(t.at ?? "")"
-        case "event":
-            return "on \(t.event ?? "")"
-        default:
-            return nil
-        }
+    private static func modifierMask(_ mods: [String]) -> NSEvent.ModifierFlags {
+        let has = Set(mods.map { $0.lowercased() })
+        var m: NSEvent.ModifierFlags = []
+        if has.contains("ctrl") || has.contains("control") { m.insert(.control) }
+        if has.contains("alt") || has.contains("option")   { m.insert(.option) }
+        if has.contains("shift")                            { m.insert(.shift) }
+        if has.contains("cmd") || has.contains("command")  { m.insert(.command) }
+        return m
     }
 
     @objc private func runAction(_ sender: NSMenuItem) {
+        // A quick-trigger item shows its hotkey only as a flush-right hint. When
+        // the user actually presses that hotkey -- even with the menu open -- the
+        // global hotkey already runs the action, so ignore the menu's own
+        // key-equivalent invocation to avoid a double-trigger. A real click
+        // leaves a mouse event as currentEvent; a key-equivalent leaves a
+        // keyboard one (keyDown/keyUp/flagsChanged, depending on timing).
+        if let t = NSApp.currentEvent?.type, t == .keyDown || t == .keyUp || t == .flagsChanged {
+            return
+        }
         guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
         store.runAction(pair[0], pair[1])
     }
 
     @objc private func showSettings() {
         openSettings()
+    }
+
+    @objc private func showShortcutMap() {
+        openShortcutMap()
     }
 
     @objc private func reloadFeatures() {
@@ -243,6 +208,33 @@ final class SettingsWindow {
             w.styleMask = [.titled, .closable, .resizable]
             w.isReleasedWhenClosed = false
             w.setContentSize(NSSize(width: 720, height: 480))
+            w.center()
+            window = w
+        }
+        store.refresh()
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// Lazily-created Shortcut Map window hosting the SwiftUI grid. Closing hides
+/// it; reopening refreshes from the registry. Mirrors SettingsWindow.
+@MainActor
+final class ShortcutMapWindow {
+    private var window: NSWindow?
+    private let store: SettingsStore
+
+    init(store: SettingsStore) {
+        self.store = store
+    }
+
+    func show() {
+        if window == nil {
+            let w = NSWindow(contentViewController: NSHostingController(rootView: ShortcutMapView(store: store)))
+            w.title = "Shortcut Map"
+            w.styleMask = [.titled, .closable, .resizable]
+            w.isReleasedWhenClosed = false
+            w.setContentSize(NSSize(width: 820, height: 540))
             w.center()
             window = w
         }

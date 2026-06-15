@@ -383,6 +383,52 @@ function registry.clearTrigger(id, actionId)
     return true
 end
 
+-- Swap the triggers of two actions (the Shortcut Map's drag-one-row-onto-
+-- another gesture): A takes B's current trigger and B takes A's. Safe by
+-- construction -- swapping leaves the SET of bound combos unchanged, so no new
+-- third-party conflict can arise, and the mutual A<->B "conflict" is the whole
+-- point, so it bypasses triggerConflict. Both bindings are dropped before
+-- either is re-registered, so the same combo is never live twice (which Carbon
+-- would reject). Persists both as overrides and live-rebinds whichever feature
+-- is enabled. Returns true (no-op when A and B are the same action).
+function registry.swapTriggers(idA, actA, idB, actB)
+    local mA = features[idA]; assert(mA, "no such feature: " .. tostring(idA))
+    local mB = features[idB]; assert(mB, "no such feature: " .. tostring(idB))
+    local aA = resolveAction(mA, actA)
+    local aB = resolveAction(mB, actB)
+    if idA == idB and aA.id == aB.id then return true end
+
+    local specA = triggerFor(mA, aA)
+    local specB = triggerFor(mB, aB)
+
+    -- Drop both live bindings and write the swapped overrides (encode, or clear
+    -- when the other side had no trigger at all).
+    local function place(m, a, spec)
+        dropActionBinding(bound[m.id], a.id)
+        adapter.setSetting(triggerKey(m.id, a.id), spec and triggers.encode(spec) or nil)
+        if a.id == "main" then adapter.setSetting("hammerdeck.trigger." .. m.id, nil) end
+    end
+    place(mA, aA, specB)
+    place(mB, aB, specA)
+
+    -- Re-register each (now both target combos are free). Quarantined: a failed
+    -- rebind is logged, not fatal.
+    local function rebind(m, a)
+        local b = bound[m.id]
+        if not b then return end
+        local spec = triggerFor(m, a)
+        if not spec then return end
+        local ok, err = pcall(function()
+            b.actionHandles[a.id] =
+                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end))
+        end)
+        if not ok then adapter.log(m.id .. "." .. a.id .. ": swap rebind failed: " .. tostring(err)) end
+    end
+    rebind(mA, aA)
+    rebind(mB, aB)
+    return true
+end
+
 -- Run one action of an ENABLED feature on demand (the menubar's quick
 -- triggers; also the only way to fire a dormant action that has no trigger
 -- bound). Returns true, or false + reason. Quarantined like trigger firing.
@@ -448,6 +494,49 @@ local function specDesc(spec)
     return tostring(spec.type)
 end
 
+-- Compact, menubar-style glyphs for a trigger (e.g. "⇧⌘V", "every 180m") --
+-- the form the command palette shows in its right-flush shortcut column, where
+-- the verbose specDesc would just truncate. Mirrors StatusBar's shortcutText.
+local function modGlyphs(mods)
+    local has = {}
+    for _, m in ipairs(mods or {}) do has[m:lower()] = true end
+    local s = ""
+    if has.ctrl or has.control then s = s .. "⌃" end
+    if has.alt or has.option then s = s .. "⌥" end
+    if has.shift then s = s .. "⇧" end
+    if has.cmd or has.command then s = s .. "⌘" end
+    return s
+end
+
+local KEY_GLYPHS = {
+    tab = "⇥", ["return"] = "↩", enter = "↩", space = "␣",
+    delete = "⌫", backspace = "⌫", escape = "⎋", esc = "⎋",
+    left = "←", right = "→", up = "↑", down = "↓",
+}
+local function keyGlyph(key)
+    key = tostring(key)
+    local g = KEY_GLYPHS[key:lower()]
+    if g then return g end
+    return #key == 1 and key:upper() or key
+end
+
+local function specGlyph(spec)
+    if not spec then return nil end
+    if spec.type == "hotkey" then
+        return modGlyphs(spec.mods) .. keyGlyph(spec.key)
+    elseif spec.type == "chord" then
+        local follows = {}
+        for _, f in ipairs(spec.follows or {}) do follows[#follows + 1] = keyGlyph(f) end
+        return modGlyphs(spec.mods) .. keyGlyph(spec.key) .. " " .. table.concat(follows, " ")
+    elseif spec.type == "schedule" then
+        if spec.everyMin then return "every " .. spec.everyMin .. "m" end
+        return "at " .. tostring(spec.at)
+    elseif spec.type == "event" then
+        return "on " .. tostring(spec.event)
+    end
+    return nil
+end
+
 -- Flatten the catalog into a command list for a "commands"-capability holder:
 -- one entry per action of every OTHER ENABLED feature (self excluded -- the
 -- palette never lists its own opener). Backs ctx.commands(); rebuilt on each
@@ -466,6 +555,7 @@ function buildCommandList(selfId)
                     -- multi-action ones need the per-action label to disambiguate.
                     label       = (#m.actions > 1) and a.label or m.name,
                     triggerDesc = specDesc(triggerFor(m, a)),
+                    triggerGlyph = specGlyph(triggerFor(m, a)),
                 }
             end
         end

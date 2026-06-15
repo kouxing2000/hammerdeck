@@ -191,4 +191,94 @@ function triggers.conflicts(a, b)
     return combo(a) == combo(b)
 end
 
+-- Well-known macOS factory-default shortcuts. macOS only writes
+-- com.apple.symbolichotkeys entries the user has CUSTOMIZED -- untouched
+-- defaults (Spotlight, screenshots, Mission Control) are absent from the live
+-- read, so we'd miss the most common collisions without this table. The live
+-- read (adapter.systemHotkeys) takes precedence per-combo, so a user who
+-- remapped one of these is matched by their real binding, not this default.
+local MACOS_DEFAULT_HOTKEYS = {
+    { mods = { "cmd" }, key = "space", name = "Spotlight" },
+    { mods = { "cmd", "alt" }, key = "space", name = "Finder search" },
+    { mods = { "ctrl", "cmd" }, key = "space", name = "Emoji & Symbols" },
+    { mods = { "ctrl" }, key = "up", name = "Mission Control" },
+    { mods = { "ctrl" }, key = "down", name = "Application Windows" },
+    { mods = { "ctrl" }, key = "left", name = "Move one space left" },
+    { mods = { "ctrl" }, key = "right", name = "Move one space right" },
+    { mods = { "cmd", "shift" }, key = "3", name = "Screenshot (whole screen)" },
+    { mods = { "cmd", "shift" }, key = "4", name = "Screenshot (selection)" },
+    { mods = { "cmd", "shift" }, key = "5", name = "Screenshot and recording options" },
+    { mods = { "ctrl", "cmd" }, key = "q", name = "Lock Screen" },
+    { mods = { "cmd", "shift" }, key = "/", name = "Help menu" },
+}
+
+-- Near-universal app shortcuts. A global hotkey on one of these does not
+-- "conflict" in the registry sense -- nothing else in Hammerdeck owns it -- but
+-- a Carbon global hotkey INTERCEPTS the combo before the focused app, so the
+-- binding silently shadows (say) Close Window everywhere. The editor warns; the
+-- user may still want it. We cannot enumerate a specific app's shortcuts (no
+-- public API), so this is a curated set of the ones that hurt most to lose.
+local COMMON_APP_HOTKEYS = {
+    { mods = { "cmd" }, key = "c", name = "Copy" },
+    { mods = { "cmd" }, key = "v", name = "Paste" },
+    { mods = { "cmd" }, key = "x", name = "Cut" },
+    { mods = { "cmd" }, key = "z", name = "Undo" },
+    { mods = { "cmd", "shift" }, key = "z", name = "Redo" },
+    { mods = { "cmd" }, key = "a", name = "Select All" },
+    { mods = { "cmd" }, key = "s", name = "Save" },
+    { mods = { "cmd" }, key = "w", name = "Close Window" },
+    { mods = { "cmd" }, key = "q", name = "Quit" },
+    { mods = { "cmd" }, key = "n", name = "New" },
+    { mods = { "cmd" }, key = "t", name = "New Tab" },
+    { mods = { "cmd" }, key = "f", name = "Find" },
+    { mods = { "cmd" }, key = "p", name = "Print" },
+    { mods = { "cmd" }, key = "tab", name = "Switch App" },
+    { mods = { "cmd" }, key = "`", name = "Switch Window" },
+}
+
+-- Soft, ADVISORY conflicts for a would-be hotkey/chord binding -- collisions
+-- with things OUTSIDE Hammerdeck's own registry (registry.triggerConflict
+-- handles the hard, in-app ones and is the only hard block). Returns a list of
+-- human-readable warning strings (empty when clear), from two sources:
+--   * the user's enabled macOS system shortcuts (read live via the adapter)
+--   * the curated near-universal app shortcuts this binding would shadow
+-- Advisory only -- the caller still lets the user apply the binding.
+function triggers.advisories(spec)
+    local out = {}
+    if type(spec) ~= "table" or not (spec.type == "hotkey" or spec.type == "chord") then
+        return out
+    end
+    -- Compare case-insensitively on the key (the editor stores keys as typed,
+    -- e.g. "J"; system/curated keys are canonical lowercase).
+    local norm = { type = spec.type, mods = spec.mods,
+                   key = tostring(spec.key):lower(), follows = spec.follows }
+
+    -- macOS system shortcuts: the user's customized ones (live read) first, so
+    -- their combos win over the factory-default table; then the well-known
+    -- defaults the live read omits. Dedup by combo so a combo never warns twice.
+    local seen = {}
+    local function noteSystem(h)
+        local other = { type = "hotkey", mods = h.mods, key = h.key }
+        local k = combo(other)
+        if seen[k] then return end
+        if triggers.conflicts(norm, other) then
+            seen[k] = true
+            out[#out + 1] = "Used by macOS: " .. (h.name or "system shortcut")
+        end
+    end
+
+    local okSys, sys = pcall(adapter.systemHotkeys)
+    if okSys and type(sys) == "table" then
+        for _, h in ipairs(sys) do noteSystem(h) end
+    end
+    for _, h in ipairs(MACOS_DEFAULT_HOTKEYS) do noteSystem(h) end
+
+    for _, h in ipairs(COMMON_APP_HOTKEYS) do
+        if triggers.conflicts(norm, { type = "hotkey", mods = h.mods, key = h.key }) then
+            out[#out + 1] = "Shadows " .. h.name .. " (most apps)"
+        end
+    end
+    return out
+end
+
 return triggers

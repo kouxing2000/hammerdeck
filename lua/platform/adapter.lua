@@ -71,6 +71,16 @@ function adapter.setSetting(key, value)
     native.set_setting(key, value)
 end
 
+-- The user's currently-enabled macOS system shortcuts, as hotkey-shaped specs
+-- { mods = {...}, key = "...", name = "..." }. READ-ONLY: macOS owns these
+-- (com.apple.symbolichotkeys); the config UI uses them only to warn before a
+-- binding collides with Spotlight, input-source switching, etc. Returns {} on a
+-- backend (test fake / older host) that does not expose the call.
+function adapter.systemHotkeys()
+    if type(native.system_hotkeys) ~= "function" then return {} end
+    return native.system_hotkeys() or {}
+end
+
 -- ---------------------------------------------------------------------------
 -- Clipboard (general pasteboard; no permission required)
 -- ---------------------------------------------------------------------------
