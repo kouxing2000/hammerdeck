@@ -71,6 +71,16 @@ return {
           label = "Apply wallpaper to" },
     },
 
+    -- The recurring refresh is the `refresh` action's schedule trigger (visible
+    -- + rebindable on its own). This descriptor surfaces the OTHER thing the
+    -- service does on its own: re-asserting the wallpaper when a display is
+    -- plugged in / rearranged -- an event the Timeline's events lane shows.
+    schedule = function()
+        return {
+            { label = "Re-apply on display change", event = "screenChanged" },
+        }
+    end,
+
     -- A minimal service: apply once shortly after enable/boot so the wallpaper
     -- is current immediately (a schedule trigger only fires AFTER its first
     -- interval, never on bind). The recurring refresh is the action's declared

@@ -42,6 +42,17 @@ return {
         { key = "dialogIdleDismissMin", type = "int", default = 2, label = "Idle during dialog counts as rest (min)", min = 1, max = 10 },
     },
 
+    -- Self-report the recurring break for the Automation Timeline. The interval
+    -- is the live `workMin` option, so editing it from the Timeline (optionKey)
+    -- reschedules the real break.
+    schedule = function(ctx)
+        return {
+            { label = "Take a break", everyMin = ctx.opt("workMin"), optionKey = "workMin" },
+            { label = "Pauses after idle", note = "paused after "
+                .. ctx.opt("idleThresholdMin") .. "m idle", optionKey = "idleThresholdMin" },
+        }
+    end,
+
     start = function(ctx)
         local persistedStamp = ctx.getState("lastStartWorkTimestamp")
         local s = {

@@ -52,6 +52,23 @@ return {
         { key = "weekendShiftMin", type = "int",  default = 60, label = "Weekend shift (min)", min = 0, max = 180 },
     },
 
+    -- Self-report the nightly schedule for the Automation Timeline. The two
+    -- warning markers are DERIVED from sleepAt minus the warn offsets, so they
+    -- are advisory (no optionKey -- edit the offset in Settings); the sleep and
+    -- hard-cap markers map straight to their time options for inline editing.
+    -- Weekday base times (the weekend shift is intentionally not folded in --
+    -- the ruler is wall-clock and the shift only applies Fri/Sat nights).
+    schedule = function(ctx)
+        local sleepSecs = timeToSecs(ctx.opt("sleepAt"))
+        local function before(min) return formatTime((sleepSecs - min * 60) % 86400) end
+        return {
+            { label = "First warning",     at = before(ctx.opt("warn1Min")) },
+            { label = "Countdown overlay",  at = before(ctx.opt("warn2Min")) },
+            { label = "Force system sleep", at = ctx.opt("sleepAt"),  optionKey = "sleepAt" },
+            { label = "Snooze hard cap",    at = ctx.opt("hardCapAt"), optionKey = "hardCapAt" },
+        }
+    end,
+
     start = function(ctx)
         -- Per-enablement state (fresh on every enable).
         local s = {

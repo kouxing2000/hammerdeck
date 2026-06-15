@@ -219,6 +219,52 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(registryNum("liveHandleCount()"), 0)
     }
 
+    // The Automation Timeline's data: a service's self-reported schedule
+    // descriptor and the lone action-level schedule trigger, end to end through
+    // the REAL bridge into the SettingsStore models the SwiftUI view renders.
+    func testServiceScheduleDescriptorFlowsThroughBridge() {
+        UserDefaults.standard.set("23:30", forKey: "hammerdeck.opt.sleep_schedule.sleepAt")
+        UserDefaults.standard.set(10.0, forKey: "hammerdeck.opt.sleep_schedule.warn1Min")
+        defer {
+            UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.sleep_schedule.sleepAt")
+            UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.sleep_schedule.warn1Min")
+        }
+        host.store.refresh()
+
+        let sleep = host.store.features.first { $0.id == "sleep_schedule" }
+        XCTAssertEqual(sleep?.schedule.count, 4, "sleep_schedule reports 4 schedule entries")
+        let force = sleep?.schedule.first { $0.optionKey == "sleepAt" }
+        XCTAssertEqual(force?.at, "23:30")
+        XCTAssertEqual(force?.minutesOfDay, 23 * 60 + 30, "minutesOfDay parses HH:MM")
+        let warn = sleep?.schedule.first { $0.label == "First warning" }
+        XCTAssertEqual(warn?.at, "23:20", "warning derived as sleepAt - warn1Min")
+        XCTAssertNil(warn?.optionKey, "a derived warning is advisory (read-only)")
+
+        // bing_daily ships the only action-level schedule trigger, plus an event
+        // descriptor entry -- both feed the Timeline.
+        let bing = host.store.features.first { $0.id == "bing_daily" }
+        XCTAssertTrue(bing?.actions.contains { $0.trigger?.type == "schedule" } ?? false,
+                      "bing_daily.refresh carries a schedule trigger")
+        XCTAssertTrue(bing?.schedule.contains { $0.kind == "event" } ?? false,
+                      "bing_daily reports its screenChanged event")
+    }
+
+    // Editing a service schedule from the Timeline writes the named option (the
+    // same path Settings uses); the descriptor then reports the new interval.
+    func testEditServiceScheduleViaOptionRoundTrips() {
+        host.store.refresh()
+        guard let br = host.store.features.first(where: { $0.id == "break_reminder" }),
+              let workOpt = br.options.first(where: { $0.key == "workMin" }) else {
+            return XCTFail("break_reminder/workMin missing")
+        }
+        host.store.setOptionValue("break_reminder", workOpt, 45)
+        defer { UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.break_reminder.workMin") }
+        host.store.refresh()
+        let entry = host.store.features.first { $0.id == "break_reminder" }?
+            .schedule.first { $0.kind == "everyMin" }
+        XCTAssertEqual(entry?.everyMin, 45, "the recurring break tracks the edited workMin")
+    }
+
     func testMenuQuickTriggerRunsTheAction() {
         // The menubar quick-trigger path: store.runAction -> registry.runAction
         // -> the feature's run(ctx), end to end on the real bridge.

@@ -69,10 +69,12 @@ public func hammerdeckMain() {
 
     let settingsWindow = SettingsWindow(store: store)
     let shortcutMapWindow = ShortcutMapWindow(store: store)
+    let timelineWindow = AutomationTimelineWindow(store: store)
     let statusBar = StatusBarController(
         store: store,
         openSettings: { settingsWindow.show() },
-        openShortcutMap: { shortcutMapWindow.show() })
+        openShortcutMap: { shortcutMapWindow.show() },
+        openTimeline: { timelineWindow.show() })
     _ = statusBar
 
     // Debug-only: a file-polled Lua control channel for visual verification

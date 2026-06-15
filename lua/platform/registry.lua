@@ -569,6 +569,65 @@ local function describeTrigger(m)
     return #m.actions .. " actions"
 end
 
+-- Normalize one entry returned by a feature's schedule(ctx) descriptor into a
+-- serializable shape the Timeline can plot. Returns the normalized row, or nil
+-- to skip a malformed entry (logged by the caller). `kind` is exactly one of
+-- everyMin / at / event / note (a non-time-anchored condition, e.g. "after 5m
+-- idle"), so the UI can route it to the ruler, a lane, or the events column.
+local function normalizeScheduleEntry(e)
+    if type(e) ~= "table" or type(e.label) ~= "string" or e.label == "" then return nil end
+    local row = { label = e.label, optionKey = e.optionKey, category = e.category }
+    if e.everyMin ~= nil then
+        local n = tonumber(e.everyMin)
+        if not n or n <= 0 then return nil end
+        row.kind = "everyMin"; row.everyMin = n
+    elseif e.at ~= nil then
+        local h, mm = tostring(e.at):match("^(%d%d?):(%d%d)$")
+        h, mm = tonumber(h), tonumber(mm)
+        if not h or h > 23 or mm > 59 then return nil end   -- shape AND range
+        row.kind = "at"; row.at = string.format("%02d:%02d", h, mm)
+    elseif e.event ~= nil then
+        row.kind = "event"; row.event = tostring(e.event)
+    elseif e.note ~= nil then
+        row.kind = "note"; row.note = tostring(e.note)
+    else
+        return nil
+    end
+    return row
+end
+
+-- A feature's self-reported schedule (its internal timers/events made visible),
+-- or nil when it declares none. Runs schedule(ctx) under a read-only ctx (no
+-- handle is bound -- ctxlib.make only defines closures) and quarantines a throw,
+-- so a buggy descriptor never breaks describe(). Reads live option values via
+-- ctx.opt, so derived times track the user's settings even while disabled.
+local function scheduleFor(m)
+    if type(m.schedule) ~= "function" then return nil end
+    -- A descriptor is meant to be pure metadata (read ctx.opt / ctx.now, return
+    -- a list). It still receives the full ctx, so a buggy one COULD bind a
+    -- handle -- and describe() runs on every Timeline/Settings open. Tear the
+    -- scope down afterward so any stray handle is stopped instead of leaking.
+    local ctx, scope = ctxlib.make(m, nil, nil)
+    local ok, entries = pcall(m.schedule, ctx)
+    scope.teardown()
+    if not ok then
+        adapter.log(m.id .. ": schedule() failed: " .. tostring(entries))
+        return nil
+    end
+    if type(entries) ~= "table" then return nil end
+    local out = {}
+    for _, e in ipairs(entries) do
+        local row = normalizeScheduleEntry(e)
+        if row then
+            row.category = row.category or m.category
+            out[#out + 1] = row
+        else
+            adapter.log(m.id .. ": skipped a malformed schedule entry")
+        end
+    end
+    return out
+end
+
 function registry.describe()
     local out = {}
     for _, m in ipairs(registry.all()) do
@@ -605,6 +664,10 @@ function registry.describe()
             }
         end
         row.actions = actions
+        -- A service's self-reported internal schedule (times/intervals/events it
+        -- runs on its own, not via the trigger model). Absent for features that
+        -- declare no schedule() descriptor. Powers the Automation Timeline.
+        row.schedule = scheduleFor(m)
         out[#out + 1] = row
     end
     -- Modules that failed to even load/register: surface as inert "failed" rows

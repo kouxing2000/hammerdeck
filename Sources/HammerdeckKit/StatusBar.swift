@@ -13,12 +13,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let store: SettingsStore
     private let openSettings: () -> Void
     private let openShortcutMap: () -> Void
+    private let openTimeline: () -> Void
 
     init(store: SettingsStore, openSettings: @escaping () -> Void,
-         openShortcutMap: @escaping () -> Void) {
+         openShortcutMap: @escaping () -> Void,
+         openTimeline: @escaping () -> Void) {
         self.store = store
         self.openSettings = openSettings
         self.openShortcutMap = openShortcutMap
+        self.openTimeline = openTimeline
         self.item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
 
@@ -79,6 +82,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         shortcutMap.target = self
         shortcutMap.toolTip = "See every shortcut at once, spot conflicts, and rebind in a grid"
         menu.addItem(shortcutMap)
+
+        let timeline = NSMenuItem(title: "Automation Timeline…", action: #selector(showTimeline),
+                                  keyEquivalent: "")
+        timeline.target = self
+        timeline.toolTip = "See what's scheduled across the day -- times, intervals, and events"
+        menu.addItem(timeline)
 
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings),
                                   keyEquivalent: ",")
@@ -175,6 +184,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         openShortcutMap()
     }
 
+    @objc private func showTimeline() {
+        openTimeline()
+    }
+
     @objc private func reloadFeatures() {
         store.reload()
     }
@@ -208,6 +221,34 @@ final class SettingsWindow {
             w.styleMask = [.titled, .closable, .resizable]
             w.isReleasedWhenClosed = false
             w.setContentSize(NSSize(width: 720, height: 480))
+            w.center()
+            window = w
+        }
+        store.refresh()
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// Lazily-created Automation Timeline window hosting the SwiftUI ruler/agenda.
+/// Closing hides it; reopening refreshes from the registry. Mirrors the others.
+@MainActor
+final class AutomationTimelineWindow {
+    private var window: NSWindow?
+    private let store: SettingsStore
+
+    init(store: SettingsStore) {
+        self.store = store
+    }
+
+    func show() {
+        if window == nil {
+            let w = NSWindow(contentViewController:
+                NSHostingController(rootView: AutomationTimelineView(store: store)))
+            w.title = "Automation Timeline"
+            w.styleMask = [.titled, .closable, .resizable]
+            w.isReleasedWhenClosed = false
+            w.setContentSize(NSSize(width: 760, height: 600))
             w.center()
             window = w
         }

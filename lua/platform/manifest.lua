@@ -96,6 +96,16 @@ function manifest.validate(m)
         assert(type(m.onOptionChange) == "function",
             "feature '" .. m.id .. "': onOptionChange must be a function")
     end
+    -- Optional: schedule(ctx) -> list of {label, at|everyMin|event|note, optionKey?}.
+    -- A SERVICE that runs its own internal timers (ctx.everySeconds / dailyAt)
+    -- is otherwise invisible to the trigger model; this descriptor lets it
+    -- SELF-REPORT the wall-clock times / intervals / events it operates on, so
+    -- the Automation Timeline can plot them. Pure metadata -- it does not bind
+    -- anything; describe() calls it with a read-only ctx (see registry).
+    if m.schedule ~= nil then
+        assert(type(m.schedule) == "function",
+            "feature '" .. m.id .. "': schedule must be a function (ctx) -> entries")
+    end
     if m.defaultTrigger ~= nil then
         assert(hasAction,
             "feature '" .. m.id .. "': top-level defaultTrigger goes with the single-action " ..

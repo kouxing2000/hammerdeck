@@ -115,6 +115,44 @@ struct ActionInfo: Identifiable {
     }
 }
 
+// One entry of a feature's self-reported schedule (its internal timers/events
+// made visible to the Automation Timeline). A service's `schedule(ctx)`
+// descriptor produces these; describe() normalizes them. `kind` is exactly one
+// of everyMin / at / event / note, so the Timeline can route each to the ruler,
+// a repeating lane, or the events/conditions column. `optionKey`, when present,
+// names the feature option the Timeline edits to change this entry.
+struct ScheduleEntry: Identifiable {
+    let label: String
+    let kind: String        // everyMin | at | event | note
+    let everyMin: Int?
+    let at: String?         // HH:MM
+    let event: String?
+    let note: String?
+    let optionKey: String?
+    let category: String
+    let id = UUID()
+
+    init?(_ dict: [String: Any]) {
+        guard let label = dict["label"] as? String, let kind = dict["kind"] as? String else { return nil }
+        self.label = label
+        self.kind = kind
+        self.everyMin = (dict["everyMin"] as? Double).map(Int.init)
+        self.at = dict["at"] as? String
+        self.event = dict["event"] as? String
+        self.note = dict["note"] as? String
+        self.optionKey = dict["optionKey"] as? String
+        self.category = dict["category"] as? String ?? "general"
+    }
+
+    /// Minutes-since-midnight for an `at` entry; nil for non-time entries.
+    var minutesOfDay: Int? {
+        guard kind == "at", let at, let colon = at.firstIndex(of: ":") else { return nil }
+        guard let h = Int(at[at.startIndex..<colon]),
+              let m = Int(at[at.index(after: colon)...]) else { return nil }
+        return h * 60 + m
+    }
+}
+
 struct FeatureInfo: Identifiable {
     let id: String
     let name: String
@@ -128,6 +166,7 @@ struct FeatureInfo: Identifiable {
     let failed: Bool            // load or start error -- the feature is broken
     let errorMessage: String
     let actions: [ActionInfo]   // one trigger editor per entry; empty for pure services
+    let schedule: [ScheduleEntry]   // self-reported internal schedule (Timeline); may be empty
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
@@ -147,6 +186,9 @@ struct FeatureInfo: Identifiable {
         self.actions = (dict["actions"] as? [Any])?
             .compactMap { $0 as? [String: Any] }
             .compactMap(ActionInfo.init) ?? []
+        self.schedule = (dict["schedule"] as? [Any])?
+            .compactMap { $0 as? [String: Any] }
+            .compactMap(ScheduleEntry.init) ?? []
     }
 }
 

@@ -30,6 +30,15 @@ return {
           label = "Idle before display off (min)", min = 1, max = 60 },
     },
 
+    -- Idle-triggered, not wall-clock: report as a condition (the Timeline lists
+    -- it in the Events/conditions lane rather than on the 24h ruler).
+    schedule = function(ctx)
+        return {
+            { label = "Turn off display", note = "after " .. ctx.opt("idleThresholdMin")
+                .. "m idle", optionKey = "idleThresholdMin" },
+        }
+    end,
+
     start = function(ctx)
         local s = { warnedAt = nil, dimmed = false }
 
