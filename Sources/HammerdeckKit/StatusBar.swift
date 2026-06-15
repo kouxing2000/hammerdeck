@@ -12,16 +12,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let store: SettingsStore
     private let openSettings: () -> Void
-    private let openShortcutMap: () -> Void
-    private let openTimeline: () -> Void
+    private let openHome: (HomeDestination) -> Void
 
     init(store: SettingsStore, openSettings: @escaping () -> Void,
-         openShortcutMap: @escaping () -> Void,
-         openTimeline: @escaping () -> Void) {
+         openHome: @escaping (HomeDestination) -> Void) {
         self.store = store
         self.openSettings = openSettings
-        self.openShortcutMap = openShortcutMap
-        self.openTimeline = openTimeline
+        self.openHome = openHome
         self.item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
 
@@ -76,6 +73,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+
+        let home = NSMenuItem(title: "Home…", action: #selector(showHome), keyEquivalent: "h")
+        home.target = self
+        home.toolTip = "The Hammerdeck home: what's on, what's running now, and what it can do"
+        menu.addItem(home)
+
+        let gallery = NSMenuItem(title: "Feature Gallery…", action: #selector(showGallery),
+                                 keyEquivalent: "")
+        gallery.target = self
+        gallery.toolTip = "Browse everything Hammerdeck can do; enable features in place"
+        menu.addItem(gallery)
 
         let shortcutMap = NSMenuItem(title: "Shortcut Map…", action: #selector(showShortcutMap),
                                      keyEquivalent: "")
@@ -180,12 +188,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         openSettings()
     }
 
+    @objc private func showHome() {
+        openHome(.home)
+    }
+
     @objc private func showShortcutMap() {
-        openShortcutMap()
+        openHome(.shortcuts)
     }
 
     @objc private func showTimeline() {
-        openTimeline()
+        openHome(.timeline)
+    }
+
+    @objc private func showGallery() {
+        openHome(.features)
     }
 
     @objc private func reloadFeatures() {
@@ -230,57 +246,37 @@ final class SettingsWindow {
     }
 }
 
-/// Lazily-created Automation Timeline window hosting the SwiftUI ruler/agenda.
-/// Closing hides it; reopening refreshes from the registry. Mirrors the others.
+/// Lazily-created Homepage window: the shell that docks the Dashboard +
+/// Gallery / Shortcut Map / Timeline tabs. `show(_:)` selects a tab so the
+/// menubar can route straight to it. Settings is opened via the injected
+/// callback (it stays its own window).
 @MainActor
-final class AutomationTimelineWindow {
+final class HomepageWindow {
     private var window: NSWindow?
     private let store: SettingsStore
+    private let nav = HomeNav()
+    private let openSettings: (String?) -> Void
 
-    init(store: SettingsStore) {
+    init(store: SettingsStore, openSettings: @escaping (String?) -> Void) {
         self.store = store
+        self.openSettings = openSettings
     }
 
-    func show() {
+    func show(_ destination: HomeDestination = .home) {
         if window == nil {
-            let w = NSWindow(contentViewController:
-                NSHostingController(rootView: AutomationTimelineView(store: store)))
-            w.title = "Automation Timeline"
-            w.styleMask = [.titled, .closable, .resizable]
+            let w = NSWindow(contentViewController: NSHostingController(
+                rootView: HomepageView(store: store, nav: nav, openSettings: openSettings)))
+            w.title = "Hammerdeck"
+            w.styleMask = [.titled, .closable, .resizable, .miniaturizable]
             w.isReleasedWhenClosed = false
-            w.setContentSize(NSSize(width: 760, height: 600))
+            w.setContentSize(NSSize(width: 980, height: 620))
             w.center()
             window = w
         }
+        nav.destination = destination
         store.refresh()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 }
 
-/// Lazily-created Shortcut Map window hosting the SwiftUI grid. Closing hides
-/// it; reopening refreshes from the registry. Mirrors SettingsWindow.
-@MainActor
-final class ShortcutMapWindow {
-    private var window: NSWindow?
-    private let store: SettingsStore
-
-    init(store: SettingsStore) {
-        self.store = store
-    }
-
-    func show() {
-        if window == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: ShortcutMapView(store: store)))
-            w.title = "Shortcut Map"
-            w.styleMask = [.titled, .closable, .resizable]
-            w.isReleasedWhenClosed = false
-            w.setContentSize(NSSize(width: 820, height: 540))
-            w.center()
-            window = w
-        }
-        store.refresh()
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-}

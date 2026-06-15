@@ -197,6 +197,11 @@ final class SettingsStore: ObservableObject {
     @Published private(set) var features: [FeatureInfo] = []
     @Published var optionEpoch = 0   // bumped on writes so editors refresh
 
+    /// The feature the Settings window should focus. The Feature Gallery sets
+    /// this before opening Settings so a card click deep-links straight to that
+    /// feature's detail; SettingsView binds its list selection to it.
+    @Published var selectedFeatureId: String?
+
     private let lua: LuaState
 
     init(lua: LuaState) {
@@ -265,6 +270,33 @@ final class SettingsStore: ObservableObject {
             + ".triggerConflict('\(id)', '\(actionId)', \(spec.luaLiteral)); return r or false"
         guard let raw = try? lua.eval(code), let s = raw as? String else { return nil }
         return s
+    }
+
+    /// Feature ids with at least one shortcut conflict on a currently-bound
+    /// hotkey/chord action -- either a hard in-app collision (triggerConflict)
+    /// or a soft system/common-app advisory (shortcutAdvisories). Powers the
+    /// Gallery's "has conflict" filter and per-card warning badge. Reads from
+    /// the in-memory `features` snapshot, so refresh() first if the catalog may
+    /// be stale.
+    func conflictedFeatureIds() -> Set<String> {
+        var out: Set<String> = []
+        for f in features where !f.failed {
+            for a in f.actions {
+                guard let t = a.trigger, t.type == "hotkey" || t.type == "chord" else { continue }
+                if triggerConflict(f.id, a.id, t) != nil || !shortcutAdvisories(t).isEmpty {
+                    out.insert(f.id)
+                    break
+                }
+            }
+        }
+        return out
+    }
+
+    /// Whether the process holds the Accessibility grant -- read through the
+    /// seam (native.ax_trusted via adapter.axTrusted), never by calling the OS
+    /// API from the UI. Powers the Dashboard's permission status row.
+    func accessibilityTrusted() -> Bool {
+        (try? lua.eval("return require('platform.adapter').axTrusted()")) as? Bool ?? false
     }
 
     /// Swap two actions' triggers (the Shortcut Map drag-to-swap). Atomic and

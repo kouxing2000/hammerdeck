@@ -17,6 +17,15 @@ func defaultLuaDir() -> String {
         .appendingPathComponent("lua").path
 }
 
+/// Whether to greet the user with the Homepage on launch: only on the very
+/// first run (the `hammerdeck.firstRun.done` flag is still unset), and never
+/// when first-run is suppressed (CI / smoke tests). Pure so it's testable
+/// without booting the GUI. Read the flag BEFORE bootLua -- the Lua boot flips
+/// it during startup.
+func shouldGreetWithHomepage(noFirstRunEnv: String?, firstRunDone: Bool) -> Bool {
+    noFirstRunEnv == nil && !firstRunDone
+}
+
 /// Wire package.path and run the platform entry point on an attached LuaState.
 @MainActor
 func bootLua(_ lua: LuaState, luaDir: String) throws {
@@ -35,6 +44,13 @@ public func hammerdeckMain() {
     let lua = LuaState()
     Native.shared.attach(lua)
     Native.shared.installBindings()
+
+    // Capture first-launch state BEFORE bootLua -- the Lua boot flips the same
+    // `hammerdeck.firstRun.done` flag during startup. On first run we greet the
+    // user with the Homepage (onboarding); later launches stay quiet.
+    let isFirstRun = shouldGreetWithHomepage(
+        noFirstRunEnv: ProcessInfo.processInfo.environment["HAMMERDECK_NO_FIRSTRUN"],
+        firstRunDone: UserDefaults.standard.bool(forKey: "hammerdeck.firstRun.done"))
 
     do {
         try bootLua(lua, luaDir: defaultLuaDir())
@@ -68,14 +84,26 @@ public func hammerdeckMain() {
     }
 
     let settingsWindow = SettingsWindow(store: store)
-    let shortcutMapWindow = ShortcutMapWindow(store: store)
-    let timelineWindow = AutomationTimelineWindow(store: store)
+    // The Homepage shell docks the Dashboard + Gallery / Shortcut Map / Timeline
+    // tabs. A Gallery card click deep-links the Settings detail (focus the
+    // feature on the store, then surface the still-separate Settings window).
+    let homepageWindow = HomepageWindow(store: store, openSettings: { id in
+        store.selectedFeatureId = id
+        settingsWindow.show()
+    })
     let statusBar = StatusBarController(
         store: store,
         openSettings: { settingsWindow.show() },
-        openShortcutMap: { shortcutMapWindow.show() },
-        openTimeline: { timelineWindow.show() })
+        openHome: { homepageWindow.show($0) })
     _ = statusBar
+
+    // First launch: open the Homepage so a new user lands on "here's what
+    // Hammerdeck can do," not a bare menubar icon. Every later launch stays
+    // quiet (it's "Home…" in the menu) -- a login-item menubar app must not
+    // throw a window up on every boot.
+    if isFirstRun {
+        homepageWindow.show(.home)
+    }
 
     // Debug-only: a file-polled Lua control channel for visual verification
     // (off unless HAMMERDECK_CONTROL_DIR is set; the launcher sets it).

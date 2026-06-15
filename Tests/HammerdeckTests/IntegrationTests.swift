@@ -265,6 +265,135 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(entry?.everyMin, 45, "the recurring break tracks the edited workMin")
     }
 
+    // The Feature Gallery's "has conflict" filter / per-card badge: a bound
+    // hotkey that collides with a macOS system shortcut is allowed (advisory,
+    // not blocked) but must surface in conflictedFeatureIds. Clearing it back to
+    // the feature's clean default drops it again.
+    func testGalleryConflictScanFlagsSystemCollision() {
+        host.store.setEnabled("clipboard_clean", true)
+        defer { host.store.setEnabled("clipboard_clean", false) }
+
+        let err = host.store.setTrigger("clipboard_clean", "main",
+            TriggerSpec(type: "hotkey", mods: ["cmd"], key: "space"))   // Spotlight
+        XCTAssertNil(err, "a system-shortcut collision is advisory, not refused")
+        XCTAssertTrue(host.store.conflictedFeatureIds().contains("clipboard_clean"),
+                      "a soft system collision flags the feature as conflicted")
+
+        // Reverting to the (clean) default ctrl+cmd+v drops it from the set.
+        host.store.clearTrigger("clipboard_clean", "main")
+        XCTAssertFalse(host.store.conflictedFeatureIds().contains("clipboard_clean"),
+                       "clearing the override leaves no conflict")
+    }
+
+    // The card data the Gallery renders, end to end through the real bridge:
+    // category + one-line description, the service/action distinction (a pure
+    // service has no actions, so its card shows "always on"), and the
+    // store-level selection the card click deep-links into the Settings detail.
+    func testGalleryCardDataAndDeepLink() {
+        host.store.refresh()
+
+        let palette = host.store.features.first { $0.id == "command_palette" }
+        XCTAssertEqual(palette?.category, "platform")
+        XCTAssertFalse(palette?.description.isEmpty ?? true,
+                       "a card needs the one-line description")
+
+        let off = host.store.features.first { $0.id == "display_off" }
+        XCTAssertEqual(off?.kind, "service")
+        XCTAssertTrue(off?.actions.isEmpty ?? false,
+                      "a pure service has no actions -> card shows 'always on'")
+
+        // Deep-link contract: the Gallery sets the focused feature on the store,
+        // then opens Settings (SettingsView binds its list selection to this).
+        host.store.selectedFeatureId = "mouse_circle"
+        XCTAssertEqual(host.store.selectedFeatureId, "mouse_circle")
+    }
+
+    // The Homepage Dashboard's "Right now" card: DashboardView.upcoming aggregates
+    // daily-time fires (service `at` descriptors + action schedule triggers) from
+    // ENABLED, non-failed features, sorted by time-until-next-fire (wrapping past
+    // midnight) and capped. A pure function over describe()-shaped data, so it is
+    // tested deterministically with synthetic FeatureInfo (independent of whether
+    // a given service can start headless).
+    func testDashboardUpcomingAggregation() {
+        func feat(_ id: String, enabled: Bool, failed: Bool = false,
+                  at: [(String, String)] = [],
+                  actionAt: [(String, String, String)] = []) -> FeatureInfo {
+            let sched: [[String: Any]] = at.map { ["label": $0.0, "kind": "at", "at": $0.1] }
+            let acts: [[String: Any]] = actionAt.map {
+                ["id": $0.0, "label": $0.1, "trigger": ["type": "schedule", "at": $0.2]]
+            }
+            return FeatureInfo(["id": id, "name": id, "enabled": enabled,
+                                "failed": failed, "schedule": sched, "actions": acts])!
+        }
+
+        let feats = [
+            feat("sleep", enabled: true, at: [("Force system sleep", "23:30")]),
+            feat("bing", enabled: true, actionAt: [("refresh", "Refresh", "06:00")]),
+            feat("off", enabled: false, at: [("never", "01:00")]),       // disabled -> excluded
+            feat("broken", enabled: true, failed: true, at: [("x", "07:00")]),  // failed -> excluded
+        ]
+
+        // now = 08:00. sleep 23:30 -> 930 min away; bing 06:00 -> wraps to 1320.
+        let items = DashboardView.upcoming(feats, now: 8 * 60, limit: 8)
+        XCTAssertEqual(items.count, 2, "only enabled, non-failed features contribute")
+        XCTAssertNil(items.first { $0.id.hasPrefix("off") || $0.id.hasPrefix("broken") })
+        XCTAssertEqual(items.first?.minutes, 23 * 60 + 30, "soonest-next-fire sorts first")
+        XCTAssertEqual(items.first?.untilNext, 930)
+        XCTAssertEqual(items.map { $0.untilNext }, items.map { $0.untilNext }.sorted())
+
+        // The cap truncates, keeping the soonest.
+        XCTAssertEqual(DashboardView.upcoming(feats, now: 8 * 60, limit: 1).count, 1)
+
+        // Relative-time formatting (the card's trailing label).
+        XCTAssertEqual(DashboardView.relative(0), "now")
+        XCTAssertEqual(DashboardView.relative(45), "in 45 min")
+        XCTAssertEqual(DashboardView.relative(15 * 60 + 30), "in 15h 30m")
+    }
+
+    // The Dashboard's "Tip of the day": DashboardView.tipFeature picks one
+    // feature deterministically per day -- stable within a day, rotating across
+    // days, never a failed plugin, preferring DISABLED features (rediscovery).
+    func testDashboardTipOfDayPick() {
+        func feat(_ id: String, enabled: Bool, failed: Bool = false) -> FeatureInfo {
+            FeatureInfo(["id": id, "name": id, "enabled": enabled, "failed": failed])!
+        }
+        let feats = [
+            feat("alpha", enabled: false),
+            feat("bravo", enabled: true),
+            feat("charlie", enabled: false),
+            feat("delta", enabled: true, failed: true),   // failed -> never tipped
+        ]
+
+        // Prefers disabled (alpha, charlie -- sorted by id); deterministic per day.
+        let d0 = DashboardView.tipFeature(feats, dayOfYear: 0)
+        XCTAssertEqual(d0?.id, "alpha")
+        XCTAssertEqual(DashboardView.tipFeature(feats, dayOfYear: 1)?.id, "charlie")
+        XCTAssertEqual(DashboardView.tipFeature(feats, dayOfYear: 2)?.id, "alpha", "wraps over the pool")
+        // Same day -> same pick (stable within a day).
+        XCTAssertEqual(DashboardView.tipFeature(feats, dayOfYear: 0)?.id, d0?.id)
+        XCTAssertNotEqual(d0?.id, "delta", "a failed plugin is never tipped")
+
+        // Once everything (non-failed) is enabled, the pool falls back to all of
+        // them rather than going empty.
+        let allOn = [feat("alpha", enabled: true), feat("bravo", enabled: true)]
+        XCTAssertNotNil(DashboardView.tipFeature(allOn, dayOfYear: 0))
+
+        // No usable features -> no tip (the card hides).
+        XCTAssertNil(DashboardView.tipFeature([feat("x", enabled: true, failed: true)], dayOfYear: 0))
+    }
+
+    // The Homepage greets the user only on the very first launch, and never when
+    // first-run is suppressed (CI / smoke tests). Pure decision, so it's checked
+    // without booting the GUI (the actual show() runs inside hammerdeckMain).
+    func testFirstRunGreetsWithHomepage() {
+        XCTAssertTrue(shouldGreetWithHomepage(noFirstRunEnv: nil, firstRunDone: false),
+                      "fresh install -> show the Homepage")
+        XCTAssertFalse(shouldGreetWithHomepage(noFirstRunEnv: nil, firstRunDone: true),
+                       "later launches stay quiet")
+        XCTAssertFalse(shouldGreetWithHomepage(noFirstRunEnv: "1", firstRunDone: false),
+                       "HAMMERDECK_NO_FIRSTRUN suppresses the greeting (CI / smoke)")
+    }
+
     func testMenuQuickTriggerRunsTheAction() {
         // The menubar quick-trigger path: store.runAction -> registry.runAction
         // -> the feature's run(ctx), end to end on the real bridge.

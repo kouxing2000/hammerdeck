@@ -8,11 +8,13 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var store: SettingsStore
-    @State private var selectedId: String?
 
     var body: some View {
+        // Selection lives on the store so the Feature Gallery can deep-link a
+        // card click straight to that feature's detail (set selectedFeatureId,
+        // then open the window).
         NavigationSplitView {
-            List(selection: $selectedId) {
+            List(selection: $store.selectedFeatureId) {
                 ForEach(groupedCategories, id: \.self) { category in
                     Section(category.capitalized) {
                         ForEach(store.features.filter { $0.category == category }) { feature in
@@ -24,7 +26,8 @@ struct SettingsView: View {
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 240)
         } detail: {
-            if let id = selectedId, let feature = store.features.first(where: { $0.id == id }) {
+            if let id = store.selectedFeatureId,
+               let feature = store.features.first(where: { $0.id == id }) {
                 FeatureDetail(store: store, feature: feature)
             } else {
                 Text("Select a feature")
@@ -34,7 +37,7 @@ struct SettingsView: View {
         .frame(minWidth: 640, minHeight: 420)
         .onAppear {
             store.refresh()
-            if selectedId == nil { selectedId = store.features.first?.id }
+            if store.selectedFeatureId == nil { store.selectedFeatureId = store.features.first?.id }
         }
     }
 

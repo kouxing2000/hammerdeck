@@ -28,38 +28,9 @@ private let kKeyW: CGFloat = 132
 private let kPreviewW: CGFloat = 96
 private let kStatusW: CGFloat = 208
 
-// Compact glyph string for a trigger (e.g. "⌃⌥⌘←"), shown in the Shortcut
-// column and used as the drag handle. Mirrors registry.lua's specGlyph; the
-// modifier order here is the macOS display convention (⌃⌥⇧⌘).
-private let kKeyGlyphs: [String: String] = [
-    "tab": "⇥", "return": "↩", "enter": "↩", "space": "␣",
-    "delete": "⌫", "backspace": "⌫", "escape": "⎋", "esc": "⎋",
-    "left": "←", "right": "→", "up": "↑", "down": "↓",
-]
-private func keyGlyph(_ key: String) -> String {
-    if let g = kKeyGlyphs[key.lowercased()] { return g }
-    return key.count == 1 ? key.uppercased() : key
-}
-private func modGlyphs(_ mods: [String]) -> String {
-    let has = Set(mods.map { $0.lowercased() })
-    var s = ""
-    if has.contains("ctrl") || has.contains("control") { s += "⌃" }
-    if has.contains("alt") || has.contains("option")   { s += "⌥" }
-    if has.contains("shift")                            { s += "⇧" }
-    if has.contains("cmd") || has.contains("command")   { s += "⌘" }
-    return s
-}
-private func shortcutGlyph(_ t: TriggerSpec?) -> String {
-    guard let t else { return "" }
-    switch t.type {
-    case "hotkey":   return modGlyphs(t.mods) + keyGlyph(t.key)
-    case "chord":    return modGlyphs(t.mods) + keyGlyph(t.key) + " "
-                          + t.follows.map(keyGlyph).joined(separator: " ")
-    case "schedule": return t.everyMin != nil ? "every \(t.everyMin!)m" : "at \(t.at ?? "")"
-    case "event":    return "on \(t.event ?? "")"
-    default:         return ""
-    }
-}
+// keyGlyph / modGlyphs / shortcutGlyph live in FeatureChrome.swift -- shared
+// with the Automation Timeline and Feature Gallery so a trigger renders the
+// same everywhere.
 
 struct ShortcutMapView: View {
     @ObservedObject var store: SettingsStore
@@ -81,7 +52,7 @@ struct ShortcutMapView: View {
             Divider()
             footerHint
         }
-        .frame(minWidth: 780, minHeight: 480)
+        // Embedded in the Homepage shell, which owns the window minimum size.
         .onAppear { store.refresh() }
     }
 

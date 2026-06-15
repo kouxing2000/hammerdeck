@@ -52,15 +52,8 @@ private struct TLItem: Identifiable {
     }
 }
 
-private func categoryColor(_ category: String) -> Color {
-    switch category {
-    case "health":       return .green
-    case "appearance":   return .purple
-    case "productivity": return .blue
-    case "platform":     return .orange
-    default:             return .gray
-    }
-}
+// categoryColor lives in FeatureChrome.swift (shared with the Shortcut Map and
+// Feature Gallery).
 
 private func fmtHM(_ minutes: Int) -> String {
     let m = ((minutes % 1440) + 1440) % 1440
@@ -97,7 +90,7 @@ struct AutomationTimelineView: View {
             Divider()
             legend
         }
-        .frame(minWidth: 720, minHeight: 540)
+        // Embedded in the Homepage shell, which owns the window minimum size.
         .onAppear { store.refresh() }
         .onReceive(tick) { _ in nowMinutes = Self.currentMinutes() }
     }
