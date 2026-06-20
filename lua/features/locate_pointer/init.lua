@@ -1,4 +1,4 @@
--- features/mouse_circle
+-- features/locate_pointer
 --
 -- "Where is my pointer?": draws a crosshair around the mouse that follows it
 -- for a few seconds, then fades (ported from the MouseCircle spoon). Unlike
@@ -10,7 +10,7 @@
 
 return {
     api         = 1,
-    id          = "mouse_circle",
+    id          = "locate_pointer",
     name        = "Locate Pointer",
     description = "Draws a crosshair around the mouse pointer for a moment, "
         .. "following it as it moves.",

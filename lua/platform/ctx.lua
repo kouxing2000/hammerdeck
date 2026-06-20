@@ -26,6 +26,35 @@ local M = {}
 local function optKey(id, k)   return "hammerdeck.opt." .. id .. "." .. k end
 local function stateKey(id, k) return "hammerdeck.state." .. id .. "." .. k end
 
+-- "Pointer Follows Moved Window" (the pointer_follows_window feature): when its
+-- toggle is on, repositioning the focused window carries the pointer along,
+-- preserving its RELATIVE position inside the window (it was 30% from the left
+-- edge -> still 30% from the left edge after the move). Implemented here, at the
+-- single window-move seam, so EVERY window feature (window_snap, Window Mode,
+-- window_to_next_screen, ...) gets it for free with no per-feature code. The
+-- toggle is just that feature's enabled-state; reading the one well-known key
+-- avoids a require cycle back into the registry.
+local POINTER_FOLLOWS_KEY = "hammerdeck.enabled.pointer_follows_window"
+
+local function moveWindowMaybeFollowingPointer(f)
+    if adapter.getSetting(POINTER_FOLLOWS_KEY, false) ~= true then
+        return adapter.setFocusedWindowFrame(f)
+    end
+    local old = adapter.focusedWindowFrame()
+    local mp  = adapter.mousePosition()
+    local ok  = adapter.setFocusedWindowFrame(f)
+    -- Carry the pointer only when it was actually inside the window being moved
+    -- (never yank a pointer parked elsewhere); guard degenerate / missing sizes.
+    if ok and old and mp and old.w and old.h and old.w > 0 and old.h > 0
+        and mp.x >= old.x and mp.x <= old.x + old.w
+        and mp.y >= old.y and mp.y <= old.y + old.h then
+        local rx = (mp.x - old.x) / old.w
+        local ry = (mp.y - old.y) / old.h
+        adapter.setMousePosition(f.x + rx * f.w, f.y + ry * f.h)
+    end
+    return ok
+end
+
 -- Build ctx + scope for a validated manifest m.
 -- scope.adopt(rawHandle)  -- track an externally created handle (registry uses
 --                            this for the trigger binding of action features)
@@ -124,7 +153,7 @@ function M.make(m, resolveTrigger, extra)
     function ctx.axPrompt()         return adapter.axPrompt() end
     function ctx.focusedWindowFrame()          return adapter.focusedWindowFrame() end
     function ctx.focusedWindowTitle()          return adapter.focusedWindowTitle() end
-    function ctx.setFocusedWindowFrame(f)      return adapter.setFocusedWindowFrame(f) end
+    function ctx.setFocusedWindowFrame(f)      return moveWindowMaybeFollowingPointer(f) end
     function ctx.setFocusedWindowFullscreen(b) return adapter.setFocusedWindowFullscreen(b) end
     function ctx.screenFrames()                return adapter.screenFrames() end
     function ctx.mousePosition()               return adapter.mousePosition() end

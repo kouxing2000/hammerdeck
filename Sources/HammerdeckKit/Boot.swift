@@ -83,17 +83,12 @@ public func hammerdeckMain() {
         exit(0)
     }
 
-    let settingsWindow = SettingsWindow(store: store)
     // The Homepage shell docks the Dashboard + Gallery / Shortcut Map / Timeline
-    // tabs. A Gallery card click deep-links the Settings detail (focus the
-    // feature on the store, then surface the still-separate Settings window).
-    let homepageWindow = HomepageWindow(store: store, openSettings: { id in
-        store.selectedFeatureId = id
-        settingsWindow.show()
-    })
+    // / Settings tabs in one window. A Gallery card click deep-links straight to
+    // the embedded Settings tab focused on that feature (handled inside the shell).
+    let homepageWindow = HomepageWindow(store: store)
     let statusBar = StatusBarController(
         store: store,
-        openSettings: { settingsWindow.show() },
         openHome: { homepageWindow.show($0) })
     _ = statusBar
 

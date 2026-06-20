@@ -8,13 +8,13 @@ import AppKit
 // now, and what it can do," and is the doorway to the deeper views.
 //
 // Pure shell + presentation: every tab reuses the SAME view struct and store
-// the standalone windows use (no duplicated logic), and the Dashboard reads
-// only data already flowing through registry.describe(). Settings stays its own
-// window (master-detail nests badly inside the shell's split) -- one click from
-// the sidebar, plus the Gallery's card deep-link.
+// (no duplicated logic), and the Dashboard reads only data already flowing
+// through registry.describe(). Settings is embedded as its own tab too -- it
+// uses an HSplitView (not a nested NavigationSplitView), so it docks cleanly in
+// the shell's detail column alongside the Gallery / Shortcut Map / Timeline.
 
 enum HomeDestination: String, CaseIterable, Identifiable, Hashable {
-    case home, features, shortcuts, timeline
+    case home, features, shortcuts, timeline, settings
     var id: String { rawValue }
 
     var title: String {
@@ -23,6 +23,7 @@ enum HomeDestination: String, CaseIterable, Identifiable, Hashable {
         case .features:  return "Features"
         case .shortcuts: return "Shortcuts"
         case .timeline:  return "Timeline"
+        case .settings:  return "Settings"
         }
     }
     var icon: String {
@@ -31,6 +32,7 @@ enum HomeDestination: String, CaseIterable, Identifiable, Hashable {
         case .features:  return "square.grid.2x2.fill"
         case .shortcuts: return "keyboard.fill"
         case .timeline:  return "clock.fill"
+        case .settings:  return "gearshape.fill"
         }
     }
 }
@@ -46,22 +48,24 @@ struct HomepageView: View {
     @ObservedObject var store: SettingsStore
     @ObservedObject var nav: HomeNav
 
-    /// Opens the Settings window focused on a feature (set by the host in Boot).
-    let openSettings: (String?) -> Void
+    /// Jump to the embedded Settings tab, optionally focused on a feature (the
+    /// Gallery's card deep-link). Selection lives on the store; SettingsPane reads it.
+    private func showSettings(_ id: String? = nil) {
+        if let id { store.selectedFeatureId = id }
+        nav.destination = .settings
+    }
 
     var body: some View {
         NavigationSplitView {
             List(selection: $nav.destination) {
-                ForEach(HomeDestination.allCases) { dest in
+                // The content lenses up top; Settings + utilities set apart below.
+                ForEach(HomeDestination.allCases.filter { $0 != .settings }) { dest in
                     Label(dest.title, systemImage: dest.icon).tag(dest)
                 }
                 Section {
-                    Button {
-                        openSettings(nil)
-                    } label: {
-                        Label("Settings…", systemImage: "gearshape.fill")
-                    }
-                    .buttonStyle(.plain)
+                    Label(HomeDestination.settings.title,
+                          systemImage: HomeDestination.settings.icon)
+                        .tag(HomeDestination.settings)
                     Button {
                         store.reload()
                     } label: {
@@ -84,13 +88,15 @@ struct HomepageView: View {
             case .home:
                 DashboardView(store: store,
                               goTo: { nav.destination = $0 },
-                              openSettings: { openSettings(nil) })
+                              openSettings: { showSettings() })
             case .features:
-                FeatureGalleryView(store: store, openSettings: { openSettings($0) })
+                FeatureGalleryView(store: store, openSettings: { showSettings($0) })
             case .shortcuts:
                 ShortcutMapView(store: store)
             case .timeline:
                 AutomationTimelineView(store: store)
+            case .settings:
+                SettingsPane(store: store)
             }
         }
         // The shell is the single source of truth for the minimum size; the

@@ -11,13 +11,11 @@ import SwiftUI
 final class StatusBarController: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let store: SettingsStore
-    private let openSettings: () -> Void
     private let openHome: (HomeDestination) -> Void
 
-    init(store: SettingsStore, openSettings: @escaping () -> Void,
+    init(store: SettingsStore,
          openHome: @escaping (HomeDestination) -> Void) {
         self.store = store
-        self.openSettings = openSettings
         self.openHome = openHome
         self.item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
@@ -185,7 +183,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func showSettings() {
-        openSettings()
+        openHome(.settings)
     }
 
     @objc private func showHome() {
@@ -219,53 +217,23 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 }
 
-/// Lazily-created settings window hosting the SwiftUI form. Closing hides it;
-/// reopening refreshes from the registry.
-@MainActor
-final class SettingsWindow {
-    private var window: NSWindow?
-    private let store: SettingsStore
-
-    init(store: SettingsStore) {
-        self.store = store
-    }
-
-    func show() {
-        if window == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store)))
-            w.title = "Hammerdeck Settings"
-            w.styleMask = [.titled, .closable, .resizable]
-            w.isReleasedWhenClosed = false
-            w.setContentSize(NSSize(width: 720, height: 480))
-            w.center()
-            window = w
-        }
-        store.refresh()
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
 /// Lazily-created Homepage window: the shell that docks the Dashboard +
-/// Gallery / Shortcut Map / Timeline tabs. `show(_:)` selects a tab so the
-/// menubar can route straight to it. Settings is opened via the injected
-/// callback (it stays its own window).
+/// Gallery / Shortcut Map / Timeline / Settings tabs. `show(_:)` selects a tab
+/// so the menubar can route straight to it (including straight to Settings).
 @MainActor
 final class HomepageWindow {
     private var window: NSWindow?
     private let store: SettingsStore
     private let nav = HomeNav()
-    private let openSettings: (String?) -> Void
 
-    init(store: SettingsStore, openSettings: @escaping (String?) -> Void) {
+    init(store: SettingsStore) {
         self.store = store
-        self.openSettings = openSettings
     }
 
     func show(_ destination: HomeDestination = .home) {
         if window == nil {
             let w = NSWindow(contentViewController: NSHostingController(
-                rootView: HomepageView(store: store, nav: nav, openSettings: openSettings)))
+                rootView: HomepageView(store: store, nav: nav)))
             w.title = "Hammerdeck"
             w.styleMask = [.titled, .closable, .resizable, .miniaturizable]
             w.isReleasedWhenClosed = false

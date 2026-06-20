@@ -34,7 +34,7 @@ else
     -- in a normal boot): a hand-maintained list keeps the app non-empty.
     registry.loadCatalog({
         "features.sleep_schedule", "features.break_reminder", "features.window_switcher",
-        "features.display_off", "features.clipboard_clean",
+        "features.display_off", "features.plain_paste",
     })
 end
 

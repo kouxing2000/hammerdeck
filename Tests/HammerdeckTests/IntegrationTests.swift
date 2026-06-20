@@ -53,6 +53,31 @@ final class TestHost {
             .deletingLastPathComponent()      // repo root
             .path
     }
+
+    // The number of features autodiscovery SHOULD find on disk, derived the
+    // same way Native.discoverFeatures does (a `<name>/init.lua` subdir or a
+    // flat `<name>.lua` file). Counting from the filesystem instead of a
+    // hardcoded literal keeps the catalog-completeness assertions from
+    // breaking every time a feature is added or removed.
+    static var diskFeatureCount: Int {
+        let fm = FileManager.default
+        let dir = repoRoot + "/lua/features"
+        guard let entries = try? fm.contentsOfDirectory(atPath: dir) else { return 0 }
+        var names = Set<String>()
+        for entry in entries where !entry.hasPrefix(".") {
+            let full = (dir as NSString).appendingPathComponent(entry)
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: full, isDirectory: &isDir)
+            if isDir.boolValue {
+                if fm.fileExists(atPath: (full as NSString).appendingPathComponent("init.lua")) {
+                    names.insert(entry)
+                }
+            } else if entry.hasSuffix(".lua"), entry != "init.lua" {
+                names.insert(String(entry.dropLast(4)))
+            }
+        }
+        return names.count
+    }
 }
 
 @MainActor
@@ -148,10 +173,11 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Tier 1: real bridge, no special permissions
 
     func testBootRegistersWholeCatalog() {
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 16,
-                       "disk discovery should find all 16 features")
+        let expected = TestHost.diskFeatureCount
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, Double(expected),
+                       "disk discovery should find every feature folder (\(expected) on disk)")
         host.store.refresh()
-        XCTAssertGreaterThanOrEqual(host.store.features.count, 16)
+        XCTAssertGreaterThanOrEqual(host.store.features.count, expected)
         XCTAssertTrue(host.store.features.contains { $0.id == "window_switcher" })
 
         // Multi-action shape survives the any() bridge crossing.
@@ -184,38 +210,38 @@ final class IntegrationTests: XCTestCase {
     }
 
     func testEnableBindsARealCarbonHotkey() {
-        host.store.setEnabled("clipboard_clean", true)
-        XCTAssertEqual(eval("return require('platform.registry').isEnabled('clipboard_clean')") as? Bool,
+        host.store.setEnabled("plain_paste", true)
+        XCTAssertEqual(eval("return require('platform.registry').isEnabled('plain_paste')") as? Bool,
                        true)
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the Carbon hotkey should be registered")
-        host.store.setEnabled("clipboard_clean", false)
+        host.store.setEnabled("plain_paste", false)
         XCTAssertEqual(registryNum("liveHandleCount()"), 0, "disable must leak nothing")
     }
 
     func testTriggerRebindEvalChunksAndConflict() {
-        host.store.setEnabled("clipboard_clean", true)
-        host.store.setEnabled("mouse_circle", true)
+        host.store.setEnabled("plain_paste", true)
+        host.store.setEnabled("locate_pointer", true)
 
-        // Conflict: mouse_circle owns cmd+alt+ctrl+m.
+        // Conflict: locate_pointer owns cmd+alt+ctrl+m.
         let conflict = host.store.setTrigger(
-            "clipboard_clean", "main",
+            "plain_paste", "main",
             TriggerSpec(type: "hotkey", mods: ["cmd", "alt", "ctrl"], key: "m"))
         XCTAssertNotNil(conflict, "rebinding onto a taken hotkey must be refused")
 
         // Success: a free combo persists encoded under the per-action key.
         let err = host.store.setTrigger(
-            "clipboard_clean", "main",
+            "plain_paste", "main",
             TriggerSpec(type: "hotkey", mods: ["ctrl", "shift"], key: "9"))
         XCTAssertNil(err)
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "hammerdeck.trigger.clipboard_clean.main"),
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "hammerdeck.trigger.plain_paste.main"),
                        "hotkey|ctrl,shift|9")
 
-        host.store.clearTrigger("clipboard_clean", "main")
-        XCTAssertNil(UserDefaults.standard.object(forKey: "hammerdeck.trigger.clipboard_clean.main"))
+        host.store.clearTrigger("plain_paste", "main")
+        XCTAssertNil(UserDefaults.standard.object(forKey: "hammerdeck.trigger.plain_paste.main"))
 
-        host.store.setEnabled("clipboard_clean", false)
-        host.store.setEnabled("mouse_circle", false)
+        host.store.setEnabled("plain_paste", false)
+        host.store.setEnabled("locate_pointer", false)
         XCTAssertEqual(registryNum("liveHandleCount()"), 0)
     }
 
@@ -270,18 +296,18 @@ final class IntegrationTests: XCTestCase {
     // not blocked) but must surface in conflictedFeatureIds. Clearing it back to
     // the feature's clean default drops it again.
     func testGalleryConflictScanFlagsSystemCollision() {
-        host.store.setEnabled("clipboard_clean", true)
-        defer { host.store.setEnabled("clipboard_clean", false) }
+        host.store.setEnabled("plain_paste", true)
+        defer { host.store.setEnabled("plain_paste", false) }
 
-        let err = host.store.setTrigger("clipboard_clean", "main",
+        let err = host.store.setTrigger("plain_paste", "main",
             TriggerSpec(type: "hotkey", mods: ["cmd"], key: "space"))   // Spotlight
         XCTAssertNil(err, "a system-shortcut collision is advisory, not refused")
-        XCTAssertTrue(host.store.conflictedFeatureIds().contains("clipboard_clean"),
+        XCTAssertTrue(host.store.conflictedFeatureIds().contains("plain_paste"),
                       "a soft system collision flags the feature as conflicted")
 
         // Reverting to the (clean) default ctrl+cmd+v drops it from the set.
-        host.store.clearTrigger("clipboard_clean", "main")
-        XCTAssertFalse(host.store.conflictedFeatureIds().contains("clipboard_clean"),
+        host.store.clearTrigger("plain_paste", "main")
+        XCTAssertFalse(host.store.conflictedFeatureIds().contains("plain_paste"),
                        "clearing the override leaves no conflict")
     }
 
@@ -303,9 +329,10 @@ final class IntegrationTests: XCTestCase {
                       "a pure service has no actions -> card shows 'always on'")
 
         // Deep-link contract: the Gallery sets the focused feature on the store,
-        // then opens Settings (SettingsView binds its list selection to this).
-        host.store.selectedFeatureId = "mouse_circle"
-        XCTAssertEqual(host.store.selectedFeatureId, "mouse_circle")
+        // then jumps to the embedded Settings tab (SettingsPane binds its list
+        // selection to this).
+        host.store.selectedFeatureId = "locate_pointer"
+        XCTAssertEqual(host.store.selectedFeatureId, "locate_pointer")
     }
 
     // The Homepage Dashboard's "Right now" card: DashboardView.upcoming aggregates
@@ -397,18 +424,18 @@ final class IntegrationTests: XCTestCase {
     func testMenuQuickTriggerRunsTheAction() {
         // The menubar quick-trigger path: store.runAction -> registry.runAction
         // -> the feature's run(ctx), end to end on the real bridge.
-        host.store.setEnabled("clipboard_clean", true)
-        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.clipboard_clean.mode")
+        host.store.setEnabled("plain_paste", true)
+        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.plain_paste.mode")
         let pb = NSPasteboard.general
         let saved = pb.string(forType: .string)
         defer {
-            host.store.setEnabled("clipboard_clean", false)
+            host.store.setEnabled("plain_paste", false)
             pb.clearContents()
             if let saved { pb.setString(saved, forType: .string) }
         }
         pb.clearContents()
         pb.setString("   from the menu   ", forType: .string)
-        host.store.runAction("clipboard_clean", "main")
+        host.store.runAction("plain_paste", "main")
         XCTAssertEqual(pb.string(forType: .string), "from the menu",
                        "the quick trigger should run the real action")
         // The action always pastes after 0.5s; the defer's setEnabled(false)
@@ -564,7 +591,8 @@ final class IntegrationTests: XCTestCase {
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('display_off')") as? Bool,
                        true, "enabled-state must survive a reload")
-        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double, 16)
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double,
+                       Double(TestHost.diskFeatureCount))
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("display_off", false)
@@ -632,20 +660,20 @@ final class IntegrationTests: XCTestCase {
     }
 
     func testChordRegistersARealPrefixHotkey() {
-        host.store.setEnabled("clipboard_clean", true)
+        host.store.setEnabled("plain_paste", true)
         // Rebind onto a chord: ChordCenter registers the prefix via the real
         // Carbon HotkeyCenter, so a live handle must exist.
         let err = host.store.setTrigger(
-            "clipboard_clean", "main",
+            "plain_paste", "main",
             TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["b"]))
         XCTAssertNil(err, "binding a chord should succeed")
         XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
                                     "the chord's prefix hotkey should be registered")
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "hammerdeck.trigger.clipboard_clean.main"),
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "hammerdeck.trigger.plain_paste.main"),
                        "chord|cmd,shift|a|b", "the chord override persisted encoded")
 
-        host.store.clearTrigger("clipboard_clean", "main")   // back to its default hotkey
-        host.store.setEnabled("clipboard_clean", false)
+        host.store.clearTrigger("plain_paste", "main")   // back to its default hotkey
+        host.store.setEnabled("plain_paste", false)
         XCTAssertEqual(registryNum("liveHandleCount()"), 0, "disable must leak nothing")
     }
 
@@ -830,12 +858,12 @@ final class IntegrationTests: XCTestCase {
         try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
             "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
 
-        host.store.setEnabled("clipboard_clean", true)
-        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.clipboard_clean.mode")
+        host.store.setEnabled("plain_paste", true)
+        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.plain_paste.mode")
         let pb = NSPasteboard.general
         let saved = pb.string(forType: .string)
         defer {
-            host.store.setEnabled("clipboard_clean", false)
+            host.store.setEnabled("plain_paste", false)
             pb.clearContents()
             if let saved { pb.setString(saved, forType: .string) }
         }
@@ -843,7 +871,7 @@ final class IntegrationTests: XCTestCase {
         pb.clearContents()
         pb.setString("  padded text  ", forType: .string)
 
-        // ctrl+cmd+v: clipboard_clean's default trigger. Mirror real input:
+        // ctrl+cmd+v: plain_paste's default trigger. Mirror real input:
         // modifier key-downs first (flagsChanged), then the letter, then the
         // releases -- some hotkey matchers ignore bare flags on a letter event.
         let src = CGEventSource(stateID: .hidSystemState)
@@ -867,7 +895,7 @@ final class IntegrationTests: XCTestCase {
             pumpAppEvents(0.05)
             if pb.string(forType: .string) == "padded text" { landed = true; break }
         }
-        host.store.setEnabled("clipboard_clean", false)   // cancels the pending paste
+        host.store.setEnabled("plain_paste", false)   // cancels the pending paste
         XCTAssertTrue(landed,
                       "the synthesized hotkey should run the real action end to end")
     }
@@ -881,19 +909,19 @@ final class IntegrationTests: XCTestCase {
         try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
             "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
 
-        host.store.setEnabled("clipboard_clean", true)
-        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.clipboard_clean.mode")
+        host.store.setEnabled("plain_paste", true)
+        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.plain_paste.mode")
         // Bind the action to a chord: ⌘⇧A, then B.
         let bindErr = host.store.setTrigger(
-            "clipboard_clean", "main",
+            "plain_paste", "main",
             TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["b"]))
         XCTAssertNil(bindErr)
 
         let pb = NSPasteboard.general
         let saved = pb.string(forType: .string)
         defer {
-            host.store.clearTrigger("clipboard_clean", "main")
-            host.store.setEnabled("clipboard_clean", false)
+            host.store.clearTrigger("plain_paste", "main")
+            host.store.setEnabled("plain_paste", false)
             pb.clearContents()
             if let saved { pb.setString(saved, forType: .string) }
         }
@@ -926,7 +954,7 @@ final class IntegrationTests: XCTestCase {
             pumpAppEvents(0.05)
             if pb.string(forType: .string) == "padded text" { landed = true; break }
         }
-        host.store.setEnabled("clipboard_clean", false)
+        host.store.setEnabled("plain_paste", false)
         XCTAssertTrue(landed,
                       "the synthesized chord (⌘⇧A then B) should run the action end to end")
     }

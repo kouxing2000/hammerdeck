@@ -197,9 +197,9 @@ final class SettingsStore: ObservableObject {
     @Published private(set) var features: [FeatureInfo] = []
     @Published var optionEpoch = 0   // bumped on writes so editors refresh
 
-    /// The feature the Settings window should focus. The Feature Gallery sets
-    /// this before opening Settings so a card click deep-links straight to that
-    /// feature's detail; SettingsView binds its list selection to it.
+    /// The feature the embedded Settings tab should focus. The Feature Gallery
+    /// sets this before switching to the Settings tab so a card click deep-links
+    /// straight to that feature's detail; SettingsPane binds its list selection to it.
     @Published var selectedFeatureId: String?
 
     private let lua: LuaState

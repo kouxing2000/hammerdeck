@@ -6,14 +6,19 @@ import SwiftUI
 // for free. Trigger editing (rebind hotkey/schedule/event) is the next step;
 // for now the trigger is shown read-only.
 
-struct SettingsView: View {
+/// The config-and-select surface, embedded as the Homepage's "Settings" tab: a
+/// self-contained two-pane split (feature list + per-feature detail form).
+///
+/// It uses HSplitView, NOT NavigationSplitView, on purpose: a NavigationSplitView
+/// here would render a SECOND sidebar inside the Homepage shell's own split. The
+/// plain split nests cleanly in the shell's detail column. Feature selection
+/// lives on the store so the Feature Gallery can deep-link a card click straight
+/// to a feature's detail (set selectedFeatureId, switch to this tab).
+struct SettingsPane: View {
     @ObservedObject var store: SettingsStore
 
     var body: some View {
-        // Selection lives on the store so the Feature Gallery can deep-link a
-        // card click straight to that feature's detail (set selectedFeatureId,
-        // then open the window).
-        NavigationSplitView {
+        HSplitView {
             List(selection: $store.selectedFeatureId) {
                 ForEach(groupedCategories, id: \.self) { category in
                     Section(category.capitalized) {
@@ -24,17 +29,20 @@ struct SettingsView: View {
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 240)
-        } detail: {
-            if let id = store.selectedFeatureId,
-               let feature = store.features.first(where: { $0.id == id }) {
-                FeatureDetail(store: store, feature: feature)
-            } else {
-                Text("Select a feature")
-                    .foregroundStyle(.secondary)
+            .frame(minWidth: 220, idealWidth: 240, maxWidth: 320)
+
+            Group {
+                if let id = store.selectedFeatureId,
+                   let feature = store.features.first(where: { $0.id == id }) {
+                    FeatureDetail(store: store, feature: feature)
+                } else {
+                    Text("Select a feature")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 640, minHeight: 420)
         .onAppear {
             store.refresh()
             if store.selectedFeatureId == nil { store.selectedFeatureId = store.features.first?.id }

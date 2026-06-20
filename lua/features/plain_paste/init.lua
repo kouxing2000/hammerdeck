@@ -1,7 +1,9 @@
--- features/clipboard_clean
+-- features/plain_paste
 --
--- "Paste as Plain Text" (id kept as clipboard_clean -- settings are keyed by
--- id): rewrites the clipboard as trimmed plain text (which also
+-- "Paste as Plain Text" (id plain_paste; renamed from the old clipboard_clean
+-- id, which read like it cleared clipboard history and collided with the
+-- clipboard_history feature): rewrites the clipboard as trimmed plain text
+-- (which also
 -- strips any rich RTF/HTML formatting, since we read and write the *string*
 -- representation), optionally turning newlines into commas. Ported from
 -- myHammerSpoon modules/input/clipboardActions.lua -- now in FULL:
@@ -34,7 +36,7 @@ end
 
 return {
     api         = 1,
-    id          = "clipboard_clean",
+    id          = "plain_paste",
     name        = "Paste as Plain Text",
     description = "Paste without formatting: strips fonts/colors/links from "
         .. "the copied text and pastes it (or types it as keystrokes).",

@@ -533,18 +533,18 @@ ok(#fake.alerts == alertsBefore + 2, "returning to activity re-arms the warning"
 registry.setEnabled("display_off", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after display_off test")
 
--- T13: clipboard_clean (action: rewrite clipboard as trimmed plain text) -------
-registry.register(require("features.clipboard_clean"))
-registry.setEnabled("clipboard_clean", true)
+-- T13: plain_paste (action: rewrite clipboard as trimmed plain text) -------
+registry.register(require("features.plain_paste"))
+registry.setEnabled("plain_paste", true)
 
 -- plainText mode: trims (and the string round-trip strips formatting)
-fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "plainText"
+fake.settings["hammerdeck.opt.plain_paste.mode"] = "plainText"
 fake.pasteboard = "   padded text\t "
 fake.pressHotkey("v")
 ok(fake.pasteboard == "padded text", "plainText mode trims the clipboard")
 
 -- newlinesToCommas mode
-fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "newlinesToCommas"
+fake.settings["hammerdeck.opt.plain_paste.mode"] = "newlinesToCommas"
 fake.pasteboard = "a\nb\r\nc"
 fake.pressHotkey("v")
 ok(fake.pasteboard == "a,b,c", "newlinesToCommas mode joins lines with commas")
@@ -558,7 +558,7 @@ ok(fake.pasteboard == "", "empty clipboard left unchanged")
 
 -- one behavior: clean, then a synthesized cmd+v after the settle wait
 -- (immediate synthesis would merge with the still-held trigger modifiers)
-fake.settings["hammerdeck.opt.clipboard_clean.mode"] = "plainText"
+fake.settings["hammerdeck.opt.plain_paste.mode"] = "plainText"
 fake.pasteboard = "  pasted for you  "
 local keysBefore = #fake.keyEvents
 fake.pressHotkey("v")
@@ -574,8 +574,8 @@ fake.pressHotkey("b")
 ok(fake.typedTexts[#fake.typedTexts] == "secret token",
     "type action types the trimmed clipboard as keystrokes")
 
-registry.setEnabled("clipboard_clean", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipboard_clean test")
+registry.setEnabled("plain_paste", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after plain_paste test")
 
 -- T13c: password_generator (action: build a random password, copy to clipboard) --
 registry.register(require("features.password_generator"))
@@ -619,44 +619,10 @@ ok(#fake.notifications == pwNotes + 1, "no character set enabled: guidance notif
 registry.setEnabled("password_generator", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after password_generator test")
 
--- T13d: mouse_follows_focus (service: warp pointer to focused window on app switch) --
-registry.register(require("features.mouse_follows_focus"))
-registry.setEnabled("mouse_follows_focus", true)
-
--- pointer outside the focused window -> warps to the window center, flashes
-fake.screenList    = { { x = 0, y = 0, w = 1440, h = 900 } }
-fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300 }   -- center (300, 250)
-fake.mousePos      = { x = 0, y = 0 }
-local mffLocates = #fake.mouseLocates
-fake.activateApp("Safari")
-ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "mouse_follows_focus warps the pointer to the window center")
-ok(#fake.mouseLocates == mffLocates + 1, "mouse_follows_focus flashes the pointer after moving (locateAfter)")
-
--- pointer already inside the focused window -> left alone (no pointless jump)
-fake.mousePos = { x = 200, y = 200 }
-fake.activateApp("Safari")
-ok(fake.mousePos.x == 200 and fake.mousePos.y == 200, "mouse_follows_focus leaves the pointer alone when already inside")
-
--- no focused-window frame (e.g. Accessibility not granted) -> stay silent, untouched
-fake.focusedWindow = nil
-fake.mousePos = { x = 5, y = 5 }
-fake.activateApp("Finder")
-ok(fake.mousePos.x == 5 and fake.mousePos.y == 5, "mouse_follows_focus stays silent with no focused window")
-
--- onlyMultiScreen gate: single display present -> no warp
-fake.settings["hammerdeck.opt.mouse_follows_focus.onlyMultiScreen"] = true
-fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300 }
-fake.mousePos      = { x = 0, y = 0 }
-fake.activateApp("Safari")
-ok(fake.mousePos.x == 0 and fake.mousePos.y == 0, "mouse_follows_focus respects onlyMultiScreen with a single display")
-
-registry.setEnabled("mouse_follows_focus", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after mouse_follows_focus test")
-
 -- T14: feature autodiscovery -- scan the features dir instead of a fixed list --
 -- (the fake adapter exposes bare names; the real modules are on disk, so the
 --  re-require path works.)
-fake.featureNames = { "window_switcher", "display_off", "clipboard_clean", "break_reminder", "sleep_schedule" }
+fake.featureNames = { "window_switcher", "display_off", "plain_paste", "break_reminder", "sleep_schedule" }
 
 local discovered = registry.discover("ignored-by-fake")
 ok(#discovered == 5, "discover returns one module per feature on disk")
@@ -790,18 +756,18 @@ ok(fake.liveProgressBar() == nil, "dismissed prompt starts nothing")
 registry.setEnabled("count_down", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after count_down test")
 
--- T17: mouse_circle (locate pointer) -------------------------------------------
-registry.register(require("features.mouse_circle"))
-registry.setEnabled("mouse_circle", true)
+-- T17: locate_pointer (locate pointer) -------------------------------------------
+registry.register(require("features.locate_pointer"))
+registry.setEnabled("locate_pointer", true)
 fake.mouseLocates = {}   -- fresh recorder: this block asserts absolute counts/indices
 fake.pressHotkey("m")
 ok(#fake.mouseLocates == 1 and fake.mouseLocates[1] == 3,
     "locate-pointer fires with the configured duration")
-fake.settings["hammerdeck.opt.mouse_circle.seconds"] = 7
+fake.settings["hammerdeck.opt.locate_pointer.seconds"] = 7
 fake.pressHotkey("m")
 ok(fake.mouseLocates[2] == 7, "duration option applies live")
-registry.setEnabled("mouse_circle", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after mouse_circle test")
+registry.setEnabled("locate_pointer", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after locate_pointer test")
 
 -- T18: json decoder + bing_daily (service + dormant refresh action) ------------
 local jsonlib = require("platform.json")
@@ -1358,6 +1324,46 @@ ok(fake.alerts[#fake.alerts]:match("No focused window") ~= nil, "no window alert
 registry.setEnabled("window_snap", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_snap test")
 
+-- T24b: pointer_follows_window (a window move carries the pointer, relative pos) --
+-- Reuses window_snap (already registered above) as the mover under test: the
+-- follow lives at the ctx.setFocusedWindowFrame seam, so ANY window feature
+-- exercises it. Screen 1 = {0,0,1000,800}; "left" snaps to {0,0,500,800}.
+registry.register(require("features.pointer_follows_window"))
+registry.setEnabled("window_snap", true)
+fake.screenList = {
+    { x = 0, y = 0, w = 1000, h = 800 },
+    { x = 1000, y = 0, w = 2000, h = 1200 },
+}
+local function snapLeftFromCorner()
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+    fake.mousePos      = { x = 200, y = 250 }   -- 25% across, 50% down the window
+    fake.pressHotkey("left", AC)                 -- -> {0,0,500,800}
+end
+
+-- toggle OFF: the snap moves the window but leaves the pointer alone
+registry.setEnabled("pointer_follows_window", false)
+snapLeftFromCorner()
+ok(fake.mousePos.x == 200 and fake.mousePos.y == 250,
+    "pointer_follows_window OFF: a snap leaves the pointer where it was")
+
+-- toggle ON: the pointer rides the window, keeping its relative position
+-- (25% across, 50% down -> 0+0.25*500, 0+0.5*800 = 125, 400)
+registry.setEnabled("pointer_follows_window", true)
+snapLeftFromCorner()
+ok(fake.mousePos.x == 125 and fake.mousePos.y == 400,
+    "pointer_follows_window ON: pointer keeps its relative spot after a snap")
+
+-- a pointer parked OUTSIDE the moved window is never yanked
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+fake.mousePos      = { x = 5, y = 5 }
+fake.pressHotkey("left", AC)
+ok(fake.mousePos.x == 5 and fake.mousePos.y == 5,
+    "pointer_follows_window: a pointer outside the window is left alone")
+
+registry.setEnabled("pointer_follows_window", false)
+registry.setEnabled("window_snap", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after pointer_follows_window test")
+
 -- T25: window_modal (modal hotkey group over the frame surface) ----------------
 registry.register(require("features.window_modal"))
 registry.setEnabled("window_modal", true)
@@ -1539,15 +1545,15 @@ registry.setEnabled("tab_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after tab_switcher test")
 
 -- T27: registry.runAction -- the menubar's quick triggers ----------------------
-registry.register(require("features.clipboard_clean"))   -- dropped by T14's reload
-registry.setEnabled("clipboard_clean", true)
+registry.register(require("features.plain_paste"))   -- dropped by T14's reload
+registry.setEnabled("plain_paste", true)
 fake.pasteboard = "  menu fired  "
-ok(registry.runAction("clipboard_clean", "main") == true, "runAction fires an enabled action")
+ok(registry.runAction("plain_paste", "main") == true, "runAction fires an enabled action")
 ok(fake.pasteboard == "menu fired", "the action really ran")
-local okRun, why = registry.runAction("clipboard_clean", "nope")
+local okRun, why = registry.runAction("plain_paste", "nope")
 ok(okRun == false and why:match("no action"), "unknown action refused with a reason")
-registry.setEnabled("clipboard_clean", false)
-okRun, why = registry.runAction("clipboard_clean", "main")
+registry.setEnabled("plain_paste", false)
+okRun, why = registry.runAction("plain_paste", "main")
 ok(okRun == false and why:match("not enabled"), "disabled feature refused")
 ok(registry.runAction("ghost_feature") == false, "unknown feature refused")
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after runAction test")
