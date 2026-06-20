@@ -400,6 +400,13 @@ function adapter.isModifierHeld(mod)
     return native.is_modifier_held(mod)
 end
 
+-- Cryptographically secure uniform integer in [min, max] (CSPRNG in the host).
+-- The seam's one secure-randomness source: features only have Lua's non-crypto
+-- math.random, so anything sensitive (e.g. password_generator) uses this.
+function adapter.randomInt(min, max)
+    return native.random_int(min, max)
+end
+
 -- Input synthesis (delivered to the frontmost app; needs Accessibility).
 -- keyStroke: one modified press, e.g. ({"cmd"}, "c"). typeText: type a
 -- unicode string as keystrokes.

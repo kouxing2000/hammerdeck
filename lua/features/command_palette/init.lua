@@ -22,13 +22,16 @@ local st = nil
 -- you reach for surface to the top. Keyed by feature + action.
 local function cmdKey(featureId, actionId) return featureId .. "\0" .. actionId end
 
+-- `counts` is a string-keyed map (cmdKey -> run count). Tag it as a JSON object
+-- so it always serializes as `{}`/`{...}` -- never as an array -- even when
+-- empty or when an older build persisted an empty map as "[]".
 local function loadCounts(ctx)
     local raw = ctx.getState("counts")
     if type(raw) == "string" then
         local t = json.decode(raw)
-        if type(t) == "table" then return t end
+        if type(t) == "table" then return json.asObject(t) end
     end
-    return {}
+    return json.asObject({})
 end
 
 local function bumpCount(ctx, featureId, actionId)

@@ -399,6 +399,12 @@ function adapter.isModifierHeld(mod)
     return fake.modifiers[mod] == true
 end
 
+-- In tests the host CSPRNG is absent; math.random gives the same uniform [min,max]
+-- contract, which is all the feature logic depends on.
+function adapter.randomInt(min, max)
+    return math.random(min, max)
+end
+
 fake.keyEvents  = {}   -- recorded keyStroke calls: {mods, key}
 fake.typedTexts = {}   -- recorded typeText strings
 fake.openedUrls = {}   -- recorded openURL calls

@@ -7,10 +7,9 @@
 -- to contain at least one character from each enabled category (a common
 -- password-policy requirement) when the length allows, then filled and shuffled.
 --
--- Randomness: Lua 5.4's math.random is auto-seeded at startup with a
--- non-deterministic seed (xoshiro256**), so no manual seeding is needed and
--- output is unpredictable across runs. Good enough for a convenience generator;
--- a CSPRNG would require a native hook (out of scope for this pure-Lua tier).
+-- Randomness: ctx.randomInt is a CRYPTOGRAPHICALLY SECURE uniform draw
+-- (SecRandomCopyBytes in the host, behind the seam) -- never Lua's math.random,
+-- which is a predictable PRNG and wrong for generating secrets.
 
 local LOWER  = "abcdefghijkmnopqrstuvwxyz"          -- no l
 local UPPER  = "ABCDEFGHJKLMNPQRSTUVWXYZ"           -- no I, O
@@ -32,22 +31,22 @@ local function poolsFor(ctx)
     return pools
 end
 
-local function pick(s)
-    local i = math.random(1, #s)
+local function pick(ctx, s)
+    local i = ctx.randomInt(1, #s)
     return s:sub(i, i)
 end
 
 -- Build a password of `length` from `pools`, one guaranteed char per pool, then
 -- a Fisher-Yates shuffle so the guaranteed chars are not stuck at the front.
-local function build(length, pools)
+local function build(ctx, length, pools)
     local all = table.concat(pools)
     local chars = {}
     for _, p in ipairs(pools) do
-        if #chars < length then chars[#chars + 1] = pick(p) end
+        if #chars < length then chars[#chars + 1] = pick(ctx, p) end
     end
-    while #chars < length do chars[#chars + 1] = pick(all) end
+    while #chars < length do chars[#chars + 1] = pick(ctx, all) end
     for i = #chars, 2, -1 do
-        local j = math.random(1, i)
+        local j = ctx.randomInt(1, i)
         chars[i], chars[j] = chars[j], chars[i]
     end
     return table.concat(chars)
@@ -66,7 +65,7 @@ local function generate(ctx)
         length = #pools
     end
 
-    local pw = build(length, pools)
+    local pw = build(ctx, length, pools)
     ctx.pasteboardWrite(pw)
     ctx.notify("Password copied", length .. "-character password is on the clipboard")
     ctx.log("generated a", length, "char password (", #pools, "char classes)")

@@ -780,6 +780,22 @@ ok(jd('{"a":}') == nil, "json: malformed -> nil")
 ok(jd('[1,2,]') == nil, "json: trailing comma -> nil")
 ok(jd('{"a":1} x') == nil, "json: trailing garbage -> nil")
 
+-- __jsontype tags: array vs object disambiguation (decisive for empty tables),
+-- honored symmetrically by encode (the Swift bridge reads the same metafield).
+local je = jsonlib.encode
+ok(je(jsonlib.asObject({})) == "{}", "json: empty object tag encodes as {}")
+ok(je(jsonlib.asArray({})) == "[]", "json: empty array tag encodes as []")
+ok(je({}) == "[]", "json: untagged empty table stays [] (back-compat default)")
+ok(je(jd("{}")) == "{}", "json: decode->encode keeps an empty object")
+ok(je(jd("[]")) == "[]", "json: decode->encode keeps an empty array")
+ok(je(jsonlib.asObject({ a = 1 })) == '{"a":1}', "json: non-empty object unchanged by tag")
+ok(select(2, je({ 1, 2, x = "oops" })) ~= nil,
+    "json: a mixed array+string-key table is rejected loudly, not silently dropped")
+-- The command_palette legacy case: a map persisted as "[]" decodes array-tagged;
+-- re-tagging it object lets string keys be added and re-encoded without error.
+local relabelled = jsonlib.asObject(jd("[]")); relabelled.k = 1
+ok(je(relabelled) == '{"k":1}', "json: asObject re-tags a decoded [] so a map built on it is safe")
+
 registry.register(require("features.bing_daily"))
 local bingApi = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1"
 fake.httpResponses[bingApi] = {

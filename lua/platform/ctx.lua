@@ -181,6 +181,9 @@ function M.make(m, resolveTrigger, extra)
 
     -- input / system state / system actions ------------------------------------
     function ctx.now()               return adapter.now() end
+    -- Cryptographically secure uniform integer in [min,max] (CSPRNG via the
+    -- host) -- use this, never math.random, for anything security-sensitive.
+    function ctx.randomInt(min, max) return adapter.randomInt(min, max) end
     function ctx.isModifierHeld(mod) return adapter.isModifierHeld(mod) end
     function ctx.keyStroke(mods, key) adapter.keyStroke(mods, key) end
     function ctx.typeText(text)       adapter.typeText(text) end

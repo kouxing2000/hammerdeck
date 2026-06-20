@@ -171,8 +171,24 @@ final class LuaState {
         return out
     }
 
-    /// Recursively read any Lua value. Tables become [Any] (when array-like)
-    /// or [String: Any]; an empty table reads as an empty array.
+    /// The `__jsontype` metafield ("array"|"object") on the table at `index`,
+    /// or nil if it carries none. The shared array/object disambiguation tag
+    /// that `lua/platform/json.lua` sets and honors -- read here so a value's
+    /// shape survives the bridge hop (decisive for empty tables).
+    static func jsonType(_ L: OpaquePointer?, _ index: Int32) -> String? {
+        let abs = lua_absindex(L, index)
+        guard lua_getmetatable(L, abs) != 0 else { return nil }
+        lua_pushstring(L, "__jsontype")
+        lua_rawget(L, -2)
+        let t = string(L, -1)
+        lua_settop(L, -3)   // pop the field value and the metatable
+        return t
+    }
+
+    /// Recursively read any Lua value. Tables become [Any] (array-like) or
+    /// [String: Any]; the `__jsontype` tag wins when present, so a table tagged
+    /// "object" reads as a dict even when empty. An untagged empty table reads
+    /// as an empty array (the historical default `json.lua` shares).
     static func any(_ L: OpaquePointer?, _ index: Int32) -> Any? {
         switch lua_type(L, index) {
         case LUA_TBOOLEAN: return bool(L, index)
@@ -180,15 +196,32 @@ final class LuaState {
         case LUA_TSTRING:  return string(L, index)
         case LUA_TTABLE:
             let abs = lua_absindex(L, index)
+            let tag = jsonType(L, abs)
             let n = lua_rawlen(L, abs)
-            if n > 0 {
+            // Array: tagged "array", or (untagged) a non-empty sequence. NOTE a
+            // deliberate strict-producer/lenient-consumer split: json.lua's
+            // ENCODER rejects a table that mixes array entries with string keys,
+            // but this READER just takes the 1..n part (string keys drop). Keep
+            // the asymmetry -- don't "fix" one side to match the other.
+            if tag == "array" || (tag != "object" && n > 0) {
                 var arr: [Any] = []
-                for i in 1...n {
-                    lua_rawgeti(L, abs, lua_Integer(i))
-                    arr.append(any(L, -1) ?? NSNull())
-                    lua_settop(L, -2)
+                if n > 0 {
+                    for i in 1...n {
+                        lua_rawgeti(L, abs, lua_Integer(i))
+                        arr.append(any(L, -1) ?? NSNull())
+                        lua_settop(L, -2)
+                    }
                 }
                 return arr
+            }
+            // Object: tagged "object" (even if empty), else an untagged empty
+            // table -> empty array to match json.lua's historical default.
+            if tag != "object" && n == 0 {
+                // Distinguish a genuine empty table from a string-keyed map.
+                lua_pushnil(L)
+                let hasKey = lua_next(L, abs) != 0
+                if hasKey { lua_settop(L, -3) }   // pop value+key from lua_next
+                if !hasKey { return [Any]() }     // truly empty -> array default
             }
             var dict: [String: Any] = [:]
             lua_pushnil(L)
@@ -198,7 +231,7 @@ final class LuaState {
                 }
                 lua_settop(L, -2)   // pop value, keep key for next()
             }
-            return dict.isEmpty ? [Any]() : dict
+            return dict
         default:
             return nil
         }

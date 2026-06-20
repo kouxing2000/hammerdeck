@@ -100,6 +100,40 @@ final class IntegrationTests: XCTestCase {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
     }
 
+    /// The secure RNG seam: native.random_int(min,max) stays inclusive-in-range
+    /// across positive, single-value, and zero-straddling (negative) ranges --
+    /// the last is the case the modular-space hardening protects against.
+    func testSecureRandomIntBounds() {
+        XCTAssertEqual(eval("return native.random_int(7, 7)") as? Double, 7,
+                       "a single-value range returns exactly that value")
+        for (lo, hi) in [(1, 6), (-5, 5), (-100, -90)] {
+            for _ in 0..<200 {
+                guard let v = eval("return native.random_int(\(lo), \(hi))") as? Double else {
+                    return XCTFail("random_int(\(lo),\(hi)) did not return a number")
+                }
+                XCTAssertTrue(v >= Double(lo) && v <= Double(hi),
+                              "random_int(\(lo),\(hi)) = \(v) out of range")
+                XCTAssertEqual(v, v.rounded(), "random_int must return an integer")
+            }
+        }
+    }
+
+    /// The bridge reader honors json.lua's `__jsontype` tag, so a value's
+    /// array-vs-object shape survives the Lua->Swift hop (decisive for empties).
+    func testBridgeHonorsJsonTypeTag() {
+        let j = "local j = require('platform.json'); return "
+        XCTAssertTrue(eval("\(j) j.asObject({})") is [String: Any],
+                      "an empty object-tagged table must read as a dict, not an array")
+        XCTAssertTrue(eval("\(j) j.asArray({})") is [Any],
+                      "an empty array-tagged table must read as an array")
+        XCTAssertTrue(eval("return ({})") is [Any],
+                      "an untagged empty table stays an array (historical default)")
+        let obj = eval("\(j) j.asObject({ a = 1 })") as? [String: Any]
+        XCTAssertEqual(obj?["a"] as? Double, 1, "a populated object still reads its keys")
+        XCTAssertTrue(eval("return ({ name = 'x' })") is [String: Any],
+                      "an untagged string-keyed map still reads as a dict")
+    }
+
     /// Pump the real application event queue (what app.run() does) -- plain
     /// RunLoop spinning does not drain the Carbon event queue that delivers
     /// RegisterEventHotKey presses.

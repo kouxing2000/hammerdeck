@@ -1,6 +1,7 @@
 import AppKit
 import CLua
 import SQLite3
+import Security
 
 /// The native backend: builds the `native` Lua table that
 /// `lua/platform/adapter.lua` targets. This file + the panels/hotkey helpers
@@ -142,6 +143,7 @@ final class Native {
             "extract_favicons":     { L in MainActor.assumeIsolated { Native.shared.extractFavicons(L) } },
             // input / system
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
+            "random_int": { L in MainActor.assumeIsolated { Native.shared.randomInt(L) } },
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
             "system_sleep": { L in MainActor.assumeIsolated { Native.shared.systemSleep(L) } },
             "lock_screen":  { L in MainActor.assumeIsolated { Native.shared.lockScreen(L) } },
@@ -1714,6 +1716,44 @@ final class Native {
         }.min() ?? 0
         lua_pushnumber(L, idle)
         return 1
+    }
+
+    // random_int(min, max): a CRYPTOGRAPHICALLY SECURE uniform integer in the
+    // inclusive range [min, max]. Features (e.g. password_generator) only have
+    // Lua's non-crypto math.random, so the one source of secure randomness lives
+    // here at the seam. Rejection sampling drops the modulo-biased tail so every
+    // value in the range is equally likely.
+    private func randomInt(_ L: OpaquePointer?) -> Int32 {
+        guard let lo = LuaState.int(L, 1), let hi = LuaState.int(L, 2), lo <= hi else {
+            return luaError(L, "random_int: need integer min <= max")
+        }
+        // Work in modular (bit-pattern) space so a wide range straddling zero
+        // can't trap: a plain `hi - lo` would overflow Int. `span` is the
+        // inclusive count; span == 0 means the range covers the entire 64-bit
+        // domain (2^64 values), where every random word maps 1:1 with no bias.
+        let loBits = UInt64(bitPattern: Int64(lo))
+        let span = (UInt64(bitPattern: Int64(hi)) &- loBits) &+ 1
+        var r = Native.secureRandomU64()
+        if span != 0 {
+            let limit = UInt64.max - (UInt64.max % span)     // largest unbiased ceiling
+            while r >= limit { r = Native.secureRandomU64() }
+            r = r % span
+        }
+        lua_pushinteger(L, lua_Integer(Int64(bitPattern: loBits &+ r)))
+        return 1
+    }
+
+    /// 8 secure-random bytes as a UInt64 (SecRandomCopyBytes; arc4random only as
+    /// a never-expected fallback). Pure, any queue.
+    private nonisolated static func secureRandomU64() -> UInt64 {
+        var v: UInt64 = 0
+        let rc = withUnsafeMutableBytes(of: &v) {
+            SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!)
+        }
+        if rc != errSecSuccess {
+            v = (UInt64(arc4random()) << 32) | UInt64(arc4random())
+        }
+        return v
     }
 
     private func isModifierHeld(_ L: OpaquePointer?) -> Int32 {

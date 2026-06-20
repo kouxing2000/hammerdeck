@@ -35,9 +35,14 @@ the bridge + adapter, never reach past the seam.
   `actions = {{id, label, defaultTrigger?, run}, ...}` -- one plugin, several
   independently rebindable shortcuts; single-action sugar
   `defaultTrigger`+`action(ctx)` still works; SERVICE = `start(ctx)`+optional
-  `stop`, may also declare `actions`), receives only the scoped `ctx` (no raw
-  adapter; no `os.time()` -- use `ctx.now()`). Never touches native APIs or
-  platform internals.
+  `stop`, may also declare `actions`), receives the scoped `ctx` as its native
+  surface. Never touches native APIs or the seam/stateful platform modules
+  (`adapter`, `ctx`, `registry`, `triggers`, `manifest`, `modal`); MAY `require`
+  the pure leaf util modules (`platform.json`, `platform.urls`, `platform.hotkeys`
+  -- stateless, no `require` of their own). Get the current time only from
+  `ctx.now()` (never bare `os.time()`/`os.date()`, which read the uncontrolled
+  wall clock and tests can't drive); `os.date`/`os.time` are fine for FORMATTING
+  or decomposing a time you already got from `ctx.now()`.
 - **lua/platform/manifest.lua** -- validates a feature's declared shape; resolves defaults.
 - **lua/platform/triggers.lua** -- declarative trigger spec -> live binding. Any
   trigger can fire any action (the core idea). Types: hotkey, chord (prefix
@@ -107,11 +112,29 @@ it for you to read. The capturing terminal needs Screen Recording, or the
 panels are missing from the image. Don't restart the user's running instance or
 run the UI tests while they may be at the keyboard -- ask first.
 
+Pixel fixes -- probe before iterating (the project instance of the global
+"probe the constraint" rule): a native-AppKit visual fix that misses once is
+usually a HARD constraint, not one tweak away. The canonical example is the
+menubar shortcut column -- only a native `keyEquivalent` sits flush-right with
+the submenu arrows; an `attributedTitle` shortcut can't reach that column and
+always floats a fixed gap short (see the StatusBar note in the layer map). When
+a menubar/panel pixel fix misses, read the layout model or run ONE throwaway
+`scripts/shot.sh` probe to learn what the mechanism physically can/can't do,
+pick it once, then implement -- don't trial-and-error.
+
 Lua syntax check: `luac -p lua/**/*.lua`. Note the version skew: the test suite
 runs on Homebrew Lua (currently 5.5) while the embedded engine is vendored
 5.4.7 -- keep all Lua code 5.4-compatible. SourceKit may show "No such module
 'CLua'/'PackageDescription'" in the editor -- stale index noise; `swift build`
 is the source of truth.
+
+Lua type-friendliness: `.luarc.json` pins the language server (runtime 5.4,
+`require` path resolution, the host-injected `native` global). Annotate
+cross-file functions and non-obvious table shapes with LuaLS `---@` annotations
+(`platform/json.lua` is the worked example). Array-vs-object shape that crosses
+the Swift bridge or `json.encode` is carried by the `__jsontype` metatable tag
+(`json.asObject`/`asArray`), honored by both `json.lua` and `LuaState.any`; a
+table mixing array entries with string keys is rejected loudly, never dropped.
 
 ## Adding a feature
 

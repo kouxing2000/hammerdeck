@@ -8,6 +8,34 @@
 
 local json = {}
 
+-- Array-vs-object type tags (the dkjson `__jsontype` convention). A Lua table
+-- can't express, on its own, whether it is a JSON array or object -- decisively
+-- so when EMPTY (`{}` could be `[]` or `{}`). A metatable `__jsontype` field of
+-- "array" | "object" pins the shape. It is honored by BOTH this encoder AND the
+-- Swift bridge reader (`LuaState.any`), so a value's shape survives a round-trip
+-- and a cross-language hop. Mark explicitly with `json.asObject`/`json.asArray`;
+-- `json.decode` auto-tags what it parses, so decode->encode is shape-stable.
+local OBJECT_MT = { __jsontype = "object" }
+local ARRAY_MT  = { __jsontype = "array" }
+
+---Tag `t` as a JSON object (encodes as `{}` even when empty). Returns `t`.
+---@param t table
+---@return table
+function json.asObject(t) return setmetatable(t, OBJECT_MT) end
+
+---Tag `t` as a JSON array (encodes as `[]`; only the 1..#t part). Returns `t`.
+---@param t table
+---@return table
+function json.asArray(t) return setmetatable(t, ARRAY_MT) end
+
+---The `__jsontype` tag on `t` ("array"|"object"), or nil if untagged.
+---@param t table
+---@return string|nil
+local function jsonType(t)
+    local mt = getmetatable(t)
+    return mt and mt.__jsontype or nil
+end
+
 local function fail(msg, i)
     error("json: " .. msg .. " at byte " .. i, 0)
 end
@@ -69,7 +97,7 @@ parseValue = function(s, i)
     if c == "" then fail("unexpected end of input", i) end
 
     if c == "{" then
-        local obj = {}
+        local obj = setmetatable({}, OBJECT_MT)   -- tagged so {} round-trips as {}
         i = skip(s, i + 1)
         if s:sub(i, i) == "}" then return obj, i + 1 end
         while true do
@@ -88,7 +116,7 @@ parseValue = function(s, i)
         end
 
     elseif c == "[" then
-        local arr = {}
+        local arr = setmetatable({}, ARRAY_MT)     -- tagged so [] round-trips as []
         i = skip(s, i + 1)
         if s:sub(i, i) == "]" then return arr, i + 1 end
         while true do
@@ -126,9 +154,12 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Minimal encoder (the counterpart: persist Lua state as JSON). Supports
--- nil/bool/number/string and tables -- a table encodes as an ARRAY when
--- #t > 0 or it is empty, else as an object with STRING keys (other key types
--- raise). No cycles. Numbers must be finite.
+-- nil/bool/number/string and tables. A table's shape: a `__jsontype` tag wins
+-- (see json.asObject/asArray); otherwise #t > 0 => ARRAY, an untagged empty
+-- table => `[]` (the historical default), else an OBJECT with STRING keys. A
+-- table that mixes array entries with string keys is REJECTED (it would
+-- silently lose the string keys) -- tag it to say which shape you meant. No
+-- cycles. Numbers must be finite.
 -- ---------------------------------------------------------------------------
 
 local ENC_ESCAPES = {
@@ -156,12 +187,23 @@ local function encValue(v, depth)
         return string.format("%.14g", v)
     elseif t == "string" then return encString(v)
     elseif t == "table" then
+        local tag = jsonType(v)
         local n = #v
-        if n > 0 then
+        -- ARRAY: tagged "array", or (untagged) a non-empty sequence. Reject a
+        -- mixed table loudly -- the string keys would otherwise just vanish.
+        if tag == "array" or (tag == nil and n > 0) then
+            for k in pairs(v) do
+                if type(k) == "string" then
+                    error("json: table mixes array entries with string key '"
+                        .. k .. "'; tag it with json.asObject/asArray", 0)
+                end
+            end
             local out = {}
             for i = 1, n do out[i] = encValue(v[i], depth + 1) end
             return "[" .. table.concat(out, ",") .. "]"
         end
+        -- OBJECT: tagged "object", or an untagged empty table that we default to
+        -- an array for back-compat (only a "object" tag forces empty -> `{}`).
         local out = {}
         for k, val in pairs(v) do
             if type(k) ~= "string" then
@@ -169,8 +211,8 @@ local function encValue(v, depth)
             end
             out[#out + 1] = encString(k) .. ":" .. encValue(val, depth + 1)
         end
-        if #out == 0 then return "[]" end   -- empty table reads back as array
-        table.sort(out)                     -- deterministic output
+        if #out == 0 and tag ~= "object" then return "[]" end   -- historical default
+        table.sort(out)                                         -- deterministic output
         return "{" .. table.concat(out, ",") .. "}"
     end
     error("json: cannot encode a " .. t, 0)
