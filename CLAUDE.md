@@ -96,8 +96,9 @@ the bridge + adapter, never reach past the seam.
 ```bash
 swift build       # compiles CLua + HammerdeckKit + the launcher
 swift run         # boots the platform in the native host (the real app)
-lua test/run.lua  # headless platform + feature tests (fake adapter, run after Lua changes)
-swift test        # integration tests on the REAL bridge (run after Swift/seam changes)
+lua test/run.lua     # headless platform + feature tests (fake adapter, Homebrew Lua -- fast inner loop)
+scripts/test-lua.sh  # SAME suite on the vendored 5.4.7 (exact embedded engine) -- run before committing Lua / in CI
+swift test           # integration tests on the REAL bridge (run after Swift/seam changes)
 ```
 
 `swift test` is QUIET by default: the 6 tests that show real panels or
@@ -128,9 +129,13 @@ a menubar/panel pixel fix misses, read the layout model or run ONE throwaway
 `scripts/shot.sh` probe to learn what the mechanism physically can/can't do,
 pick it once, then implement -- don't trial-and-error.
 
-Lua syntax check: `luac -p lua/**/*.lua`. Note the version skew: the test suite
-runs on Homebrew Lua (currently 5.5) while the embedded engine is vendored
-5.4.7 -- keep all Lua code 5.4-compatible. SourceKit may show "No such module
+Lua syntax check: `luac -p lua/**/*.lua`. Version skew: `lua test/run.lua` runs
+on Homebrew Lua (currently 5.5) while the embedded engine is vendored 5.4.7 --
+keep all Lua code 5.4-compatible. `scripts/test-lua.sh` closes the gap: it
+compiles a standalone interpreter from `Sources/CLua` (the exact embedded
+5.4.7, same `-DLUA_USE_MACOSX` flag) and runs the same suite, so a 5.4
+incompatibility that 5.5 happens to accept fails there. The suite's final line
+prints the live `_VERSION` so you can see which engine ran. SourceKit may show "No such module
 'CLua'/'PackageDescription'" in the editor -- stale index noise; `swift build`
 is the source of truth.
 

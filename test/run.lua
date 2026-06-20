@@ -30,6 +30,41 @@ local function minutesFromNow(min)
     return os.date("%H:%M", fake.now() + min * 60)
 end
 
+-- T0: fake-adapter <-> real-adapter SURFACE PARITY ----------------------------
+-- The fake adapter must export exactly the same function surface as the real
+-- seam (lua/platform/adapter.lua). Without this, a feature can pass headlessly
+-- against a fake contract the real bridge doesn't provide (or the fake can rot
+-- with dead reimplementations of removed functions). This pins both directions.
+-- It does NOT prove behavioral equivalence -- only that the API shape matches;
+-- behavior is covered per-function by the feature tests below and the real-
+-- bridge Swift integration suite.
+do
+    -- Load the REAL adapter for inspection. adapter.lua assert()s `native` is a
+    -- table at load, so stub it (we only read its key set, never call through).
+    local savedNative = rawget(_G, "native")
+    local savedAdapter = package.loaded["platform.adapter"]
+    _G.native = setmetatable({}, { __index = function() return function() end end })
+    package.loaded["platform.adapter"] = nil          -- force a fresh real load
+    local okLoad, realAdapter = pcall(require, "platform.adapter")
+    package.loaded["platform.adapter"] = savedAdapter  -- restore the fake preempt
+    _G.native = savedNative
+    ok(okLoad and type(realAdapter) == "table",
+        "real adapter.lua loads for surface inspection")
+
+    local function funcSet(t)
+        local s = {}
+        for k, v in pairs(t) do if type(v) == "function" then s[k] = true end end
+        return s
+    end
+    local realFns, fakeFns = funcSet(realAdapter), funcSet(fake.adapter)
+    for k in pairs(realFns) do
+        ok(fakeFns[k], "fake adapter implements real adapter." .. k)
+    end
+    for k in pairs(fakeFns) do
+        ok(realFns[k], "fake adapter." .. k .. " has a real counterpart (not dead/renamed)")
+    end
+end
+
 -- T1: all manifests register + validate --------------------------------------
 -- loadCatalog (not three register() calls) so the catalog is recorded for the
 -- hot-reload test (T11), exactly as the real bootstrap does.
@@ -1836,4 +1871,4 @@ ok(hasWarn(triggers.advisories({ type = "hotkey", mods = { "ctrl", "shift" }, ke
     "My Custom Action"), "live-read system shortcut is detected")
 fake.systemHotkeys = {}
 
-print("OK -- " .. passed .. " assertions passed")
+print("OK -- " .. passed .. " assertions passed (" .. _VERSION .. ")")
