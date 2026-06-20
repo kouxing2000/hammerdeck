@@ -26,6 +26,76 @@ func shouldGreetWithHomepage(noFirstRunEnv: String?, firstRunDone: Bool) -> Bool
     noFirstRunEnv == nil && !firstRunDone
 }
 
+/// The "Show in Dock" preference: whether Hammerdeck keeps a Dock icon (and a
+/// Cmd-Tab entry) or stays a pure menubar accessory. Default ON -- the Homepage
+/// is the app's front door, so a fresh install is easy to find; the user can
+/// turn it off from the menu to reclaim the clean menubar-only feel.
+///
+/// `.regular` = Dock icon present; `.accessory` = menubar-only. Switchable live.
+enum DockPreference {
+    static let key = "hammerdeck.showInDock"
+
+    /// Unset key counts as ON (the default), so first launch shows in the Dock.
+    static var showInDock: Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
+
+    static func set(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: key)
+    }
+
+    /// Apply the current preference to the running app. Safe to call repeatedly.
+    @MainActor static func apply() {
+        NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+    }
+}
+
+/// Build the Dock icon at runtime. `swift run` produces a bare executable with
+/// no bundle/.icns, so macOS shows a generic "exec" tile; setting
+/// `NSApp.applicationIconImage` overrides it for the running process. We prefer
+/// the designed artwork (`design/AppIcon.png` -- the hammer-on-fanned-deck mark,
+/// transparent corners) and fall back to drawing the menubar hammer on an accent
+/// squircle if the file is missing. For a shipped `.app`, generate a real `.icns`
+/// from the same PNG and set `CFBundleIconFile` in the bundle instead.
+@MainActor
+func makeDockIcon() -> NSImage {
+    // The designed icon lives at the repo root (resolved from this file's path so
+    // it works regardless of the launch working directory).
+    let artwork = URL(fileURLWithPath: #filePath)   // .../Sources/HammerdeckKit/Boot.swift
+        .deletingLastPathComponent()                 // .../Sources/HammerdeckKit
+        .deletingLastPathComponent()                 // .../Sources
+        .deletingLastPathComponent()                 // repo root
+        .appendingPathComponent("design/AppIcon.png")
+    if let designed = NSImage(contentsOf: artwork) {
+        return designed
+    }
+
+    // Fallback: draw the hammer identity procedurally.
+    let side: CGFloat = 512
+    let size = NSSize(width: side, height: side)
+    let icon = NSImage(size: size)
+    icon.lockFocus()
+
+    // rounded-rect "squircle" background, inset to leave the usual icon margin
+    let bg = NSRect(x: 0, y: 0, width: side, height: side).insetBy(dx: 36, dy: 36)
+    let radius = bg.width * 0.22
+    NSColor.controlAccentColor.setFill()
+    NSBezierPath(roundedRect: bg, xRadius: radius, yRadius: radius).fill()
+
+    // hammer glyph, forced white via a palette symbol configuration, centered
+    let cfg = NSImage.SymbolConfiguration(pointSize: 260, weight: .semibold)
+        .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+    if let hammer = NSImage(systemSymbolName: "hammer.fill", accessibilityDescription: "Hammerdeck")?
+        .withSymbolConfiguration(cfg) {
+        let s = hammer.size
+        hammer.draw(in: NSRect(x: (side - s.width) / 2, y: (side - s.height) / 2,
+                               width: s.width, height: s.height))
+    }
+
+    icon.unlockFocus()
+    return icon
+}
+
 /// Wire package.path and run the platform entry point on an attached LuaState.
 @MainActor
 func bootLua(_ lua: LuaState, luaDir: String) throws {
@@ -39,7 +109,8 @@ func bootLua(_ lua: LuaState, luaDir: String) throws {
 public func hammerdeckMain() {
     // The app object must exist before any panel is created by feature start().
     let app = NSApplication.shared
-    app.setActivationPolicy(.accessory)
+    DockPreference.apply()   // .regular (Dock icon) or .accessory (menubar-only)
+    app.applicationIconImage = makeDockIcon()   // replace the generic "exec" tile
 
     let lua = LuaState()
     Native.shared.attach(lua)
@@ -90,7 +161,9 @@ public func hammerdeckMain() {
     let statusBar = StatusBarController(
         store: store,
         openHome: { homepageWindow.show($0) })
-    _ = statusBar
+    // The status bar controller doubles as the app delegate so clicking the Dock
+    // icon (when shown) reopens the Homepage -- the point of having the icon.
+    app.delegate = statusBar
 
     // First launch: open the Homepage so a new user lands on "here's what
     // Hammerdeck can do," not a bare menubar icon. Every later launch stays

@@ -8,7 +8,7 @@ import SwiftUI
 // conversion needed -- main.swift keeps NSApplication.run()).
 
 @MainActor
-final class StatusBarController: NSObject, NSMenuDelegate {
+final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate {
     private let item: NSStatusItem
     private let store: SettingsStore
     private let openHome: (HomeDestination) -> Void
@@ -112,6 +112,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         logs.toolTip = "Daily log files (troubleshooting clues live here)"
         menu.addItem(logs)
 
+        let dock = NSMenuItem(title: "Show in Dock", action: #selector(toggleDock), keyEquivalent: "")
+        dock.target = self
+        dock.state = DockPreference.showInDock ? .on : .off
+        dock.toolTip = "Keep a Hammerdeck icon in the Dock; click it to open Home"
+        menu.addItem(dock)
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Quit Hammerdeck", action: #selector(quit), keyEquivalent: "q")
@@ -212,8 +218,22 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         NSWorkspace.shared.open(Native.logsDir)
     }
 
+    @objc private func toggleDock() {
+        DockPreference.set(!DockPreference.showInDock)
+        DockPreference.apply()
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    // MARK: app delegate
+
+    /// Clicking the Dock icon (only present when "Show in Dock" is on) with no
+    /// window up reopens the Homepage -- the reason to have the icon at all.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { openHome(.home) }
+        return true
     }
 }
 
