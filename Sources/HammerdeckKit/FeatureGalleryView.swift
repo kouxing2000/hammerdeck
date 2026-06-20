@@ -229,9 +229,19 @@ private struct FeatureCard: View {
         return "action"
     }
 
+    private var archetype: FeatureArchetype { FeatureArchetype.of(feature) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
+            // Archetype preview band: static first frame at rest, animates on
+            // hover. Only present for features that have an archetype scene, so
+            // the rest of the catalog keeps its compact card (POC: one feature).
+            if case .none = archetype {} else {
+                archetype.scene(playing: hover && !feature.failed)
+                    .frame(height: 78)
+                    .frame(maxWidth: .infinity)
+            }
             Text(feature.name).font(.headline).lineLimit(1)
             Text(feature.failed
                  ? (feature.errorMessage.isEmpty ? "Failed to load." : feature.errorMessage)
