@@ -214,6 +214,7 @@ private struct FeatureCard: View {
     let onOpen: () -> Void
 
     @State private var hover = false
+    @State private var hoverStart = Date()   // anchors the playback bar to hover-start
 
     private var isService: Bool { feature.actions.isEmpty }
 
@@ -238,9 +239,27 @@ private struct FeatureCard: View {
             // hover. Only present for features that have an archetype scene, so
             // the rest of the catalog keeps its compact card (POC: one feature).
             if case .none = archetype {} else {
-                archetype.scene(playing: hover && !feature.failed)
-                    .frame(height: 78)
-                    .frame(maxWidth: .infinity)
+                ZStack(alignment: .bottom) {
+                    archetype.scene(playing: hover && !feature.failed)
+                        .frame(height: 78)
+                        .frame(maxWidth: .infinity)
+                    // Playback progress: while hovering, a thin bar sweeps over the
+                    // scene's loop duration (anchored at hover-start, same as the
+                    // scene), so reaching the end means the loop just replayed.
+                    if hover && !feature.failed {
+                        playbackBar(loop: archetype.loopDuration)
+                            .transition(.opacity)
+                    }
+                }
+                // A play affordance over the calm first frame teaches that the
+                // preview animates -- otherwise the static frame gives no hint to
+                // hover. It fades out on hover, where the motion (and the progress
+                // bar) speak for themselves. It's a hint, not a button: clicking
+                // opens Settings like the rest of the card (hover is the trigger).
+                .overlay(alignment: .center) {
+                    if !hover && !feature.failed { playHint }
+                }
+                .animation(.easeInOut(duration: 0.18), value: hover)
             }
             Text(feature.name).font(.headline).lineLimit(1)
             Text(feature.failed
@@ -259,10 +278,46 @@ private struct FeatureCard: View {
         .shadow(color: .black.opacity(hover && !feature.failed ? 0.12 : 0), radius: 4, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onTapGesture { onOpen() }
-        .onHover { hover = $0 }
+        .onHover { hovering in
+            if hovering { hoverStart = Date() }   // restart the loop clock on entry
+            hover = hovering
+        }
         .help(feature.failed
               ? "Broken plugin -- click for details"
               : "Click to configure \(feature.name)")
+    }
+
+    /// Playback progress for the preview loop: a thin bar that sweeps left-to-right
+    /// over `loop` seconds, anchored at hover-start (so it tracks the scene), then
+    /// snaps back -- the snap is the "finished, replaying" cue. Driven by a
+    /// TimelineView so it's smooth and stops when the card un-hovers (view removed).
+    private func playbackBar(loop: Double) -> some View {
+        TimelineView(.animation) { ctx in
+            let elapsed = ctx.date.timeIntervalSince(hoverStart)
+            let p = loop > 0 ? CGFloat((elapsed.truncatingRemainder(dividingBy: loop)) / loop) : 0
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.secondary.opacity(0.25)).frame(height: 3)
+                    Capsule().fill(Color.accentColor).frame(width: geo.size.width * p, height: 3)
+                }
+            }
+            .frame(height: 3)
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 4)
+        .allowsHitTesting(false)
+    }
+
+    /// The "this previews on hover" affordance: a play glyph over the calm frame.
+    /// Non-interactive (allowsHitTesting false) so taps fall through to the card.
+    private var playHint: some View {
+        Image(systemName: "play.circle.fill")
+            .font(.system(size: 24))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white, .black.opacity(0.4))
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .transition(.opacity)
+            .allowsHitTesting(false)
     }
 
     private var header: some View {

@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 // Native archetype animations for the Feature Gallery -- a small, reusable set
 // of looping SwiftUI "demo scenes" that SHOW what a feature does, rather than a
@@ -66,6 +67,28 @@ enum FeatureArchetype {
         }
     }
 
+    /// Seconds for one visible loop of this archetype's scene. MUST equal the
+    /// scene's heartbeat interval x its cycle length -- the gallery's playback
+    /// progress bar is anchored at hover-start and sweeps over this duration, so
+    /// it hits 100% exactly when the scene restarts its loop. Keep in sync if a
+    /// scene's `.heartbeat(...)` interval or cycle changes.
+    var loopDuration: Double {
+        switch self {
+        case .none:                 return 0
+        case .chooser(let s):       return 0.85 * Double(max(1, s.rows.count))   // step per row
+        case .windowArrange(let s): return 0.95 * Double(max(1, s.moves.count))  // step per move
+        case .banner:               return 1.3 * 2     // slide in + out
+        case .screenOff:            return 1.4 * 2     // dark + lit
+        case .countdownStrip:       return 0.55 * 5    // cycle = 5 states
+        case .pointerPulse:         return 0.4 * 6     // cycle = 6
+        case .pointerFollow:        return 1.1 * 2     // two spots
+        case .passwordReveal:       return 0.32 * 6    // cycle = 6
+        case .chart:                return 1.6 * 2     // grow + reset
+        case .wallpaperSwap:        return 1.9 * 2     // two wallpapers
+        case .textTransform:        return 1.5 * 2     // before + after
+        }
+    }
+
     @MainActor @ViewBuilder
     func scene(playing: Bool) -> some View {
         switch self {
@@ -82,6 +105,49 @@ enum FeatureArchetype {
         case .wallpaperSwap:         WallpaperSwapArchetypeScene(playing: playing)
         case .textTransform(let s):  TextTransformArchetypeScene(sample: s, playing: playing)
         }
+    }
+}
+
+// MARK: - Hover-gated heartbeat
+
+/// A periodic tick that runs ONLY while `active` (card hover). The gallery shows
+/// ~17 archetype cards at once; a free-running `Timer.publish` per card would
+/// wake the main thread continuously even for paused (un-hovered) scenes. This
+/// starts the timer on hover and tears it down on exit -- or when the card
+/// scrolls off (`onDisappear`) -- so an idle gallery does zero animation work.
+private struct Heartbeat: ViewModifier {
+    let interval: TimeInterval
+    let active: Bool
+    let onTick: () -> Void
+
+    @State private var cancellable: AnyCancellable?
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { if active { start() } }
+            .onDisappear { stop() }
+            .onChange(of: active) { isOn in
+                if isOn { start() } else { stop() }
+            }
+    }
+
+    private func start() {
+        stop()   // never stack two timers
+        cancellable = Timer.publish(every: interval, on: .main, in: .common)
+            .autoconnect()
+            .sink { _ in onTick() }
+    }
+
+    private func stop() {
+        cancellable?.cancel()
+        cancellable = nil
+    }
+}
+
+private extension View {
+    /// Tick `onTick` every `interval` seconds, but only while `active` is true.
+    func heartbeat(_ interval: TimeInterval, active: Bool, onTick: @escaping () -> Void) -> some View {
+        modifier(Heartbeat(interval: interval, active: active, onTick: onTick))
     }
 }
 
@@ -165,9 +231,6 @@ private struct ChooserArchetypeScene: View {
 
     @State private var step = 0   // advances while playing; selected = step % rowCount
 
-    // One shared heartbeat; we simply ignore ticks while not playing.
-    private let tick = Timer.publish(every: 0.85, on: .main, in: .common).autoconnect()
-
     // Guard the modulo: the sample comment invites new chooser features, and an
     // empty `rows` would otherwise divide by zero.
     private var selected: Int { rowCount == 0 ? 0 : step % rowCount }
@@ -192,8 +255,7 @@ private struct ChooserArchetypeScene: View {
         .scaleEffect(playing ? 1 : 0.97)
         .opacity(playing ? 1 : 0.9)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
-        .onReceive(tick) { _ in
-            guard playing else { return }
+        .heartbeat(0.85, active: playing) {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) { step += 1 }
         }
         .onChange(of: playing) { isOn in
@@ -295,7 +357,6 @@ private struct WindowArrangeArchetypeScene: View {
     let playing: Bool
 
     @State private var step = 0
-    private let tick = Timer.publish(every: 0.95, on: .main, in: .common).autoconnect()
 
     private var target: CGRect { sample.moves[step % sample.moves.count] }
 
@@ -331,10 +392,7 @@ private struct WindowArrangeArchetypeScene: View {
             .opacity(playing ? 1 : 0.9)
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
         }
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            step += 1
-        }
+        .heartbeat(0.95, active: playing) { step += 1 }
         .onChange(of: playing) { isOn in
             if !isOn { step = 0 }   // reset to the first move (calm frame) at rest
         }
@@ -396,7 +454,6 @@ private struct BannerArchetypeScene: View {
     let playing: Bool
 
     @State private var shown = true   // calm frame = banner resting in view
-    private let tick = Timer.publish(every: 1.3, on: .main, in: .common).autoconnect()
 
     var body: some View {
         GeometryReader { geo in
@@ -415,10 +472,7 @@ private struct BannerArchetypeScene: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            shown.toggle()
-        }
+        .heartbeat(1.3, active: playing) { shown.toggle() }
         .onChange(of: playing) { isOn in
             if !isOn { shown = true }   // settle back to the shown calm frame
         }
@@ -475,7 +529,6 @@ private struct ScreenOffArchetypeScene: View {
     let playing: Bool
 
     @State private var dark = false
-    private let tick = Timer.publish(every: 1.4, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -506,10 +559,7 @@ private struct ScreenOffArchetypeScene: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.18), lineWidth: 1))
         .animation(.easeInOut(duration: 0.55), value: dark)
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            dark.toggle()
-        }
+        .heartbeat(1.4, active: playing) { dark.toggle() }
         .onChange(of: playing) { isOn in
             if !isOn { dark = false }   // settle back to the lit calm frame
         }
@@ -526,7 +576,6 @@ private struct CountdownStripArchetypeScene: View {
 
     private let cycle = 5   // states 0..4; remaining = (cycle-1-state)/(cycle-1)
     @State private var step = 0
-    private let tick = Timer.publish(every: 0.55, on: .main, in: .common).autoconnect()
 
     private var remaining: Double {
         let state = step % cycle
@@ -558,10 +607,7 @@ private struct CountdownStripArchetypeScene: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            step += 1
-        }
+        .heartbeat(0.55, active: playing) { step += 1 }
         .onChange(of: playing) { isOn in
             if !isOn { step = 0 }   // reset to the full-strip calm frame
         }
@@ -579,7 +625,6 @@ private struct PointerPulseArchetypeScene: View {
 
     private let cycle = 6
     @State private var step = 0
-    private let tick = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
 
     /// 0 -> ~0.83 sawtooth; the ring grows as phase rises and fades as it nears 1,
     /// so the jump back to 0 happens while it's invisible (same trick as the strip).
@@ -620,10 +665,7 @@ private struct PointerPulseArchetypeScene: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .animation(.linear(duration: 0.38), value: step)
         }
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            step += 1
-        }
+        .heartbeat(0.4, active: playing) { step += 1 }
         .onChange(of: playing) { isOn in
             if !isOn { step = 0 }   // settle to just-the-cursor calm frame
         }
@@ -654,7 +696,6 @@ private struct PointerFollowArchetypeScene: View {
         CGRect(x: 0.53, y: 0.20, width: 0.42, height: 0.66),
     ]
     @State private var step = 0
-    private let tick = Timer.publish(every: 1.1, on: .main, in: .common).autoconnect()
 
     private var target: CGRect { moves[step % moves.count] }
 
@@ -689,10 +730,7 @@ private struct PointerFollowArchetypeScene: View {
             .opacity(playing ? 1 : 0.9)
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
         }
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            step += 1
-        }
+        .heartbeat(1.1, active: playing) { step += 1 }
         .onChange(of: playing) { isOn in
             if !isOn { step = 0 }   // reset to the first spot (calm frame)
         }
@@ -731,7 +769,6 @@ private struct PasswordRevealArchetypeScene: View {
     private let frames = ["q2$xZ9wK", "7Kp#4mR8", "v8!Lr3nP", "Hk7$mP9w"]
     private let cycle = 6     // 0..2 scramble, 3 locked, 4 copied, 5 hold
     @State private var step = 0
-    private let tick = Timer.publish(every: 0.32, on: .main, in: .common).autoconnect()
 
     private var state: Int { step % cycle }
     private var locked: Bool { state >= 3 }
@@ -784,10 +821,7 @@ private struct PasswordRevealArchetypeScene: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: state)
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            step += 1
-        }
+        .heartbeat(0.32, active: playing) { step += 1 }
         .onChange(of: playing) { isOn in
             if !isOn { step = 0 }   // settle to the locked-password calm frame
         }
@@ -811,7 +845,6 @@ private struct UsageChartArchetypeScene: View {
     ]
 
     @State private var grown = true
-    private let tick = Timer.publish(every: 1.6, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -828,8 +861,7 @@ private struct UsageChartArchetypeScene: View {
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.18), lineWidth: 1))
-        .onReceive(tick) { _ in
-            guard playing else { return }
+        .heartbeat(1.6, active: playing) {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { grown.toggle() }
         }
         .onChange(of: playing) { isOn in
@@ -865,7 +897,6 @@ private struct WallpaperSwapArchetypeScene: View {
     let playing: Bool
 
     @State private var second = false
-    private let tick = Timer.publish(every: 1.9, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -892,10 +923,7 @@ private struct WallpaperSwapArchetypeScene: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.18), lineWidth: 1))
         .animation(.easeInOut(duration: 0.7), value: second)
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            second.toggle()
-        }
+        .heartbeat(1.9, active: playing) { second.toggle() }
         .onChange(of: playing) { isOn in
             if !isOn { second = false }   // settle to the first wallpaper
         }
@@ -951,7 +979,6 @@ private struct TextTransformArchetypeScene: View {
     let playing: Bool
 
     @State private var done = false
-    private let tick = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -978,10 +1005,7 @@ private struct TextTransformArchetypeScene: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .animation(.spring(response: 0.32, dampingFraction: 0.7), value: done)
-        .onReceive(tick) { _ in
-            guard playing else { return }
-            done.toggle()
-        }
+        .heartbeat(1.5, active: playing) { done.toggle() }
         .onChange(of: playing) { isOn in
             if !isOn { done = false }   // settle to the BEFORE (messy) state
         }
