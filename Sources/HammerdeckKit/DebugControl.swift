@@ -21,8 +21,14 @@ import Foundation
 /// never grows the adapter/ctx seam, so features gain nothing from it -- the
 /// same least-privilege stance as the test-only Native introspection. It is
 /// OFF unless the env var is set; normal `swift run` users never get it.
+///
+/// DEBUG-only: the entire eval channel is compiled out of release builds, so a
+/// shipped/notarized binary physically cannot eval arbitrary Lua even if the env
+/// var were present. The visual-check workflow (scripts/app.sh) uses `swift run`,
+/// which is a debug build, so it is unaffected.
 @MainActor
 enum DebugControl {
+#if DEBUG
     private static var timer: Timer?
 
     static func startIfRequested(_ lua: LuaState) {
@@ -63,4 +69,9 @@ enum DebugControl {
         default: return String(describing: v!)
         }
     }
+#else
+    /// Release builds compile out the eval channel entirely -- no env var can
+    /// turn it on, so a shipped binary cannot eval arbitrary Lua.
+    static func startIfRequested(_ lua: LuaState) {}
+#endif
 }

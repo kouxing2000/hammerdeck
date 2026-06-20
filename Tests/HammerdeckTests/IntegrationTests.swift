@@ -134,6 +134,36 @@ final class IntegrationTests: XCTestCase {
                       "an untagged string-keyed map still reads as a dict")
     }
 
+    /// Bridge-surface completeness: every `native.<fn>` that adapter.lua actually
+    /// calls must exist as a function in the `native` table. This is the guard
+    /// for the Native.swift -> Native+*.swift split: dropping or mistyping a
+    /// binding in any extension's installBindings entry fails HERE, naming the
+    /// missing symbol, instead of surfacing as a confusing nil-call deep inside
+    /// one feature at runtime. The demanded set is derived from the adapter
+    /// source, so it stays correct as the seam grows -- no list to maintain.
+    func testNativeSurfaceMatchesAdapterDemand() {
+        let adapterPath = TestHost.repoRoot + "/lua/platform/adapter.lua"
+        guard let raw = try? String(contentsOfFile: adapterPath, encoding: .utf8) else {
+            return XCTFail("could not read adapter.lua at \(adapterPath)")
+        }
+        // Strip Lua line comments first: a `native.*` mention inside a comment
+        // (e.g. a doc line or a TODO) is not a real call and must not drive the
+        // assertion -- we only want the actual demanded surface.
+        let src = raw.replacingOccurrences(of: "--[^\n]*", with: "", options: .regularExpression)
+        let re = try! NSRegularExpression(pattern: "native\\.([a-z_]+)")
+        var names = Set<String>()
+        for m in re.matches(in: src, range: NSRange(src.startIndex..., in: src)) {
+            if let r = Range(m.range(at: 1), in: src) { names.insert(String(src[r])) }
+        }
+        // Sanity: we actually found the surface (a broken regex would pass vacuously).
+        XCTAssertGreaterThan(names.count, 60,
+                             "expected the full native.* call surface in adapter.lua, found \(names.count)")
+        for name in names.sorted() {
+            XCTAssertEqual(eval("return type(native.\(name))") as? String, "function",
+                           "native.\(name) is called by adapter.lua but is missing from the bridge")
+        }
+    }
+
     /// Pump the real application event queue (what app.run() does) -- plain
     /// RunLoop spinning does not drain the Carbon event queue that delivers
     /// RegisterEventHotKey presses.

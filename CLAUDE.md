@@ -12,10 +12,14 @@ payload (the feature platform). They meet at one bridge.
 ## The one inviolable rule
 
 **Only the Swift bridge (`Sources/HammerdeckKit/LuaState.swift` +
-`Native.swift`) and the Lua seam (`lua/platform/adapter.lua`) may touch
-native / OS APIs.** New OS surface grows in `Native.swift` (+ its
-HotkeyCenter/ChordCenter/Panels helpers); features and every other platform
-module go through the adapter. This keeps the host
+`Native.swift` and its `Native+*.swift` domain extensions) and the Lua seam
+(`lua/platform/adapter.lua`) may touch native / OS APIs.** `Native.swift` holds
+the class, shared state and `installBindings`; the actual OS calls live in
+`Native+Triggers/Storage/Panels/Network/Windows/System/Input/Browser.swift`
+(same type, extensions). New OS surface grows in whichever `Native+*` slice fits
+(or a new one), plus its HotkeyCenter/ChordCenter and the per-panel UI files
+(`ChooserPanel.swift`, `BannerPanel.swift`, ...); features and every other
+platform module go through the adapter. This keeps the host
 swappable and the layers clean. If you need a native call elsewhere, add it to
 the bridge + adapter, never reach past the seam.
 
@@ -63,8 +67,10 @@ the bridge + adapter, never reach past the seam.
   is a handle with `.stop()`.
 - **Sources/HammerdeckKit/LuaState.swift** -- the bridge mechanics: owns the
   Lua state, runs Lua, callback refs, table readers, `eval`.
-- **Sources/HammerdeckKit/Native.swift** (+ HotkeyCenter/ChordCenter/Panels helpers) -- the
-  seam (Swift side): the `native` table the adapter calls. The only place
+- **Sources/HammerdeckKit/Native.swift + Native+*.swift** (+ HotkeyCenter/ChordCenter
+  and per-panel UI files) -- the seam (Swift side): the `native` table the adapter
+  calls. `Native.swift` is the class + shared state + `installBindings`; the OS
+  calls are grouped into `Native+<domain>.swift` extensions. The only place
   macOS-API surface should grow.
 - **Sources/HammerdeckKit/SettingsStore/SettingsView/StatusBar.swift** --
   config UI: menubar (QUICK TRIGGERS: every enabled feature's actions fire on
