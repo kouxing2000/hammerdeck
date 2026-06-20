@@ -577,6 +577,82 @@ ok(fake.typedTexts[#fake.typedTexts] == "secret token",
 registry.setEnabled("clipboard_clean", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipboard_clean test")
 
+-- T13c: password_generator (action: build a random password, copy to clipboard) --
+registry.register(require("features.password_generator"))
+fake.settings["hammerdeck.opt.password_generator.length"]         = 24
+fake.settings["hammerdeck.opt.password_generator.avoidAmbiguous"] = true
+registry.setEnabled("password_generator", true)
+
+local pwNotes = #fake.notifications
+fake.pasteboard = nil
+fake.pressHotkey("p")
+local pw = fake.pasteboard
+ok(type(pw) == "string" and #pw == 24, "password_generator copies a 24-char password")
+ok(#fake.notifications == pwNotes + 1, "password_generator notifies on copy")
+
+-- avoidAmbiguous strips 0 O 1 l I; all four enabled classes still appear
+ok(not pw:find("[0O1lI]"), "avoidAmbiguous strips ambiguous glyphs")
+ok(pw:find("%l") and pw:find("%u") and pw:find("%d") and pw:find("[^%w]"),
+    "all four character classes appear in the password")
+
+-- consecutive generations differ (randomness sanity)
+fake.pressHotkey("p"); local pw2 = fake.pasteboard
+fake.pressHotkey("p"); local pw3 = fake.pasteboard
+ok(pw2 ~= pw3, "consecutive passwords differ")
+
+-- length floor: a length below the enabled-class count still fits one of each
+fake.settings["hammerdeck.opt.password_generator.length"] = 2   -- < 4 classes
+fake.pressHotkey("p")
+ok(#fake.pasteboard == 4, "length below the class count widens to one char per class")
+
+-- no character set enabled: clipboard untouched, a guidance notification fires
+fake.settings["hammerdeck.opt.password_generator.lowercase"] = false
+fake.settings["hammerdeck.opt.password_generator.uppercase"] = false
+fake.settings["hammerdeck.opt.password_generator.digits"]    = false
+fake.settings["hammerdeck.opt.password_generator.symbols"]   = false
+fake.pasteboard = "UNCHANGED"
+pwNotes = #fake.notifications
+fake.pressHotkey("p")
+ok(fake.pasteboard == "UNCHANGED", "no character set enabled: clipboard untouched")
+ok(#fake.notifications == pwNotes + 1, "no character set enabled: guidance notification")
+
+registry.setEnabled("password_generator", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after password_generator test")
+
+-- T13d: mouse_follows_focus (service: warp pointer to focused window on app switch) --
+registry.register(require("features.mouse_follows_focus"))
+registry.setEnabled("mouse_follows_focus", true)
+
+-- pointer outside the focused window -> warps to the window center, flashes
+fake.screenList    = { { x = 0, y = 0, w = 1440, h = 900 } }
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300 }   -- center (300, 250)
+fake.mousePos      = { x = 0, y = 0 }
+local mffLocates = #fake.mouseLocates
+fake.activateApp("Safari")
+ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "mouse_follows_focus warps the pointer to the window center")
+ok(#fake.mouseLocates == mffLocates + 1, "mouse_follows_focus flashes the pointer after moving (locateAfter)")
+
+-- pointer already inside the focused window -> left alone (no pointless jump)
+fake.mousePos = { x = 200, y = 200 }
+fake.activateApp("Safari")
+ok(fake.mousePos.x == 200 and fake.mousePos.y == 200, "mouse_follows_focus leaves the pointer alone when already inside")
+
+-- no focused-window frame (e.g. Accessibility not granted) -> stay silent, untouched
+fake.focusedWindow = nil
+fake.mousePos = { x = 5, y = 5 }
+fake.activateApp("Finder")
+ok(fake.mousePos.x == 5 and fake.mousePos.y == 5, "mouse_follows_focus stays silent with no focused window")
+
+-- onlyMultiScreen gate: single display present -> no warp
+fake.settings["hammerdeck.opt.mouse_follows_focus.onlyMultiScreen"] = true
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300 }
+fake.mousePos      = { x = 0, y = 0 }
+fake.activateApp("Safari")
+ok(fake.mousePos.x == 0 and fake.mousePos.y == 0, "mouse_follows_focus respects onlyMultiScreen with a single display")
+
+registry.setEnabled("mouse_follows_focus", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after mouse_follows_focus test")
+
 -- T14: feature autodiscovery -- scan the features dir instead of a fixed list --
 -- (the fake adapter exposes bare names; the real modules are on disk, so the
 --  re-require path works.)
@@ -717,6 +793,7 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after count
 -- T17: mouse_circle (locate pointer) -------------------------------------------
 registry.register(require("features.mouse_circle"))
 registry.setEnabled("mouse_circle", true)
+fake.mouseLocates = {}   -- fresh recorder: this block asserts absolute counts/indices
 fake.pressHotkey("m")
 ok(#fake.mouseLocates == 1 and fake.mouseLocates[1] == 3,
     "locate-pointer fires with the configured duration")
