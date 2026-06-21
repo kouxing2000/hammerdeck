@@ -12,6 +12,8 @@
 -- Needs the Accessibility permission (focused-window frame surface); without
 -- it every action alerts the onboarding message.
 
+local W = require("platform.windows")
+
 local RETRY_SECONDS = 0.5   -- fullscreen exit settle time before retrying
 local TOGGLE_SCALE  = 0.75  -- the "smaller" size of the maximize toggle
 
@@ -21,16 +23,7 @@ local function arranger(ctx)
 
     -- The focused window, or nil after alerting (the per-action guard).
     local function focused()
-        local f = ctx.focusedWindowFrame()
-        if f then return f end
-        if not ctx.axTrusted() then
-            ctx.axPrompt()
-            ctx.alert("Window Arrange needs the Accessibility permission -- "
-                .. "grant Hammerdeck in System Settings, then try again")
-        else
-            ctx.alert("No focused window")
-        end
-        return nil
+        return W.focusedOrAlert(ctx, "Window Arrange")
     end
 
     -- Exit fullscreen and re-run `retry` after a beat (donor behavior).
@@ -44,11 +37,7 @@ local function arranger(ctx)
     function a.snap(xR, yR, wR, hR)
         local f = focused()
         if not f then return end
-        local s = f.screen
-        ctx.setFocusedWindowFrame {
-            x = s.x + s.w * xR, y = s.y + s.h * yR,
-            w = s.w * wR, h = s.h * hR,
-        }
+        ctx.setFocusedWindowFrame(W.rectFromRatios(f.screen, xR, yR, wR, hR))
     end
 
     -- Maximized (full width or height) -> centered 75%; else maximize.
@@ -59,12 +48,10 @@ local function arranger(ctx)
         local s = f.screen
         if f.w == s.w or f.h == s.h then
             local m = (1 - TOGGLE_SCALE) / 2
-            ctx.setFocusedWindowFrame {
-                x = s.x + s.w * m, y = s.y + s.h * m,
-                w = s.w * TOGGLE_SCALE, h = s.h * TOGGLE_SCALE,
-            }
+            ctx.setFocusedWindowFrame(
+                W.rectFromRatios(s, m, m, TOGGLE_SCALE, TOGGLE_SCALE))
         else
-            ctx.setFocusedWindowFrame { x = s.x, y = s.y, w = s.w, h = s.h }
+            ctx.setFocusedWindowFrame(W.rectFromRatios(s, 0, 0, 1, 1))
         end
     end
 
@@ -130,8 +117,9 @@ return {
     api         = 1,
     id          = "window_snap",
     name        = "Window Snap",
-    description = "Snap the focused window to screen halves, toggle "
-        .. "maximize, or throw it to the next screen (pointer follows).",
+    description = "Direct hotkeys for the common arrangements -- snap to a "
+        .. "half, toggle maximize/75%, throw to the next screen (pointer "
+        .. "follows). Best for one-key snaps. Pairs with Window Mode.",
     version     = "1.0.0",
     category    = "productivity",
 

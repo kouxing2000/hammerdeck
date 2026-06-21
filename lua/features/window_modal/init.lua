@@ -20,21 +20,15 @@
 --
 -- Needs Accessibility (the focused-window frame surface).
 
+local W = require("platform.windows")
+
 local HISTORY_MAX = 50
 
 local function arrangerFor(ctx)
     local st = { mode = nil, undoStack = {}, redoStack = {} }
 
     local function focused()
-        local f = ctx.focusedWindowFrame()
-        if f then return f end
-        if not ctx.axTrusted() then
-            ctx.axPrompt()
-            ctx.alert("Window Mode needs the Accessibility permission")
-        else
-            ctx.alert("No focused window")
-        end
-        return nil
+        return W.focusedOrAlert(ctx, "Window Mode")
     end
 
     local function steps(f)
@@ -142,9 +136,7 @@ local function arrangerFor(ctx)
 
     local function snap(xR, yR, wR, hR)
         apply(function(f)
-            local s = f.screen
-            return { x = s.x + s.w * xR, y = s.y + s.h * yR,
-                     w = s.w * wR, h = s.h * hR }
+            return W.rectFromRatios(f.screen, xR, yR, wR, hR)
         end)
     end
 
@@ -252,8 +244,9 @@ return {
     api         = 1,
     id          = "window_modal",
     name        = "Window Mode",
-    description = "A modal keyboard layer for window arranging: enter the "
-        .. "mode, tap keys to move/resize/snap until Escape.",
+    description = "A modal keyboard layer for finer arranging -- move/resize/"
+        .. "corners/center/undo under one key until Escape. Best when you want "
+        .. "control without many global hotkeys. Pairs with Window Snap.",
     version     = "1.0.0",
     category    = "productivity",
 

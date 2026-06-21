@@ -42,8 +42,8 @@ the bridge + adapter, never reach past the seam.
   `stop`, may also declare `actions`), receives the scoped `ctx` as its native
   surface. Never touches native APIs or the seam/stateful platform modules
   (`adapter`, `ctx`, `registry`, `triggers`, `manifest`, `modal`); MAY `require`
-  the pure leaf util modules (`platform.json`, `platform.urls`, `platform.hotkeys`
-  -- stateless, no `require` of their own). Get the current time only from
+  the pure leaf util modules (`platform.json`, `platform.urls`, `platform.hotkeys`,
+  `platform.windows` -- stateless, no `require` of their own). Get the current time only from
   `ctx.now()` (never bare `os.time()`/`os.date()`, which read the uncontrolled
   wall clock and tests can't drive); `os.date`/`os.time` are fine for FORMATTING
   or decomposing a time you already got from `ctx.now()`.
