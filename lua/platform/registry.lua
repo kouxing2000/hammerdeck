@@ -126,9 +126,22 @@ end
 
 -- One action's chosen trigger: the user's override, else its declared default.
 -- Writers are registry.setTrigger / clearTrigger below.
+--
+-- This is the single read point feeding bind-on-load, describe(), and conflict
+-- detection, so the automatable policy is enforced HERE rather than only at the
+-- setTrigger write path: a stored override that is an AUTOMATED trigger on an
+-- action that is not automatable is ignored (falls back to the declared
+-- default, which manifest.validate guarantees is manual-or-nil for such an
+-- action). This closes the gap where a stale/hand-edited override -- or one
+-- left behind after an author drops automatable -- would otherwise bind a
+-- schedule/event to a context-dependent action and fire it unattended.
 local function triggerFor(m, a)
     local stored = storedTrigger(m, a)
-    return (stored and triggers.decode(stored)) or a.defaultTrigger
+    local spec = (stored and triggers.decode(stored)) or nil
+    if spec and triggers.isAutomated(spec) and not a.automatable then
+        spec = nil
+    end
+    return spec or a.defaultTrigger
 end
 
 -- Fire-time error surfacing. A trigger fires an action's run(ctx) on its own
@@ -343,6 +356,15 @@ function registry.setTrigger(id, actionId, spec)
     assert(m, "no such feature: " .. id)
     local a = resolveAction(m, actionId)
     triggers.validate(spec)
+
+    -- Enforce the action's automatable policy: a context-dependent action
+    -- (the default) accepts only manual triggers (hotkey/chord). The UI hides
+    -- the automated types for such actions; this guards the seam in case a spec
+    -- arrives any other way (a hand-edited setting, a test, a future caller).
+    if triggers.isAutomated(spec) and not a.automatable then
+        return false, "action '" .. a.id .. "' is not automatable; " ..
+            "it accepts only hotkey/chord triggers"
+    end
 
     local conflict = registry.triggerConflict(id, a.id, spec)
     if conflict then return false, conflict end
@@ -657,6 +679,7 @@ function registry.describe()
             local current = triggerFor(m, a)
             actions[#actions + 1] = {
                 id = a.id, label = a.label,
+                automatable = a.automatable == true,
                 trigger = current,
                 defaultTrigger = a.defaultTrigger,
                 triggerOverridden = storedTrigger(m, a) ~= nil,

@@ -103,6 +103,10 @@ struct ActionInfo: Identifiable {
     let defaultTrigger: TriggerSpec?    // declared default (may be nil)
     let triggerOverridden: Bool
     let triggerDesc: String
+    // May this action be driven by an AUTOMATED trigger (schedule / system
+    // event), not just a manual one (hotkey / chord)? False for context-
+    // dependent actions -- the trigger picker hides the automated types for them.
+    let automatable: Bool
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
@@ -112,6 +116,7 @@ struct ActionInfo: Identifiable {
         self.defaultTrigger = TriggerSpec(dict["defaultTrigger"] as? [String: Any])
         self.triggerOverridden = dict["triggerOverridden"] as? Bool ?? false
         self.triggerDesc = dict["triggerDesc"] as? String ?? ""
+        self.automatable = dict["automatable"] as? Bool ?? false
     }
 }
 

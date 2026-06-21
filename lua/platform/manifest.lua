@@ -136,6 +136,28 @@ function manifest.validate(m)
                 "feature '" .. m.id .. "': action '" .. a.id ..
                 "' defaultTrigger must be a trigger spec table")
         end
+        -- automatable: may this action be driven by a context-free AUTOMATED
+        -- trigger (schedule / system event), not just a manual one (hotkey /
+        -- chord)? Most actions read the live UI context (current selection,
+        -- focused window, clipboard) and are nonsensical -- even harmful --
+        -- fired with nobody at the keyboard, so the default is false: the
+        -- trigger picker offers only hotkey/chord. State-changers that need no
+        -- context (toggle dark mode, lock screen) opt in with automatable=true.
+        if a.automatable ~= nil then
+            assert(type(a.automatable) == "boolean",
+                "feature '" .. m.id .. "': action '" .. a.id ..
+                "' automatable must be true/false")
+        end
+        a.automatable = (a.automatable == true)
+        -- A declared default that IS an automated trigger implies the action is
+        -- automatable -- otherwise the seam would refuse to bind its own default.
+        if a.defaultTrigger and not a.automatable then
+            local dt = a.defaultTrigger.type
+            assert(dt ~= "schedule" and dt ~= "event",
+                "feature '" .. m.id .. "': action '" .. a.id ..
+                "' has a " .. dt .. " defaultTrigger but is not automatable; " ..
+                "set automatable = true")
+        end
     end
 
     if m.capabilities ~= nil then

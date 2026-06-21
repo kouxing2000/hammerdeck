@@ -281,6 +281,25 @@ ok(pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function()
 ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,
     options = { { key = "n", type = "int", multiline = true } } }),
     "multiline is rejected on a non-string option")
+-- automatable: optional per-action boolean; default false; an automated
+-- defaultTrigger implies it must be true.
+do
+    local m = manifest.validate({ api = 1, id = "x", name = "X", action = function() end })
+    ok(m.actions[1].automatable == false, "automatable defaults to false")
+    local m2 = manifest.validate({ api = 1, id = "y", name = "Y",
+        actions = { { id = "a", run = function() end, automatable = true } } })
+    ok(m2.actions[1].automatable == true, "automatable carried through when declared")
+end
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X",
+    actions = { { id = "a", run = function() end, automatable = "yes" } } }),
+    "automatable must be a boolean")
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,
+    defaultTrigger = { type = "schedule", everyMin = 5 } }),
+    "an automated defaultTrigger on a non-automatable action is rejected")
+ok(pcall(manifest.validate, { api = 1, id = "x", name = "X",
+    actions = { { id = "a", run = function() end, automatable = true,
+        defaultTrigger = { type = "schedule", everyMin = 5 } } } }),
+    "an automated defaultTrigger is fine when automatable = true")
 local sleepDesc = desc[2]
 ok(sleepDesc.kind == "service" and sleepDesc.triggerDesc == "always-on service",
     "service features described as always-on")
@@ -465,6 +484,49 @@ for _, d in ipairs(registry.describe()) do if d.id == "rebind_probe" then probeD
 ok(probeDesc.actions[1].trigger and probeDesc.actions[1].trigger.key == "q",
     "describe exposes the current trigger spec")
 ok(probeDesc.actions[1].triggerOverridden == true, "describe reports the override state")
+
+-- automatable policy: schedule/event are the automated trigger types ----------
+ok(triggers.isAutomated({ type = "schedule", everyMin = 5 }) == true, "schedule is automated")
+ok(triggers.isAutomated({ type = "event", event = "wake" }) == true, "event is automated")
+ok(triggers.isAutomated({ type = "hotkey", key = "p" }) == false, "hotkey is not automated")
+ok(triggers.isAutomated({ type = "chord", key = "a", follows = { "b" } }) == false, "chord is not automated")
+
+-- rebind_probe is the default (non-automatable): the seam refuses an automated
+-- trigger but still accepts a manual one, and describe reports the flag.
+ok(probeDesc.actions[1].automatable == false, "describe surfaces automatable=false by default")
+local okAuto, whyAuto = registry.setTrigger("rebind_probe", { type = "schedule", everyMin = 5 })
+ok(okAuto == false and whyAuto ~= nil, "seam refuses a schedule trigger on a non-automatable action")
+local okAuto2 = registry.setTrigger("rebind_probe", { type = "event", event = "wake" })
+ok(okAuto2 == false, "seam refuses an event trigger on a non-automatable action")
+
+-- an automatable action accepts an automated trigger
+local autoFires = 0
+package.loaded["features._auto_probe"] = {
+    api = 1, id = "auto_probe", name = "Auto Probe",
+    actions = { { id = "main", automatable = true, run = function() autoFires = autoFires + 1 end } },
+}
+registry.load("features._auto_probe")
+registry.setEnabled("auto_probe", true)
+ok(registry.setTrigger("auto_probe", { type = "schedule", everyMin = 15 }) == true,
+    "seam accepts a schedule trigger on an automatable action")
+local autoDesc
+for _, d in ipairs(registry.describe()) do if d.id == "auto_probe" then autoDesc = d end end
+ok(autoDesc.actions[1].automatable == true, "describe surfaces automatable=true")
+registry.setEnabled("auto_probe", false)
+registry.unregister("auto_probe")
+
+-- bind-on-load enforcement: a STALE stored automated override on a
+-- non-automatable action (e.g. left behind after an author dropped automatable,
+-- or hand-edited) must be ignored on read, not bound. rebind_probe is the
+-- non-automatable hotkey probe; plant a schedule override directly in settings.
+fake.settings["hammerdeck.trigger.rebind_probe.main"] = "schedule|every|5"
+do
+    local staleDesc
+    for _, d in ipairs(registry.describe()) do if d.id == "rebind_probe" then staleDesc = d end end
+    ok(staleDesc.actions[1].trigger.type == "hotkey",
+        "a stale automated override on a non-automatable action is ignored (falls back to default)")
+end
+fake.settings["hammerdeck.trigger.rebind_probe.main"] = nil
 
 -- clearTrigger reverts to the manifest default
 registry.clearTrigger("rebind_probe")

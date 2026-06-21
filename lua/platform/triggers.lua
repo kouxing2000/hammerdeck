@@ -29,6 +29,18 @@ local VALID_EVENTS = {
     screenChanged = true,   -- display added/removed/rearranged
 }
 
+-- Is this an AUTOMATED trigger -- one that fires on its own (a clock or a
+-- system event) with no human present and no live UI context? schedule and
+-- event are automated; hotkey and chord are MANUAL (a person presses keys, so
+-- the current selection / focused window / clipboard is meaningful). The
+-- registry uses this to keep context-dependent actions off automated triggers
+-- (see the action `automatable` flag in manifest.lua).
+---@param spec table a trigger spec
+---@return boolean
+function triggers.isAutomated(spec)
+    return spec.type == "schedule" or spec.type == "event"
+end
+
 -- Validate a trigger spec (used before persisting a user rebind). Throws on a
 -- malformed spec; returns true on success.
 function triggers.validate(spec)

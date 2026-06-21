@@ -258,6 +258,22 @@ private enum TriggerMode: String, CaseIterable, Identifiable {
         case .event:         return "System event"
         }
     }
+
+    // AUTOMATED modes fire with no human present and no live UI context, so they
+    // only make sense for actions an author marked `automatable`. The manual
+    // modes (hotkey/chord) suit any action.
+    var isAutomated: Bool {
+        switch self {
+        case .hotkey, .chord:                       return false
+        case .scheduleEvery, .scheduleAt, .event:   return true
+        }
+    }
+
+    // The trigger types offered for an action: manual always, automated only
+    // when the action opts in.
+    static func available(automatable: Bool) -> [TriggerMode] {
+        automatable ? allCases : allCases.filter { !$0.isAutomated }
+    }
 }
 
 private let allMods: [(id: String, symbol: String)] =
@@ -333,8 +349,11 @@ private struct TriggerEditor: View {
                 .onHover { previewHover = $0 }
         }
 
-        Picker("Type", selection: $mode) {
-            ForEach(TriggerMode.allCases) { Text($0.label).tag($0) }
+        let modes = TriggerMode.available(automatable: action.automatable)
+        if modes.count > 1 {
+            Picker("Type", selection: $mode) {
+                ForEach(modes) { Text($0.label).tag($0) }
+            }
         }
 
         switch mode {

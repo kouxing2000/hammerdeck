@@ -100,6 +100,9 @@ return {
 
     actions = {
         { id = "refresh", label = "Refresh wallpaper now",
+          -- Context-free (just fetches + sets the wallpaper), so it may run on
+          -- an automated trigger -- and its default IS a schedule.
+          automatable = true,
           defaultTrigger = { type = "schedule", everyMin = REFRESH_MINUTES },
           run = function(ctx) refresh(ctx) end },
     },
