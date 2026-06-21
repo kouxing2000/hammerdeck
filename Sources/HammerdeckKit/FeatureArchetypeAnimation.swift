@@ -61,7 +61,7 @@ enum FeatureArchetype {
         case "count_down":        return .countdownStrip
         case "usage_stats":       return .chart
         case "bing_daily":        return .wallpaperSwap
-        case "text_actions":      return .textTransform(.caseChange)
+        case "text_actions":      return .chooser(.textActions)
         case "plain_paste":       return .textTransform(.stripFormat)
         default:                  return .none
         }
@@ -125,7 +125,19 @@ extension FeatureArchetype {
     /// usual gallery loop. Lets the editor show "what THIS shortcut does".
     @MainActor @ViewBuilder
     static func actionScene(feature: FeatureInfo, actionId: String, playing: Bool) -> some View {
-        if let sample = windowActionSample(feature: feature, actionId: actionId) {
+        if feature.id == "locate_pointer", actionId == "center" {
+            // The Pointer feature's two actions need DIFFERENT previews: "Locate
+            // pointer" is the crosshair pulse (the feature archetype), but
+            // "Center pointer on focused window" is the cursor jumping into a
+            // window's center -- its own scene.
+            PointerCenterArchetypeScene(playing: playing)
+        } else if feature.id == "plain_paste", actionId == "type" {
+            // plain_paste's two actions diverge: "Paste as plain text" is the
+            // strip-format effect (the feature archetype), but "Type clipboard
+            // as keystrokes" types the clipboard out char-by-char -- a typing
+            // scene, nothing to do with stripping styling.
+            TypeKeystrokesArchetypeScene(playing: playing)
+        } else if let sample = windowActionSample(feature: feature, actionId: actionId) {
             WindowArrangeArchetypeScene(sample: sample, playing: playing)
         } else {
             of(feature).scene(playing: playing)
@@ -270,6 +282,18 @@ struct ChooserSample {
             .init(glyph: "chevron.left.forwardslash.chevron.right", primary: "GitHub",   secondary: "github.com"),
             .init(glyph: "envelope",                                primary: "Gmail",    secondary: "mail.google.com"),
             .init(glyph: "calendar",                                primary: "Calendar", secondary: "calendar.google.com"),
+        ])
+
+    /// text_actions: act on the selected text -- the feature copies the
+    /// selection then pops THIS picker (dictionary lookup, case changes, a
+    /// calculator); URLs open directly without the menu. A chooser, not a single
+    /// transform, so its preview is the menu (rows = the offered actions).
+    static let textActions = ChooserSample(
+        query: "act on selection...",
+        rows: [
+            .init(glyph: "book",       primary: "Dictionary", secondary: "look up"),
+            .init(glyph: "textformat", primary: "UPPERCASE",  secondary: "change case"),
+            .init(glyph: "function",   primary: "Calculate",  secondary: "evaluate"),
         ])
 }
 
@@ -837,6 +861,163 @@ private struct PointerFollowArchetypeScene: View {
     }
 }
 
+// MARK: - Center-pointer-on-window effect (Pointer feature, "center" action)
+
+/// Previews the Pointer feature's "Center pointer on focused window" action: a
+/// window sits in the frame and the cursor springs from an off-corner to its
+/// exact center, where a locate ring flashes (the action ends in locateMouse).
+/// At rest the cursor sits centered on the window (the end state -- the calm
+/// frame shows where it lands). Plays only while `playing` (hover).
+private struct PointerCenterArchetypeScene: View {
+    let playing: Bool
+
+    // The window the pointer centers on, and the off-corner it starts from.
+    private let win = CGRect(x: 0.24, y: 0.20, width: 0.52, height: 0.58)
+    private let corner = CGPoint(x: 0.10, y: 0.14)
+
+    @State private var step = 0
+
+    // At rest, show the centered end state; while playing, toggle corner<->center.
+    private var centered: Bool { playing ? (step % 2 == 1) : true }
+    private var center: CGPoint { CGPoint(x: win.midX, y: win.midY) }
+    private var spot: CGPoint { centered ? center : corner }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let cx = spot.x * w, cy = spot.y * h
+            let ringD = min(w, h) * 0.42
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.secondary.opacity(0.06))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.18), lineWidth: 1))
+
+                // the target window
+                window
+                    .frame(width: win.width * w, height: win.height * h)
+                    .offset(x: win.minX * w, y: win.minY * h)
+
+                // locate ring flashing at the window center once the cursor lands
+                if playing && centered {
+                    Circle()
+                        .stroke(Color.accentColor, lineWidth: 2)
+                        .frame(width: ringD, height: ringD)
+                        .position(x: center.x * w, y: center.y * h)
+                        .opacity(0.0)
+                        .modifier(RingPulse())
+                }
+
+                Image(systemName: "cursorarrow")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .position(x: cx, y: cy)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.7), value: step)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .heartbeat(0.95, active: playing) { step += 1 }
+        .onChange(of: playing) { isOn in
+            if !isOn { step = 0 }   // settle to the centered calm frame
+        }
+    }
+
+    private var window: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { _ in
+                    Circle().fill(.secondary.opacity(0.5)).frame(width: 3, height: 3)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 4)
+            .frame(height: 9)
+            .background(Color.accentColor.opacity(0.28))
+            Spacer(minLength: 0)
+        }
+        .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor.opacity(0.7), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+/// One expand-and-fade pulse, driven on appearance -- the ring is re-created each
+/// time the cursor lands centered, so a plain onAppear animation gives the flash.
+private struct RingPulse: ViewModifier {
+    @State private var on = false
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(on ? 1.0 : 0.4)
+            .opacity(on ? 0.0 : 0.9)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.7)) { on = true }
+            }
+    }
+}
+
+// MARK: - Type-as-keystrokes effect (plain_paste, "type" action)
+
+/// Previews plain_paste's "Type clipboard as keystrokes" action: the clipboard
+/// text is typed into a document one character at a time (a blinking caret
+/// trailing), with a keyboard glyph to signal it's synthesized keystrokes -- not
+/// a paste. At rest the full line is shown (the calm frame). Plays only while
+/// `playing` (hover).
+private struct TypeKeystrokesArchetypeScene: View {
+    let playing: Bool
+
+    private let full = "Hello, clipboard"
+    private let holdFrames = 6              // pause on the full line before looping
+    @State private var step = 0
+
+    private var cycle: Int { full.count + holdFrames }
+    private var shownCount: Int {
+        guard playing else { return full.count }   // calm frame = fully typed
+        return min(step % cycle, full.count)
+    }
+    private var shown: String { String(full.prefix(shownCount)) }
+    private var caretOn: Bool { !playing || step % 2 == 0 }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.18), lineWidth: 1))
+
+            VStack(spacing: 7) {
+                // the document being typed into
+                HStack(spacing: 1) {
+                    Text(shown)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(width: 1.5, height: 13)
+                        .opacity(caretOn ? 1 : 0.15)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.background))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor.opacity(0.4), lineWidth: 1))
+
+                // a keyboard glyph: these are synthesized keystrokes, not a paste
+                HStack(spacing: 3) {
+                    Image(systemName: "keyboard").font(.system(size: 8, weight: .bold))
+                    Text("Typed as keystrokes").font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(Color.accentColor.opacity(0.9)))
+            }
+            .padding(.horizontal, 10)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .heartbeat(0.16, active: playing) { step += 1 }
+        .onChange(of: playing) { isOn in
+            if !isOn { step = 0 }   // settle to the fully-typed calm frame
+        }
+    }
+}
+
 // MARK: - Password-reveal effect (password generator)
 
 /// Previews password_generator's effect: characters scramble, lock into a strong
@@ -1095,6 +1276,10 @@ private struct TextTransformArchetypeScene: View {
 
     @ViewBuilder private var lineView: some View {
         switch sample.kind {
+        // NOTE: .caseChange is currently UNROUTED -- text_actions now maps to
+        // .chooser(.textActions) (it pops a menu, not a single transform), so no
+        // live feature produces this sample. Kept for a future direct
+        // change-case action; the Kind case is still needed for exhaustiveness.
         case .caseChange:
             Text(done ? "RESIZE WINDOW" : "resize window")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))

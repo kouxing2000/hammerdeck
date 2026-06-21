@@ -15,8 +15,9 @@
 --
 -- Departures from the donor: redo actually works (the donor bound a
 -- WinWin:redo() that does not exist in the spoon); undo is a proper stack
--- (the donor replayed every historical frame of the window in order); the
--- donor's separate alt+G "center cursor on window" is the second action.
+-- (the donor replayed every historical frame of the window in order). The
+-- donor's separate alt+G "center cursor on window" now lives in the Pointer
+-- feature (locate_pointer) with the other on-demand pointer action.
 --
 -- Needs Accessibility (the focused-window frame surface).
 
@@ -217,17 +218,6 @@ local function arrangerFor(ctx)
         }
     end
 
-    function st.centerCursor()
-        local f = ctx.focusedWindowFrame()
-        if f then
-            ctx.setMousePosition(f.x + f.w / 2, f.y + f.h / 2)
-        else
-            local s = ctx.screenFrames()[1]
-            if s then ctx.setMousePosition(s.x + s.w / 2, s.y + s.h / 2) end
-        end
-        ctx.locateMouse(1)
-    end
-
     return st
 end
 
@@ -259,8 +249,5 @@ return {
         { id = "enter", label = "Enter / exit window mode",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "2" },
           run = function(ctx) with(ctx).toggleMode() end },
-        { id = "center_cursor", label = "Center pointer on window",
-          defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "g" },
-          run = function(ctx) with(ctx).centerCursor() end },
     },
 }

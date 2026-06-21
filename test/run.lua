@@ -863,6 +863,11 @@ ok(#fake.mouseLocates == 1 and fake.mouseLocates[1] == 3,
 fake.settings["hammerdeck.opt.locate_pointer.seconds"] = 7
 fake.pressHotkey("m")
 ok(fake.mouseLocates[2] == 7, "duration option applies live")
+-- center the pointer on the focused window (the donor's alt+G, now here)
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+fake.pressHotkey("g", { "alt" })
+ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "alt+G centers the pointer on the window")
+ok(fake.mouseLocates[#fake.mouseLocates] == 1, "and flashes the locator")
 registry.setEnabled("locate_pointer", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after locate_pointer test")
 
@@ -1538,12 +1543,6 @@ fake.pressHotkey("2", { "ctrl", "cmd" })
 ok(fake.liveBanner() ~= nil, "re-enter works")
 fake.pressHotkey("2", { "ctrl", "cmd" })
 ok(fake.liveBanner() == nil, "the enter hotkey toggles the mode off")
-
--- center the pointer on the window (the donor's alt+G)
-fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
-fake.pressHotkey("g", { "alt" })
-ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "alt+G centers the pointer")
-ok(fake.mouseLocates[#fake.mouseLocates] == 1, "and flashes the locator")
 
 -- disabling mid-mode leaks nothing
 fake.pressHotkey("2", { "ctrl", "cmd" })
