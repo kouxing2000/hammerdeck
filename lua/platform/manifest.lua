@@ -16,6 +16,12 @@
 --         run = function(ctx) ... end },
 --     }
 --   An action without a defaultTrigger is dormant until the user binds one.
+--   `automatable = true` (optional, default false) lets an action take an
+--   AUTOMATED trigger (schedule / system event) as well as the manual ones
+--   (hotkey / chord). Leave it off for any action that reads the live UI
+--   context (current selection, focused window, clipboard) -- firing those
+--   unattended is nonsensical; the UI then offers only hotkey/chord. Opt in for
+--   context-free state-changers (refresh wallpaper, toggle a setting).
 --
 --   SINGLE-ACTION SUGAR -- the common one-shortcut case, normalized internally
 --   to a one-entry `actions` list (id "main"):

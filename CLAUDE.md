@@ -36,8 +36,8 @@ the bridge + adapter, never reach past the seam.
 -> `LuaState.swift` (Swift bridge) -> macOS APIs
 
 - **lua/features/** -- logic only; declares a manifest (`api = 1`; ACTIONS =
-  `actions = {{id, label, defaultTrigger?, run}, ...}` -- one plugin, several
-  independently rebindable shortcuts; single-action sugar
+  `actions = {{id, label, defaultTrigger?, automatable?, run}, ...}` -- one plugin,
+  several independently rebindable shortcuts; single-action sugar
   `defaultTrigger`+`action(ctx)` still works; SERVICE = `start(ctx)`+optional
   `stop`, may also declare `actions`), receives the scoped `ctx` as its native
   surface. Never touches native APIs or the seam/stateful platform modules
@@ -49,10 +49,18 @@ the bridge + adapter, never reach past the seam.
   or decomposing a time you already got from `ctx.now()`.
 - **lua/platform/manifest.lua** -- validates a feature's declared shape; resolves defaults.
 - **lua/platform/triggers.lua** -- declarative trigger spec -> live binding. Any
-  trigger can fire any action (the core idea). Types: hotkey, chord (prefix
+  trigger can fire any action (the core idea). Types split into MANUAL (a human
+  presses keys, so live UI context is meaningful) -- hotkey, chord (prefix
   hotkey + an ordered follow-key sequence, e.g. cmd+shift+a then b -- a modal
-  layer over Carbon in ChordCenter.swift, permission-free), schedule (everyMin /
-  at), event (sleep|wake|screenLock|screenUnlock|screenChanged).
+  layer over Carbon in ChordCenter.swift, permission-free) -- and AUTOMATED
+  (fires with nobody present, no context) -- schedule (everyMin / at), event
+  (sleep|wake|screenLock|screenUnlock|screenChanged). An action takes automated
+  triggers ONLY if it declares `automatable = true` (default false -- most
+  actions read the live selection/window/clipboard and are nonsensical fired
+  unattended); the Settings picker hides the automated types for a non-
+  automatable action, and the registry seam refuses such a spec on rebind (and
+  silently ignores a stale stored one on load -- falling back to the default).
+  State-changers that need no context (refresh wallpaper, toggle a setting) opt in.
 - **lua/platform/modal.lua** -- modal hotkey groups (enter a keyboard mode:
   bare-key hotkeys live until Escape/exit; banner legend). Pure Lua over
   adapter primitives; reach it via ctx.modal().
@@ -155,7 +163,12 @@ manifest -- a flat `features/<name>.lua` file also works for trivial features).
 Features are **autodiscovered** by scanning `lua/features/` -- just drop the
 folder in (no catalog to edit; menubar "Reload Features" or a restart picks it
 up). Then cover its main flow in `test/run.lua` (register it there directly --
-the test harness uses its own catalog, not disk discovery).
+the test harness uses its own catalog, not disk discovery). If an action is a
+context-free state-changer a user might want to schedule or fire on a system
+event (e.g. bing_daily's "Refresh wallpaper now", which ships with a schedule
+as its default trigger), mark it `automatable = true`;
+otherwise it stays manual-only (hotkey/chord). An automated `defaultTrigger`
+requires `automatable = true` -- manifest.validate rejects the mismatch.
 
 ## Status / roadmap
 
