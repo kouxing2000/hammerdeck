@@ -5,7 +5,8 @@ import AppKit
 // one grouped, in-place-editable grid -- the "see what's used / what's free,
 // and rebind without drilling into each plugin" surface. A spreadsheet of
 // bindings: one checkbox column per modifier (⌃ ⌥ ⇧ ⌘), an editable / capture
-// Key cell, and a Status cell that lights up the conflict tier (green clean /
+// Key cell, a Then cell (type follow keys to make the row a chord), and a
+// Status cell that lights up the conflict tier (green clean /
 // amber soft system-or-app collision / red hard in-app conflict).
 //
 // A plugin with several actions (e.g. Window Snap's 7) becomes a collapsible
@@ -25,6 +26,7 @@ private let kModOrder = ["shift", "ctrl", "alt", "cmd"]
 
 private let kModW: CGFloat = 34
 private let kKeyW: CGFloat = 132
+private let kThenW: CGFloat = 92
 private let kPreviewW: CGFloat = 96
 private let kStatusW: CGFloat = 208
 
@@ -103,6 +105,7 @@ struct ShortcutMapView: View {
                 Text(m.glyph).frame(width: kModW)
             }
             Text("Key").frame(width: kKeyW)
+            Text("Then").frame(width: kThenW)
             Text("Shortcut").frame(width: kPreviewW)
             Text("Status").frame(width: kStatusW, alignment: .leading)
         }
@@ -180,6 +183,7 @@ struct ShortcutMapView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(kMods, id: \.id) { _ in Text("").frame(width: kModW) }
                     Text("--").foregroundStyle(.secondary).frame(width: kKeyW)
+                    Text("--").foregroundStyle(.secondary).frame(width: kThenW)
                     Text("--").foregroundStyle(.secondary).frame(width: kPreviewW)
                     Text("always-on service").foregroundStyle(.secondary)
                         .frame(width: kStatusW, alignment: .leading)
@@ -211,16 +215,19 @@ private struct BindingRow: View {
 
     @State private var mods: Set<String>
     @State private var key: String
+    @State private var follows: String   // chord follow keys (space/comma separated)
     @State private var status: RowStatus
     @State private var capturing = false
     @State private var monitor: Any?
     @State private var isDropTarget = false
     @State private var pillHover = false
+    @FocusState private var focusedField: Field?
+    private enum Field: Hashable { case key, then }
 
-    /// The grid edits HOTKEYS. A chord/schedule/event trigger is shown
-    /// read-only (its mods/key, where it has them) and routed to the precise
-    /// per-feature editor -- the grid would otherwise have to clobber a chord's
-    /// follow-sequence to fit one Key cell.
+    /// The grid edits KEYBOARD triggers: a plain hotkey, or a chord (its prefix
+    /// in the mod/Key cells, its follow sequence in the Then cell). Schedule and
+    /// event triggers aren't keystrokes at all, so they stay read-only here and
+    /// are edited in the precise per-feature editor.
     private let editable: Bool
 
     init(store: SettingsStore, feature: FeatureInfo, action: ActionInfo,
@@ -231,10 +238,12 @@ private struct BindingRow: View {
         self.title = title
         self.indent = indent
         let t = action.trigger
-        self.editable = (t == nil || t?.type == "hotkey")
+        let kind = t?.type
+        self.editable = (kind == nil || kind == "hotkey" || kind == "chord")
         _mods = State(initialValue: Set(t?.mods ?? []))
         _key = State(initialValue: t?.key ?? "")
-        if let t, t.type != "hotkey" {
+        _follows = State(initialValue: (t?.follows ?? []).joined(separator: " "))
+        if let t, !(kind == "hotkey" || kind == "chord") {
             _status = State(initialValue: .info(Self.shortDesc(t)))
         } else {
             _status = State(initialValue: .unbound)
@@ -246,12 +255,20 @@ private struct BindingRow: View {
             nameCell
             ForEach(kMods, id: \.id) { m in modCell(m.id, m.glyph) }
             keyCell
+            thenCell
             previewCell
             statusCell
         }
         .padding(.horizontal, 14).padding(.vertical, 5)
         .background(isDropTarget ? Color.accentColor.opacity(0.15) : Color.clear)
-        .task(id: "\(editable)|\(mods.sorted().joined())|\(key)") {
+        // Commit on focus loss (clicking away), not only on Enter -- otherwise a
+        // typed key/follow-key is shown as OK by the live status recompute but
+        // never persisted. apply() is idempotent, so a focus-out with no change
+        // is a no-op.
+        .onChange(of: focusedField) { f in
+            if f == nil { apply() }
+        }
+        .task(id: "\(editable)|\(mods.sorted().joined())|\(key)|\(follows)") {
             if editable { recomputeStatus() }
         }
         .onDisappear { stopCapture() }
@@ -362,6 +379,7 @@ private struct BindingRow: View {
             HStack(spacing: 4) {
                 TextField(capturing ? "press keys..." : "key", text: $key)
                     .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .key)
                     .frame(width: kKeyW - 32)
                     .onSubmit { apply() }
                 Button {
@@ -376,6 +394,25 @@ private struct BindingRow: View {
             .frame(width: kKeyW)
         } else {
             Text(key.isEmpty ? "--" : key).foregroundStyle(.secondary).frame(width: kKeyW)
+        }
+    }
+
+    /// The Then cell: optional follow keys. Typing here (e.g. "b c") turns the
+    /// row's hotkey prefix into a chord; clearing it makes it a plain hotkey
+    /// again -- the type is inferred, no separate picker. Read-only for the
+    /// non-keyboard (schedule/event) rows.
+    @ViewBuilder private var thenCell: some View {
+        if editable {
+            TextField("then", text: $follows)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .then)
+                .frame(width: kThenW - 10)
+                .onSubmit { apply() }
+                .help("Type follow keys (e.g. b c) to make this a chord; leave empty for a plain hotkey")
+                .frame(width: kThenW)
+        } else {
+            Text(follows.isEmpty ? "--" : follows)
+                .foregroundStyle(.secondary).frame(width: kThenW)
         }
     }
 
@@ -436,19 +473,43 @@ private struct BindingRow: View {
 
     // MARK: editing
 
+    /// Build the row's spec from its live cells. A non-empty Then field makes it
+    /// a CHORD (prefix mods+key, then the follow sequence); an empty Then is a
+    /// plain hotkey. The grid edits both keyboard trigger types; the type is
+    /// inferred so there's no separate picker.
     private func buildSpec() -> TriggerSpec {
         let ordered = kModOrder.filter { mods.contains($0) }
-        return TriggerSpec(type: "hotkey", mods: ordered,
-                           key: key.trimmingCharacters(in: .whitespaces).lowercased())
+        let prefixKey = key.trimmingCharacters(in: .whitespaces).lowercased()
+        let followKeys = follows
+            .split(whereSeparator: { $0 == " " || $0 == "," })
+            .map { $0.lowercased() }
+        if followKeys.isEmpty {
+            return TriggerSpec(type: "hotkey", mods: ordered, key: prefixKey)
+        }
+        return TriggerSpec(type: "chord", mods: ordered, key: prefixKey, follows: followKeys)
     }
 
-    /// Apply the current mods+key as a hotkey. A hard conflict (registry
-    /// refusal) shows red and is NOT persisted; a soft collision shows amber but
-    /// still binds. An empty key just parks the row as unbound.
+    /// Apply the current mods+key (+ follow keys = chord) as the trigger. A hard
+    /// conflict (registry refusal) shows red and is NOT persisted; a soft
+    /// collision shows amber but still binds. An empty key just parks the row as
+    /// unbound. Idempotent: if the built spec already matches what's stored
+    /// (e.g. a focus-out with no edit), it just refreshes status, no rebind.
     private func apply() {
         guard editable else { return }
         if key.trimmingCharacters(in: .whitespaces).isEmpty { status = .unbound; return }
-        if let reason = store.setTrigger(feature.id, action.id, buildSpec()) {
+        let spec = buildSpec()
+        let current = store.features.first { $0.id == feature.id }?
+            .actions.first { $0.id == action.id }?.trigger
+        // No-op if the built spec already matches what's stored. Compare mods as
+        // a SET: buildSpec orders them via kModOrder, but a never-edited default
+        // carries them in the feature's declared order, so an ordered == would
+        // false-negative and rebind needlessly on a plain focus-out.
+        if let current, current.type == spec.type,
+           Set(current.mods) == Set(spec.mods),
+           current.key == spec.key, current.follows == spec.follows {
+            recomputeStatus(); return
+        }
+        if let reason = store.setTrigger(feature.id, action.id, spec) {
             status = .hard(reason)
         } else {
             recomputeStatus()
@@ -461,6 +522,7 @@ private struct BindingRow: View {
             .actions.first { $0.id == action.id }?.trigger
         mods = Set(t?.mods ?? [])
         key = t?.key ?? ""
+        follows = (t?.follows ?? []).joined(separator: " ")
         recomputeStatus()
     }
 

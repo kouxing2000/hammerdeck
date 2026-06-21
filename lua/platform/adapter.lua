@@ -36,8 +36,10 @@ end
 -- bare keys pressed after it (e.g. {"b"} for cmd+shift+a then b, or {"b","c"}).
 -- Permission-free: the prefix is a normal global hotkey, and the follow keys
 -- are registered transiently only while the prefix has armed the chord mode.
-function adapter.bindChord(mods, key, follows, fn)
-    return handleFor(native.bind_chord(mods or {}, key, follows or {}, fn))
+-- `label` (optional): the action's human name, shown in the which-key hint that
+-- appears after the prefix arms (so a chord menu is discoverable, not memorized).
+function adapter.bindChord(mods, key, follows, fn, label)
+    return handleFor(native.bind_chord(mods or {}, key, follows or {}, fn, label))
 end
 
 function adapter.everySeconds(n, fn)

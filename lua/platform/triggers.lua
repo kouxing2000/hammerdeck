@@ -139,16 +139,17 @@ function triggers.decode(str)
     return nil
 end
 
--- spec: trigger table; action: function to run when it fires.
+-- spec: trigger table; action: function to run when it fires. `label` (optional):
+-- the action's human name, used only by chords for the which-key hint.
 -- returns a handle with .stop()
-function triggers.bind(spec, action)
+function triggers.bind(spec, action, label)
     assert(type(spec) == "table" and spec.type, "trigger spec needs a type")
 
     if spec.type == "hotkey" then
         return adapter.bindHotkey(spec.mods or {}, spec.key, action)
 
     elseif spec.type == "chord" then
-        return adapter.bindChord(spec.mods or {}, spec.key, spec.follows or {}, action)
+        return adapter.bindChord(spec.mods or {}, spec.key, spec.follows or {}, action, label)
 
     elseif spec.type == "schedule" then
         if spec.everyMin then

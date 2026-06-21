@@ -26,6 +26,7 @@ final class ChordCenter {
     private struct Chord {
         let id: UInt32
         let follows: [String]      // ordered, lowercased follow-key names
+        let label: String          // action label, shown in the which-key hint
         let handler: () -> Void
     }
     private struct Prefix: Hashable {
@@ -44,12 +45,23 @@ final class ChordCenter {
     private var armedPos = 0
     private var armedUnbinds: [() -> Void] = []
     private var armedTimer: Timer?
+    private var armedDeadline: Date?   // when the current level times out (for the hint bar)
+
+    // Which-key hint state. The hint shows after a short delay so an expert who
+    // types the follow key immediately never sees it (no flicker); a hesitater
+    // gets the menu. The panel instance is reused across arms.
+    private var hintPanel: ChordHintPanel?
+    private var hintTimer: Timer?
+    private var hintShown = false
+    /// Delay from arming to showing the hint. Under `timeout` so it's useful.
+    var hintDelay: TimeInterval = 0.35
 
     /// Register a chord. Returns its id, or nil if the prefix key or any follow
     /// key is unknown (or there are no follow keys -- that would be a plain
-    /// hotkey, which callers should use instead).
+    /// hotkey, which callers should use instead). `label` names the action in
+    /// the which-key hint.
     func bind(mods: [String], key: String, follows: [String],
-              handler: @escaping () -> Void) -> UInt32? {
+              label: String = "", handler: @escaping () -> Void) -> UInt32? {
         guard !follows.isEmpty else { return nil }
         guard HotkeyCenter.keyCodes[key.lowercased()] != nil else { return nil }
         for f in follows {
@@ -60,7 +72,8 @@ final class ChordCenter {
 
         let prefix = Prefix(mods: Self.canonicalMods(mods), key: key.lowercased())
         let id = nextId; nextId += 1
-        let chord = Chord(id: id, follows: follows.map { $0.lowercased() }, handler: handler)
+        let chord = Chord(id: id, follows: follows.map { $0.lowercased() },
+                          label: label, handler: handler)
 
         // Register the prefix hotkey once; later chords on the same prefix just
         // join the set. Bail (without consuming the id slot's side effects) if
@@ -107,6 +120,7 @@ final class ChordCenter {
         armedPos = 0
         registerLevel()
         startTimeout()
+        scheduleHint()
     }
 
     /// Register the distinct follow keys live at the current position, plus
@@ -150,6 +164,10 @@ final class ChordCenter {
         armedPos = pos
         registerLevel()
         startTimeout()
+        // If the hint is already up, update it to the new level immediately;
+        // otherwise keep respecting the delay (an expert mid-sequence still
+        // never sees it).
+        if hintShown { presentHint() } else { scheduleHint() }
     }
 
     private func startTimeout() {
@@ -158,6 +176,7 @@ final class ChordCenter {
         }
         RunLoop.main.add(t, forMode: .common)
         armedTimer = t
+        armedDeadline = Date().addingTimeInterval(timeout)
     }
 
     private func unregisterLevel() {
@@ -167,10 +186,55 @@ final class ChordCenter {
 
     private func disarm() {
         armedTimer?.invalidate(); armedTimer = nil
+        hintTimer?.invalidate(); hintTimer = nil
+        if hintShown { hintPanel?.close(); hintShown = false }
         unregisterLevel()
         armedPrefix = nil
         armedCandidates = []
         armedPos = 0
+    }
+
+    // MARK: - Which-key hint
+
+    /// Show the hint after `hintDelay`, reading live state when it fires.
+    private func scheduleHint() {
+        hintTimer?.invalidate()
+        let t = Timer(timeInterval: hintDelay, repeats: false) { _ in
+            MainActor.assumeIsolated { ChordCenter.shared.presentHint() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        hintTimer = t
+    }
+
+    /// Render (or refresh) the hint for the current level. No rows -> nothing.
+    private func presentHint() {
+        guard let prefix = armedPrefix else { return }
+        let rows = hintRows()
+        guard !rows.isEmpty else { return }
+        if hintPanel == nil { hintPanel = ChordHintPanel() }
+        // Remaining time on the current level so the bar depletes in step with
+        // the real timeout (and ends exactly when it auto-disarms).
+        let remaining = max(0, armedDeadline?.timeIntervalSinceNow ?? timeout)
+        hintPanel?.update(prefixMods: prefix.mods, prefixKey: prefix.key, rows: rows,
+                          remaining: remaining, total: timeout)
+        hintShown = true
+    }
+
+    /// The distinct follow keys live at the current level, each labelled: a key
+    /// that completes a chord here shows that action's label; a key that only
+    /// descends deeper shows "more...". Sorted for a stable order.
+    private func hintRows() -> [ChordHintPanel.Row] {
+        var byKey: [String: [Chord]] = [:]
+        for c in armedCandidates where armedPos < c.follows.count {
+            byKey[c.follows[armedPos], default: []].append(c)
+        }
+        return byKey.keys.sorted().map { k in
+            let cs = byKey[k]!
+            if let done = cs.first(where: { armedPos + 1 == $0.follows.count }) {
+                return ChordHintPanel.Row(key: k, label: done.label.isEmpty ? "(action)" : done.label)
+            }
+            return ChordHintPanel.Row(key: k, label: "more...")
+        }
     }
 
     // MARK: - Helpers

@@ -43,8 +43,12 @@ extension Native {
             return luaError(L, "bind_chord: key must be a string")
         }
         let follows = LuaState.stringArray(L, 3)
+        // Optional 5th arg: the action label, shown in the which-key hint. Read
+        // before makeRef just to keep the positional reads in argument order.
+        let label = LuaState.string(L, 5) ?? ""
         let ref = lua.makeRef(at: 4)
         guard let chordId = ChordCenter.shared.bind(mods: mods, key: key, follows: follows,
+                                                    label: label,
                                                     handler: { Native.shared.lua.callRef(ref) }) else {
             lua.releaseRef(ref)
             return luaError(L, "bind_chord: could not register chord "

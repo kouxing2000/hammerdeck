@@ -226,7 +226,8 @@ local function bindFeature(m)
             local spec = triggerFor(m, a)
             if spec then
                 b.actionHandles[a.id] =
-                    scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, ctx) end))
+                    scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, ctx) end,
+                        a.label or a.id))
                 adapter.log(m.id .. "." .. a.id .. ": bound (" .. spec.type .. ")")
             else
                 adapter.log(m.id .. "." .. a.id .. ": no trigger; manual only")
@@ -325,6 +326,18 @@ function registry.triggerConflict(id, actionId, spec)
                     if other and triggers.conflicts(spec, other) then
                         local who = m.name
                         if #m.actions > 1 then who = who .. ": " .. a.label end
+                        -- Name WHY it clashes (and, for the common case, the fix)
+                        -- rather than a flat "already bound": a plain hotkey on a
+                        -- chord's prefix just needs a follow key to coexist.
+                        if spec.type == "hotkey" and other.type == "chord" then
+                            return "this combo is the chord prefix for '" .. who
+                                .. "' -- add a follow key to make it a chord"
+                        elseif spec.type == "chord" and other.type == "hotkey" then
+                            return "the chord prefix is already the hotkey for '" .. who .. "'"
+                        elseif spec.type == "chord" and other.type == "chord" then
+                            return "chord clashes with '" .. who
+                                .. "' (same prefix, overlapping follow keys)"
+                        end
                         return "shortcut already bound to '" .. who .. "'"
                     end
                 end
@@ -378,7 +391,8 @@ function registry.setTrigger(id, actionId, spec)
     if b then
         local okBind, err = pcall(function()
             b.actionHandles[a.id] =
-                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end))
+                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end,
+                    a.label or a.id))
         end)
         if not okBind then return false, "bind failed: " .. tostring(err) end
     end
@@ -400,7 +414,8 @@ function registry.clearTrigger(id, actionId)
     end
     if b and a.defaultTrigger then
         b.actionHandles[a.id] =
-            b.scope.adopt(triggers.bind(a.defaultTrigger, function() runActionGuarded(m, a, b.ctx) end))
+            b.scope.adopt(triggers.bind(a.defaultTrigger, function() runActionGuarded(m, a, b.ctx) end,
+                a.label or a.id))
     end
     return true
 end
@@ -442,7 +457,8 @@ function registry.swapTriggers(idA, actA, idB, actB)
         if not spec then return end
         local ok, err = pcall(function()
             b.actionHandles[a.id] =
-                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end))
+                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end,
+                    a.label or a.id))
         end)
         if not ok then adapter.log(m.id .. "." .. a.id .. ": swap rebind failed: " .. tostring(err)) end
     end
