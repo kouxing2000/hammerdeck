@@ -281,6 +281,16 @@ private struct TriggerEditor: View {
     @State private var event: String
     @State private var conflict: String?
     @State private var advisories: [String] = []   // soft system/common-app warnings
+    @State private var previewHover = false
+
+    // The seeded baseline -- Apply stays disabled until the edit differs from it.
+    private let seedMode: TriggerMode
+    private let seedMods: Set<String>
+    private let seedKey: String
+    private let seedFollows: String
+    private let seedEveryMin: Int
+    private let seedAt: String
+    private let seedEvent: String
 
     init(store: SettingsStore, feature: FeatureInfo, action: ActionInfo) {
         self.store = store
@@ -294,62 +304,54 @@ private struct TriggerEditor: View {
         case "event":    m = .event
         default:         m = .hotkey
         }
+        let follows = t.follows.joined(separator: " ")
         _mode = State(initialValue: m)
         _mods = State(initialValue: Set(t.mods))
         _key = State(initialValue: t.key)
-        _follows = State(initialValue: t.follows.joined(separator: " "))
+        _follows = State(initialValue: follows)
         _everyMin = State(initialValue: t.everyMin ?? 25)
         _at = State(initialValue: t.at ?? "09:00")
         _event = State(initialValue: t.event ?? "wake")
         _conflict = State(initialValue: nil)
+        seedMode = m
+        seedMods = Set(t.mods)
+        seedKey = t.key
+        seedFollows = follows
+        seedEveryMin = t.everyMin ?? 25
+        seedAt = t.at ?? "09:00"
+        seedEvent = t.event ?? "wake"
     }
 
     var body: some View {
+        // Action-specific animated preview -- shows what THIS shortcut does
+        // (window features map each action to its window move; others fall back
+        // to the feature's gallery loop). Plays on hover, like the gallery.
+        if FeatureArchetype.hasActionPreview(feature: feature, actionId: action.id) {
+            FeatureArchetype.actionScene(feature: feature, actionId: action.id, playing: previewHover)
+                .frame(height: 54)
+                .frame(maxWidth: .infinity)
+                .onHover { previewHover = $0 }
+        }
+
         Picker("Type", selection: $mode) {
             ForEach(TriggerMode.allCases) { Text($0.label).tag($0) }
         }
 
         switch mode {
         case .hotkey:
-            LabeledContent("Modifiers") {
-                HStack(spacing: 4) {
-                    ForEach(allMods, id: \.id) { mod in
-                        Toggle(mod.symbol, isOn: Binding(
-                            get: { mods.contains(mod.id) },
-                            set: { on in if on { mods.insert(mod.id) } else { mods.remove(mod.id) } }
-                        ))
-                        .toggleStyle(.button)
-                    }
-                }
-            }
-            LabeledContent("Key") {
-                TextField("e.g. j", text: $key)
-                    .frame(width: 70)
-                    .multilineTextAlignment(.trailing)
+            LabeledContent("Shortcut") {
+                ShortcutRecorder(mods: $mods, key: $key)
             }
         case .chord:
-            LabeledContent("Prefix modifiers") {
-                HStack(spacing: 4) {
-                    ForEach(allMods, id: \.id) { mod in
-                        Toggle(mod.symbol, isOn: Binding(
-                            get: { mods.contains(mod.id) },
-                            set: { on in if on { mods.insert(mod.id) } else { mods.remove(mod.id) } }
-                        ))
-                        .toggleStyle(.button)
-                    }
-                }
-            }
-            LabeledContent("Prefix key") {
-                TextField("e.g. a", text: $key)
-                    .frame(width: 70)
-                    .multilineTextAlignment(.trailing)
+            LabeledContent("Prefix") {
+                ShortcutRecorder(mods: $mods, key: $key, placeholder: "Record prefix")
             }
             LabeledContent("Then keys") {
                 TextField("e.g. b c", text: $follows)
                     .frame(width: 120)
                     .multilineTextAlignment(.trailing)
             }
-            Text("Press the prefix, then the follow keys in order (e.g. ⌘⇧A then B).")
+            Text("Record the prefix, then type the follow keys in order (e.g. ⌘⇧A then B).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .scheduleEvery:
@@ -385,7 +387,13 @@ private struct TriggerEditor: View {
 
         HStack {
             Button("Apply") { conflict = store.setTrigger(feature.id, action.id, buildSpec()) }
-                .disabled(applyDisabled)
+                .disabled(applyDisabled || !dirty || conflict != nil)
+            // Once the edit differs from what's applied, let the user back out
+            // in place (discard the unapplied change) without navigating away.
+            if dirty {
+                Button("Revert") { revertEdit() }
+                    .help("Discard the unapplied change and restore the current shortcut")
+            }
             if action.triggerOverridden {
                 Button("Reset to default") {
                     store.clearTrigger(feature.id, action.id)
@@ -406,8 +414,17 @@ private struct TriggerEditor: View {
     }
 
     private func refreshAdvisories() {
-        advisories = (mode == .hotkey || mode == .chord)
-            ? store.shortcutAdvisories(buildSpec()) : []
+        let isKeyish = (mode == .hotkey || mode == .chord)
+        advisories = isKeyish ? store.shortcutAdvisories(buildSpec()) : []
+        // Surface a hard in-app conflict LIVE (the moment a taken combo is
+        // recorded/typed), not only after Apply -- the recorder now captures
+        // such combos instead of firing them, so the warning is how the user
+        // learns it's taken. Only for a complete combo; schedule/event keep the
+        // Apply-set value.
+        if isKeyish {
+            conflict = applyDisabled ? nil
+                : store.triggerConflict(feature.id, action.id, buildSpec())
+        }
     }
 
     private var applyDisabled: Bool {
@@ -418,6 +435,38 @@ private struct TriggerEditor: View {
         case .scheduleAt: return at.range(of: #"^\d{1,2}:\d{2}$"#, options: .regularExpression) == nil
         default:          return false
         }
+    }
+
+    /// True once the edit differs from the seeded baseline -- Apply is grayed
+    /// until something actually changes (re-seeds on remount after a successful
+    /// apply, so it grays again).
+    private var dirty: Bool {
+        if mode != seedMode { return true }
+        switch mode {
+        case .hotkey:
+            return mods != seedMods
+                || key.trimmingCharacters(in: .whitespaces) != seedKey
+        case .chord:
+            return mods != seedMods
+                || key.trimmingCharacters(in: .whitespaces) != seedKey
+                || follows != seedFollows
+        case .scheduleEvery: return everyMin != seedEveryMin
+        case .scheduleAt:    return at != seedAt
+        case .event:         return event != seedEvent
+        }
+    }
+
+    /// Discard the unapplied edit -- restore every field to the seeded baseline
+    /// (the currently-applied trigger). Leaves persistence untouched.
+    private func revertEdit() {
+        mode = seedMode
+        mods = seedMods
+        key = seedKey
+        follows = seedFollows
+        everyMin = seedEveryMin
+        at = seedAt
+        event = seedEvent
+        conflict = nil
     }
 
     /// The chord follow sequence parsed from the space-separated field.

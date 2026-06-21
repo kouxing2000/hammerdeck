@@ -468,26 +468,16 @@ private struct BindingRow: View {
 
     private func startCapture() {
         capturing = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { ev in
-            if ev.keyCode == 53 { stopCapture(); return nil }   // Escape cancels
-            var m: Set<String> = []
-            let f = ev.modifierFlags
-            if f.contains(.control) { m.insert("ctrl") }
-            if f.contains(.option)  { m.insert("alt") }
-            if f.contains(.shift)   { m.insert("shift") }
-            if f.contains(.command) { m.insert("cmd") }
-            let name = Native.codeToKeyName[Int(ev.keyCode)]
-                ?? (ev.charactersIgnoringModifiers ?? "").lowercased()
+        monitor = ShortcutCapture.begin(onKey: { m, name in
             mods = m
             key = name
             stopCapture()
             apply()
-            return nil   // swallow the captured event
-        }
+        }, onCancel: { stopCapture() })
     }
 
     private func stopCapture() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
+        ShortcutCapture.end(monitor)
         monitor = nil
         capturing = false
     }

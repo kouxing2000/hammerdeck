@@ -108,6 +108,61 @@ enum FeatureArchetype {
     }
 }
 
+// MARK: - Per-action preview (the trigger editor)
+
+extension FeatureArchetype {
+    /// Whether the (feature, action) pair is worth a preview frame in the trigger
+    /// editor: an action-specific window move, or any feature with a non-`.none`
+    /// archetype (which falls back to the feature-level loop).
+    static func hasActionPreview(feature: FeatureInfo, actionId: String) -> Bool {
+        if windowActionSample(feature: feature, actionId: actionId) != nil { return true }
+        if case .none = of(feature) { return false }
+        return true
+    }
+
+    /// A preview specialized to ONE action when it maps to a distinct window move
+    /// (window_snap's direction/maximize/throw actions); otherwise the feature's
+    /// usual gallery loop. Lets the editor show "what THIS shortcut does".
+    @MainActor @ViewBuilder
+    static func actionScene(feature: FeatureInfo, actionId: String, playing: Bool) -> some View {
+        if let sample = windowActionSample(feature: feature, actionId: actionId) {
+            WindowArrangeArchetypeScene(sample: sample, playing: playing)
+        } else {
+            of(feature).scene(playing: playing)
+        }
+    }
+
+    /// window_snap's per-action sample: the window RESTS in the action's end
+    /// state (so the still frame already shows where it lands) and, while
+    /// playing, pulses to a neutral box and back so the move reads. Returns nil
+    /// for anything without a distinct window-rect end state (caller falls back).
+    private static func windowActionSample(feature: FeatureInfo,
+                                           actionId: String) -> WindowArrangeSample? {
+        guard feature.id == "window_snap" else { return nil }
+        let neutral = CGRect(x: 0.28, y: 0.28, width: 0.44, height: 0.44)
+        func onScreen(_ target: CGRect) -> WindowArrangeSample {
+            WindowArrangeSample(moves: [WindowArrangeMove(target), WindowArrangeMove(neutral)],
+                                screenCount: 1, legend: nil)
+        }
+        switch actionId {
+        case "left":       return onScreen(CGRect(x: 0,   y: 0,   width: 0.5, height: 1))
+        case "right":      return onScreen(CGRect(x: 0.5, y: 0,   width: 0.5, height: 1))
+        case "top":        return onScreen(CGRect(x: 0,   y: 0,   width: 1,   height: 0.5))
+        case "bottom":     return onScreen(CGRect(x: 0,   y: 0.5, width: 1,   height: 0.5))
+        case "toggle_max": return onScreen(CGRect(x: 0,   y: 0,   width: 1,   height: 1))
+        case "screen_next":
+            return WindowArrangeSample(
+                moves: [WindowArrangeMove(neutral, 1), WindowArrangeMove(neutral, 0)],
+                screenCount: 2, legend: nil)
+        case "screen_prev":
+            return WindowArrangeSample(
+                moves: [WindowArrangeMove(neutral, 0), WindowArrangeMove(neutral, 1)],
+                screenCount: 2, legend: nil)
+        default:           return nil
+        }
+    }
+}
+
 // MARK: - Hover-gated heartbeat
 
 /// A periodic tick that runs ONLY while `active` (card hover). The gallery shows
@@ -315,67 +370,94 @@ private struct ChooserArchetypeScene: View {
 
 // MARK: - Window-arrange archetype (snap AND modal -- they share the effect)
 
-/// The per-feature content the window-arrange scene plays: a sequence of target
-/// rects the window springs through, and an optional mode legend. window_snap
-/// shows basic half/quarter snaps; window_modal shows a richer sequence (its
-/// superset: snap + center + resize + maximize) plus a "mode" chip -- same
-/// effect family, different repertoire, so they share one scene.
+/// One step in a window-arrange sequence: a normalized target rect plus the
+/// display it lives on (0-based). Single-display samples leave `screen` at 0.
+struct WindowArrangeMove {
+    let rect: CGRect       // normalized within ITS display (origin top-left)
+    let screen: Int        // which display (0-based); 0 for single-screen samples
+    init(_ rect: CGRect, _ screen: Int = 0) { self.rect = rect; self.screen = screen }
+}
+
+/// The per-feature content the window-arrange scene plays: a sequence of moves
+/// the window springs through, the display count to render, and an optional mode
+/// legend. window_snap shows half/maximize snaps and a cross-screen throw across
+/// two displays; window_modal shows a richer single-display sequence (snap +
+/// center + resize + maximize + quarter) plus a "mode" chip -- same effect
+/// family, different repertoire, so they share one scene.
 struct WindowArrangeSample {
-    let moves: [CGRect]    // normalized target rects (origin top-left)
+    let moves: [WindowArrangeMove]
+    let screenCount: Int   // displays the scene renders side by side (1 or 2)
     let legend: String?    // non-nil => render a modal-mode chip (window_modal)
 
-    /// window_snap: direct-hotkey half/quarter/maximize snaps.
+    /// window_snap: direct-hotkey halves + maximize, then THROW to the 2nd
+    /// display (window_snap's marquee move -- the only sample that needs two
+    /// screens). No quarter: window_snap has no quarter action (that's modal).
     static let snap = WindowArrangeSample(
         moves: [
-            CGRect(x: 0,   y: 0,   width: 0.5, height: 1),    // left half
-            CGRect(x: 0.5, y: 0,   width: 0.5, height: 1),    // right half
-            CGRect(x: 0,   y: 0,   width: 1,   height: 1),    // maximize
-            CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5),  // bottom-right quarter
+            WindowArrangeMove(CGRect(x: 0,   y: 0, width: 0.5, height: 1)),       // left half
+            WindowArrangeMove(CGRect(x: 0.5, y: 0, width: 0.5, height: 1)),       // right half
+            WindowArrangeMove(CGRect(x: 0,   y: 0, width: 1,   height: 1)),       // maximize
+            WindowArrangeMove(CGRect(x: 0.15, y: 0.15, width: 0.7, height: 0.7), 1), // throw to screen 2
         ],
+        screenCount: 2,
         legend: nil)
 
     /// window_modal: the superset -- snap, then center, expand, maximize, quarter.
-    /// The legend (with key hints) slides in as the modal ENTRY and stays while
-    /// the mode is active, mirroring the real feature's persistent legend banner.
+    /// Single display: its sample doesn't include a cross-screen move, and the
+    /// legend chip is what distinguishes it. The legend (with key hints) marks
+    /// the modal ENTRY and stays while the mode is active, mirroring the real
+    /// feature's persistent legend banner.
     static let windowMode = WindowArrangeSample(
         moves: [
-            CGRect(x: 0,    y: 0,   width: 0.5,  height: 1),     // snap left
-            CGRect(x: 0.27, y: 0.2, width: 0.46, height: 0.6),   // center (floating)
-            CGRect(x: 0.12, y: 0.1, width: 0.76, height: 0.8),   // expand a step
-            CGRect(x: 0,    y: 0,   width: 1,    height: 1),     // maximize
-            CGRect(x: 0.5,  y: 0,   width: 0.5,  height: 0.5),   // top-right quarter
+            WindowArrangeMove(CGRect(x: 0,    y: 0,   width: 0.5,  height: 1)),    // snap left
+            WindowArrangeMove(CGRect(x: 0.27, y: 0.2, width: 0.46, height: 0.6)),  // center (floating)
+            WindowArrangeMove(CGRect(x: 0.12, y: 0.1, width: 0.76, height: 0.8)),  // expand a step
+            WindowArrangeMove(CGRect(x: 0,    y: 0,   width: 1,    height: 1)),    // maximize
+            WindowArrangeMove(CGRect(x: 0.5,  y: 0,   width: 0.5,  height: 0.5)),  // top-right quarter
         ],
+        screenCount: 1,
         legend: "Window Mode · H J K L · esc")
 }
 
-/// A stylized desktop with a single window that springs through the sample's
-/// move sequence, looping. Shared by window_snap and window_modal (same effect:
-/// arranging a window). Plays only while `playing` (hover); at rest it shows the
-/// first move (the calm frame). window_modal also shows a "mode" chip.
+/// A stylized desktop -- one or two displays side by side -- with a single
+/// window that springs through the sample's move sequence, looping. Shared by
+/// window_snap (two displays; the last move THROWS the window to the 2nd) and
+/// window_modal (single display). Plays only while `playing` (hover); at rest it
+/// shows the first move (the calm frame). window_modal also shows a "mode" chip.
 private struct WindowArrangeArchetypeScene: View {
     let sample: WindowArrangeSample
     let playing: Bool
 
     @State private var step = 0
 
-    private var target: CGRect { sample.moves[step % sample.moves.count] }
+    private var move: WindowArrangeMove { sample.moves[step % sample.moves.count] }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
-            let gap: CGFloat = 3
+            let gap: CGFloat = 3          // window inset within its display
+            let screenGap: CGFloat = 6    // gap between the two displays
+            let n = max(1, sample.screenCount)
+            let dispW = (w - screenGap * CGFloat(n - 1)) / CGFloat(n)
+            let r = move.rect
+            let s = min(max(move.screen, 0), n - 1)
+            let dispX = CGFloat(s) * (dispW + screenGap)
             ZStack(alignment: .topLeading) {
-                // the desktop
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(LinearGradient(colors: [.secondary.opacity(0.10), .secondary.opacity(0.04)],
-                                         startPoint: .top, endPoint: .bottom))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.18), lineWidth: 1))
+                // the desktop(s)
+                ForEach(0..<n, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(LinearGradient(colors: [.secondary.opacity(0.10), .secondary.opacity(0.04)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.18), lineWidth: 1))
+                        .frame(width: dispW, height: h)
+                        .offset(x: CGFloat(i) * (dispW + screenGap), y: 0)
+                }
 
-                // the window that arranges
+                // the window that arranges (hops between displays on a throw)
                 window
-                    .frame(width: max(0, target.width * w - gap * 2),
-                           height: max(0, target.height * h - gap * 2))
-                    .offset(x: target.minX * w + gap, y: target.minY * h + gap)
+                    .frame(width: max(0, r.width * dispW - gap * 2),
+                           height: max(0, r.height * h - gap * 2))
+                    .offset(x: dispX + r.minX * dispW + gap, y: r.minY * h + gap)
                     .animation(.spring(response: 0.4, dampingFraction: 0.72), value: step)
 
                 // modal indicator: the legend chip is PERSISTENT -- it marks the

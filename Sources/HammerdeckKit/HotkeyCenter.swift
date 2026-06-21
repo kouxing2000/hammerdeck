@@ -12,6 +12,9 @@ final class HotkeyCenter {
     private var handlers: [UInt32: () -> Void] = [:]
     private var releaseHandlers: [UInt32: () -> Void] = [:]
     private var refs: [UInt32: EventHotKeyRef] = [:]
+    private var carbonSpecs: [UInt32: (keyCode: UInt32, mods: UInt32)] = [:]  // for re-register on resume
+    private var suspendedIds: Set<UInt32> = []   // ids parked while suspended
+    private var suspendDepth = 0
     private var nextId: UInt32 = 1
     private var installed = false
 
@@ -69,22 +72,62 @@ final class HotkeyCenter {
 
         let id = nextId
         nextId += 1
-        var ref: EventHotKeyRef?
-        let hkID = EventHotKeyID(signature: OSType(0x48_44_4B_59) /* 'HDKY' */, id: id)
-        let status = RegisterEventHotKey(UInt32(keyCode), carbonMods, hkID,
-                                         GetEventDispatcherTarget(), 0, &ref)
-        guard status == noErr, let hotkeyRef = ref else { return nil }
+        // While suspended (a recorder is capturing), park the binding without a
+        // live Carbon ref so it can't fire mid-capture; resume() registers it.
+        if suspendDepth == 0 {
+            var ref: EventHotKeyRef?
+            let hkID = EventHotKeyID(signature: OSType(0x48_44_4B_59) /* 'HDKY' */, id: id)
+            let status = RegisterEventHotKey(UInt32(keyCode), carbonMods, hkID,
+                                             GetEventDispatcherTarget(), 0, &ref)
+            guard status == noErr, let hotkeyRef = ref else { return nil }
+            refs[id] = hotkeyRef
+        } else {
+            suspendedIds.insert(id)
+        }
 
         handlers[id] = handler
         if let onRelease { releaseHandlers[id] = onRelease }
-        refs[id] = hotkeyRef
+        carbonSpecs[id] = (UInt32(keyCode), carbonMods)
         return { [weak self] in
-            guard let self, let r = self.refs[id] else { return }
-            UnregisterEventHotKey(r)
+            guard let self else { return }
+            if let r = self.refs[id] { UnregisterEventHotKey(r) }
             self.refs[id] = nil
+            self.suspendedIds.remove(id)
             self.handlers[id] = nil
             self.releaseHandlers[id] = nil
+            self.carbonSpecs[id] = nil
         }
+    }
+
+    /// Temporarily unregister every Carbon hotkey -- used while a shortcut
+    /// recorder captures a keystroke, so an already-bound combo falls through to
+    /// normal key dispatch (the recorder) instead of firing its action. Chords
+    /// ride HotkeyCenter too, so this covers them. Balanced and re-entrant: pair
+    /// each `suspend()` with a `resume()`.
+    func suspend() {
+        suspendDepth += 1
+        guard suspendDepth == 1 else { return }
+        for (id, ref) in refs {
+            UnregisterEventHotKey(ref)
+            suspendedIds.insert(id)
+        }
+        refs.removeAll()
+    }
+
+    func resume() {
+        guard suspendDepth > 0 else { return }
+        suspendDepth -= 1
+        guard suspendDepth == 0 else { return }
+        for id in suspendedIds {
+            guard let spec = carbonSpecs[id] else { continue }
+            var ref: EventHotKeyRef?
+            let hkID = EventHotKeyID(signature: OSType(0x48_44_4B_59), id: id)
+            if RegisterEventHotKey(spec.keyCode, spec.mods, hkID,
+                                   GetEventDispatcherTarget(), 0, &ref) == noErr, let ref {
+                refs[id] = ref
+            }
+        }
+        suspendedIds.removeAll()
     }
 
     /// Carbon virtual key codes, keyed by the lowercase names features use.
