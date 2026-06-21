@@ -110,9 +110,13 @@ return {
     actions = {
         -- id "main" keeps pre-multi-action stored trigger keys valid.
         { id = "main", label = "Switch to a window",
+          description = "Open the window switcher, or cycle forward through windows "
+              .. "when it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "tab" },
           run = function(ctx) jump(ctx, "main", false) end },
         { id = "open_backward", label = "Cycle backward",
+          description = "Open the window switcher, or cycle backward through windows "
+              .. "when it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "`" },
           run = function(ctx) jump(ctx, "open_backward", true) end },
     },

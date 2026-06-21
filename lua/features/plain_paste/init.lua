@@ -53,6 +53,8 @@ return {
     actions = {
         -- id "main" keeps the pre-multi-action stored trigger keys valid.
         { id = "main", label = "Paste as plain text",
+          description = "Strip formatting from the clipboard text, then paste it "
+              .. "with a synthesized cmd+v.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "v" },
           run = function(ctx)
               local text = cleaned(ctx)
@@ -75,6 +77,8 @@ return {
               end)
           end },
         { id = "type", label = "Type clipboard as keystrokes",
+          description = "Type the stripped clipboard text as keystrokes instead "
+              .. "of pasting -- works in paste-blocking fields.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "b" },
           run = function(ctx)
               local text = cleaned(ctx)

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Security
 
 // The config-UI side of the bridge: reads the manifest catalog from the Lua
 // registry, and reads/writes the SAME UserDefaults keys the Lua side uses
@@ -9,7 +10,7 @@ import Combine
 
 struct OptionInfo: Identifiable {
     let key: String
-    let type: String        // bool | int | string | enum | time | appList
+    let type: String        // bool | int | string | enum | time | appList | secret
     let label: String
     let defaultValue: Any?
     let min: Double?
@@ -17,6 +18,15 @@ struct OptionInfo: Identifiable {
     let values: [String]
     let labels: [String]    // enum display labels, parallel to `values` (may be empty)
     let multiline: Bool     // string: render a multi-line text box (one item per line)
+    let defaultLabel: String // appList: name shown for the empty/"default app" choice
+    let hint: String        // optional one-line caption rendered under the control
+    let section: String     // optional group header; options sharing one render together
+    let actionLabel: String // optional: render a button (calls the feature's optionAction)
+    let preview: String     // optional token -> a small animated preview on the row (e.g. "case:upper")
+    let validate: String?   // secret: provider name -> Settings renders a Validate button
+    let gatedBy: String?    // option key whose validation gates this control (grayed until validated)
+    let valuesFrom: String? // enum: option key whose validation supplies dynamic choices
+    let collapsible: Bool   // render the editor inside a collapsed disclosure (keeps tall controls tidy)
     var id: String { key }
 
     init?(_ dict: [String: Any]) {
@@ -30,6 +40,15 @@ struct OptionInfo: Identifiable {
         self.values = (dict["values"] as? [Any])?.compactMap { $0 as? String } ?? []
         self.labels = (dict["labels"] as? [Any])?.compactMap { $0 as? String } ?? []
         self.multiline = dict["multiline"] as? Bool ?? false
+        self.defaultLabel = dict["defaultLabel"] as? String ?? ""
+        self.hint = dict["hint"] as? String ?? ""
+        self.section = dict["section"] as? String ?? ""
+        self.actionLabel = dict["actionLabel"] as? String ?? ""
+        self.preview = dict["preview"] as? String ?? ""
+        self.validate = dict["validate"] as? String
+        self.gatedBy = dict["gatedBy"] as? String
+        self.valuesFrom = dict["valuesFrom"] as? String
+        self.collapsible = dict["collapsible"] as? Bool ?? false
     }
 
     /// The display label for an enum value -- the parallel `labels` entry when
@@ -99,6 +118,7 @@ struct TriggerSpec: Equatable {
 struct ActionInfo: Identifiable {
     let id: String
     let label: String
+    let description: String             // optional one-line "what this action does"
     let trigger: TriggerSpec?           // current (override or default)
     let defaultTrigger: TriggerSpec?    // declared default (may be nil)
     let triggerOverridden: Bool
@@ -112,6 +132,7 @@ struct ActionInfo: Identifiable {
         guard let id = dict["id"] as? String else { return nil }
         self.id = id
         self.label = dict["label"] as? String ?? id
+        self.description = dict["description"] as? String ?? ""
         self.trigger = TriggerSpec(dict["trigger"] as? [String: Any])
         self.defaultTrigger = TriggerSpec(dict["defaultTrigger"] as? [String: Any])
         self.triggerOverridden = dict["triggerOverridden"] as? Bool ?? false
@@ -197,10 +218,24 @@ struct FeatureInfo: Identifiable {
     }
 }
 
+/// Live state of a `validate`-able secret (e.g. an OpenAI key): the transient UI
+/// status shown next to the Validate button. The DURABLE "is it validated" bit
+/// lives in UserDefaults (feature state, so the Lua feature reads it too) -- this
+/// is just the in-session spinner/result for the editor.
+enum ValidationState: Equatable {
+    case idle
+    case validating
+    case ok(String)
+    case failed(String)
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     @Published private(set) var features: [FeatureInfo] = []
     @Published var optionEpoch = 0   // bumped on writes so editors refresh
+    /// Per-secret validation status, keyed by "<featureId>.<secretKey>". Absent =
+    /// fall back to the persisted validated flag (see validationState).
+    @Published var validation: [String: ValidationState] = [:]
 
     /// The feature the embedded Settings tab should focus. The Feature Gallery
     /// sets this before switching to the Settings tab so a card click deep-links
@@ -324,14 +359,26 @@ final class SettingsStore: ObservableObject {
             "require('platform.registry').runAction('\(id)', '\(actionId)'); return true")
     }
 
+    /// Run a feature's option-action (a Settings "Test" button). Fire-and-forget;
+    /// the handler surfaces its own result to the user (alert / app focus).
+    func runOptionAction(_ featureId: String, _ opt: OptionInfo) {
+        _ = try? lua.eval(
+            "require('platform.registry').runOptionAction('\(featureId)', '\(opt.key)'); return true")
+    }
+
     // MARK: - Option values (UserDefaults, same keys as ctx.opt)
 
     private func optKey(_ featureId: String, _ key: String) -> String {
         "hammerdeck.opt.\(featureId).\(key)"
     }
 
-    /// Stored override, or the manifest default.
+    /// Stored override, or the manifest default. `secret`-typed options live in
+    /// the login Keychain (same account namespace ctx.secret reads), never in
+    /// UserDefaults, and have NO manifest default fallback.
     func optionValue(_ featureId: String, _ opt: OptionInfo) -> Any? {
+        if opt.type == "secret" {
+            return KeychainStore.get(optKey(featureId, opt.key))
+        }
         let v = UserDefaults.standard.object(forKey: optKey(featureId, opt.key))
         switch v {
         case let n as NSNumber:
@@ -345,6 +392,19 @@ final class SettingsStore: ObservableObject {
 
     func setOptionValue(_ featureId: String, _ opt: OptionInfo, _ value: Any?) {
         let key = optKey(featureId, opt.key)
+        if opt.type == "secret" {
+            let s = value as? String ?? ""
+            if s.isEmpty { KeychainStore.delete(key) } else { KeychainStore.set(key, s) }
+            // Editing a validatable credential invalidates any prior validation:
+            // re-lock the gated options until the user validates the new key.
+            if opt.validate != nil {
+                UserDefaults.standard.set(false, forKey: validatedStateKey(featureId, opt.key))
+                validation[validationLookupKey(featureId, opt.key)] = .idle
+            }
+            optionEpoch += 1
+            notifyOptionChanged(featureId, opt.key)
+            return
+        }
         switch value {
         case let b as Bool:   UserDefaults.standard.set(b, forKey: key)
         case let d as Double: UserDefaults.standard.set(d, forKey: key)
@@ -357,7 +417,11 @@ final class SettingsStore: ObservableObject {
     }
 
     func resetOption(_ featureId: String, _ opt: OptionInfo) {
-        UserDefaults.standard.removeObject(forKey: optKey(featureId, opt.key))
+        if opt.type == "secret" {
+            KeychainStore.delete(optKey(featureId, opt.key))
+        } else {
+            UserDefaults.standard.removeObject(forKey: optKey(featureId, opt.key))
+        }
         optionEpoch += 1
         notifyOptionChanged(featureId, opt.key)
     }
@@ -370,6 +434,207 @@ final class SettingsStore: ObservableObject {
     }
 
     func isOptionOverridden(_ featureId: String, _ opt: OptionInfo) -> Bool {
-        UserDefaults.standard.object(forKey: optKey(featureId, opt.key)) != nil
+        if opt.type == "secret" {
+            return KeychainStore.get(optKey(featureId, opt.key)) != nil
+        }
+        return UserDefaults.standard.object(forKey: optKey(featureId, opt.key)) != nil
+    }
+
+    // MARK: - Credential validation (validate-able secrets)
+
+    // The DURABLE validated flag + fetched choices live in the feature-STATE
+    // namespace (hammerdeck.state.<id>.<key>__*), not the option namespace, so:
+    //  - the Lua feature reads the flag via ctx.getState("<key>__validated"), and
+    //  - they are never confused with a user-set option override.
+    private func validatedStateKey(_ id: String, _ secretKey: String) -> String {
+        "hammerdeck.state.\(id).\(secretKey)__validated"
+    }
+    private func modelsStateKey(_ id: String, _ secretKey: String) -> String {
+        "hammerdeck.state.\(id).\(secretKey)__models"
+    }
+    private func validationLookupKey(_ id: String, _ secretKey: String) -> String {
+        "\(id).\(secretKey)"
+    }
+
+    /// Has this secret been successfully validated (and not edited since)? Reads
+    /// the durable flag, so it survives relaunch. Powers gatedBy graying.
+    func isValidated(_ featureId: String, _ secretKey: String) -> Bool {
+        UserDefaults.standard.bool(forKey: validatedStateKey(featureId, secretKey))
+    }
+
+    /// The dynamic choices a `valuesFrom` enum should show -- the list fetched by
+    /// the last successful validate, or [] before one (caller falls back to seed).
+    func fetchedChoices(_ featureId: String, _ secretKey: String) -> [String] {
+        guard let s = UserDefaults.standard.string(forKey: modelsStateKey(featureId, secretKey)),
+              let data = s.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return [] }
+        return arr.compactMap { $0 as? String }
+    }
+
+    /// The editor's status for a secret: the live in-session state if any, else
+    /// derived from the durable validated flag (so a validated key reads "ok"
+    /// after a relaunch without re-checking the network).
+    func validationState(_ featureId: String, _ secretKey: String) -> ValidationState {
+        if let s = validation[validationLookupKey(featureId, secretKey)] { return s }
+        return isValidated(featureId, secretKey) ? .ok("Validated") : .idle
+    }
+
+    /// Validate a secret against its provider (opt.validate), then on success
+    /// record the durable flag + fetched choices and reconcile the dependent
+    /// model selection. Async: the editor reflects `validation[...]` as it moves
+    /// idle -> validating -> ok/failed.
+    func validate(_ featureId: String, _ opt: OptionInfo) {
+        let secretKey = opt.key
+        let lookup = validationLookupKey(featureId, secretKey)
+        guard let key = KeychainStore.get(optKey(featureId, secretKey)), !key.isEmpty else {
+            validation[lookup] = .failed("Enter an API key first")
+            return
+        }
+        let provider = opt.validate ?? "openai"
+        validation[lookup] = .validating
+
+        // The enum that draws its choices from this secret -- so we can verify
+        // (and, if needed, default) the selection against the fetched list.
+        let modelOpt = features.first { $0.id == featureId }?
+            .options.first { $0.valuesFrom == secretKey }
+        let currentModel = modelOpt.flatMap { optionValue(featureId, $0) as? String }
+
+        SecretValidator.validate(provider: provider, key: key) { [weak self] result in
+            guard let self else { return }
+            // Stale-result guard: the user may have edited the key while this
+            // request was in flight (setOptionValue re-locks the gate). If the
+            // stored key no longer matches what we validated, drop this result --
+            // otherwise we'd unlock the gate for a key that was never validated.
+            guard KeychainStore.get(self.optKey(featureId, secretKey)) == key else { return }
+            switch result {
+            case .success(let choices):
+                UserDefaults.standard.set(true, forKey: self.validatedStateKey(featureId, secretKey))
+                if let data = try? JSONSerialization.data(withJSONObject: choices),
+                   let s = String(data: data, encoding: .utf8) {
+                    UserDefaults.standard.set(s, forKey: self.modelsStateKey(featureId, secretKey))
+                }
+                var msg = "Key valid -- \(choices.count) models available"
+                // Verify the selected model is actually offered; default it if not.
+                if let modelOpt, let currentModel, !choices.isEmpty, !choices.contains(currentModel) {
+                    let fallback = choices.contains("gpt-4o-mini") ? "gpt-4o-mini" : choices[0]
+                    self.setOptionValue(featureId, modelOpt, fallback)
+                    msg = "Key valid; model set to \(fallback)"
+                }
+                self.validation[lookup] = .ok(msg)
+            case .failure(let failure):
+                UserDefaults.standard.set(false, forKey: self.validatedStateKey(featureId, secretKey))
+                self.validation[lookup] = .failed(failure.message)
+            }
+            self.notifyOptionChanged(featureId, secretKey)
+            self.optionEpoch += 1
+        }
+    }
+}
+
+/// Checks a credential against its provider's API. The OpenAI specifics live
+/// here (host config surface, same role as KeychainStore) -- a new provider adds
+/// a case. Returns the provider's offered chat models on success so a `valuesFrom`
+/// enum can populate from the live account.
+enum SecretValidator {
+    /// A validation failure carrying a human-readable reason (String is not an
+    /// Error, so Result needs a typed failure).
+    struct Failure: Error, Sendable { let message: String }
+
+    // completion is @MainActor (so it is Sendable and safe to capture in the
+    // URLSession @Sendable callback, and the result lands back on the main actor
+    // where the store mutates @Published state). Mirrors Native+Network's
+    // DispatchQueue.main.async { MainActor.assumeIsolated { ... } } hop.
+    @MainActor
+    static func validate(provider: String, key: String,
+                         completion: @escaping @MainActor (Result<[String], Failure>) -> Void) {
+        switch provider {
+        case "openai": validateOpenAI(key: key, completion: completion)
+        default:       completion(.failure(Failure(message: "Unknown provider '\(provider)'")))
+        }
+    }
+
+    @MainActor
+    private static func validateOpenAI(key: String,
+                                       completion: @escaping @MainActor (Result<[String], Failure>) -> Void) {
+        guard let url = URL(string: "https://api.openai.com/v1/models") else {
+            return completion(.failure(Failure(message: "Bad URL")))
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 20
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            let finish: @Sendable (Result<[String], Failure>) -> Void = { r in
+                DispatchQueue.main.async { MainActor.assumeIsolated { completion(r) } }
+            }
+            if let error { return finish(.failure(Failure(message: error.localizedDescription))) }
+            guard let http = response as? HTTPURLResponse else {
+                return finish(.failure(Failure(message: "No response")))
+            }
+            guard http.statusCode == 200 else {
+                return finish(.failure(Failure(message: http.statusCode == 401 ? "Invalid API key"
+                                                                               : "HTTP \(http.statusCode)")))
+            }
+            guard let data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let arr = obj["data"] as? [[String: Any]] else {
+                return finish(.failure(Failure(message: "Unexpected response")))
+            }
+            finish(.success(chatModels(arr.compactMap { $0["id"] as? String })))
+        }.resume()
+    }
+
+    /// Keep only chat-capable model ids (drop embeddings/audio/image/etc.), sorted.
+    private static func chatModels(_ ids: [String]) -> [String] {
+        let exclude = ["embedding", "whisper", "tts", "audio", "realtime", "transcribe",
+                       "image", "dall-e", "moderation", "babbage", "davinci"]
+        return ids.filter { id in
+            let l = id.lowercased()
+            guard l.hasPrefix("gpt-") || l.hasPrefix("o1") || l.hasPrefix("o3")
+                || l.hasPrefix("o4") || l.hasPrefix("chatgpt") else { return false }
+            return !exclude.contains { l.contains($0) }
+        }.sorted()
+    }
+}
+
+/// The config UI's write side for `secret` options. Mirrors the Lua-facing
+/// `keychain_*` bindings (Native+Keychain.swift): SAME service + account string
+/// (`hammerdeck.opt.<id>.<key>`), so what Settings writes is what ctx.secret
+/// reads. This is the Swift config surface, not the Lua seam -- the same role
+/// SettingsStore already plays mirroring native.get_setting's UserDefaults.
+enum KeychainStore {
+    static let service = "com.hammerdeck.secrets"
+
+    private static func baseQuery(_ account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+
+    static func get(_ account: String) -> String? {
+        var query = baseQuery(account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    static func set(_ account: String, _ value: String) -> Bool {
+        SecItemDelete(baseQuery(account) as CFDictionary)
+        var attrs = baseQuery(account)
+        attrs[kSecValueData as String] = Data(value.utf8)
+        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(attrs as CFDictionary, nil) == errSecSuccess
+    }
+
+    @discardableResult
+    static func delete(_ account: String) -> Bool {
+        let status = SecItemDelete(baseQuery(account) as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }

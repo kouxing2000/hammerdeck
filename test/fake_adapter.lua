@@ -103,6 +103,14 @@ function adapter.systemHotkeys()
     return fake.systemHotkeys or {}
 end
 
+-- Secrets (separate store from fake.settings, so tests can prove a secret never
+-- leaks into UserDefaults). Keyed by the full account string ctx.secret builds.
+fake.secrets = {}
+
+function adapter.secretGet(key)        return fake.secrets[key] end
+function adapter.secretSet(key, value) fake.secrets[key] = value; return true end
+function adapter.secretDelete(key)     fake.secrets[key] = nil;   return true end
+
 -- Output ------------------------------------------------------------------------
 
 function adapter.notify(title, text)
@@ -432,6 +440,15 @@ function adapter.activateApp(name)
     return false
 end
 
+fake.launchedApps = {}   -- recorded launchOrFocusApp bundle ids
+-- Launch-or-focus by bundle id: records and succeeds unless the test marks the
+-- id as not-installed via fake.uninstalledApps[bundleId] = true.
+function adapter.launchOrFocusApp(bundleId)
+    if fake.uninstalledApps and fake.uninstalledApps[bundleId] then return false end
+    fake.launchedApps[#fake.launchedApps + 1] = bundleId
+    return true
+end
+
 fake.browserTabs   = {}   -- url strings (the fake browser's open tabs)
 fake.focusedTabs   = {}   -- recorded focused tab urls
 fake.openedNewTabs = {}   -- recorded fallback opens
@@ -518,6 +535,17 @@ function adapter.httpGet(url, headers, cb)
     local r = fake.httpResponses[url]
     -- synchronous in tests (the native backend calls back async on main)
     if r then cb(r.status, r.body) else cb(0, nil) end
+end
+
+function adapter.httpRequest(url, method, headers, body, cb)
+    fake.httpRequests[#fake.httpRequests + 1] =
+        { url = url, method = method, headers = headers, body = body }
+    local r = fake.httpResponses[url]
+    if r then cb(r.status, r.body) else cb(0, nil) end
+end
+
+function adapter.httpPost(url, headers, body, cb)
+    return adapter.httpRequest(url, "POST", headers, body, cb)
 end
 
 function adapter.downloadFile(url, path, cb)

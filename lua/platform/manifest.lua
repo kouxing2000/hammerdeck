@@ -58,8 +58,12 @@ local manifest = {}
 -- to the ctx surface; loaders reject mismatched features with a clear error.
 manifest.API_VERSION = 1
 
+-- `secret` is a string stored in the login Keychain (not UserDefaults): masked
+-- in Settings and read by features via ctx.secret, never ctx.opt. It must NOT
+-- declare a plaintext `default` (enforced below).
 local VALID_OPTION_TYPES = {
     bool = true, int = true, string = true, enum = true, time = true, appList = true,
+    secret = true,
 }
 
 -- Privileged ctx extensions a feature may opt into via `capabilities = {...}`.
@@ -179,10 +183,22 @@ function manifest.validate(m)
 
     m.category = m.category or "general"
     m.options = m.options or {}
+    -- Index options by key so cross-references (gatedBy / valuesFrom) can be
+    -- checked against real, validate-able options below.
+    local optByKey = {}
+    for _, o in ipairs(m.options) do
+        if type(o.key) == "string" then optByKey[o.key] = o end
+    end
     for _, o in ipairs(m.options) do
         assert(type(o.key) == "string", "option in '" .. m.id .. "' needs a key")
         assert(VALID_OPTION_TYPES[o.type], "option '" .. o.key .. "' in '" .. m.id ..
             "' has unknown type '" .. tostring(o.type) .. "'")
+        -- A secret lives in the Keychain, never in a manifest: a plaintext
+        -- default would defeat the point (and there is no UserDefaults fallback).
+        if o.type == "secret" then
+            assert(o.default == nil, "secret option '" .. o.key .. "' in '" .. m.id ..
+                "': must not declare a plaintext default")
+        end
         -- Optional display labels for an enum: a list parallel to `values`,
         -- shown in the Settings picker instead of the raw stored value.
         if o.labels ~= nil then
@@ -199,6 +215,53 @@ function manifest.validate(m)
                 "': multiline only applies to a string")
             assert(type(o.multiline) == "boolean", "option '" .. o.key .. "' in '" ..
                 m.id .. "': multiline must be true/false")
+        end
+        -- Optional: render this option's editor inside a collapsed disclosure
+        -- (the Settings UI shows just the label + a triangle; expand to edit).
+        -- Keeps tall controls -- e.g. multiline prompts -- from bloating a form.
+        if o.collapsible ~= nil then
+            assert(type(o.collapsible) == "boolean", "option '" .. o.key .. "' in '" ..
+                m.id .. "': collapsible must be true/false")
+        end
+        -- Optional: `validate` marks a secret as externally verifiable -- the
+        -- Settings UI renders a "Validate" button that checks the credential
+        -- (and unlocks the options gated on it). The value names the provider
+        -- the host knows how to check (e.g. "openai"). On success the host
+        -- records a feature-state flag (hammerdeck.state.<id>.<key>__validated)
+        -- the feature reads via ctx.getState to know the credential is live.
+        if o.validate ~= nil then
+            assert(o.type == "secret", "option '" .. o.key .. "' in '" .. m.id ..
+                "': validate only applies to a secret")
+            assert(type(o.validate) == "string" and o.validate ~= "",
+                "option '" .. o.key .. "' in '" .. m.id ..
+                "': validate must be a non-empty provider name string")
+        end
+        -- Optional: `gatedBy` names another option key whose successful
+        -- validation this option depends on -- the Settings UI grays this
+        -- control until that secret validates.
+        if o.gatedBy ~= nil then
+            assert(type(o.gatedBy) == "string" and o.gatedBy ~= "",
+                "option '" .. o.key .. "' in '" .. m.id ..
+                "': gatedBy must be an option key string")
+            local target = optByKey[o.gatedBy]
+            assert(target and target.validate ~= nil,
+                "option '" .. o.key .. "' in '" .. m.id .. "': gatedBy '" .. o.gatedBy ..
+                "' must name a validate-able secret option (else it grays forever)")
+        end
+        -- Optional: `valuesFrom` names a (secret) option key whose validation
+        -- result supplies this enum's choices dynamically (e.g. the model list
+        -- fetched from the provider); the manifest `values` are the seed shown
+        -- before validation.
+        if o.valuesFrom ~= nil then
+            assert(o.type == "enum", "option '" .. o.key .. "' in '" .. m.id ..
+                "': valuesFrom only applies to an enum")
+            assert(type(o.valuesFrom) == "string" and o.valuesFrom ~= "",
+                "option '" .. o.key .. "' in '" .. m.id ..
+                "': valuesFrom must be an option key string")
+            local target = optByKey[o.valuesFrom]
+            assert(target and target.validate ~= nil,
+                "option '" .. o.key .. "' in '" .. m.id .. "': valuesFrom '" .. o.valuesFrom ..
+                "' must name a validate-able secret option (its validation supplies the choices)")
         end
     end
     return m

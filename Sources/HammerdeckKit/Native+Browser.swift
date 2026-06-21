@@ -34,6 +34,24 @@ extension Native {
         return 1
     }
 
+    // launch_or_focus_app(bundleId): focus the app, LAUNCHING it first if it is
+    // not running (unlike activate_app, which only focuses a running app). Keyed
+    // by bundle identifier -- stable across languages, and the only id that
+    // resolves to a launchable URL. Returns false only when no installed app
+    // carries that bundle id. The launch is async; callers settle before typing.
+    func launchOrFocusApp(_ L: OpaquePointer?) -> Int32 {
+        guard let bundleId = LuaState.string(L, 1),
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
     // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
     // Chrome tab whose URL contains `pattern` to front; opens fallbackURL in a
     // new tab when absent (the donor miscBindings "locate otter" flow,

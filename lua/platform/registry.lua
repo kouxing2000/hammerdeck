@@ -485,6 +485,24 @@ function registry.runAction(id, actionId)
     return true
 end
 
+-- Run a feature's option-action (the handler behind a Settings "Test" button,
+-- declared in m.optionActions[optKey]) with the feature's live ctx. Requires the
+-- feature enabled (it needs a bound ctx). Errors are contained + logged.
+function registry.runOptionAction(id, optKey)
+    local m = features[id]
+    if not m then return false, "no such feature: " .. tostring(id) end
+    local fn = m.optionActions and m.optionActions[optKey]
+    if type(fn) ~= "function" then return false, "no option action for " .. tostring(optKey) end
+    local b = bound[id]
+    if not b then return false, "feature not enabled: " .. id end
+    local okRun, err = pcall(fn, b.ctx)
+    if not okRun then
+        adapter.log(id .. ".optionAction." .. optKey .. ": failed: " .. tostring(err))
+        return false, tostring(err)
+    end
+    return true
+end
+
 -- The config UI calls this after writing hammerdeck.opt.<id>.<key>: an
 -- ENABLED feature that declared onOptionChange(ctx, key) reacts immediately
 -- (e.g. the usage widget hiding the moment its toggle flips) instead of on
@@ -675,6 +693,10 @@ function registry.describe()
                 key = o.key, type = o.type, label = o.label or o.key,
                 default = o.default, min = o.min, max = o.max,
                 values = o.values, labels = o.labels, multiline = o.multiline,
+                defaultLabel = o.defaultLabel, hint = o.hint,
+                section = o.section, actionLabel = o.actionLabel, preview = o.preview,
+                validate = o.validate, gatedBy = o.gatedBy, valuesFrom = o.valuesFrom,
+                collapsible = o.collapsible,
             }
         end
         local row = {
@@ -694,7 +716,7 @@ function registry.describe()
         for _, a in ipairs(m.actions) do
             local current = triggerFor(m, a)
             actions[#actions + 1] = {
-                id = a.id, label = a.label,
+                id = a.id, label = a.label, description = a.description,
                 automatable = a.automatable == true,
                 trigger = current,
                 defaultTrigger = a.defaultTrigger,

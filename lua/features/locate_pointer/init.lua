@@ -31,11 +31,15 @@ return {
 
     actions = {
         { id = "main", label = "Locate pointer",
+          description = "Flash a crosshair around the mouse pointer so you can "
+              .. "find it on screen.",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "m" },
           run = function(ctx)
               ctx.locateMouse(ctx.opt("seconds"))
           end },
         { id = "center", label = "Center pointer on focused window",
+          description = "Warp the mouse pointer to the center of the focused "
+              .. "window, then flash the locator.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "g" },
           run = function(ctx)
               local f = ctx.focusedWindowFrame()

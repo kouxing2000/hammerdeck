@@ -12,3 +12,6 @@ Package.resolved
 .vscode/
 .idea/
 /.deleted
+
+# Local dev secrets (e.g. OPENAI_KEY for text_actions) -- never commit
+.env

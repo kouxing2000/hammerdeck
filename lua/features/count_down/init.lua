@@ -73,6 +73,8 @@ return {
         return {
             {
                 id = "start", label = "Start / cancel countdown",
+                description = "Prompt for minutes and start the countdown, or "
+                    .. "cancel the one already running.",
                 defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "c" },
                 run = function(ctx)
                     local s = ensure(ctx)
@@ -100,6 +102,8 @@ return {
             },
             {
                 id = "pause", label = "Pause / resume",
+                description = "Pause the running countdown, or resume it if it is "
+                    .. "already paused.",
                 -- Dormant: no default trigger; bind one in Settings to use it.
                 run = function(ctx)
                     local s = ensure(ctx)

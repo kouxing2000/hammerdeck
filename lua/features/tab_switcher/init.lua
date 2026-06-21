@@ -355,9 +355,13 @@ return {
 
     actions = {
         { id = "open", label = "Switch to a tab",
+          description = "Open the tab switcher, or cycle forward through tabs when "
+              .. "it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
           run = function(ctx) with(ctx).open("open", false) end },
         { id = "open_backward", label = "Cycle backward",
+          description = "Open the tab switcher, or cycle backward through tabs when "
+              .. "it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "`" },
           run = function(ctx) with(ctx).open("open_backward", true) end },
     },

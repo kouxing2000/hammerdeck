@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // The config-and-select surface (Milestone 4 core): feature list with on/off
 // toggles, and a per-feature options form GENERATED from the typed manifest
@@ -127,9 +128,11 @@ private struct FeatureDetail: View {
                         .id("\(feature.id)|\(action.id)|\(action.triggerDesc)")
                 }
             }
-            if !feature.options.isEmpty {
-                Section("Options") {
-                    ForEach(feature.options) { opt in
+            // Options grouped into sections: each option's `section` (or the
+            // default "Options") becomes a Section header, in declaration order.
+            ForEach(optionSections, id: \.name) { group in
+                Section(group.name) {
+                    ForEach(group.opts) { opt in
                         OptionEditor(store: store, featureId: feature.id, opt: opt)
                     }
                 }
@@ -137,6 +140,19 @@ private struct FeatureDetail: View {
         }
         .formStyle(.grouped)
         .navigationTitle(feature.name)
+    }
+
+    /// Options bucketed by their `section` field, preserving first-appearance
+    /// order; an option without a section falls under "Options".
+    private var optionSections: [(name: String, opts: [OptionInfo])] {
+        var order: [String] = []
+        var groups: [String: [OptionInfo]] = [:]
+        for opt in feature.options {
+            let s = opt.section.isEmpty ? "Options" : opt.section
+            if groups[s] == nil { order.append(s) }
+            groups[s, default: []].append(opt)
+        }
+        return order.map { ($0, groups[$0]!) }
     }
 }
 
@@ -147,20 +163,27 @@ private struct OptionEditor: View {
     let featureId: String
     let opt: OptionInfo
 
+    // collapsible options start closed; the disclosure header shows the label
+    // (and a "customized" tag when overridden) so the form stays scannable.
+    @State private var expanded = false
+
+    private var boolBinding: Binding<Bool> {
+        Binding(
+            get: { store.optionValue(featureId, opt) as? Bool ?? false },
+            set: { store.setOptionValue(featureId, opt, $0) }
+        )
+    }
+
     var body: some View {
-        HStack {
-            editor
-            if store.isOptionOverridden(featureId, opt) {
-                Button {
-                    store.resetOption(featureId, opt)
-                } label: {
-                    Image(systemName: "arrow.uturn.backward.circle")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Reset to default")
+        Group {
+            if opt.collapsible {
+                collapsibleBody
+            } else {
+                standardBody
             }
         }
+        // gatedBy: stay grayed until the secret this option depends on validates.
+        .disabled(gateClosed)
         // NB: do NOT key this view on store.optionEpoch -- the editors read
         // live through their bindings and re-render on @Published changes, so a
         // remount is unneeded AND it steals focus from a TextField/TextEditor on
@@ -168,31 +191,129 @@ private struct OptionEditor: View {
         // (ForEach keys by opt.key) keeps focus while typing.
     }
 
+    /// The default layout: control on top, then reset/hint/action below.
+    private var standardBody: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                editor
+                if store.isOptionOverridden(featureId, opt) { resetButton }
+            }
+            hintView
+            actionButton
+        }
+    }
+
+    /// A collapsible option: just a label + triangle until expanded, then the
+    /// full editor (hint, reset, action) inside. Keeps a tall control (e.g. a
+    /// multiline prompt) out of the way until the user wants to edit it.
+    private var collapsibleBody: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                editor
+                hintView
+                actionButton
+                if store.isOptionOverridden(featureId, opt) {
+                    Button {
+                        store.resetOption(featureId, opt)
+                    } label: {
+                        Label("Reset to default", systemImage: "arrow.uturn.backward.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .controlSize(.small)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 2)
+        } label: {
+            HStack(spacing: 6) {
+                Text(opt.label)
+                // A subtle "customized" tag flags an edited prompt without
+                // forcing the user to expand each one to check.
+                if store.isOptionOverridden(featureId, opt) {
+                    Text("customized")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var resetButton: some View {
+        Button {
+            store.resetOption(featureId, opt)
+        } label: {
+            Image(systemName: "arrow.uturn.backward.circle")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Reset to default")
+    }
+
+    /// Optional one-line caption explaining the option / its requirement.
+    @ViewBuilder
+    private var hintView: some View {
+        if !opt.hint.isEmpty {
+            Text(opt.hint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Optional action button (e.g. "Test") -- runs the feature's optionAction.
+    /// Enabled only once the feature is on and a value is set.
+    @ViewBuilder
+    private var actionButton: some View {
+        if !opt.actionLabel.isEmpty {
+            Button(opt.actionLabel) { store.runOptionAction(featureId, opt) }
+                .controlSize(.small)
+                .disabled(!featureEnabled || optionValueIsEmpty)
+        }
+    }
+
     @ViewBuilder
     private var editor: some View {
         switch opt.type {
+        case "bool" where !opt.preview.isEmpty:
+            // An action with an animated preview CARD (the per-action analog of a
+            // feature's gallery card): the animation on top, the label + switch
+            // below. Hovering the card plays the animation.
+            VStack(alignment: .leading, spacing: 8) {
+                // Auto-plays (not hover-gated) so the animation is visible at a
+                // glance -- there are only a handful of these per feature, unlike
+                // the gallery's many cards.
+                OptionPreviewScene(token: opt.preview, playing: true)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.08)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.15), lineWidth: 1))
+                HStack {
+                    Text(opt.label)
+                    Spacer()
+                    Toggle("", isOn: boolBinding).labelsHidden()
+                }
+            }
         case "bool":
-            Toggle(opt.label, isOn: Binding(
-                get: { store.optionValue(featureId, opt) as? Bool ?? false },
-                set: { store.setOptionValue(featureId, opt, $0) }
-            ))
+            Toggle(opt.label, isOn: boolBinding)
         case "int":
             Stepper(value: intBinding, in: intRange) {
                 LabeledContent(opt.label, value: "\(intBinding.wrappedValue)")
             }
         case "enum":
             Picker(opt.label, selection: stringBinding) {
-                ForEach(opt.values, id: \.self) { Text(opt.enumLabel($0)).tag($0) }
+                ForEach(enumValues, id: \.self) { Text(opt.enumLabel($0)).tag($0) }
             }
         case "time":
             LabeledContent(opt.label) {
                 TextField("HH:MM", text: timeBinding)
+                    .textFieldStyle(.roundedBorder)
                     .frame(width: 70)
                     .multilineTextAlignment(.trailing)
             }
         case "string" where opt.multiline:
             VStack(alignment: .leading, spacing: 4) {
-                Text(opt.label)
+                // When collapsible, the disclosure header already shows the label.
+                if !opt.collapsible { Text(opt.label) }
                 TextEditor(text: stringBinding)
                     .font(.body.monospaced())
                     .frame(minHeight: 90)
@@ -201,13 +322,157 @@ private struct OptionEditor: View {
         case "string":
             LabeledContent(opt.label) {
                 TextField("", text: stringBinding)
+                    .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 240)
                     .multilineTextAlignment(.trailing)
+            }
+        case "secret" where opt.validate != nil:
+            // A validate-able secret: the field plus a Validate button that checks
+            // the credential and unlocks the gatedBy options below it.
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent(opt.label) {
+                    SecureField("", text: secretBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 240)
+                        .multilineTextAlignment(.trailing)
+                }
+                HStack(spacing: 8) {
+                    Button("Validate") { store.validate(featureId, opt) }
+                        .disabled(secretBinding.wrappedValue.isEmpty || isValidating)
+                    validationStatus
+                    Spacer()
+                }
+            }
+        case "secret":
+            LabeledContent(opt.label) {
+                SecureField("", text: secretBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 240)
+                    .multilineTextAlignment(.trailing)
+            }
+        case "appList":
+            // Pick from the currently-running apps; we store the chosen app's
+            // BUNDLE ID (stable across languages, and what launch_or_focus_app
+            // needs to relaunch it later). The label resolves that id back to the
+            // app's display name. Empty = the feature's default (e.g. macOS
+            // Dictionary).
+            LabeledContent(opt.label) {
+                Menu {
+                    Button(appListDefaultLabel) { store.setOptionValue(featureId, opt, "") }
+                    Divider()
+                    ForEach(runningApps(), id: \.bundleId) { app in
+                        Button(app.name) { store.setOptionValue(featureId, opt, app.bundleId) }
+                    }
+                } label: {
+                    Text(appListSelectionLabel).lineLimit(1)
+                }
+                .frame(maxWidth: 240)
             }
         default:
             LabeledContent(opt.label, value: "(\(opt.type) editor not built yet)")
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// gatedBy: this option is grayed until the secret it names has validated.
+    private var gateClosed: Bool {
+        guard let g = opt.gatedBy else { return false }
+        return !store.isValidated(featureId, g)
+    }
+
+    /// The choices for an enum: the list fetched by the secret named in
+    /// `valuesFrom` (after a successful Validate), else the manifest seed. The
+    /// current selection is always included so the Picker never shows blank.
+    private var enumValues: [String] {
+        guard let from = opt.valuesFrom else { return opt.values }
+        let fetched = store.fetchedChoices(featureId, from)
+        var vals = fetched.isEmpty ? opt.values : fetched
+        let current = stringBinding.wrappedValue
+        if !current.isEmpty && !vals.contains(current) { vals.insert(current, at: 0) }
+        return vals
+    }
+
+    /// Whether the secret is mid-validation (Validate button stays disabled).
+    private var isValidating: Bool {
+        if case .validating = store.validationState(featureId, opt.key) { return true }
+        return false
+    }
+
+    /// The result chip shown next to the Validate button.
+    @ViewBuilder
+    private var validationStatus: some View {
+        switch store.validationState(featureId, opt.key) {
+        case .idle:
+            EmptyView()
+        case .validating:
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.small)
+                Text("Validating...").font(.caption).foregroundStyle(.secondary)
+            }
+        case .ok(let msg):
+            Label(msg, systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(.green)
+        case .failed(let msg):
+            Label(msg, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption).foregroundStyle(.red)
+        }
+    }
+
+    /// Whether this option's feature is currently enabled (an optionAction needs
+    /// the feature's bound ctx, so its button is dead until then).
+    private var featureEnabled: Bool {
+        store.features.first { $0.id == featureId }?.enabled ?? false
+    }
+
+    /// Whether the option's stored value is empty -- used to keep an action
+    /// button (e.g. dict "Test") off until the user has actually chosen something.
+    private var optionValueIsEmpty: Bool {
+        (store.optionValue(featureId, opt) as? String ?? "").isEmpty
+    }
+
+    /// The menu entry for the empty/"use the default" choice -- named by the
+    /// option (e.g. "macOS Dictionary (default)"), or a generic fallback.
+    private var appListDefaultLabel: String {
+        opt.defaultLabel.isEmpty ? "Default app" : "\(opt.defaultLabel) (default)"
+    }
+
+    /// What the appList menu shows as selected: the default-app label when empty,
+    /// else the display name resolved from the stored bundle id (falling back to
+    /// the raw id if the app can't be resolved -- e.g. uninstalled).
+    private var appListSelectionLabel: String {
+        let v = stringBinding.wrappedValue
+        if v.isEmpty { return appListDefaultLabel }
+        return appDisplayName(forBundleId: v) ?? v
+    }
+
+    private func appDisplayName(forBundleId id: String) -> String? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return nil }
+        return FileManager.default.displayName(atPath: url.path)
+    }
+
+    /// Currently-running regular (UI) apps as (display name, bundle id), deduped
+    /// by bundle id and sorted -- the candidate set for an `appList` option. Read
+    /// fresh each time the menu opens (Settings is host UI, so NSWorkspace is
+    /// fair game here).
+    private func runningApps() -> [(name: String, bundleId: String)] {
+        var seen = Set<String>()
+        var out: [(name: String, bundleId: String)] = []
+        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+            guard let name = app.localizedName, let bid = app.bundleIdentifier,
+                  !seen.contains(bid) else { continue }
+            seen.insert(bid)
+            out.append((name, bid))
+        }
+        return out.sorted { $0.name < $1.name }
+    }
+
+    /// Keychain-backed string. Never seeded from a manifest default -- get
+    /// returns the stored secret or empty; set persists (empty clears it).
+    private var secretBinding: Binding<String> {
+        Binding(
+            get: { store.optionValue(featureId, opt) as? String ?? "" },
+            set: { store.setOptionValue(featureId, opt, $0) }
+        )
     }
 
     private var intBinding: Binding<Int> {
@@ -347,6 +612,16 @@ private struct TriggerEditor: View {
                 .frame(height: 54)
                 .frame(maxWidth: .infinity)
                 .onHover { previewHover = $0 }
+        }
+
+        // What this action does -- the per-action analog of the feature's
+        // description (rendered only when the action declares one).
+        if !action.description.isEmpty {
+            Text(action.description)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         let modes = TriggerMode.available(automatable: action.automatable)

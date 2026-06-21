@@ -191,15 +191,17 @@ final class IntegrationTests: XCTestCase {
         return cond()
     }
 
-    /// Tests that show real on-screen panels or synthesize system-wide
-    /// keystrokes are disruptive while someone is using the machine -- dialogs
-    /// flash, and synthesized text lands in whatever app is focused. They run
-    /// only on explicit opt-in so a routine `swift test` stays quiet:
+    /// Tests that show real on-screen panels, synthesize system-wide keystrokes,
+    /// or touch the login Keychain are disruptive while someone is using the
+    /// machine -- dialogs flash, synthesized text lands in whatever app is
+    /// focused, and the Keychain can pop a "xctest wants to use the login
+    /// keychain" prompt. They run only on explicit opt-in so a routine
+    /// `swift test` stays quiet:
     ///   HAMMERDECK_UI_TESTS=1 swift test
     private func requireUITests() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["HAMMERDECK_UI_TESTS"] == "1",
-            "UI/synthesis test -- set HAMMERDECK_UI_TESTS=1 to run "
-            + "(shows real panels / posts real keystrokes)")
+            "UI/synthesis/Keychain test -- set HAMMERDECK_UI_TESTS=1 to run "
+            + "(shows real panels / posts real keystrokes / prompts for Keychain access)")
     }
 
     /// Whether synthesized CGEvents actually reach our Carbon hotkeys in THIS
@@ -271,6 +273,98 @@ final class IntegrationTests: XCTestCase {
         for k in ["hammerdeck.it.str", "hammerdeck.it.flag"] {
             UserDefaults.standard.removeObject(forKey: k)
         }
+    }
+
+    // The Keychain seam round-trips through the real Lua adapter: set, read
+    // back, delete, read nil. Uses a throwaway account and cleans up after.
+    func testKeychainSeamRoundTrip() throws {
+        try requireUITests()   // login-Keychain access can prompt; opt-in only
+        let acct = "hammerdeck.it.secret.\(ProcessInfo.processInfo.globallyUniqueString)"
+        defer { eval("require('platform.adapter').secretDelete('\(acct)'); return true") }
+
+        eval("require('platform.adapter').secretSet('\(acct)', 'sk-abc'); return true")
+        XCTAssertEqual(eval("return require('platform.adapter').secretGet('\(acct)')") as? String,
+                       "sk-abc", "secret reads back from the Keychain")
+        // It must NOT be in UserDefaults.
+        XCTAssertNil(UserDefaults.standard.object(forKey: acct),
+                     "a secret never lands in UserDefaults")
+
+        eval("require('platform.adapter').secretDelete('\(acct)'); return true")
+        XCTAssertNil(eval("return require('platform.adapter').secretGet('\(acct)')"),
+                     "deleted secret reads nil")
+    }
+
+    // A `secret`-typed option routes through the Keychain (not UserDefaults) on
+    // both the write side (SettingsStore) and the read side (ctx.secret), under
+    // the same hammerdeck.opt.<id>.<key> account namespace.
+    func testSecretOptionRoutesToKeychainNotDefaults() throws {
+        try requireUITests()   // login-Keychain access can prompt; opt-in only
+        guard let opt = OptionInfo(["key": "openaiKey", "type": "secret", "label": "k"]) else {
+            return XCTFail("could not build a secret OptionInfo")
+        }
+        // A THROWAWAY feature id (not a real feature's), so the test owns a fresh
+        // Keychain item and never collides with -- nor prompts for access to, nor
+        // deletes -- a real feature's stored secret (e.g. a user's actual
+        // text_actions OpenAI key) in the login Keychain. The namespace pattern
+        // (hammerdeck.opt.<id>.<key>) is what's under test, not the literal id.
+        let fid = "ittest.\(ProcessInfo.processInfo.globallyUniqueString)"
+        let acct = "hammerdeck.opt.\(fid).openaiKey"
+        defer { host.store.resetOption(fid, opt) }
+
+        host.store.setOptionValue(fid, opt, "sk-xyz")
+        XCTAssertNil(UserDefaults.standard.object(forKey: acct),
+                     "secret option must not write UserDefaults")
+        XCTAssertEqual(host.store.optionValue(fid, opt) as? String, "sk-xyz",
+                       "store reads the secret back from the Keychain")
+        XCTAssertTrue(host.store.isOptionOverridden(fid, opt),
+                      "a stored secret counts as overridden")
+        // A feature reads it via ctx.secret (same account namespace).
+        XCTAssertEqual(
+            eval("return require('platform.adapter').secretGet('\(acct)')") as? String, "sk-xyz",
+            "ctx.secret/adapter reads what the Settings store wrote")
+
+        host.store.resetOption(fid, opt)
+        XCTAssertFalse(host.store.isOptionOverridden(fid, opt),
+                       "reset clears the secret")
+    }
+
+    // The validate-gating mechanics (the network call itself is host-only and not
+    // unit-tested): the durable validated flag lives in feature STATE, the feature
+    // reads it via ctx.getState, fetched choices parse from state, and editing the
+    // credential re-locks (clears the flag).
+    func testValidationGatingStateRoundTrip() {
+        let validatedKey = "hammerdeck.state.text_actions.openaiKey__validated"
+        let modelsKey = "hammerdeck.state.text_actions.openaiKey__models"
+        guard let secret = OptionInfo(
+            ["key": "openaiKey", "type": "secret", "label": "k", "validate": "openai"]) else {
+            return XCTFail("could not build a validatable secret OptionInfo")
+        }
+        defer {
+            UserDefaults.standard.removeObject(forKey: validatedKey)
+            UserDefaults.standard.removeObject(forKey: modelsKey)
+            host.store.resetOption("text_actions", secret)
+        }
+
+        XCTAssertFalse(host.store.isValidated("text_actions", "openaiKey"),
+                       "unset -> not validated")
+
+        // The durable flag the host writes on success; the feature reads the SAME
+        // key via ctx.getState (adapter.getSetting proves the round-trip).
+        UserDefaults.standard.set(true, forKey: validatedKey)
+        XCTAssertTrue(host.store.isValidated("text_actions", "openaiKey"))
+        XCTAssertEqual(
+            eval("return require('platform.adapter').getSetting('\(validatedKey)', false)") as? Bool,
+            true, "the feature reads the validated flag through the seam")
+
+        // Fetched choices parse from the JSON the host stores.
+        UserDefaults.standard.set("[\"gpt-4o\",\"gpt-4o-mini\"]", forKey: modelsKey)
+        XCTAssertEqual(host.store.fetchedChoices("text_actions", "openaiKey"),
+                       ["gpt-4o", "gpt-4o-mini"], "fetched model list parses from state")
+
+        // Editing the credential re-locks the gate.
+        host.store.setOptionValue("text_actions", secret, "sk-new")
+        XCTAssertFalse(host.store.isValidated("text_actions", "openaiKey"),
+                       "editing the key clears the validated flag")
     }
 
     func testEnableBindsARealCarbonHotkey() {

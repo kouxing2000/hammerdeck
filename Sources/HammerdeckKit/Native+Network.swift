@@ -38,6 +38,41 @@ extension Native {
         return 0
     }
 
+    // Async request with an explicit method/body; callback gets (status, body|nil),
+    // body decoded as UTF-8 text (same contract as httpGet). Args: url, method
+    // (default "GET"), headers table, optional body string, callback. Lets
+    // features POST JSON (e.g. OpenAI) with custom headers (Authorization: Bearer).
+    func httpRequest(_ L: OpaquePointer?) -> Int32 {
+        guard let url = LuaState.string(L, 1), let u = URL(string: url) else {
+            return luaError(L, "http_request: url required")
+        }
+        let method = LuaState.string(L, 2) ?? "GET"
+        let headers = (LuaState.any(L, 3) as? [String: Any]) ?? [:]
+        let body = LuaState.string(L, 4)
+        let ref = lua.makeRef(at: 5)
+        var req = URLRequest(url: u)
+        req.httpMethod = method
+        for (k, v) in headers {
+            if let s = v as? String { req.setValue(s, forHTTPHeaderField: k) }
+        }
+        if let body { req.httpBody = body.data(using: .utf8) }
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let body = data.flatMap { String(data: $0, encoding: .utf8) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    Native.shared.lua.callRef(ref) { L in
+                        lua_pushinteger(L, lua_Integer(status))
+                        if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
+                        return 2
+                    }
+                    Native.shared.lua.releaseRef(ref)
+                }
+            }
+        }.resume()
+        return 0
+    }
+
     func downloadFile(_ L: OpaquePointer?) -> Int32 {
         guard let url = LuaState.string(L, 1), let u = URL(string: url),
               let path = LuaState.string(L, 2) else {

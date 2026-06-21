@@ -154,6 +154,12 @@ public func hammerdeckMain() {
         exit(0)
     }
 
+    // Dev convenience (DEBUG only): seed text_actions' OpenAI key from a
+    // gitignored repo-root .env so `swift run` doesn't need a manual paste.
+    #if DEBUG
+    DevEnv.seed(store)
+    #endif
+
     // The Homepage shell docks the Dashboard + Gallery / Shortcut Map / Timeline
     // / Settings tabs in one window. A Gallery card click deep-links straight to
     // the embedded Settings tab focused on that feature (handled inside the shell).

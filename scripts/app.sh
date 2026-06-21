@@ -26,6 +26,35 @@ bin_path() {
     echo "$(cd "$REPO" && swift build --show-bin-path 2>/dev/null)/Hammerdeck"
 }
 
+# Sign the built binary with a STABLE self-signed identity when one exists, so
+# the macOS Keychain trust ("Always Allow" for com.hammerdeck.secrets) survives
+# rebuilds. swift build ad-hoc-signs the binary with a signature that changes
+# every build, so without a stable identity the Keychain re-prompts each launch.
+# No-op (with a one-time hint) when the cert is absent. Override the name with
+# HAMMERDECK_SIGN_IDENTITY; create the cert once -- see scripts/README-signing.md.
+HAMMERDECK_SIGN_IDENTITY="${HAMMERDECK_SIGN_IDENTITY:-Hammerdeck Dev}"
+sign_dev() {
+    local bin="$1"
+    # NB: no -v here -- a self-signed cert is "not trusted" (CSSMERR_TP_NOT_TRUSTED)
+    # so `-v` (valid only) hides it, yet codesign signs with it fine. Match by name
+    # across ALL codesigning identities instead.
+    if security find-identity -p codesigning 2>/dev/null | grep -q "$HAMMERDECK_SIGN_IDENTITY"; then
+        # --identifier Hammerdeck pins the bundle identifier so the designated
+        # requirement is "identifier Hammerdeck and certificate leaf = <cert>" --
+        # cert-based and CONSTANT across rebuilds (SPM's ad-hoc build otherwise
+        # uses a hash-suffixed identifier that would vary the requirement).
+        if codesign --force --identifier Hammerdeck --sign "$HAMMERDECK_SIGN_IDENTITY" "$bin" 2>/dev/null; then
+            echo "signed with '$HAMMERDECK_SIGN_IDENTITY' (stable Keychain trust)"
+        else
+            echo "WARN: codesign with '$HAMMERDECK_SIGN_IDENTITY' failed" >&2
+        fi
+    else
+        echo "note: no '$HAMMERDECK_SIGN_IDENTITY' code-signing identity found --"
+        echo "      the Keychain will re-prompt on each rebuild. Create the cert"
+        echo "      once (see scripts/README-signing.md) to stop that."
+    fi
+}
+
 # Echo the PID of a live Hammerdeck process, preferring the pidfile and falling
 # back to a match on the exact binary path (so we still find it after a manual
 # `swift run`). Empty output => not running.
@@ -56,6 +85,8 @@ cmd_start() {
         echo "ERROR: built binary not found at $bin" >&2
         return 1
     fi
+
+    sign_dev "$bin"   # stable signature so Keychain "Always Allow" sticks
 
     echo "----- $(date '+%Y-%m-%d %H:%M:%S') start -----" >>"$OUTLOG"
     mkdir -p "$CONTROL_DIR"

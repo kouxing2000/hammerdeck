@@ -112,6 +112,14 @@ function M.make(m, resolveTrigger, extra)
         return adapter.getSetting(optKey(m.id, key), manifest.defaultFor(m, key))
     end
 
+    -- secrets (Keychain-backed; read-only here -- the user sets them in
+    -- Settings). Namespaced per feature, so a feature reads only its own.
+    -- Returns the stored string or nil; NEVER a manifest default (a `secret`
+    -- option must not declare a plaintext default).
+    function ctx.secret(key)
+        return adapter.secretGet(optKey(m.id, key))
+    end
+
     -- feature-scoped persistent state ----------------------------------------
     function ctx.getState(key, default)
         return adapter.getSetting(stateKey(m.id, key), default)
@@ -175,6 +183,10 @@ function M.make(m, resolveTrigger, extra)
 
     -- network / files / wallpaper -----------------------------------------------
     function ctx.httpGet(url, headers, cb)     adapter.httpGet(url, headers, cb) end
+    function ctx.httpPost(url, headers, body, cb) adapter.httpPost(url, headers, body, cb) end
+    function ctx.httpRequest(url, method, headers, body, cb)
+        adapter.httpRequest(url, method, headers, body, cb)
+    end
     function ctx.downloadFile(url, path, cb)   adapter.downloadFile(url, path, cb) end
     function ctx.setWallpaper(path, mode)      return adapter.setWallpaper(path, mode) end
     function ctx.cacheDir()                    return adapter.cacheDir() end
@@ -189,6 +201,7 @@ function M.make(m, resolveTrigger, extra)
     function ctx.typeText(text)       adapter.typeText(text) end
     function ctx.openURL(url)         return adapter.openURL(url) end
     function ctx.activateApp(name)    return adapter.activateApp(name) end
+    function ctx.launchOrFocusApp(id) return adapter.launchOrFocusApp(id) end
     function ctx.focusBrowserTab(pattern, fallbackURL)
         return adapter.focusBrowserTab(pattern, fallbackURL)
     end

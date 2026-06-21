@@ -72,6 +72,10 @@ final class Native {
             // persistence
             "get_setting":  { L in MainActor.assumeIsolated { Native.shared.getSetting(L) } },
             "set_setting":  { L in MainActor.assumeIsolated { Native.shared.setSetting(L) } },
+            // secrets (login Keychain -- never plaintext UserDefaults)
+            "keychain_get":    { L in MainActor.assumeIsolated { Native.shared.keychainGet(L) } },
+            "keychain_set":    { L in MainActor.assumeIsolated { Native.shared.keychainSet(L) } },
+            "keychain_delete": { L in MainActor.assumeIsolated { Native.shared.keychainDelete(L) } },
             // clipboard (general pasteboard -- no permission required)
             "pasteboard_read":  { L in MainActor.assumeIsolated { Native.shared.pasteboardRead(L) } },
             "pasteboard_write": { L in MainActor.assumeIsolated { Native.shared.pasteboardWrite(L) } },
@@ -103,6 +107,7 @@ final class Native {
             "locate_mouse":  { L in MainActor.assumeIsolated { Native.shared.locateMouse(L) } },
             // network / files / wallpaper
             "http_get":      { L in MainActor.assumeIsolated { Native.shared.httpGet(L) } },
+            "http_request":  { L in MainActor.assumeIsolated { Native.shared.httpRequest(L) } },
             "download_file": { L in MainActor.assumeIsolated { Native.shared.downloadFile(L) } },
             "set_wallpaper": { L in MainActor.assumeIsolated { Native.shared.setWallpaper(L) } },
             "cache_dir":     { L in MainActor.assumeIsolated { Native.shared.cacheDir(L) } },
@@ -137,6 +142,7 @@ final class Native {
             // apps / urls
             "open_url":     { L in MainActor.assumeIsolated { Native.shared.openUrl(L) } },
             "activate_app": { L in MainActor.assumeIsolated { Native.shared.activateApp(L) } },
+            "launch_or_focus_app": { L in MainActor.assumeIsolated { Native.shared.launchOrFocusApp(L) } },
             "focus_browser_tab": { L in MainActor.assumeIsolated { Native.shared.focusBrowserTab(L) } },
             "app_running":       { L in MainActor.assumeIsolated { Native.shared.appRunning(L) } },
             "browser_list_tabs": { L in MainActor.assumeIsolated { Native.shared.browserListTabs(L) } },

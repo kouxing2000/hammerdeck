@@ -73,6 +73,25 @@ function adapter.setSetting(key, value)
     native.set_setting(key, value)
 end
 
+-- ---------------------------------------------------------------------------
+-- Secrets (login Keychain; never plaintext UserDefaults)
+-- ---------------------------------------------------------------------------
+-- `key` is the full account string -- features reach these only via ctx.secret,
+-- which namespaces it as hammerdeck.opt.<id>.<key> (same namespace the Settings
+-- UI writes through SettingsStore's KeychainStore).
+
+function adapter.secretGet(key)
+    return native.keychain_get(key)
+end
+
+function adapter.secretSet(key, value)
+    return native.keychain_set(key, value)
+end
+
+function adapter.secretDelete(key)
+    return native.keychain_delete(key)
+end
+
 -- The user's currently-enabled macOS system shortcuts, as hotkey-shaped specs
 -- { mods = {...}, key = "...", name = "..." }. READ-ONLY: macOS owns these
 -- (com.apple.symbolichotkeys); the config UI uses them only to warn before a
@@ -373,6 +392,18 @@ function adapter.httpGet(url, headers, cb)
     native.http_get(url, headers or {}, cb)
 end
 
+-- Async request with an explicit method/body; cb(status, body|nil). Same
+-- one-shot, non-cancellable contract as httpGet. `body` is a string (e.g. a
+-- JSON payload); pass Content-Type / Authorization via the headers table.
+function adapter.httpRequest(url, method, headers, body, cb)
+    native.http_request(url, method or "GET", headers or {}, body, cb)
+end
+
+-- Convenience POST over adapter.httpRequest; cb(status, body|nil).
+function adapter.httpPost(url, headers, body, cb)
+    native.http_request(url, "POST", headers or {}, body, cb)
+end
+
 -- Async download straight to `path` (binary-safe); cb(ok).
 function adapter.downloadFile(url, path, cb)
     native.download_file(url, path, cb)
@@ -428,6 +459,13 @@ end
 -- Bring a RUNNING app (by localized name) frontmost; false if not running.
 function adapter.activateApp(name)
     return native.activate_app(name) == true
+end
+
+-- Focus an app by BUNDLE ID, launching it first if it is not running. False
+-- only when no installed app has that bundle id. (Unlike activateApp, this
+-- launches -- the basis for "open my dictionary app and search".)
+function adapter.launchOrFocusApp(bundleId)
+    return native.launch_or_focus_app(bundleId) == true
 end
 
 -- Focus the first browser tab whose URL contains `pattern`; open fallbackURL

@@ -247,6 +247,8 @@ return {
 
     actions = {
         { id = "enter", label = "Enter / exit window mode",
+          description = "Toggle the modal window-arranging layer where bare keys "
+              .. "move, resize, and snap the focused window until Escape.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "2" },
           run = function(ctx) with(ctx).toggleMode() end },
     },
