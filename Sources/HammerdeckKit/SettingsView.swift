@@ -698,13 +698,29 @@ private struct TriggerEditor: View {
                 ShortcutRecorder(mods: $mods, key: $key)
             }
         case .chord:
-            LabeledContent("Prefix") {
-                ShortcutRecorder(mods: $mods, key: $key, placeholder: "Record prefix")
-            }
-            LabeledContent("Then keys") {
-                TextField("e.g. b c", text: $follows)
-                    .frame(width: 120)
-                    .multilineTextAlignment(.trailing)
+            // Prefix + follow keys on ONE row: record the prefix, then the
+            // "then" field for the ordered follow keys (mirrors the Shortcut Map
+            // grid, where a chord also lives in a single row).
+            LabeledContent("Shortcut") {
+                // Two visual units -- the recorded prefix and the typed follow
+                // keys -- with a wider gap around the "then" connector than the
+                // recorder's internal spacing, so they read as distinct groups.
+                // The follows field is bordered (a "type here" box) to set it
+                // apart from the prefix's glyph display, mirroring the grid.
+                HStack(spacing: 12) {
+                    ShortcutRecorder(mods: $mods, key: $key, placeholder: "Record prefix")
+                    Text("then")
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 4)
+                    // labelsHidden + prompt: the title would otherwise render as
+                    // a persistent label beside the box on macOS (the stray
+                    // "keys" that wrapped); we want a placeholder-only field.
+                    TextField("Follow keys", text: $follows, prompt: Text("b c"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 64)
+                        .multilineTextAlignment(.center)
+                }
             }
             Text("Record the prefix, then type the follow keys in order (e.g. ⌘⇧A then B).")
                 .font(.caption)

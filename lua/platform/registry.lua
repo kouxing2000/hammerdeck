@@ -622,9 +622,10 @@ function buildCommandList(selfId)
     return out
 end
 
--- A compact "which-key" legend of every ENABLED binding on the Hyper prefix
--- (cmd+alt+ctrl), for the held-Caps indicator. Each entry is "<keyGlyph> <label>"
--- (a chord prefix gets a trailing "…"); joined and key-sorted. "" when none.
+-- A "which-key" legend of every ENABLED binding on the Hyper prefix
+-- (cmd+alt+ctrl), for the held-Caps HUD. Returns a key-sorted list of rows
+-- { key = <raw key>, label = <feature/action name>, chord = <bool> }; the
+-- renderer turns `key` into a key-cap glyph (chords get a trailing "…").
 function registry.hyperLegend()
     local function isHyper(t)
         if not t or (t.type ~= "hotkey" and t.type ~= "chord") then return false end
@@ -640,18 +641,17 @@ function registry.hyperLegend()
             for _, a in ipairs(m.actions) do
                 local t = triggerFor(m, a)
                 if isHyper(t) then
-                    local label = (#m.actions > 1) and a.label or m.name
-                    local g = keyGlyph(t.key)
-                    if t.type == "chord" then g = g .. "…" end
-                    items[#items + 1] = { key = t.key, text = g .. " " .. label }
+                    items[#items + 1] = {
+                        key = t.key,
+                        label = (#m.actions > 1) and a.label or m.name,
+                        chord = (t.type == "chord"),
+                    }
                 end
             end
         end
     end
     table.sort(items, function(a, b) return a.key < b.key end)
-    local parts = {}
-    for _, it in ipairs(items) do parts[#parts + 1] = it.text end
-    return table.concat(parts, "    ·    ")
+    return items
 end
 
 local function describeTrigger(m)

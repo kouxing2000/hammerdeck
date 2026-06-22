@@ -31,6 +31,12 @@ enum DebugControl {
 #if DEBUG
     private static var timer: Timer?
 
+    /// Deep-link into the SwiftUI Settings window, which the Lua eval channel
+    /// can't reach (it's host UI, not the platform). Set by Boot; invoked when a
+    /// control command is the magic string "@settings[:<featureId>]". Lets the
+    /// screenshot flow verify the config UI, not just the native panels.
+    static var openSettings: ((String?) -> Void)?
+
     static func startIfRequested(_ lua: LuaState) {
         guard let dir = ProcessInfo.processInfo.environment["HAMMERDECK_CONTROL_DIR"],
               !dir.isEmpty else { return }
@@ -48,10 +54,18 @@ enum DebugControl {
                 else { return }
                 try? fm.removeItem(atPath: cmdPath)   // consume exactly once
                 let out: String
-                do {
-                    out = DebugControl.render(try lua.eval(code))
-                } catch {
-                    out = "ERROR: \(error)"
+                if code == "@settings" || code.hasPrefix("@settings:") {
+                    // Host-UI deep link (see openSettings) -- not Lua.
+                    let id = String(code.dropFirst("@settings".count))
+                        .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
+                    DebugControl.openSettings?(id.isEmpty ? nil : id)
+                    out = "opened settings\(id.isEmpty ? "" : ":" + id)"
+                } else {
+                    do {
+                        out = DebugControl.render(try lua.eval(code))
+                    } catch {
+                        out = "ERROR: \(error)"
+                    }
                 }
                 // Atomic write: the waiter never sees a partial result.
                 try? out.write(toFile: resPath, atomically: true, encoding: .utf8)

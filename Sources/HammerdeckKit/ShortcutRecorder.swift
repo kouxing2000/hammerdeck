@@ -63,37 +63,13 @@ enum ShortcutCapture {
     }
 }
 
-/// Canonical modifier order + display glyphs (cmd -> alt -> ctrl -> shift).
-let kModSymbols: [(id: String, symbol: String)] =
-    [("cmd", "⌘"), ("alt", "⌥"), ("ctrl", "⌃"), ("shift", "⇧")]
-
-/// The selected modifier glyphs, in canonical order.
-func shortcutModSymbols(_ mods: Set<String>) -> [String] {
-    kModSymbols.filter { mods.contains($0.id) }.map(\.symbol)
-}
-
-/// A key name shown for display: arrows/return/etc. as their glyph, single
-/// characters uppercased, everything else verbatim. "" for an empty key.
-func shortcutKeyLabel(_ key: String) -> String {
-    let k = key.trimmingCharacters(in: .whitespaces)
-    if k.isEmpty { return "" }
-    let named: [String: String] = [
-        "left": "←", "right": "→", "up": "↑", "down": "↓",
-        "return": "⏎", "enter": "⏎", "space": "␣", "escape": "⎋", "esc": "⎋",
-        "tab": "⇥", "delete": "⌫", "backspace": "⌫", "forwarddelete": "⌦",
-    ]
-    if let glyph = named[k.lowercased()] { return glyph }
-    return k.count == 1 ? k.uppercased() : k
-}
-
-/// The full combo string, e.g. "⌘ ⌥ ⌃ + ←", or `placeholder` when empty.
+/// The full combo string in macOS-canonical form, e.g. "⌃⌥⌘←" (no "+", no
+/// spaces, modifier order ⌃⌥⇧⌘), or `placeholder` when empty. Renders through
+/// the shared `modGlyphs`/`keyGlyph` (FeatureChrome) so the recorder reads
+/// identically to the menu, the gallery, and the Shortcut Map preview chip.
 func shortcutCombo(_ mods: Set<String>, _ key: String, placeholder: String) -> String {
-    let syms = shortcutModSymbols(mods).joined(separator: " ")
-    let k = shortcutKeyLabel(key)
-    if syms.isEmpty && k.isEmpty { return placeholder }
-    if syms.isEmpty { return k }
-    if k.isEmpty { return syms }
-    return "\(syms) + \(k)"
+    let combo = modGlyphs(Array(mods)) + keyGlyph(key.trimmingCharacters(in: .whitespaces))
+    return combo.isEmpty ? placeholder : combo
 }
 
 /// A self-contained hotkey input: shows the current combo (⌘⌥⌃ + key) and a

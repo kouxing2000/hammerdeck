@@ -48,10 +48,10 @@ final class CapsHyperTap {
     private static let tapMaxNs: UInt64 = 250_000_000     // press < 250ms = a tap
     private static let doubleWindowNs: UInt64 = 300_000_000 // <300ms apart = double
 
-    /// Supplies the which-key legend text (the host wires this to read the live
-    /// catalog). Shown in a banner when Caps is HELD past a short delay.
-    var legendProvider: (() -> String)?
-    private var legendBanner: BannerPanel?
+    /// Supplies the which-key legend rows (the host wires this to read the live
+    /// catalog). Shown in a HUD card when Caps is HELD past a short delay.
+    var legendProvider: (() -> [HyperHintPanel.Row])?
+    private var legendPanel: HyperHintPanel?
     private var legendTask: Task<Void, Never>?
     private static let legendDelayNs: UInt64 = 300_000_000  // hold this long -> show
 
@@ -154,19 +154,17 @@ final class CapsHyperTap {
         legendTask?.cancel()
         legendTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.legendDelayNs)
-            guard !Task.isCancelled, self.f18Held, self.legendBanner == nil else { return }
-            let body = self.legendProvider?() ?? ""
-            let text = body.isEmpty ? "⌘⌥⌃ Hyper — press a shortcut"
-                                    : "⌘⌥⌃    " + body
-            self.legendBanner = BannerPanel(text: text)
+            guard !Task.isCancelled, self.f18Held, self.legendPanel == nil else { return }
+            let rows = self.legendProvider?() ?? []
+            self.legendPanel = HyperHintPanel(rows: rows)
         }
     }
 
     fileprivate func cancelAndHideLegend() {
         legendTask?.cancel()
         legendTask = nil
-        legendBanner?.close()
-        legendBanner = nil
+        legendPanel?.close()
+        legendPanel = nil
     }
 
     /// Toggle the system Caps Lock state + LED via IOKit (the remap means the key

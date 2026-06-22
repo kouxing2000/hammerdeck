@@ -1081,11 +1081,21 @@ package.loaded["features._hyperprobe"] = {
 }
 registry.load("features._hyperprobe")
 registry.setEnabled("hyperprobe", true)
+local function legendHas(rows, key, label)
+    for _, it in ipairs(rows) do
+        if it.key == key and it.label == label then return true end
+    end
+    return false
+end
+local function legendHasLabel(rows, label)
+    for _, it in ipairs(rows) do if it.label == label then return true end end
+    return false
+end
 local legend = registry.hyperLegend()
-ok(legend:find("H Go", 1, true) ~= nil, "hyperLegend lists a Hyper binding as glyph + label")
-ok(legend:find("NotHyper", 1, true) == nil, "hyperLegend excludes non-Hyper bindings")
+ok(legendHas(legend, "h", "Go"), "hyperLegend lists a Hyper binding as { key, label }")
+ok(not legendHasLabel(legend, "NotHyper"), "hyperLegend excludes non-Hyper bindings")
 registry.setEnabled("hyperprobe", false)
-ok(registry.hyperLegend():find("H Go", 1, true) == nil,
+ok(not legendHasLabel(registry.hyperLegend(), "Go"),
     "hyperLegend drops a disabled feature's bindings")
 
 -- T20: usage_stats (service: sessions + per-app focus time to CSV) ------------

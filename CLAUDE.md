@@ -127,6 +127,15 @@ it for you to read. The capturing terminal needs Screen Recording, or the
 panels are missing from the image. Don't restart the user's running instance or
 run the UI tests while they may be at the keyboard -- ask first.
 
+To screenshot the **SwiftUI Settings window** (the chord/trigger editors, option
+forms -- NOT a native panel, so the Lua eval channel can't reach it), use the
+host-UI deep link: `scripts/control.sh '@settings:<featureId>'` opens Settings
+straight to that feature's detail (e.g. `@settings:count_down`), then
+`scripts/shot.sh`. Bare `@settings` just opens the tab. (DebugControl intercepts
+the `@settings` prefix before the Lua eval; it's DEBUG-only.) Reach for this
+BEFORE blind-iterating on config-UI pixels -- the chord-row layout took 3 blind
+rounds before this deep link existed.
+
 Pixel fixes -- probe before iterating (the project instance of the global
 "probe the constraint" rule): a native-AppKit visual fix that misses once is
 usually a HARD constraint, not one tweak away. The canonical example is the

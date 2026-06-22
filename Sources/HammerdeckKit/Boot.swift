@@ -173,7 +173,14 @@ public func hammerdeckMain() {
     Native.shared.installBindings()
     // The held-Caps which-key legend reads the live catalog each time it shows.
     CapsHyperTap.shared.legendProvider = {
-        (try? Native.shared.lua.eval("return require('platform.registry').hyperLegend()")) as? String ?? ""
+        let raw = (try? Native.shared.lua.eval(
+            "return require('platform.registry').hyperLegend()")) as? [Any] ?? []
+        return raw.compactMap { item -> HyperHintPanel.Row? in
+            guard let d = item as? [String: Any],
+                  let key = d["key"] as? String,
+                  let label = d["label"] as? String else { return nil }
+            return HyperHintPanel.Row(key: key, label: label, chord: (d["chord"] as? Bool) ?? false)
+        }
     }
     CapsHyperPreference.apply()   // start the Caps->Hyper tap if opted in
 
@@ -242,6 +249,12 @@ public func hammerdeckMain() {
 
     // Debug-only: a file-polled Lua control channel for visual verification
     // (off unless HAMMERDECK_CONTROL_DIR is set; the launcher sets it).
+    #if DEBUG
+    DebugControl.openSettings = { id in
+        homepageWindow.show(.settings)
+        if let id { store.selectedFeatureId = id }
+    }
+    #endif
     DebugControl.startIfRequested(lua)
 
     // Clean teardown on quit: stop every feature (unbind hotkeys, watchers,
