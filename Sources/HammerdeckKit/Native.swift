@@ -22,6 +22,7 @@ final class Native {
     private var nextId: Int32 = 1
     var cancellers: [Int32: () -> Void] = [:]
     var banners: [Int32: BannerPanel] = [:]
+    var windowModeHUDs: [Int32: WindowModeHUDPanel] = [:]
     var choosers: [Int32: ChooserPanel] = [:]
     var progresses: [Int32: ProgressPanel] = [:]
     var askTexts: [Int32: AskTextPanel] = [:]
@@ -49,6 +50,7 @@ final class Native {
     func freeResource(_ id: Int32) {
         cancellers[id] = nil
         banners[id] = nil
+        windowModeHUDs[id] = nil
         choosers[id] = nil
         progresses[id] = nil
         askTexts[id] = nil
@@ -86,6 +88,7 @@ final class Native {
             // banner
             "banner_show":  { L in MainActor.assumeIsolated { Native.shared.bannerShow(L) } },
             "banner_set_text": { L in MainActor.assumeIsolated { Native.shared.bannerSetText(L) } },
+            "hud_show":     { L in MainActor.assumeIsolated { Native.shared.hudShow(L) } },
             // chooser / dialogs
             "chooser_new":  { L in MainActor.assumeIsolated { Native.shared.chooserNew(L) } },
             "chooser_set_choices": { L in MainActor.assumeIsolated { Native.shared.chooserSetChoices(L) } },

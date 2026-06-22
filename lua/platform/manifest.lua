@@ -126,7 +126,7 @@ function manifest.validate(m)
 
     -- Normalize the sugar, then validate the (possibly synthesized) list.
     if hasAction then
-        m.actions = { { id = "main", label = m.name,
+        m.actions = { { id = "main", label = m.name, mnemonic = m.mnemonic,
                         defaultTrigger = m.defaultTrigger, run = m.action } }
     end
     m.actions = m.actions or {}
@@ -159,6 +159,16 @@ function manifest.validate(m)
                 "' automatable must be true/false")
         end
         a.automatable = (a.automatable == true)
+        -- mnemonic: optional one-line "why this key" hint for the DEFAULT trigger
+        -- (e.g. "P for Password", "arrows = screen edges"). Surfaced read-only in
+        -- the Shortcut Map / Settings / palette to make the defaults memorable;
+        -- the UI hides it once the user rebinds away from the default (then it
+        -- would lie). Pure metadata -- never affects binding.
+        if a.mnemonic ~= nil then
+            assert(type(a.mnemonic) == "string",
+                "feature '" .. m.id .. "': action '" .. a.id ..
+                "' mnemonic must be a string")
+        end
         -- A declared default that IS an automated trigger implies the action is
         -- automatable -- otherwise the seam would refuse to bind its own default.
         if a.defaultTrigger and not a.automatable then

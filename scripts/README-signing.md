@@ -1,16 +1,26 @@
-# Stable dev code-signing (stop the repeated Keychain prompt)
+# Stable dev code-signing
 
-## Why
+> **The Keychain re-prompt is NOT fixed by signing -- see the warning below.**
+> In dev, secrets are read straight from `.env` and never touch the Keychain
+> (`DevEnv.cachedSecret`, DEBUG-only). This doc is now only about giving the dev
+> binary a *stable code identity* for other identity-keyed grants (e.g. TCC /
+> Accessibility persisting across rebuilds).
 
-Hammerdeck stores secrets (e.g. the OpenAI key) in the login Keychain under
-`com.hammerdeck.secrets`. macOS ties "Always Allow" to the app's **code
-signature**. `swift build` ad-hoc-signs the binary with a signature that
-**changes on every rebuild**, so each launch looks like a different app and the
-Keychain re-prompts -- "Always Allow" never sticks.
+## Why a stable signature is NOT enough for the Keychain
 
-Signing every build with one **stable** self-signed identity fixes this without
-weakening security: the signature is constant, so the Keychain trust persists,
-and only Hammerdeck-signed binaries can read the secrets.
+macOS ties Keychain access to the binary's **code identity**. A bare `swift build`
+ad-hoc-signs with a signature that changes every rebuild, so the login Keychain
+re-prompts each launch. The obvious fix -- a stable self-signed `Hammerdeck Dev`
+cert -- gives a constant *designated requirement* (`certificate leaf = H"..."`),
+**but that does not stop the prompt**: for a generic-password item whose signing
+cert is **not Apple-anchored** (every self-signed cert), the login-Keychain ACL
+pins the per-build **cdhash**, not the stable DR. So each rebuild still looks like
+a new app, and even **Always Allow** only sticks for that one cdhash. Only a
+**Developer ID** (Apple-anchored) signature gets a stable DR-based Keychain trust
+-- which a shipped `.app` has, but `swift build` cannot.
+
+That is why the dev build sidesteps the Keychain entirely (reads `.env`); see
+`Sources/HammerdeckKit/DevEnv.swift`.
 
 ## One-time: create the signing certificate
 
@@ -40,14 +50,15 @@ scripts/start.sh       # rebuild + SIGN + launch
 identity exists (it prints "signed with 'Hammerdeck Dev'"); without the cert it
 prints a hint and continues unsigned.
 
-The **first** signed launch still prompts once (the existing Keychain item was
-trusted to the old ad-hoc signature) -- click **Always Allow**, and because the
-signature is now stable, it won't ask again across rebuilds.
+A stable identity keeps identity-keyed system grants (e.g. TCC / Accessibility,
+which `window_switcher` needs) from resetting on every rebuild. It does **not**
+affect the Keychain prompt -- dev reads secrets from `.env`, so the Keychain is
+never touched in DEBUG (see the warning at the top).
 
 ## Notes
 
-- A shipped `.app` signed with a Developer ID has a stable signature already, so
-  it never had this problem -- this is purely a `swift run`/`swift build` dev
-  artifact.
+- A shipped `.app` signed with a Developer ID has an Apple-anchored, stable
+  signature, so its Keychain trust is DR-based and persists -- self-signed dev
+  certs do not get this. The `.env` bypass is the dev-time answer.
 - If you ever rename the cert, set `HAMMERDECK_SIGN_IDENTITY="<name>"` in the
   environment before running the scripts.

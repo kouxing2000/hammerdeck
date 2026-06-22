@@ -119,6 +119,7 @@ struct ActionInfo: Identifiable {
     let id: String
     let label: String
     let description: String             // optional one-line "what this action does"
+    let mnemonic: String                // optional "why this key" hint for the DEFAULT
     let trigger: TriggerSpec?           // current (override or default)
     let defaultTrigger: TriggerSpec?    // declared default (may be nil)
     let triggerOverridden: Bool
@@ -133,6 +134,7 @@ struct ActionInfo: Identifiable {
         self.id = id
         self.label = dict["label"] as? String ?? id
         self.description = dict["description"] as? String ?? ""
+        self.mnemonic = dict["mnemonic"] as? String ?? ""
         self.trigger = TriggerSpec(dict["trigger"] as? [String: Any])
         self.defaultTrigger = TriggerSpec(dict["defaultTrigger"] as? [String: Any])
         self.triggerOverridden = dict["triggerOverridden"] as? Bool ?? false
@@ -614,6 +616,11 @@ enum KeychainStore {
     }
 
     static func get(_ account: String) -> String? {
+        #if DEBUG
+        // Dev: serve secrets from `.env` so the config UI never hits the login
+        // Keychain (which re-prompts on every rebuild). See DevEnv.cachedSecret.
+        if let value = DevEnv.cachedSecret(account) { return value }
+        #endif
         var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne

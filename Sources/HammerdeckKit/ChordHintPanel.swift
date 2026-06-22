@@ -65,7 +65,7 @@ final class ChordHintPanel {
                 remaining: TimeInterval, total: TimeInterval) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
-        let prefix = prefixGlyphs(prefixMods, prefixKey)
+        let prefix = KeyGlyphs.prefix(prefixMods, prefixKey)
         stack.addArrangedSubview(headerLabel("\(prefix)  then\u{2026}"))
         for r in rows { stack.addArrangedSubview(rowLabel(r)) }
         stack.addArrangedSubview(footerLabel("esc  cancel"))
@@ -131,7 +131,7 @@ final class ChordHintPanel {
         let f = NSTextField()
         f.isEditable = false; f.isBordered = false; f.drawsBackground = false
         let s = NSMutableAttributedString()
-        s.append(NSAttributedString(string: keyGlyph(r.key), attributes: [
+        s.append(NSAttributedString(string: KeyGlyphs.glyph(r.key), attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .bold),
             .foregroundColor: NSColor.controlAccentColor]))
         s.append(NSAttributedString(string: "   \(r.label)", attributes: [
@@ -139,27 +139,5 @@ final class ChordHintPanel {
             .foregroundColor: NSColor.labelColor]))
         f.attributedStringValue = s
         return f
-    }
-
-    // MARK: glyphs
-
-    private func prefixGlyphs(_ mods: [String], _ key: String) -> String {
-        // canonical display order: ctrl, alt, shift, cmd (outer to Command)
-        let order: [(String, String)] = [("ctrl", "\u{2303}"), ("alt", "\u{2325}"),
-                                         ("shift", "\u{21E7}"), ("cmd", "\u{2318}")]
-        let set = Set(mods.map { $0.lowercased() })
-        let m = order.filter { set.contains($0.0) }.map(\.1).joined()
-        return m + keyGlyph(key)
-    }
-
-    private func keyGlyph(_ k: String) -> String {
-        let named: [String: String] = [
-            "left": "\u{2190}", "right": "\u{2192}", "up": "\u{2191}", "down": "\u{2193}",
-            "return": "\u{23CE}", "enter": "\u{23CE}", "space": "\u{2423}",
-            "tab": "\u{21E5}", "delete": "\u{232B}", "backspace": "\u{232B}",
-            "escape": "\u{238B}", "esc": "\u{238B}",
-        ]
-        if let g = named[k.lowercased()] { return g }
-        return k.count == 1 ? k.uppercased() : k
     }
 }

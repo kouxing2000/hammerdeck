@@ -180,8 +180,32 @@ local function arrangerFor(ctx)
         end
         st.mode = ctx.modal {
             name = "Window Mode",
-            hint = "WASD move · HJKL halves · ⇧HJKL resize · YUIO corners · "
-                .. "F max · C center · -/= shrink/expand · arrows screens · [ ] undo/redo",
+            -- A spatial cheat-sheet: the 3x3 grid mirrors the screen, so each
+            -- key sits where it sends the window (H = left half, Y = NW corner,
+            -- F/C = center). Legend rows below cover the non-spatial keys.
+            hud = {
+                title = "Window Mode",
+                cells = {
+                    { col = 0, row = 0, keys = { "y" } },
+                    { col = 1, row = 0, keys = { "k" } },
+                    { col = 2, row = 0, keys = { "o" } },
+                    { col = 0, row = 1, keys = { "h" } },
+                    { col = 1, row = 1, keys = { "f", "c" }, label = "max / center" },
+                    { col = 2, row = 1, keys = { "l" } },
+                    { col = 0, row = 2, keys = { "u" } },
+                    { col = 1, row = 2, keys = { "j" } },
+                    { col = 2, row = 2, keys = { "i" } },
+                },
+                caption = "letters snap halves & corners",
+                groups = {
+                    { label = "Nudge",       keys = { "w", "a", "s", "d" } },
+                    { label = "⇧ Resize",    keys = { "h", "j", "k", "l" } },
+                    { label = "Grow/Shrink", keys = { "=", "-" } },
+                    { label = "To screen",   keys = { "left", "up", "right", "down", "space" } },
+                    { label = "Undo/Redo",   keys = { "[", "]" } },
+                },
+                footer = "esc  exit",
+            },
             onExit = function() st.mode = nil end,
             -- repeats=true on the INCREMENTAL keys (nudge/resize/inflate) so
             -- holding one keeps stepping; snaps/corners/screen-moves are
@@ -249,7 +273,8 @@ return {
         { id = "enter", label = "Enter / exit window mode",
           description = "Toggle the modal window-arranging layer where bare keys "
               .. "move, resize, and snap the focused window until Escape.",
-          defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "2" },
+          defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "w" },
+          mnemonic = "W for Window mode",
           run = function(ctx) with(ctx).toggleMode() end },
     },
 }

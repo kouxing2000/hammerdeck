@@ -13,10 +13,8 @@
 -- under the aligned storage policy (plaintext + FileVault + 0700).
 --
 -- Text only (the donor optionally handled images; not ported). Entries cap
--- at 5000 chars, donor's max_entry_size. Default trigger is cmd+shift+v --
--- NOT the donor's cmd+alt+ctrl+v, which the slimmed Hammerspoon config still
--- holds for its live ClipboardTool; rebind after retiring it if muscle
--- memory prefers the old combo.
+-- at 5000 chars, donor's max_entry_size. Default trigger is Hyper+H
+-- (cmd+alt+ctrl+h -- "H" for History, a right-hand key).
 
 local POLL_SECONDS    = 0.8     -- donor frequency
 local MAX_ENTRY_CHARS = 5000    -- donor max_entry_size (truncate, keep)
@@ -154,7 +152,8 @@ return {
 
     actions = {
         { id = "show", label = "Show clipboard history",
-          defaultTrigger = { type = "hotkey", mods = { "cmd", "shift" }, key = "v" },
+          defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "h" },
+          mnemonic = "H for History",
           run = function(ctx)
               if shared.st then shared.st.show() end
           end },

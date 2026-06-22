@@ -179,6 +179,7 @@ return {
                 .. "case, calculate, look it up in a dictionary, or (with a key) run it "
                 .. "through AI -- the result pastes back in place.",
             defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "o" },
+            mnemonic = "O — act On the selection",
             run = function(ctx)
                 ctx.keyStroke({ "cmd" }, "c")
                 ctx.afterSeconds(COPY_SETTLE_SECONDS, function()

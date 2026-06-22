@@ -21,6 +21,7 @@ fake.watchers      = {}   -- {event, fn, stopped}
 fake.choosers      = {}   -- see adapter.chooser
 fake.dialogs       = {}   -- see adapter.askChoice
 fake.banners       = {}   -- {text, stopped}
+fake.huds          = {}   -- {spec, title, stopped}
 fake.textPrompts   = {}   -- see adapter.askText
 fake.progressBars  = {}   -- {fraction, stopped}
 fake.windows       = {}   -- preset by the test for listWindows()
@@ -189,6 +190,15 @@ function adapter.banner(text)
     return {
         setText = function(t) b.text = t end,
         stop    = function() freeOnce(b) end,
+    }
+end
+
+function adapter.hud(spec)
+    local h = { spec = spec, title = spec and spec.title, stopped = false }
+    fake.huds[#fake.huds + 1] = h
+    alloc()
+    return {
+        stop = function() freeOnce(h) end,
     }
 end
 
@@ -692,6 +702,13 @@ end
 function fake.liveBanner()
     for i = #fake.banners, 1, -1 do
         if not fake.banners[i].stopped then return fake.banners[i] end
+    end
+    return nil
+end
+
+function fake.liveHud()
+    for i = #fake.huds, 1, -1 do
+        if not fake.huds[i].stopped then return fake.huds[i] end
     end
     return nil
 end

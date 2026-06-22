@@ -31,6 +31,14 @@ extension Native {
         guard let account = LuaState.string(L, 1) else {
             return luaError(L, "keychain_get: account required")
         }
+        #if DEBUG
+        // Dev: serve secrets from `.env` so we never hit the login Keychain (which
+        // re-prompts on every rebuild for a self-signed binary). See DevEnv.cachedSecret.
+        if let value = DevEnv.cachedSecret(account) {
+            lua_pushstring(L, value)
+            return 1
+        }
+        #endif
         var query = keychainBaseQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne

@@ -16,7 +16,7 @@ struct ChooserEntry {
 /// hs.chooser-equivalent: a floating search field + list. onSelect receives the
 /// 1-based index into the ORIGINAL entries array (nil = dismissed/escape).
 @MainActor
-final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSWindowDelegate {
     private let panel: KeyablePanel
     private let searchField = NSTextField()
     private let tableView = NSTableView()
@@ -28,6 +28,12 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private let onSelect: (Int?) -> Void
     private let onHide: () -> Void
     private var keyMonitor: Any?         // cmd+1..9 quick-pick, live while shown
+    // Re-entrancy guard for the close cascade: any deliberate teardown
+    // (finish/select/hide/close) sets this before orderOut so the resulting
+    // windowDidResignKey doesn't loop back into a second dismiss. Re-armed
+    // (cleared) on show() because choosers are REUSED (window_switcher keeps one
+    // across invocations), so this can't be a one-shot latch.
+    private var isClosing = false
 
     private static let width: CGFloat = 680
     private static let rowHeight: CGFloat = 34
@@ -79,6 +85,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         content.addSubview(scrollView)
 
         panel.contentView = content
+        panel.delegate = self
     }
 
     // MARK: public API (mirrors the adapter chooser handle)
@@ -98,6 +105,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     }
 
     func show() {
+        isClosing = false   // re-arm: this panel may have been dismissed before
         layout()
         panel.center()
         if let screen = NSScreen.main {
@@ -113,6 +121,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     func hide() {
         guard panel.isVisible else { return }
+        isClosing = true
         removeQuickKeys()
         panel.orderOut(nil)
         onHide()
@@ -181,6 +190,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     }
 
     func close() {
+        isClosing = true
         removeQuickKeys()
         panel.orderOut(nil)
     }
@@ -188,10 +198,25 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     // MARK: internals
 
     private func finish(_ originalIndex: Int?) {
+        guard !isClosing else { return }   // ignore re-entry from the orderOut->resignKey cascade
+        isClosing = true
         removeQuickKeys()
         if panel.isVisible { panel.orderOut(nil) }
         onSelect(originalIndex)
         onHide()
+    }
+
+    // MARK: NSWindowDelegate
+
+    /// Click-away dismiss: when the panel loses key focus to anything external
+    /// (user clicked back into their app / another window), cancel it -- the
+    /// Spotlight/Alfred convention. Without this a chooser that has lost focus
+    /// floats with no keyboard escape (ESC is routed through the search field,
+    /// which only gets it while the panel is key). Guarded by isClosing so the
+    /// deliberate teardown paths (finish/hide/close) don't recurse here.
+    func windowDidResignKey(_ notification: Notification) {
+        guard !isClosing, panel.isVisible else { return }
+        finish(nil)
     }
 
     private func selectFirstValid() {

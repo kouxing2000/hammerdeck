@@ -23,6 +23,9 @@ local REPEAT_INTERVAL = 0.04
 -- Enter a mode immediately. spec:
 --   name     = banner title
 --   hint     = short key legend appended to the banner (optional)
+--   hud      = structured cheat-sheet card (optional); when present it REPLACES
+--              the plain banner -- see adapter.hud for the shape (a spatial
+--              key map + grouped legend rows, e.g. Window Mode).
 --   bindings = { { mods = {...}|nil, key = "a", fn = function() end,
 --                  repeats = false }, ... }
 --               repeats=true: hold the key to fire fn repeatedly (Carbon gives
@@ -43,9 +46,13 @@ function modal.enter(spec)
     -- m.stop() -> exit() and nothing leaks. Cancelled on key-up or exit.
     local repeating = {}
 
-    local banner = adapter.banner(
-        (spec.name or "Mode") .. (spec.hint and ("  --  " .. spec.hint) or "")
-        .. "  (Esc exits)")
+    -- A feature can supply a structured `hud` (a spatial cheat-sheet card);
+    -- otherwise fall back to the plain full-width banner built from name + hint.
+    local banner = spec.hud
+        and adapter.hud(spec.hud)
+        or adapter.banner(
+            (spec.name or "Mode") .. (spec.hint and ("  --  " .. spec.hint) or "")
+            .. "  (Esc exits)")
 
     local function cancelRepeat(b)
         local r = repeating[b]

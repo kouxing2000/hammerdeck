@@ -50,6 +50,62 @@ enum DockPreference {
     }
 }
 
+/// "Caps Lock acts as Hyper (⌘⌥⌃)": when ON, the physical Caps key becomes a
+/// momentary Hyper modifier (CapsHyperTap does the work). Default OFF -- it
+/// remaps Caps and needs the Accessibility grant, so it stays opt-in. A pure
+/// host concern (global input plumbing, no per-action surface), so it mirrors
+/// DockPreference rather than living as a Lua feature option.
+enum CapsHyperPreference {
+    static let key = "hammerdeck.capsHyper"
+
+    /// Unset key counts as OFF (Caps stays a normal Caps Lock until opted in).
+    static var enabled: Bool {
+        UserDefaults.standard.bool(forKey: key)
+    }
+
+    static func set(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: key)
+    }
+
+    /// Apply the current preference. When turning on without the Accessibility
+    /// grant the tap can't be created -- prompt and leave the pref ON so it takes
+    /// effect on the next apply (after the user grants and relaunches/retoggles).
+    @MainActor static func apply() {
+        if enabled {
+            if !CapsHyperTap.shared.enable() {
+                let opts = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+                _ = AXIsProcessTrustedWithOptions(opts)
+            }
+        } else {
+            CapsHyperTap.shared.disable()
+        }
+    }
+
+    /// A USER-initiated toggle (menu / Settings): persist, apply, and surface an
+    /// on-screen notice -- Caps now behaves differently, so a silent flip would
+    /// leave the user confused later. Distinct from apply()-on-launch, which must
+    /// stay silent (no toast on every boot when it's already on).
+    @MainActor static func userToggle(to on: Bool) {
+        set(on)
+        apply()
+        if on {
+            if CapsHyperTap.shared.isEnabled {
+                Toast.show(title: "Caps Lock → Hyper",
+                           text: "Caps Lock now acts as ⌘⌥⌃. Double-tap Caps for normal Caps Lock.",
+                           centered: true, seconds: 3)
+            } else {
+                Toast.show(title: "Caps Lock → Hyper",
+                           text: "Grant Accessibility, then toggle again to enable.",
+                           centered: true, seconds: 4)
+            }
+        } else {
+            Toast.show(title: "Caps Lock restored",
+                       text: "Caps Lock works normally again.",
+                       centered: true, seconds: 2)
+        }
+    }
+}
+
 /// Build the Dock icon at runtime. `swift run` produces a bare executable with
 /// no bundle/.icns, so macOS shows a generic "exec" tile; setting
 /// `NSApp.applicationIconImage` overrides it for the running process. We prefer
@@ -115,6 +171,11 @@ public func hammerdeckMain() {
     let lua = LuaState()
     Native.shared.attach(lua)
     Native.shared.installBindings()
+    // The held-Caps which-key legend reads the live catalog each time it shows.
+    CapsHyperTap.shared.legendProvider = {
+        (try? Native.shared.lua.eval("return require('platform.registry').hyperLegend()")) as? String ?? ""
+    }
+    CapsHyperPreference.apply()   // start the Caps->Hyper tap if opted in
 
     // Capture first-launch state BEFORE bootLua -- the Lua boot flips the same
     // `hammerdeck.firstRun.done` flag during startup. On first run we greet the
@@ -190,6 +251,9 @@ public func hammerdeckMain() {
         forName: NSApplication.willTerminateNotification, object: nil, queue: .main
     ) { _ in
         MainActor.assumeIsolated {
+            // Restore plain Caps Lock on a clean quit (clears the hidutil remap);
+            // otherwise Caps would stay a dead F18 key until the next launch.
+            CapsHyperTap.shared.disable()
             _ = try? Native.shared.lua.eval("require('platform.registry').stopAll(); return true")
         }
     }

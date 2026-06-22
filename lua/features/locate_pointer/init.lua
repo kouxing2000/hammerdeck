@@ -33,14 +33,16 @@ return {
         { id = "main", label = "Locate pointer",
           description = "Flash a crosshair around the mouse pointer so you can "
               .. "find it on screen.",
-          defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "m" },
+          defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "m" } },
+          mnemonic = "M for Mouse (Hyper+M, then M)",
           run = function(ctx)
               ctx.locateMouse(ctx.opt("seconds"))
           end },
         { id = "center", label = "Center pointer on focused window",
           description = "Warp the mouse pointer to the center of the focused "
               .. "window, then flash the locator.",
-          defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "g" },
+          defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "c" } },
+          mnemonic = "C for Center (same Hyper+M prefix)",
           run = function(ctx)
               local f = ctx.focusedWindowFrame()
               if f then

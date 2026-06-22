@@ -42,20 +42,45 @@ enum DevEnv {
     /// click. Skips the network when a prior run already validated this key.
     @MainActor
     static func seed(_ store: SettingsStore) {
-        guard let text = try? String(contentsOf: dotEnvURL, encoding: .utf8) else { return }
-        guard let key = parse(text)["OPENAI_KEY"], !key.isEmpty else { return }
-
-        let account = "hammerdeck.opt.text_actions.openaiKey"
-        if KeychainStore.get(account)?.isEmpty ?? true {
-            KeychainStore.set(account, key)
-            print("[hammerdeck] dev: seeded OPENAI_KEY from .env into the Keychain")
-        }
+        // Just trigger validation so the model dropdown populates and the AI
+        // actions ungray -- the key itself is served straight from `.env` via
+        // cachedSecret (below), NOT written to the Keychain. See that note for why.
+        guard cachedSecret("hammerdeck.opt.text_actions.openaiKey") != nil else { return }
 
         store.refresh()
         guard !store.isValidated("text_actions", "openaiKey"),
               let opt = store.features.first(where: { $0.id == "text_actions" })?
                   .options.first(where: { $0.key == "openaiKey" }) else { return }
         store.validate("text_actions", opt)   // async; unlocks the AI actions when it returns
+    }
+
+    /// DEBUG dev-secret cache: account -> value, sourced from `.env`. Consulted by
+    /// BOTH secret read paths (the Lua seam `keychainGet` and the Swift
+    /// `KeychainStore.get`) BEFORE the system Keychain, so dev never round-trips a
+    /// secret through the login Keychain.
+    ///
+    /// Why bypass the Keychain in dev: macOS ties Keychain access to the binary's
+    /// code identity. For a self-signed (non-Apple-anchored) `swift build` binary,
+    /// the login-Keychain ACL pins the per-build *cdhash*, NOT the stable cert
+    /// designated requirement -- so every rebuild looks like a new app and re-prompts,
+    /// and even "Always Allow" only sticks for that one cdhash. Reading from `.env`
+    /// sidesteps the ACL entirely. Release builds compile this out and use the
+    /// Keychain normally (a Developer ID `.app` has an Apple-anchored, stable identity).
+    private static let accountForEnvKey = ["OPENAI_KEY": "hammerdeck.opt.text_actions.openaiKey"]
+    nonisolated(unsafe) private static var secretCache: [String: String]?
+
+    static func cachedSecret(_ account: String) -> String? {
+        if secretCache == nil {
+            var m: [String: String] = [:]
+            if let text = try? String(contentsOf: dotEnvURL, encoding: .utf8) {
+                let env = parse(text)
+                for (envKey, acct) in accountForEnvKey where !(env[envKey] ?? "").isEmpty {
+                    m[acct] = env[envKey]
+                }
+            }
+            secretCache = m
+        }
+        return secretCache?[account]
     }
 }
 #endif

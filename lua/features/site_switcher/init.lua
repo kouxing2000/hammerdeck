@@ -91,7 +91,8 @@ return {
           label = "Sites (one URL per line)" },
     },
 
-    defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "6" },
+    defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "u" },
+    mnemonic = "U for URL",
 
     action = function(ctx)
         local sites = configuredSites(ctx)

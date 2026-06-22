@@ -250,6 +250,8 @@ local jumpDesc = desc[3]
 ok(jumpDesc.id == "window_switcher" and jumpDesc.kind == "action", "window_switcher is an action")
 ok(jumpDesc.triggerDesc == "2 actions", "multi-action feature summarized in the list")
 ok(jumpDesc.actions[1].triggerDesc == "hotkey: alt+tab", "per-action trigger described")
+ok(type(jumpDesc.actions[1].mnemonic) == "string" and jumpDesc.actions[1].mnemonic:find("⌥Tab"),
+    "per-action mnemonic surfaced in describe()")
 ok(#jumpDesc.options == 0,
     "window_switcher exports no options (cycle modifier derives from the trigger)")
 -- typed option export incl. enum values, on a synthetic probe
@@ -306,6 +308,19 @@ ok(pcall(manifest.validate, { api = 1, id = "x", name = "X",
     actions = { { id = "a", run = function() end, automatable = true,
         defaultTrigger = { type = "schedule", everyMin = 5 } } } }),
     "an automated defaultTrigger is fine when automatable = true")
+-- mnemonic: optional per-action "why this key" string; carried through the
+-- single-action sugar; rejected if not a string.
+do
+    local m = manifest.validate({ api = 1, id = "mn", name = "Mn", action = function() end,
+        mnemonic = "P for Password" })
+    ok(m.actions[1].mnemonic == "P for Password", "mnemonic flows through the single-action sugar")
+    local m2 = manifest.validate({ api = 1, id = "mn2", name = "Mn2",
+        actions = { { id = "a", run = function() end, mnemonic = "H for History" } } })
+    ok(m2.actions[1].mnemonic == "H for History", "mnemonic carried through on an actions entry")
+end
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X",
+    actions = { { id = "a", run = function() end, mnemonic = 42 } } }),
+    "mnemonic must be a string")
 local sleepDesc = desc[2]
 ok(sleepDesc.kind == "service" and sleepDesc.triggerDesc == "always-on service",
     "service features described as always-on")
@@ -673,7 +688,7 @@ ok(pasteKey.key == "v" and pasteKey.mods[1] == "cmd", "then pastes (cmd+v)")
 
 -- the "type" action types the cleaned clipboard as keystrokes
 fake.pasteboard = "  secret token\n"
-fake.pressHotkey("b")
+fake.pressHotkey("y")
 ok(fake.typedTexts[#fake.typedTexts] == "secret token",
     "type action types the trimmed clipboard as keystrokes")
 
@@ -820,7 +835,7 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after multi
 registry.register(require("features.count_down"))
 registry.setEnabled("count_down", true)
 
-fake.pressHotkey("c")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "c", { "c" })
 local prompt = fake.openTextPrompt()
 ok(prompt ~= nil, "countdown start prompts for minutes")
 ok(prompt.default == "5", "prompt suggests the defaultMinutes option")
@@ -830,21 +845,18 @@ ok(cdBar ~= nil, "countdown shows a progress strip")
 fake.fireTimers("every", 1)
 ok(math.abs(cdBar.fraction - 1 / 120) < 1e-9, "progress advances per second")
 
--- the dormant pause action goes live when the user binds it
-ok(registry.setTrigger("count_down", "pause",
-    { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "p" }) == true,
-    "binding a dormant action succeeds")
-fake.pressHotkey("p")                           -- pause
+-- pause/resume now ships as a sibling chord under the same prefix (Hyper+C P)
+fake.fireChord({ "cmd", "alt", "ctrl" }, "c", { "p" })   -- pause
 ok(fake.fireTimers("every", 1) == 0, "paused countdown stops ticking")
-fake.pressHotkey("p")                           -- resume
+fake.fireChord({ "cmd", "alt", "ctrl" }, "c", { "p" })   -- resume
 ok(fake.fireTimers("every", 1) == 1, "resume restarts the tick")
 
 -- invoking start while running cancels
-fake.pressHotkey("c")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "c", { "c" })
 ok(fake.liveProgressBar() == nil, "start-while-running cancels the countdown")
 
 -- completion notifies and clears the bar
-fake.pressHotkey("c")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "c", { "c" })
 fake.openTextPrompt().submit("1")               -- 60 ticks
 local cdN = #fake.notifications
 for _ = 1, 60 do fake.fireTimers("every", 1) end
@@ -852,7 +864,7 @@ ok(#fake.notifications == cdN + 1, "completion notifies")
 ok(fake.liveProgressBar() == nil, "completion clears the strip")
 
 -- a dismissed prompt starts nothing
-fake.pressHotkey("c")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "c", { "c" })
 fake.openTextPrompt().submit(nil)               -- Escape
 ok(fake.liveProgressBar() == nil, "dismissed prompt starts nothing")
 
@@ -863,16 +875,16 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after count
 registry.register(require("features.locate_pointer"))
 registry.setEnabled("locate_pointer", true)
 fake.mouseLocates = {}   -- fresh recorder: this block asserts absolute counts/indices
-fake.pressHotkey("m")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "m" })
 ok(#fake.mouseLocates == 1 and fake.mouseLocates[1] == 3,
     "locate-pointer fires with the configured duration")
 fake.settings["hammerdeck.opt.locate_pointer.seconds"] = 7
-fake.pressHotkey("m")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "m" })
 ok(fake.mouseLocates[2] == 7, "duration option applies live")
--- center the pointer on the focused window (the donor's alt+G, now here)
+-- center the pointer on the focused window (sibling chord Hyper+M C)
 fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
-fake.pressHotkey("g", { "alt" })
-ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "alt+G centers the pointer on the window")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "c" })
+ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "Hyper+M C centers the pointer on the window")
 ok(fake.mouseLocates[#fake.mouseLocates] == 1, "and flashes the locator")
 registry.setEnabled("locate_pointer", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after locate_pointer test")
@@ -1054,6 +1066,27 @@ ok(okPlain == false and whyPlain ~= nil, "a plain hotkey on a chord's prefix com
 
 registry.setEnabled("chordy", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after chord tests")
+
+-- T19b: registry.hyperLegend() -- which-key legend of enabled Hyper bindings ---
+package.loaded["features._hyperprobe"] = {
+    api = 1, id = "hyperprobe", name = "Hyper Probe",
+    actions = {
+        { id = "go", label = "Go",
+          defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "h" },
+          run = function() end },
+        { id = "no", label = "NotHyper",   -- only cmd: must be excluded
+          defaultTrigger = { type = "hotkey", mods = { "cmd" }, key = "j" },
+          run = function() end },
+    },
+}
+registry.load("features._hyperprobe")
+registry.setEnabled("hyperprobe", true)
+local legend = registry.hyperLegend()
+ok(legend:find("H Go", 1, true) ~= nil, "hyperLegend lists a Hyper binding as glyph + label")
+ok(legend:find("NotHyper", 1, true) == nil, "hyperLegend excludes non-Hyper bindings")
+registry.setEnabled("hyperprobe", false)
+ok(registry.hyperLegend():find("H Go", 1, true) == nil,
+    "hyperLegend drops a disabled feature's bindings")
 
 -- T20: usage_stats (service: sessions + per-app focus time to CSV) ------------
 registry.register(require("features.usage_stats"))
@@ -1418,13 +1451,12 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after text_
 -- -- click, Enter, or cmd+<n> -- to focus that site's tab, or open it) --------
 registry.register(require("features.site_switcher"))
 registry.setEnabled("site_switcher", true)
-local CC = { "ctrl", "cmd" }
 
 -- several sites: the shortcut pops a chooser listing them (domain text, url sub)
 fake.settings["hammerdeck.opt.site_switcher.sites"] =
     "https://www.otter.ai/\nhttps://github.com/\n"
 fake.browserTabs = { "https://github.com/x", "https://www.otter.ai/meetings" }
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 local ch = fake.visibleChooser()
 ok(ch ~= nil and #ch.choices == 2
     and ch.choices[1].text == "otter.ai"
@@ -1437,21 +1469,21 @@ ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
 ok(fake.visibleChooser() == nil, "the chooser closes after a pick")
 
 -- a later row (what cmd+2 / arrow+Enter resolves to) jumps to its site
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 fake.visibleChooser().userSelect(2)
 ok(fake.focusedTabs[#fake.focusedTabs] == "https://github.com/x",
     "picking row 2 focuses the second site's tab")
 
 -- dismissing the chooser (Escape -> onSelect(nil)) jumps nothing
 local focusedCount = #fake.focusedTabs
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 fake.visibleChooser().userSelect(0)   -- out-of-range = dismissed
 ok(#fake.focusedTabs == focusedCount, "dismissing the chooser jumps nothing")
 
 -- a single configured site skips the list and jumps straight (donor behavior)
 fake.settings["hammerdeck.opt.site_switcher.sites"] = "https://github.com/"
 fake.browserTabs = { "https://github.com/x" }
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 ok(fake.visibleChooser() == nil
     and fake.focusedTabs[#fake.focusedTabs] == "https://github.com/x",
     "one site needs no list -- jumps straight")
@@ -1459,7 +1491,7 @@ ok(fake.visibleChooser() == nil
 -- no match opens the fallback URL in a new tab
 fake.settings["hammerdeck.opt.site_switcher.sites"] = "https://www.otter.ai/"
 fake.browserTabs = { "https://github.com/x" }
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.otter.ai/",
     "no match opens the fallback URL")
 
@@ -1467,7 +1499,7 @@ ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.otter.ai/",
 -- (the "opened bing.com" dead-tab bug)
 fake.settings["hammerdeck.opt.site_switcher.sites"] = "bing.com"
 fake.browserTabs = {}
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://bing.com",
     "a scheme-less site gets https:// before opening (no more dead tab)")
 
@@ -1475,13 +1507,13 @@ ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://bing.com",
 fake.settings["hammerdeck.opt.site_switcher.sites"] = nil
 fake.settings["hammerdeck.opt.site_switcher.openURL"] = "https://www.otter.ai/"
 fake.browserTabs = { "https://www.otter.ai/meetings" }
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
     "the legacy openURL migrates as the one site when the list is empty")
 fake.settings["hammerdeck.opt.site_switcher.openURL"] = nil
 
 -- no sites at all -> a clear hint, not silence
-fake.pressHotkey("6", CC)
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 ok(fake.alerts[#fake.alerts]:match("No sites yet") ~= nil,
     "empty config alerts instead of doing nothing")
 
@@ -1534,7 +1566,7 @@ ok(lf.w == 750 and lf.h == 600, "the retry then applies the toggle")
 -- throw to the bigger screen: least-distortion scale (1.5), per-axis offsets
 fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
 fake.mousePos = { x = 150, y = 200 }
-fake.pressHotkey("right", { "ctrl", "alt" })
+fake.pressHotkey("]", AC)
 lf = lastFrame()
 ok(lf.w == 600 and lf.h == 450, "frame scales by the axis ratio closer to 1 (1.5)")
 ok(lf.x == 1200 and lf.y == 150, "position scales per axis onto the target screen")
@@ -1543,12 +1575,12 @@ ok(fake.mouseLocates[#fake.mouseLocates] == 2, "pointer flashed after the throw"
 
 -- and back, wrapping
 fake.focusedWindow.screenIndex = 2
-fake.pressHotkey("left", { "ctrl", "alt" })
+fake.pressHotkey("[", AC)
 ok(lastFrame().x >= 0 and lastFrame().x < 1000, "previous wraps back to the primary")
 
 -- a huge window clamps into the smaller target screen
 fake.focusedWindow = { x = 1000, y = 0, w = 2000, h = 1200, screenIndex = 2 }
-fake.pressHotkey("left", { "ctrl", "alt" })
+fake.pressHotkey("[", AC)
 lf = lastFrame()
 ok(lf.x == 0 and lf.y == 0 and lf.w == 1000 and lf.h == 800,
     "oversized throw clamps to the target screen")
@@ -1612,10 +1644,10 @@ fake.screenList = {
 }
 fake.focusedWindow = { x = 200, y = 200, w = 400, h = 300, screenIndex = 1 }
 
--- enter the mode: banner up, bare keys live
-fake.pressHotkey("2", { "ctrl", "cmd" })
-ok(fake.liveBanner() ~= nil and fake.liveBanner().text:match("Window Mode"),
-    "entering the mode shows the banner")
+-- enter the mode: HUD up, bare keys live
+fake.pressHotkey("w", { "cmd", "alt", "ctrl" })
+ok(fake.liveHud() ~= nil and fake.liveHud().title == "Window Mode",
+    "entering the mode shows the HUD")
 fake.pressHotkey("a", {})
 ok(fake.focusedWindow.x == 100, "A step-moves left by screen/stepParts")
 fake.pressHotkey("s", {})
@@ -1653,19 +1685,19 @@ ok(fake.windowFrames[#fake.windowFrames].x == 1200
 -- escape exits: banner gone, bare keys dead
 local xBefore = fake.focusedWindow.x
 fake.pressHotkey("escape", {})
-ok(fake.liveBanner() == nil, "escape drops the banner")
+ok(fake.liveHud() == nil, "escape drops the HUD")
 fake.pressHotkey("a", {})
 ok(fake.focusedWindow.x == xBefore, "bare keys are dead after exit")
 
 -- the trigger toggles: enter, then the same hotkey exits
-fake.pressHotkey("2", { "ctrl", "cmd" })
-ok(fake.liveBanner() ~= nil, "re-enter works")
-fake.pressHotkey("2", { "ctrl", "cmd" })
-ok(fake.liveBanner() == nil, "the enter hotkey toggles the mode off")
+fake.pressHotkey("w", { "cmd", "alt", "ctrl" })
+ok(fake.liveHud() ~= nil, "re-enter works")
+fake.pressHotkey("w", { "cmd", "alt", "ctrl" })
+ok(fake.liveHud() == nil, "the enter hotkey toggles the mode off")
 
 -- disabling mid-mode leaks nothing
-fake.pressHotkey("2", { "ctrl", "cmd" })
-ok(fake.liveBanner() ~= nil, "mode active before disable")
+fake.pressHotkey("w", { "cmd", "alt", "ctrl" })
+ok(fake.liveHud() ~= nil, "mode active before disable")
 registry.setEnabled("window_modal", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
     "disable mid-mode tears everything down")
@@ -1806,7 +1838,7 @@ ok(fake.files[histPath]:find("the%-password") == nil,
 fake.copyText("alpha")                 -- re-copy: dedup moves to front
 fake.fireTimers("every", 0.8)
 
-fake.pressHotkey("v", { "cmd", "shift" })
+fake.pressHotkey("h", { "cmd", "alt", "ctrl" })
 local hch = fake.visibleChooser()
 ok(hch ~= nil and #hch.choices == 2, "history chooser opens, deduped")
 ok(hch.choices[1].text == "alpha" and hch.choices[2].text == "beta",
@@ -1815,7 +1847,7 @@ ok(hch.choices[1].text == "alpha" and hch.choices[2].text == "beta",
 -- selecting writes the clipboard and pastes (paste_on_select donor default)
 fake.copyText("other")                 -- clipboard currently holds something else
 fake.fireTimers("every", 0.8)
-fake.pressHotkey("v", { "cmd", "shift" })
+fake.pressHotkey("h", { "cmd", "alt", "ctrl" })
 fake.visibleChooser().userSelect(3)    -- pick "beta" (other, alpha, beta)
 ok(fake.pasteboard == "beta", "selection puts the entry on the clipboard")
 fake.fireTimers("after", 0.15)
@@ -1825,7 +1857,7 @@ ok(pk.key == "v" and pk.mods[1] == "cmd", "and pastes it (cmd+v)")
 -- pasteOnSelect off: clipboard only
 fake.settings["hammerdeck.opt.clipboard_history.pasteOnSelect"] = false
 local keysBefore28 = #fake.keyEvents
-fake.pressHotkey("v", { "cmd", "shift" })
+fake.pressHotkey("h", { "cmd", "alt", "ctrl" })
 fake.visibleChooser().userSelect(2)
 fake.fireTimers("after", 0.15)
 ok(#fake.keyEvents == keysBefore28, "pasteOnSelect off -> no synthesized paste")
@@ -1836,7 +1868,7 @@ fake.settings["hammerdeck.opt.clipboard_history.historySize"] = nil
 fake.settings["hammerdeck.opt.clipboard_history.historySize"] = 2
 fake.copyText("gamma")
 fake.fireTimers("every", 0.8)
-fake.pressHotkey("v", { "cmd", "shift" })
+fake.pressHotkey("h", { "cmd", "alt", "ctrl" })
 ok(#fake.visibleChooser().choices == 2, "historySize caps the list")
 fake.visibleChooser().userSelect(1)
 fake.fireTimers("after", 0.15)
@@ -1846,7 +1878,7 @@ fake.settings["hammerdeck.opt.clipboard_history.historySize"] = nil
 registry.setEnabled("clipboard_history", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clipboard_history leaks nothing")
 registry.setEnabled("clipboard_history", true)
-fake.pressHotkey("v", { "cmd", "shift" })
+fake.pressHotkey("h", { "cmd", "alt", "ctrl" })
 ok(#fake.visibleChooser().choices >= 1, "history restored from disk after re-enable")
 fake.visibleChooser().userSelect(1)
 fake.fireTimers("after", 0.15)
@@ -1892,7 +1924,7 @@ registry.setEnabled("cmd_a", true)
 registry.setEnabled("cmd_b", true)
 registry.setEnabled("command_palette", true)
 
-fake.pressHotkey("space", { "cmd", "shift" })
+fake.pressHotkey("space", { "cmd", "alt", "ctrl" })
 local pch = fake.visibleChooser()
 ok(pch ~= nil, "palette opened a chooser")
 -- cmd_a (1) + cmd_b (2) = 3 rows; the palette excludes itself, disabled cmd_off excluded
@@ -1917,7 +1949,7 @@ ok(palHits.two == 1, "the deferred command actually ran via ctx.runCommand")
 
 -- showShortcuts off -> bare feature name, no trigger suffix
 fake.settings["hammerdeck.opt.command_palette.showShortcuts"] = false
-fake.pressHotkey("space", { "cmd", "shift" })
+fake.pressHotkey("space", { "cmd", "alt", "ctrl" })
 local pchNo = fake.visibleChooser()
 local subNo, scNo = {}, {}
 for _, c in ipairs(pchNo.choices) do subNo[c.text] = c.subText; scNo[c.text] = c.shortcut end
@@ -1931,7 +1963,7 @@ fake.settings["hammerdeck.opt.command_palette.showShortcuts"] = nil
 -- empty catalog: a single non-selectable info row instead of a blank panel
 registry.setEnabled("cmd_a", false)
 registry.setEnabled("cmd_b", false)
-fake.pressHotkey("space", { "cmd", "shift" })
+fake.pressHotkey("space", { "cmd", "alt", "ctrl" })
 local pchEmpty = fake.visibleChooser()
 ok(pchEmpty ~= nil and #pchEmpty.choices == 1 and pchEmpty.choices[1].valid == false,
     "empty catalog shows a single info row")

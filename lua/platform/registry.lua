@@ -612,11 +612,46 @@ function buildCommandList(selfId)
                     label       = (#m.actions > 1) and a.label or m.name,
                     triggerDesc = specDesc(triggerFor(m, a)),
                     triggerGlyph = specGlyph(triggerFor(m, a)),
+                    -- "why this key" hint, only while the default still holds
+                    -- (an override would make the mnemonic lie).
+                    mnemonic    = (storedTrigger(m, a) == nil) and a.mnemonic or nil,
                 }
             end
         end
     end
     return out
+end
+
+-- A compact "which-key" legend of every ENABLED binding on the Hyper prefix
+-- (cmd+alt+ctrl), for the held-Caps indicator. Each entry is "<keyGlyph> <label>"
+-- (a chord prefix gets a trailing "…"); joined and key-sorted. "" when none.
+function registry.hyperLegend()
+    local function isHyper(t)
+        if not t or (t.type ~= "hotkey" and t.type ~= "chord") then return false end
+        local m = t.mods or {}
+        if #m ~= 3 then return false end
+        local s = {}
+        for _, x in ipairs(m) do s[x:lower()] = true end
+        return (s.cmd or s.command) and (s.alt or s.option) and (s.ctrl or s.control)
+    end
+    local items = {}
+    for _, m in ipairs(registry.all()) do
+        if registry.isEnabled(m.id) then
+            for _, a in ipairs(m.actions) do
+                local t = triggerFor(m, a)
+                if isHyper(t) then
+                    local label = (#m.actions > 1) and a.label or m.name
+                    local g = keyGlyph(t.key)
+                    if t.type == "chord" then g = g .. "…" end
+                    items[#items + 1] = { key = t.key, text = g .. " " .. label }
+                end
+            end
+        end
+    end
+    table.sort(items, function(a, b) return a.key < b.key end)
+    local parts = {}
+    for _, it in ipairs(items) do parts[#parts + 1] = it.text end
+    return table.concat(parts, "    ·    ")
 end
 
 local function describeTrigger(m)
@@ -717,6 +752,7 @@ function registry.describe()
             local current = triggerFor(m, a)
             actions[#actions + 1] = {
                 id = a.id, label = a.label, description = a.description,
+                mnemonic = a.mnemonic,
                 automatable = a.automatable == true,
                 trigger = current,
                 defaultTrigger = a.defaultTrigger,

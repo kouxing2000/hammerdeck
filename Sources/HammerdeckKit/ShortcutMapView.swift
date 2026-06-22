@@ -343,6 +343,11 @@ private struct BindingRow: View {
             if action.triggerOverridden {
                 Image(systemName: "pencil").font(.caption2).foregroundStyle(.secondary)
                     .help("Custom shortcut (overrides the default)")
+            } else if !action.mnemonic.isEmpty {
+                // "Why this key" hint for the default -- hover to read. Hidden
+                // once overridden (the mnemonic describes the default choice).
+                Image(systemName: "lightbulb").font(.caption2).foregroundStyle(.tertiary)
+                    .help(action.mnemonic)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

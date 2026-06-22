@@ -207,6 +207,16 @@ function adapter.banner(text)
     }
 end
 
+-- Structured HUD card (a spatial cheat-sheet, e.g. Window Mode). `spec` is a
+-- plain table: { title, cells = {{col,row,keys,label?}, ...}, caption,
+-- groups = {{label, keys}, ...}, footer }. Returns { stop() }.
+function adapter.hud(spec)
+    local id = native.hud_show(spec or {})
+    return {
+        stop = function() native.stop(id) end,
+    }
+end
+
 -- One-shot text prompt: Enter submits the string, Escape cancels (nil). opts:
 --   title, placeholder, default, onSubmit(text|nil)
 function adapter.askText(opts)

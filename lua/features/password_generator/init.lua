@@ -90,5 +90,6 @@ return {
     },
 
     defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "p" },
+    mnemonic = "P for Password",
     action = generate,
 }

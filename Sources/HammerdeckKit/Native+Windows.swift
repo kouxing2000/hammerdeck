@@ -308,7 +308,18 @@ extension Native {
         AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
         var pid: pid_t = 0
         if AXUIElementGetPid(win, &pid) == .success {
-            NSRunningApplication(processIdentifier: pid)?.activate()
+            // Bringing the OWNING app frontmost. For our own process,
+            // NSRunningApplication(self).activate() is a no-op from this
+            // background / nonactivating-panel context (macOS cooperative
+            // activation) -- self-activation must go through NSApp.activate,
+            // the same path StatusBar uses to surface Settings. Other apps
+            // are already raised by kAXRaiseAction; activate() finishes the
+            // app switch for them.
+            if pid == getpid() {
+                NSApp.activate(ignoringOtherApps: true)
+            } else {
+                NSRunningApplication(processIdentifier: pid)?.activate()
+            }
         }
         lua_pushboolean(L, 1)
         return 1

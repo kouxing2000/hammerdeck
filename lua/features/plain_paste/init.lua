@@ -8,10 +8,11 @@
 -- representation), optionally turning newlines into commas. Ported from
 -- myHammerSpoon modules/input/clipboardActions.lua -- now in FULL:
 --
---   main  (ctrl+cmd+v)  paste as plain text: clean the clipboard, then a
+--   main  (cmd+shift+v) paste as plain text: clean the clipboard, then a
 --                       synthesized cmd+v pastes it (the donor's "paste
---                       simple format" -- one behavior, no switches).
---   type  (ctrl+cmd+b)  TYPE the cleaned clipboard as keystrokes instead of
+--                       simple format" -- one behavior, no switches). On the
+--                       world's paste-and-match-style key by design.
+--   type  (Hyper+Y)     TYPE the cleaned clipboard as keystrokes instead of
 --                       pasting (the donor's "type simple format" -- for
 --                       paste-blocking password fields and the like).
 --
@@ -55,7 +56,8 @@ return {
         { id = "main", label = "Paste as plain text",
           description = "Strip formatting from the clipboard text, then paste it "
               .. "with a synthesized cmd+v.",
-          defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "v" },
+          defaultTrigger = { type = "hotkey", mods = { "cmd", "shift" }, key = "v" },
+          mnemonic = "⇧⌘V — the system's paste-and-match-style key",
           run = function(ctx)
               local text = cleaned(ctx)
               if not text then return end
@@ -70,8 +72,8 @@ return {
                   return
               end
               -- The settle wait is load-bearing: the user is still holding
-              -- ctrl+cmd from the trigger; synthesizing cmd+v immediately
-              -- would merge into ctrl+cmd+v and re-trigger this action.
+              -- cmd+shift from the trigger; synthesizing cmd+v immediately
+              -- would merge into cmd+shift+v and re-trigger this action.
               ctx.afterSeconds(PASTE_SETTLE_SECONDS, function()
                   ctx.keyStroke({ "cmd" }, "v")
               end)
@@ -79,7 +81,8 @@ return {
         { id = "type", label = "Type clipboard as keystrokes",
           description = "Type the stripped clipboard text as keystrokes instead "
               .. "of pasting -- works in paste-blocking fields.",
-          defaultTrigger = { type = "hotkey", mods = { "ctrl", "cmd" }, key = "b" },
+          defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "y" },
+          mnemonic = "Y = keYstrokes",
           run = function(ctx)
               local text = cleaned(ctx)
               if not text then return end

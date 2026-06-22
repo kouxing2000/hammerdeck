@@ -61,10 +61,16 @@ local function buildChoices(ctx)
         -- Source feature as dim context, but only when it adds information --
         -- for single-action features the label already IS the feature name, so
         -- repeating it is noise.
-        local source = nil
+        -- Dim subtitle: the source feature (when it adds info) and the "why this
+        -- key" mnemonic, joined when both are present.
+        local parts = {}
         if cmd.featureName and cmd.featureName ~= cmd.label then
-            source = cmd.featureName
+            parts[#parts + 1] = cmd.featureName
         end
+        if cmd.mnemonic and cmd.mnemonic ~= "" then
+            parts[#parts + 1] = cmd.mnemonic
+        end
+        local source = (#parts > 0) and table.concat(parts, " · ") or nil
         local shortcut = nil
         if ctx.opt("showShortcuts") and cmd.triggerGlyph and cmd.triggerGlyph ~= "" then
             shortcut = cmd.triggerGlyph
@@ -128,9 +134,11 @@ return {
           label = "Show each command's shortcut in the subtitle" },
     },
 
-    -- ⇧⌘Space: a Spotlight-style Space launcher that avoids the taken combos
-    -- (⌘Space Spotlight, ⌥⌘Space Finder search, ⌃Space/⌃⌥Space input source,
-    -- ⌃⌘Space emoji) -- so our own conflict warning stays clean out of the box.
-    defaultTrigger = { type = "hotkey", mods = { "cmd", "shift" }, key = "space" },
+    -- Hyper+Space: the Hammerdeck namespace's front-door launcher. Hyper
+    -- (⌘⌥⌃) is effectively unclaimed by macOS/apps, so it sidesteps the taken
+    -- Space combos (⌘Space Spotlight, ⌥⌘Space Finder search, ⌃Space/⌃⌥Space
+    -- input source, ⌃⌘Space emoji) and keeps our conflict warning clean.
+    defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "space" },
+    mnemonic = "Space — the everything launcher",
     action = function(ctx) openPalette(ctx) end,
 }

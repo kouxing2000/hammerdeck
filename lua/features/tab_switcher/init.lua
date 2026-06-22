@@ -358,11 +358,13 @@ return {
           description = "Open the tab switcher, or cycle forward through tabs when "
               .. "it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
+          mnemonic = "⌃⌥Tab — the window-switch keys + Ctrl, for tabs",
           run = function(ctx) with(ctx).open("open", false) end },
         { id = "open_backward", label = "Cycle backward",
           description = "Open the tab switcher, or cycle backward through tabs when "
               .. "it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "`" },
+          mnemonic = "⌃⌥` steps backward",
           run = function(ctx) with(ctx).open("open_backward", true) end },
     },
 }

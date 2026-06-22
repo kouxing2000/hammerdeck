@@ -4,9 +4,10 @@
 -- init.lua wiring): invoke, type the minutes, and a thin progress strip runs
 -- along the bottom of the screen; a notification fires when time is up.
 --
--- MULTI-ACTION feature (the first one): "start" prompts/cancels on its hotkey;
--- "pause" pause/resumes and ships DORMANT (no default trigger) -- bind it in
--- Settings if you want it, exactly the contract's any-trigger-any-action idea.
+-- MULTI-ACTION feature (the first one): "start" prompts/cancels and "pause"
+-- pause/resumes are sibling CHORDS under one prefix -- Hyper+C then C starts/
+-- cancels, Hyper+C then P pauses/resumes -- exactly the contract's
+-- any-trigger-any-action idea (each rebindable in Settings).
 --
 -- Donor deviation: invoking start while a countdown runs CANCELS it (alert),
 -- instead of the spoon's finish-early-with-"time is up" notification -- saying
@@ -75,7 +76,8 @@ return {
                 id = "start", label = "Start / cancel countdown",
                 description = "Prompt for minutes and start the countdown, or "
                     .. "cancel the one already running.",
-                defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "c" },
+                defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "c", follows = { "c" } },
+                mnemonic = "C for Countdown (Hyper+C, then C)",
                 run = function(ctx)
                     local s = ensure(ctx)
                     if s.timer or s.paused then
@@ -104,7 +106,8 @@ return {
                 id = "pause", label = "Pause / resume",
                 description = "Pause the running countdown, or resume it if it is "
                     .. "already paused.",
-                -- Dormant: no default trigger; bind one in Settings to use it.
+                defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "c", follows = { "p" } },
+                mnemonic = "P for Pause (same Hyper+C prefix)",
                 run = function(ctx)
                     local s = ensure(ctx)
                     if s.timer then

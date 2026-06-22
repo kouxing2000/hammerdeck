@@ -37,6 +37,17 @@ extension Native {
         return 0
     }
 
+    // MARK: - Window Mode HUD (structured cheat-sheet card)
+
+    func hudShow(_ L: OpaquePointer?) -> Int32 {
+        let dict = LuaState.any(L, 1) as? [String: Any] ?? [:]
+        let hud = WindowModeHUDPanel(spec: WindowModeHUDPanel.Spec(dict))
+        let id = registerResource { hud.close() }
+        windowModeHUDs[id] = hud
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
     // MARK: - Chooser
 
     func chooserNew(_ L: OpaquePointer?) -> Int32 {

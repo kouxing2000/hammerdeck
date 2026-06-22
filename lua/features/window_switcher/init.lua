@@ -113,11 +113,13 @@ return {
           description = "Open the window switcher, or cycle forward through windows "
               .. "when it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "tab" },
+          mnemonic = "⌥Tab — mirrors ⌘Tab, but for windows",
           run = function(ctx) jump(ctx, "main", false) end },
         { id = "open_backward", label = "Cycle backward",
           description = "Open the window switcher, or cycle backward through windows "
               .. "when it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "`" },
+          mnemonic = "⌥` steps backward (like ⌘`)",
           run = function(ctx) jump(ctx, "open_backward", true) end },
     },
 }

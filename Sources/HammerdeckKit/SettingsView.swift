@@ -18,9 +18,19 @@ import AppKit
 struct SettingsPane: View {
     @ObservedObject var store: SettingsStore
 
+    /// Sentinel selection id for the host-level "General" pane (app preferences
+    /// that are not a Lua feature -- Caps->Hyper, Show in Dock).
+    static let generalId = "__general__"
+
     var body: some View {
         HSplitView {
             List(selection: $store.selectedFeatureId) {
+                // Host-level app preferences, pinned above the feature catalog so
+                // they are discoverable (not buried in the menubar only).
+                Section("App") {
+                    Label("General", systemImage: "gearshape")
+                        .tag(Self.generalId)
+                }
                 ForEach(groupedCategories, id: \.self) { category in
                     Section(category.capitalized) {
                         ForEach(store.features.filter { $0.category == category }) { feature in
@@ -33,7 +43,9 @@ struct SettingsPane: View {
             .frame(minWidth: 220, idealWidth: 240, maxWidth: 320)
 
             Group {
-                if let id = store.selectedFeatureId,
+                if store.selectedFeatureId == Self.generalId {
+                    GeneralSettingsDetail()
+                } else if let id = store.selectedFeatureId,
                    let feature = store.features.first(where: { $0.id == id }) {
                     FeatureDetail(store: store, feature: feature)
                 } else {
@@ -89,6 +101,44 @@ private struct FeatureRow: View {
             .disabled(feature.kind == "failed")   // a never-registered module can't be toggled
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// Host-level app preferences (not Lua features): the Caps->Hyper toggle and
+/// the Dock visibility toggle. Both mirror the menubar items and read/write the
+/// same `Hammerdeck` defaults keys, so a change here or there stays in sync on
+/// the next render. @State seeds from the live prefs on appear.
+private struct GeneralSettingsDetail: View {
+    @State private var capsHyper = CapsHyperPreference.enabled
+    @State private var showInDock = DockPreference.showInDock
+
+    var body: some View {
+        Form {
+            Section("Keyboard") {
+                Toggle("Caps Lock acts as Hyper (⌘⌥⌃)", isOn: $capsHyper)
+                    .onChange(of: capsHyper) { on in CapsHyperPreference.userToggle(to: on) }
+                Text("Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper shortcuts "
+                     + "are a one-key press. Double-tap Caps Lock for its normal lock. "
+                     + "Remaps Caps Lock and needs Accessibility.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Section("App") {
+                Toggle("Show in Dock", isOn: $showInDock)
+                    .onChange(of: showInDock) { on in DockPreference.set(on); DockPreference.apply() }
+                Text("Keep a Hammerdeck icon in the Dock (and a Cmd-Tab entry); "
+                     + "click it to open Home. Off = a pure menubar app.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("General")
+        // Re-seed from the live prefs (e.g. if toggled from the menubar meanwhile).
+        .onAppear {
+            capsHyper = CapsHyperPreference.enabled
+            showInDock = DockPreference.showInDock
+        }
     }
 }
 
@@ -621,6 +671,17 @@ private struct TriggerEditor: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        // "Why this key" hint for the DEFAULT binding (e.g. "P for Password").
+        // Hidden once the user rebinds away from the default -- it describes the
+        // default's choice and would otherwise mislead.
+        if !action.mnemonic.isEmpty && !action.triggerOverridden {
+            Label(action.mnemonic, systemImage: "lightbulb")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .labelStyle(.titleAndIcon)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 

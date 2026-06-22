@@ -72,28 +72,14 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
 
         menu.addItem(.separator())
 
-        let home = NSMenuItem(title: "Home…", action: #selector(showHome), keyEquivalent: "h")
+        // Primary destinations -- the two most-used. Home opens the Homepage
+        // window (whose tabs cover the rest: Gallery / Shortcut Map / Timeline /
+        // Settings), so the menu only needs the front door plus a direct Settings
+        // jump; the other tabs + low-frequency utilities live under "More".
+        let home = NSMenuItem(title: "Open Hammerdeck…", action: #selector(showHome), keyEquivalent: "h")
         home.target = self
-        home.toolTip = "The Hammerdeck home: what's on, what's running now, and what it can do"
+        home.toolTip = "Open Hammerdeck: dashboard, gallery, shortcut map, timeline, and settings (switch tabs inside)"
         menu.addItem(home)
-
-        let gallery = NSMenuItem(title: "Feature Gallery…", action: #selector(showGallery),
-                                 keyEquivalent: "")
-        gallery.target = self
-        gallery.toolTip = "Browse everything Hammerdeck can do; enable features in place"
-        menu.addItem(gallery)
-
-        let shortcutMap = NSMenuItem(title: "Shortcut Map…", action: #selector(showShortcutMap),
-                                     keyEquivalent: "")
-        shortcutMap.target = self
-        shortcutMap.toolTip = "See every shortcut at once, spot conflicts, and rebind in a grid"
-        menu.addItem(shortcutMap)
-
-        let timeline = NSMenuItem(title: "Automation Timeline…", action: #selector(showTimeline),
-                                  keyEquivalent: "")
-        timeline.target = self
-        timeline.toolTip = "See what's scheduled across the day -- times, intervals, and events"
-        menu.addItem(timeline)
 
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings),
                                   keyEquivalent: ",")
@@ -101,22 +87,61 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         settings.toolTip = "Enable/disable features, options, and trigger bindings"
         menu.addItem(settings)
 
+        // "More": the other Homepage tabs plus rarely-touched utilities, tucked
+        // into one submenu so the top level stays short.
+        let more = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
+        let moreMenu = NSMenu()
+
+        let gallery = NSMenuItem(title: "Feature Gallery…", action: #selector(showGallery),
+                                 keyEquivalent: "")
+        gallery.target = self
+        gallery.toolTip = "Browse everything Hammerdeck can do; enable features in place"
+        moreMenu.addItem(gallery)
+
+        let shortcutMap = NSMenuItem(title: "Shortcut Map…", action: #selector(showShortcutMap),
+                                     keyEquivalent: "")
+        shortcutMap.target = self
+        shortcutMap.toolTip = "See every shortcut at once, spot conflicts, and rebind in a grid"
+        moreMenu.addItem(shortcutMap)
+
+        let timeline = NSMenuItem(title: "Automation Timeline…", action: #selector(showTimeline),
+                                  keyEquivalent: "")
+        timeline.target = self
+        timeline.toolTip = "See what's scheduled across the day -- times, intervals, and events"
+        moreMenu.addItem(timeline)
+
+        moreMenu.addItem(.separator())
+
         let reload = NSMenuItem(title: "Reload Features", action: #selector(reloadFeatures),
                                 keyEquivalent: "r")
         reload.target = self
         reload.toolTip = "Re-read feature scripts from disk without restarting"
-        menu.addItem(reload)
+        moreMenu.addItem(reload)
 
         let logs = NSMenuItem(title: "Open Logs", action: #selector(openLogs), keyEquivalent: "")
         logs.target = self
         logs.toolTip = "Daily log files (troubleshooting clues live here)"
-        menu.addItem(logs)
+        moreMenu.addItem(logs)
+
+        moreMenu.addItem(.separator())
 
         let dock = NSMenuItem(title: "Show in Dock", action: #selector(toggleDock), keyEquivalent: "")
         dock.target = self
         dock.state = DockPreference.showInDock ? .on : .off
         dock.toolTip = "Keep a Hammerdeck icon in the Dock; click it to open Home"
-        menu.addItem(dock)
+        moreMenu.addItem(dock)
+
+        let capsHyper = NSMenuItem(title: "Caps Lock acts as Hyper (⌘⌥⌃)",
+                                   action: #selector(toggleCapsHyper), keyEquivalent: "")
+        capsHyper.target = self
+        capsHyper.state = CapsHyperPreference.enabled ? .on : .off
+        capsHyper.toolTip = "Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper "
+            + "shortcuts are one key; double-tap Caps for its normal lock "
+            + "(remaps Caps; needs Accessibility)"
+        moreMenu.addItem(capsHyper)
+
+        more.submenu = moreMenu
+        menu.addItem(more)
 
         menu.addItem(.separator())
 
@@ -133,16 +158,36 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         // Show a bound hotkey as a real key-equivalent so it sits flush-right in
         // the native shortcut column. It is DISPLAY ONLY: menuHasKeyEquivalent
         // refuses to fire any quick-trigger item, so the global hotkey stays the
-        // single source of truth (no double-trigger). Only "hotkey" triggers map
-        // to a single key-equivalent; chord/schedule/event have no key form and
-        // show no hint (still click-to-run).
+        // single source of truth (no double-trigger). Only a single-key "hotkey"
+        // maps to that native column; a chord/schedule/event (or a hotkey whose
+        // key has no single-char form) has no key-equivalent, so we render its
+        // compact glyph (e.g. "⌃⌥⌘C C", "every 30m") as a dim INLINE suffix --
+        // an attributedTitle can't reach the flush-right column (see the StatusBar
+        // note in the layer map), but it stops a bound action from looking unbound.
         if let t = action.trigger, t.type == "hotkey", let ke = Self.keyEquivalent(for: t.key) {
             mi.keyEquivalent = ke
             mi.keyEquivalentModifierMask = Self.modifierMask(t.mods)
+        } else if let t = action.trigger, case let glyph = shortcutGlyph(t), !glyph.isEmpty {
+            mi.attributedTitle = Self.titleWithHint(title, hint: glyph)
         } else if action.trigger == nil {
             mi.toolTip = "Runs on demand — bind a shortcut in Settings"
         }
         return mi
+    }
+
+    /// Title + a dim, trailing shortcut glyph for triggers with no native
+    /// key-equivalent (chords, schedules, events). secondaryLabelColor stays
+    /// legible on the blue highlight too (an attributedTitle's colors don't
+    /// auto-invert the way a native key-equivalent's do).
+    private static func titleWithHint(_ title: String, hint: String) -> NSAttributedString {
+        let font = NSFont.menuFont(ofSize: 0)
+        let s = NSMutableAttributedString(string: title, attributes: [
+            .font: font, .foregroundColor: NSColor.labelColor,
+        ])
+        s.append(NSAttributedString(string: "   " + hint, attributes: [
+            .font: font, .foregroundColor: NSColor.secondaryLabelColor,
+        ]))
+        return s
     }
 
     // MARK: trigger -> native key-equivalent
@@ -221,6 +266,10 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
     @objc private func toggleDock() {
         DockPreference.set(!DockPreference.showInDock)
         DockPreference.apply()
+    }
+
+    @objc private func toggleCapsHyper() {
+        CapsHyperPreference.userToggle(to: !CapsHyperPreference.enabled)
     }
 
     @objc private func quit() {
