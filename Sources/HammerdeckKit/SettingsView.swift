@@ -321,28 +321,50 @@ private struct OptionEditor: View {
         }
     }
 
+    /// A bool action with an animated preview CARD (the per-action analog of a
+    /// feature's gallery card): the animation on top, the label + switch below.
+    private var boolPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Auto-plays (not hover-gated) so the animation is visible at a
+            // glance -- there are only a handful of these per feature, unlike
+            // the gallery's many cards.
+            OptionPreviewScene(token: opt.preview, playing: true)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.15), lineWidth: 1))
+            HStack {
+                Text(opt.label)
+                Spacer()
+                Toggle("", isOn: boolBinding).labelsHidden()
+            }
+        }
+    }
+
+    /// A validate-able secret: the field plus a Validate button that checks the
+    /// credential and unlocks the gatedBy options below it.
+    private var validatableSecretField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent(opt.label) {
+                SecureField("", text: secretBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 240)
+                    .multilineTextAlignment(.trailing)
+            }
+            HStack(spacing: 8) {
+                Button("Validate") { store.validate(featureId, opt) }
+                    .disabled(secretBinding.wrappedValue.isEmpty || isValidating)
+                validationStatus
+                Spacer()
+            }
+        }
+    }
+
     @ViewBuilder
     private var editor: some View {
         switch opt.type {
         case "bool" where !opt.preview.isEmpty:
-            // An action with an animated preview CARD (the per-action analog of a
-            // feature's gallery card): the animation on top, the label + switch
-            // below. Hovering the card plays the animation.
-            VStack(alignment: .leading, spacing: 8) {
-                // Auto-plays (not hover-gated) so the animation is visible at a
-                // glance -- there are only a handful of these per feature, unlike
-                // the gallery's many cards.
-                OptionPreviewScene(token: opt.preview, playing: true)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .padding(.vertical, 6)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.08)))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.15), lineWidth: 1))
-                HStack {
-                    Text(opt.label)
-                    Spacer()
-                    Toggle("", isOn: boolBinding).labelsHidden()
-                }
-            }
+            boolPreviewCard
         case "bool":
             Toggle(opt.label, isOn: boolBinding)
         case "int":
@@ -377,22 +399,7 @@ private struct OptionEditor: View {
                     .multilineTextAlignment(.trailing)
             }
         case "secret" where opt.validate != nil:
-            // A validate-able secret: the field plus a Validate button that checks
-            // the credential and unlocks the gatedBy options below it.
-            VStack(alignment: .leading, spacing: 6) {
-                LabeledContent(opt.label) {
-                    SecureField("", text: secretBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 240)
-                        .multilineTextAlignment(.trailing)
-                }
-                HStack(spacing: 8) {
-                    Button("Validate") { store.validate(featureId, opt) }
-                        .disabled(secretBinding.wrappedValue.isEmpty || isValidating)
-                    validationStatus
-                    Spacer()
-                }
-            }
+            validatableSecretField
         case "secret":
             LabeledContent(opt.label) {
                 SecureField("", text: secretBinding)
@@ -410,7 +417,7 @@ private struct OptionEditor: View {
                 Menu {
                     Button(appListDefaultLabel) { store.setOptionValue(featureId, opt, "") }
                     Divider()
-                    ForEach(runningApps(), id: \.bundleId) { app in
+                    ForEach(AppCatalog.runningApps(), id: \.bundleId) { app in
                         Button(app.name) { store.setOptionValue(featureId, opt, app.bundleId) }
                     }
                 } label: {
@@ -492,28 +499,7 @@ private struct OptionEditor: View {
     private var appListSelectionLabel: String {
         let v = stringBinding.wrappedValue
         if v.isEmpty { return appListDefaultLabel }
-        return appDisplayName(forBundleId: v) ?? v
-    }
-
-    private func appDisplayName(forBundleId id: String) -> String? {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return nil }
-        return FileManager.default.displayName(atPath: url.path)
-    }
-
-    /// Currently-running regular (UI) apps as (display name, bundle id), deduped
-    /// by bundle id and sorted -- the candidate set for an `appList` option. Read
-    /// fresh each time the menu opens (Settings is host UI, so NSWorkspace is
-    /// fair game here).
-    private func runningApps() -> [(name: String, bundleId: String)] {
-        var seen = Set<String>()
-        var out: [(name: String, bundleId: String)] = []
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
-            guard let name = app.localizedName, let bid = app.bundleIdentifier,
-                  !seen.contains(bid) else { continue }
-            seen.insert(bid)
-            out.append((name, bid))
-        }
-        return out.sorted { $0.name < $1.name }
+        return AppCatalog.displayName(forBundleId: v) ?? v
     }
 
     /// Keychain-backed string. Never seeded from a manifest default -- get
