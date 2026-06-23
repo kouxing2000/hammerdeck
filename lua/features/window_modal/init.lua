@@ -124,14 +124,8 @@ local function arrangerFor(ctx)
                 end
                 target = best.t
             end
-            local nf = {
-                w = math.min(f.w, target.w), h = math.min(f.h, target.h),
-                x = target.x + (f.x - s.x) * (target.w / s.w),
-                y = target.y + (f.y - s.y) * (target.h / s.h),
-            }
-            if nf.x + nf.w > target.x + target.w then nf.x = target.x + target.w - nf.w end
-            if nf.y + nf.h > target.y + target.h then nf.y = target.y + target.h - nf.h end
-            return nf
+            -- size kept (shrunk to fit) + clamp -- shared geometry (windows.lua).
+            return W.moveToScreen(f, s, target, { keepSize = true })
         end)
     end
 

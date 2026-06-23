@@ -55,10 +55,9 @@ local function arranger(ctx)
         end
     end
 
-    -- Move to the adjacent screen, scaling the frame proportionally (the
-    -- donor's least-distortion scale: whichever axis ratio is closer to 1
-    -- scales BOTH dimensions; positions scale per axis; clamp into the
-    -- target). The pointer is carried over and flashed.
+    -- Move to the adjacent screen (by index), rescaling the frame with the
+    -- shared least-distortion geometry (windows.moveToScreen). The pointer is
+    -- carried over at the same relative spot and flashed.
     function a.moveScreen(dir)
         local f = focused()
         if not f then return end
@@ -74,22 +73,8 @@ local function arranger(ctx)
         local j = (dir == "next") and (i % #screens) + 1 or ((i - 2) % #screens) + 1
         local s, t = f.screen, screens[j]
 
-        local scale1, scale2 = t.w / s.w, t.h / s.h
-        local scale = math.abs(scale2 - 1) < math.abs(scale1 - 1) and scale2 or scale1
-        local nf = {
-            w = f.w * scale, h = f.h * scale,
-            x = t.x + (f.x - s.x) * scale1,
-            y = t.y + (f.y - s.y) * scale2,
-        }
-        if nf.x + nf.w > t.x + t.w then
-            nf.x = t.x + t.w - nf.w
-            if nf.x < t.x then nf.x, nf.w = t.x, t.w end
-        end
-        if nf.y + nf.h > t.y + t.h then
-            nf.y = t.y + t.h - nf.h
-            if nf.y < t.y then nf.y, nf.h = t.y, t.h end
-        end
-        ctx.setFocusedWindowFrame(nf)
+        -- least-distortion rescale + clamp (shared geometry; see windows.lua).
+        ctx.setFocusedWindowFrame(W.moveToScreen(f, s, t))
 
         -- Carry the pointer at the same offset on the new screen, clamped.
         local m = ctx.mousePosition()

@@ -1734,6 +1734,27 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
     "disable mid-mode tears everything down")
 fake.settings["hammerdeck.opt.window_modal.stepParts"] = nil
 
+-- T25c: windows.moveToScreen geometry (the pure shared core of both features) ---
+local W = require("platform.windows")
+local function frameEq(nf, x, y, w, h, msg)
+    ok(nf.x == x and nf.y == y and nf.w == w and nf.h == h,
+        msg .. " (got " .. nf.x .. "," .. nf.y .. "," .. nf.w .. "," .. nf.h .. ")")
+end
+local s1 = { x = 0, y = 0, w = 1000, h = 800 }
+-- default (window_snap): same-size target, scale 1 -> position shifts, size kept.
+frameEq(W.moveToScreen({ x = 100, y = 100, w = 400, h = 300 }, s1, { x = 1000, y = 0, w = 1000, h = 800 }),
+    1100, 100, 400, 300, "moveToScreen default: equal screens just translate")
+-- default: 2x larger target -> least-distortion scale 2 on both dims + position.
+frameEq(W.moveToScreen({ x = 100, y = 100, w = 400, h = 300 }, s1, { x = 0, y = 0, w = 2000, h = 1600 }),
+    200, 200, 800, 600, "moveToScreen default: larger screen scales both dims")
+-- default fill-clamp: scaled window wider than target -> filled to the target edge.
+frameEq(W.moveToScreen({ x = 0, y = 0, w = 1000, h = 800 }, s1, { x = 1000, y = 0, w = 800, h = 800 }),
+    1000, 0, 800, 800, "moveToScreen default: oversize result fills the target edge")
+-- keepSize (window_modal): size kept but shrunk to fit, clamped back inside.
+frameEq(W.moveToScreen({ x = 100, y = 100, w = 1500, h = 1000 }, s1, { x = 1000, y = 0, w = 800, h = 600 },
+    { keepSize = true }),
+    1000, 0, 800, 600, "moveToScreen keepSize: shrinks to fit and clamps inside")
+
 -- T26: tab_switcher (cross-browser tab switcher, MRU-first) ----------------------
 local jsonlib = require("platform.json")
 
