@@ -173,8 +173,7 @@ public func hammerdeckMain() {
     Native.shared.installBindings()
     // The held-Caps which-key legend reads the live catalog each time it shows.
     CapsHyperTap.shared.legendProvider = {
-        let raw = (try? Native.shared.lua.eval(
-            "return require('platform.registry').hyperLegend()")) as? [Any] ?? []
+        let raw = (try? Native.shared.lua.call("platform.registry", "hyperLegend"))?.first as? [Any] ?? []
         return raw.compactMap { item -> HyperHintPanel.Row? in
             guard let d = item as? [String: Any],
                   let key = d["key"] as? String,
@@ -267,7 +266,7 @@ public func hammerdeckMain() {
             // Restore plain Caps Lock on a clean quit (clears the hidutil remap);
             // otherwise Caps would stay a dead F18 key until the next launch.
             CapsHyperTap.shared.disable()
-            _ = try? Native.shared.lua.eval("require('platform.registry').stopAll(); return true")
+            _ = try? Native.shared.lua.call("platform.registry", "stopAll")
         }
     }
 
