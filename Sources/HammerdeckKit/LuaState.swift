@@ -75,6 +75,73 @@ final class LuaState {
         lua_setglobal(L, name)
     }
 
+    /// Current Lua stack depth. For tests/diagnostics -- a call that leaks or
+    /// over-pops the stack is a classic C-API bug, so tests assert this is
+    /// unchanged across `call`.
+    var stackTop: Int { Int(lua_gettop(L)) }
+
+    // MARK: - Typed calls (marshalled args -- never Lua source)
+
+    /// Call `require(module).function(args...)` and return its results, marshalling
+    /// each argument straight onto the Lua stack as a real value. Unlike `eval`,
+    /// DATA never enters Lua source, so there is no escaping/injection surface --
+    /// the config layer hands over Swift values, not hand-built Lua table literals.
+    /// Only the module/function NAMES (code constants) identify the target. Throws
+    /// the Lua error on a require/call failure; the stack is restored on every path.
+    ///
+    /// Returns exactly `results` values (Lua nil-pads/truncates to fit) -- there is
+    /// no MULTRET "all returns" mode; pass the count you read. Like the rest of the
+    /// bridge it assumes the default Lua stack headroom (LUA_MINSTACK) -- fine for
+    /// the shallow arg shapes callers pass, not a deep-recursion marshaller.
+    @discardableResult
+    func call(_ module: String, _ function: String,
+              _ args: [LuaArg] = [], results: Int32 = 1) throws -> [Any?] {
+        let base = lua_gettop(L)
+        // require(module) -> module table on top
+        lua_getglobal(L, "require")
+        lua_pushstring(L, module)
+        if lua_pcallk(L, 1, 1, 0, 0, nil) != LUA_OK {
+            let e = popError(); lua_settop(L, base); throw e
+        }
+        // module[function], then drop the module table so the function sits
+        // directly above the args (where lua_pcallk expects it).
+        lua_getfield(L, -1, function)
+        lua_rotate(L, base + 1, -1)   // [module, fn] -> [fn, module]
+        lua_settop(L, -2)             // pop the module copy
+        for a in args { push(a) }
+        if lua_pcallk(L, Int32(args.count), results, 0, 0, nil) != LUA_OK {
+            let e = popError(); lua_settop(L, base); throw e
+        }
+        var out: [Any?] = []
+        if results > 0 {
+            for i in 1...Int(results) { out.append(LuaState.any(L, base + Int32(i))) }
+        }
+        lua_settop(L, base)           // leave the stack exactly as we found it
+        return out
+    }
+
+    /// Push one marshalled argument onto the stack (recursive for table/array).
+    private func push(_ arg: LuaArg) {
+        switch arg {
+        case .string(let s): lua_pushstring(L, s)
+        case .bool(let b):   lua_pushboolean(L, b ? 1 : 0)
+        case .int(let i):    lua_pushinteger(L, lua_Integer(i))
+        case .double(let d): lua_pushnumber(L, d)
+        case .array(let xs):
+            lua_createtable(L, Int32(xs.count), 0)
+            for (i, x) in xs.enumerated() {
+                push(x)
+                lua_rawseti(L, -2, lua_Integer(i + 1))
+            }
+        case .table(let m):
+            lua_createtable(L, 0, Int32(m.count))
+            for (k, v) in m {
+                push(v)
+                lua_setfield(L, -2, k)
+            }
+        }
+    }
+
     // MARK: - Callback references (the core bridge problem, solved once)
 
     /// Take the Lua value at `index` (usually a function argument) and pin it
@@ -249,4 +316,16 @@ final class LuaState {
 struct LuaError: Error, CustomStringConvertible {
     let message: String
     var description: String { "Lua error: \(message)" }
+}
+
+/// A Swift value that marshals directly into a Lua call argument, so callers
+/// hand over data as values instead of building Lua source (no escaping, no
+/// injection). Mirrors what `LuaState.any` reads back the other way.
+indirect enum LuaArg {
+    case string(String)
+    case bool(Bool)
+    case int(Int)
+    case double(Double)
+    case array([LuaArg])
+    case table([String: LuaArg])
 }

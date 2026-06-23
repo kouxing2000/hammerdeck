@@ -89,26 +89,24 @@ struct TriggerSpec: Equatable {
         self.event = dict["event"] as? String
     }
 
-    /// Emit as a Lua table literal for registry.setTrigger (single quotes and
-    /// backslashes escaped so a hand-typed key can't break the chunk).
-    var luaLiteral: String {
-        func esc(_ s: String) -> String {
-            s.replacingOccurrences(of: "\\", with: "\\\\")
-             .replacingOccurrences(of: "'", with: "\\'")
-        }
-        func list(_ xs: [String]) -> String { xs.map { "'\(esc($0))'" }.joined(separator: ",") }
+    /// Marshal as a Lua call argument (a real table value, not source) for
+    /// registry.setTrigger / triggers.* -- so a hand-typed key can't break or
+    /// inject into a chunk; there is no source to escape.
+    var luaArg: LuaArg {
+        func list(_ xs: [String]) -> LuaArg { .array(xs.map(LuaArg.string)) }
         switch type {
         case "hotkey":
-            return "{type='hotkey',mods={\(list(mods))},key='\(esc(key))'}"
+            return .table(["type": .string("hotkey"), "mods": list(mods), "key": .string(key)])
         case "chord":
-            return "{type='chord',mods={\(list(mods))},key='\(esc(key))',follows={\(list(follows))}}"
+            return .table(["type": .string("chord"), "mods": list(mods),
+                           "key": .string(key), "follows": list(follows)])
         case "schedule":
-            if let everyMin { return "{type='schedule',everyMin=\(everyMin)}" }
-            return "{type='schedule',at='\(esc(at ?? "00:00"))'}"
+            if let everyMin { return .table(["type": .string("schedule"), "everyMin": .int(everyMin)]) }
+            return .table(["type": .string("schedule"), "at": .string(at ?? "00:00")])
         case "event":
-            return "{type='event',event='\(esc(event ?? "wake"))'}"
+            return .table(["type": .string("event"), "event": .string(event ?? "wake")])
         default:
-            return "{}"
+            return .table([:])
         }
     }
 }
@@ -251,7 +249,7 @@ final class SettingsStore: ObservableObject {
     }
 
     func refresh() {
-        guard let raw = try? lua.eval("return require('platform.registry').describe()"),
+        guard let raw = try? lua.call("platform.registry", "describe").first ?? nil,
               let list = raw as? [Any] else {
             print("[hammerdeck] settings: failed to read catalog")
             return
@@ -261,7 +259,7 @@ final class SettingsStore: ObservableObject {
 
     func setEnabled(_ id: String, _ on: Bool) {
         do {
-            _ = try lua.eval("require('platform.registry').setEnabled('\(id)', \(on)); return true")
+            try lua.call("platform.registry", "setEnabled", [.string(id), .bool(on)])
         } catch {
             print("[hammerdeck] settings: setEnabled failed: \(error)")
         }
@@ -271,7 +269,7 @@ final class SettingsStore: ObservableObject {
     /// Hot-reload all features from disk: drops cached Lua modules, re-loads the
     /// catalog, and re-binds whatever was enabled. Enabled-state/options persist.
     func reload() {
-        _ = try? lua.eval("require('platform.registry').reload(); return true")
+        _ = try? lua.call("platform.registry", "reload")
         refresh()
     }
 
@@ -280,16 +278,14 @@ final class SettingsStore: ObservableObject {
     /// Rebind one action of a feature. Returns nil on success, or a
     /// human-readable reason if the registry refused (e.g. hotkey already taken).
     func setTrigger(_ id: String, _ actionId: String, _ spec: TriggerSpec) -> String? {
-        let code = """
-        local ok, reason = require('platform.registry').setTrigger('\(id)', '\(actionId)', \(spec.luaLiteral))
-        return { ok = ok and true or false, reason = reason }
-        """
         defer { refresh() }
-        guard let raw = try? lua.eval(code), let r = raw as? [String: Any] else {
+        // setTrigger returns `true` or `false, reason` -- read both results.
+        guard let r = try? lua.call("platform.registry", "setTrigger",
+                                    [.string(id), .string(actionId), spec.luaArg], results: 2) else {
             return "could not apply trigger"
         }
-        if (r["ok"] as? Bool) == true { return nil }
-        return (r["reason"] as? String) ?? "trigger conflict"
+        if (r[0] as? Bool) == true { return nil }
+        return (r[1] as? String) ?? "trigger conflict"
     }
 
     /// Advisory (soft) conflicts for a candidate hotkey/chord binding: macOS
@@ -298,8 +294,8 @@ final class SettingsStore: ObservableObject {
     /// Empty when clear; the caller still lets the user apply.
     func shortcutAdvisories(_ spec: TriggerSpec) -> [String] {
         guard spec.type == "hotkey" || spec.type == "chord" else { return [] }
-        let code = "return require('platform.triggers').advisories(\(spec.luaLiteral))"
-        guard let raw = try? lua.eval(code), let list = raw as? [Any] else { return [] }
+        guard let raw = try? lua.call("platform.triggers", "advisories", [spec.luaArg]).first ?? nil,
+              let list = raw as? [Any] else { return [] }
         return list.compactMap { $0 as? String }
     }
 
@@ -308,9 +304,9 @@ final class SettingsStore: ObservableObject {
     /// would refuse -- used to render a row's live status WITHOUT mutating
     /// anything (setTrigger persists; this doesn't).
     func triggerConflict(_ id: String, _ actionId: String, _ spec: TriggerSpec) -> String? {
-        let code = "local r = require('platform.registry')"
-            + ".triggerConflict('\(id)', '\(actionId)', \(spec.luaLiteral)); return r or false"
-        guard let raw = try? lua.eval(code), let s = raw as? String else { return nil }
+        guard let raw = try? lua.call("platform.registry", "triggerConflict",
+                                      [.string(id), .string(actionId), spec.luaArg]).first ?? nil,
+              let s = raw as? String else { return nil }
         return s
     }
 
@@ -338,34 +334,32 @@ final class SettingsStore: ObservableObject {
     /// seam (native.ax_trusted via adapter.axTrusted), never by calling the OS
     /// API from the UI. Powers the Dashboard's permission status row.
     func accessibilityTrusted() -> Bool {
-        (try? lua.eval("return require('platform.adapter').axTrusted()")) as? Bool ?? false
+        (try? lua.call("platform.adapter", "axTrusted").first ?? nil) as? Bool ?? false
     }
 
     /// Swap two actions' triggers (the Shortcut Map drag-to-swap). Atomic and
     /// conflict-safe in the registry. Refreshes the catalog after.
     func swapTriggers(_ idA: String, _ actionA: String, _ idB: String, _ actionB: String) {
-        _ = try? lua.eval(
-            "require('platform.registry').swapTriggers('\(idA)', '\(actionA)', '\(idB)', '\(actionB)'); return true")
+        _ = try? lua.call("platform.registry", "swapTriggers",
+                      [.string(idA), .string(actionA), .string(idB), .string(actionB)])
         refresh()
     }
 
     /// Drop one action's override, reverting to its declared default trigger.
     func clearTrigger(_ id: String, _ actionId: String) {
-        _ = try? lua.eval("require('platform.registry').clearTrigger('\(id)', '\(actionId)'); return true")
+        _ = try? lua.call("platform.registry", "clearTrigger", [.string(id), .string(actionId)])
         refresh()
     }
 
     /// Fire one action of an enabled feature on demand (menubar quick triggers).
     func runAction(_ id: String, _ actionId: String) {
-        _ = try? lua.eval(
-            "require('platform.registry').runAction('\(id)', '\(actionId)'); return true")
+        _ = try? lua.call("platform.registry", "runAction", [.string(id), .string(actionId)])
     }
 
     /// Run a feature's option-action (a Settings "Test" button). Fire-and-forget;
     /// the handler surfaces its own result to the user (alert / app focus).
     func runOptionAction(_ featureId: String, _ opt: OptionInfo) {
-        _ = try? lua.eval(
-            "require('platform.registry').runOptionAction('\(featureId)', '\(opt.key)'); return true")
+        _ = try? lua.call("platform.registry", "runOptionAction", [.string(featureId), .string(opt.key)])
     }
 
     // MARK: - Option values (UserDefaults, same keys as ctx.opt)
@@ -431,8 +425,7 @@ final class SettingsStore: ObservableObject {
     /// Let an enabled feature react to the edit immediately (registry no-ops
     /// for features without an onOptionChange handler).
     private func notifyOptionChanged(_ featureId: String, _ key: String) {
-        _ = try? lua.eval(
-            "require('platform.registry').optionChanged('\(featureId)', '\(key)'); return true")
+        _ = try? lua.call("platform.registry", "optionChanged", [.string(featureId), .string(key)])
     }
 
     func isOptionOverridden(_ featureId: String, _ opt: OptionInfo) -> Bool {

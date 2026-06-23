@@ -200,10 +200,51 @@ final class IntegrationTests: XCTestCase {
         specs.append(TriggerSpec(type: "event", event: "wake"))
 
         for spec in specs {
-            let lua = eval("return require('platform.triggers').glyph(\(spec.luaLiteral))") as? String
+            // Drive the Lua side through the typed call seam (marshalled luaArg),
+            // which also exercises LuaArg round-tripping into a real Lua table.
+            let lua = (try? host.lua.call("platform.triggers", "glyph", [spec.luaArg]).first ?? nil) as? String
             XCTAssertEqual(lua, shortcutGlyph(spec),
-                           "glyph drift for \(spec.luaLiteral): Lua=\(lua ?? "nil") Swift=\(shortcutGlyph(spec))")
+                           "glyph drift for \(spec.type)/\(spec.key): Lua=\(lua ?? "nil") Swift=\(shortcutGlyph(spec))")
         }
+    }
+
+    /// The typed call seam (LuaState.call): marshalled args reach Lua as real
+    /// values (no source-building), results read back, and -- critically for a
+    /// C-API bug -- the Lua stack is left exactly as found on every path
+    /// (success, multi-return, and error).
+    func testTypedCallMarshalsArgsAndBalancesStack() {
+        let top0 = host.lua.stackTop
+
+        // Single string result: glyph of a marshalled hotkey spec.
+        let g = try? host.lua.call("platform.triggers", "glyph",
+            [.table(["type": .string("hotkey"),
+                     "mods": .array([.string("cmd"), .string("shift")]),
+                     "key": .string("v")])]).first ?? nil
+        XCTAssertEqual(g as? String, "⇧⌘V", "marshalled table arg -> glyph")
+
+        // Nested array marshalling (chord follows) survives the crossing.
+        let c = try? host.lua.call("platform.triggers", "describe",
+            [.table(["type": .string("chord"), "mods": .array([.string("cmd")]),
+                     "key": .string("a"), "follows": .array([.string("b"), .string("c")])])]).first ?? nil
+        XCTAssertEqual(c as? String, "chord: cmd+a then b c", "nested array (follows) marshals")
+
+        // Multi-return: registry.runAction on an unknown feature returns
+        // (false, reason) -- both results come back across the seam.
+        let r = (try? host.lua.call("platform.registry", "runAction",
+            [.string("no_such_feature"), .string("main")], results: 2)) ?? []
+        XCTAssertEqual(r.count, 2, "results:2 yields two slots")
+        XCTAssertEqual(r[0] as? Bool, false, "runAction(unknown) returns false")
+        XCTAssertEqual(r[1] as? String, "no such feature: no_such_feature", "reason comes back as the 2nd result")
+
+        // A quote in the data is just data now -- it cannot break a chunk (the
+        // whole point of marshalling vs string interpolation).
+        _ = try? host.lua.call("platform.triggers", "glyph",
+            [.table(["type": .string("hotkey"), "mods": .array([]), "key": .string("'")])])
+
+        // An error path (calling a missing function) must still restore the stack.
+        XCTAssertThrowsError(try host.lua.call("platform.registry", "no_such_function_xyz"))
+
+        XCTAssertEqual(host.lua.stackTop, top0, "call leaves the Lua stack balanced across all paths")
     }
 
     /// Pump the real application event queue (what app.run() does) -- plain
