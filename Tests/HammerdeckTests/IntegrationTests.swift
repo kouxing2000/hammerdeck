@@ -164,6 +164,48 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    /// Trigger-glyph rendering exists once per language (KeyGlyphs.swift on the
+    /// Swift side, registry.lua's specGlyph on the Lua side -- the irreducible
+    /// cross-language minimum after the Swift copies were merged, REFACTOR #1).
+    /// This drives BOTH with the same specs and asserts they agree, so the two
+    /// copies can't silently drift (a new named key, a reordered modifier).
+    func testGlyphParityAcrossLanguageSeam() {
+        // Pin the load-bearing glyph decisions absolutely, not just "both sides
+        // agree" -- so a same-direction drift in both copies (e.g. Return back
+        // to U+23CE) still fails. Return is U+21A9 (the macOS menu convention),
+        // NOT U+23CE, which the HUD panels used to show out of step.
+        XCTAssertEqual(KeyGlyphs.glyph("return"), "\u{21A9}")
+        XCTAssertEqual(KeyGlyphs.modifiers(["ctrl", "alt", "shift", "cmd"]), "\u{2303}\u{2325}\u{21E7}\u{2318}")
+
+        var specs: [TriggerSpec] = []
+        // Every named key, plus a sampling of single chars and passthroughs.
+        // Keys are ASCII in practice; the count==1 upcasing branch counts
+        // grapheme clusters in Swift vs bytes in Lua, so a multi-byte key would
+        // be a latent parity hole -- not exercised here because none can occur.
+        for k in ["tab", "return", "enter", "space", "delete", "backspace",
+                  "escape", "esc", "left", "right", "up", "down",
+                  "a", "Z", "5", "f1", ""] {
+            specs.append(TriggerSpec(type: "hotkey", mods: ["cmd"], key: k))
+        }
+        // Modifier combinations, including the long-form aliases both sides accept.
+        for mods in [[], ["cmd"], ["ctrl", "alt", "shift", "cmd"],
+                     ["control", "option", "command"], ["shift", "ctrl"]] {
+            specs.append(TriggerSpec(type: "hotkey", mods: mods, key: "v"))
+        }
+        // Chords (incl. an empty follow list), schedules, and events.
+        specs.append(TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["b", "left"]))
+        specs.append(TriggerSpec(type: "chord", mods: ["cmd"], key: "x", follows: []))
+        specs.append(TriggerSpec(type: "schedule", everyMin: 180))
+        specs.append(TriggerSpec(type: "schedule", at: "07:30"))
+        specs.append(TriggerSpec(type: "event", event: "wake"))
+
+        for spec in specs {
+            let lua = eval("return require('platform.registry').specGlyph(\(spec.luaLiteral))") as? String
+            XCTAssertEqual(lua, shortcutGlyph(spec),
+                           "glyph drift for \(spec.luaLiteral): Lua=\(lua ?? "nil") Swift=\(shortcutGlyph(spec))")
+        }
+    }
+
     /// Pump the real application event queue (what app.run() does) -- plain
     /// RunLoop spinning does not drain the Carbon event queue that delivers
     /// RegisterEventHotKey presses.

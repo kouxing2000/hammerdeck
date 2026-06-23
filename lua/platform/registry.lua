@@ -593,6 +593,11 @@ local function specGlyph(spec)
     return nil
 end
 
+-- Exposed for the Swift<->Lua glyph parity test: this is the one Lua glyph
+-- copy, KeyGlyphs.swift is the one Swift copy, and IntegrationTests asserts the
+-- two agree so they can't drift (see REFACTOR_TODO #1).
+registry.specGlyph = specGlyph
+
 -- Flatten the catalog into a command list for a "commands"-capability holder:
 -- one entry per action of every OTHER ENABLED feature (self excluded -- the
 -- palette never lists its own opener). Backs ctx.commands(); rebuilt on each

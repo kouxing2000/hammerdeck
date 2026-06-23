@@ -29,28 +29,13 @@ func categoryIcon(_ category: String) -> String {
     }
 }
 
-// Compact glyph string for a trigger (e.g. "⌃⌥⌘←"). Mirrors registry.lua's
-// specGlyph; the modifier order here is the macOS display convention (⌃⌥⇧⌘).
-private let kKeyGlyphs: [String: String] = [
-    "tab": "⇥", "return": "↩", "enter": "↩", "space": "␣",
-    "delete": "⌫", "backspace": "⌫", "escape": "⎋", "esc": "⎋",
-    "left": "←", "right": "→", "up": "↑", "down": "↓",
-]
+// Compact glyph string for a trigger (e.g. "⌃⌥⌘←"). Thin wrappers over
+// `KeyGlyphs` (the single Swift glyph source) for callers that want the
+// free-function form (the SwiftUI views, ShortcutRecorder, StatusBar); the
+// AppKit HUD panels call KeyGlyphs directly. Mirrors registry.lua's specGlyph.
+func keyGlyph(_ key: String) -> String { KeyGlyphs.glyph(key) }
 
-func keyGlyph(_ key: String) -> String {
-    if let g = kKeyGlyphs[key.lowercased()] { return g }
-    return key.count == 1 ? key.uppercased() : key
-}
-
-func modGlyphs(_ mods: [String]) -> String {
-    let has = Set(mods.map { $0.lowercased() })
-    var s = ""
-    if has.contains("ctrl") || has.contains("control") { s += "⌃" }
-    if has.contains("alt") || has.contains("option")   { s += "⌥" }
-    if has.contains("shift")                            { s += "⇧" }
-    if has.contains("cmd") || has.contains("command")   { s += "⌘" }
-    return s
-}
+func modGlyphs(_ mods: [String]) -> String { KeyGlyphs.modifiers(mods) }
 
 /// The compact glyph for a trigger spec, or "" when there is none.
 func shortcutGlyph(_ t: TriggerSpec?) -> String {
