@@ -43,7 +43,7 @@ extension Native {
 
         struct Row {
             let z: Int; let id: Int; let app: String; let title: String
-            let bundleID: String; let screenName: String?
+            let bundleID: String; let screenName: String?; let iconToken: String
         }
         var rows: [Row] = []
         // Screen names only matter (and only render) on multi-display setups.
@@ -92,9 +92,13 @@ extension Native {
                 let id = nextWindowId
                 nextWindowId += 1
                 axWindowCache[id] = win
+                // Use bundleID for installed apps; fall back to pid for processes
+                // without a .app bundle (e.g. the app itself under `swift run`).
+                let iconToken = bundleID.isEmpty ? "appiconpid:\(pid)" : "appicon:\(bundleID)"
                 rows.append(Row(z: z, id: id, app: appName,
                                 title: title.isEmpty ? appName : title,
-                                bundleID: bundleID, screenName: screenName))
+                                bundleID: bundleID, screenName: screenName,
+                                iconToken: iconToken))
             }
         }
         rows.sort { $0.z < $1.z }
@@ -106,6 +110,7 @@ extension Native {
             lua_pushstring(L, r.title);            lua_setfield(L, -2, "title")
             lua_pushstring(L, r.app);              lua_setfield(L, -2, "appName")
             lua_pushstring(L, r.bundleID);         lua_setfield(L, -2, "bundleID")
+            lua_pushstring(L, r.iconToken);        lua_setfield(L, -2, "icon")
             if let s = r.screenName {
                 lua_pushstring(L, s);              lua_setfield(L, -2, "screenName")
             }

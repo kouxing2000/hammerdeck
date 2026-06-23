@@ -135,6 +135,9 @@ function adapter.chooser(opts)
     alloc()
     local h = {}
     function h.setPlaceholder(t)  c.placeholder = t end
+    function h.setTitle(t, symbol, badge)
+        c.title = t; c.titleSymbol = symbol; c.titleBadge = badge
+    end
     function h.setChoices(list)   c.choices = list end
     function h.show()             c.visible = true end
     function h.hide()

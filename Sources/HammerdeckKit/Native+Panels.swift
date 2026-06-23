@@ -97,6 +97,13 @@ extension Native {
         return 0
     }
 
+    func chooserSetTitle(_ L: OpaquePointer?) -> Int32 {
+        chooser(L)?.setTitle(LuaState.string(L, 2) ?? "",
+                             symbol: LuaState.string(L, 3),
+                             badge: LuaState.string(L, 4))
+        return 0
+    }
+
     func chooserSetQuery(_ L: OpaquePointer?) -> Int32 {
         chooser(L)?.setQuery(LuaState.string(L, 2))
         return 0
@@ -201,10 +208,10 @@ extension Native {
             },
             onHide: {}
         )
-        var entries = actions.map { ChooserEntry(text: $0, subText: nil, iconToken: nil, valid: true) }
-        entries += infos.map { ChooserEntry(text: $0, subText: nil, iconToken: nil, valid: false) }
+        let entries = actions.map { ChooserEntry(text: $0, subText: nil, iconToken: nil, valid: true) }
         panel.setChoices(entries)
-        panel.setPlaceholder(title)
+        panel.setTitle(title)        // real header band, not the dim search placeholder
+        panel.setFooter(infos)       // pinned context strip, not blurred-in list rows
         panel.show()
 
         cancellers[id] = {

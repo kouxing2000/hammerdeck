@@ -75,18 +75,24 @@ local function jump(ctx, actionId, backward)
             end
             return
         end
+        -- Second line = the display the window is on, but ONLY on multi-display
+        -- setups: native reports w.screenName only then (nil on a single screen),
+        -- so a nil subText collapses the row back to one line. The app name is
+        -- dropped on purpose -- the leading icon already identifies the app, so
+        -- the only thing worth a second line is which monitor the window is on.
         local choices = {}
         for _, w in ipairs(windows) do
-            local sub = w.appName
-            if w.screenName then sub = sub .. " (" .. w.screenName .. ")" end
             choices[#choices + 1] = {
                 text = w.title,
-                subText = sub,
-                image = ctx.appIcon(w.bundleID),
+                subText = w.screenName,
+                image = w.icon or ctx.appIcon(w.bundleID),
                 id = w.id,
             }
         end
         st.lastChoices = choices
+        local count = #choices
+        st.chooser.setTitle("Switch Window", "macwindow.on.rectangle",
+            count .. (count == 1 and " window" or " windows"))
         st.chooser.setPlaceholder("Search windows")
         st.chooser.setChoices(choices)
         st.chooser.setQuery(nil)

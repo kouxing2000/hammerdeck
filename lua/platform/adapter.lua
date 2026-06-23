@@ -164,6 +164,8 @@ function adapter.chooser(opts)
         end)
     local h = {}
     function h.setPlaceholder(t)  native.chooser_set_placeholder(id, t) end
+    -- title plus optional leading SF Symbol + right-flush badge (e.g. a count)
+    function h.setTitle(t, symbol, badge) native.chooser_set_title(id, t, symbol, badge) end
     function h.setChoices(list)   choicesCache = list; native.chooser_set_choices(id, list) end
     function h.show()             native.chooser_show(id) end
     function h.hide()             native.chooser_hide(id) end

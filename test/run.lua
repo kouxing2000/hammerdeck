@@ -108,6 +108,9 @@ ok(ch ~= nil, "window_switcher opened a chooser")
 ok(#ch.choices == 3, "chooser lists all windows")
 ok(ch.selectedRow == 2, "chooser preselects the previous window")
 ok(ch.choices[1].image == "icon:com.a", "choices carry app icons")
+ok(ch.title == "Switch Window" and ch.titleSymbol == "macwindow.on.rectangle"
+    and ch.titleBadge == "3 windows",
+    "header carries title, glyph symbol, and live count badge")
 ch.userSelect(2)
 ok(fake.focused[#fake.focused] == 22, "selecting focuses the chosen window")
 
@@ -132,7 +135,8 @@ fake.modifiers.alt = false
 fake.fireTimers("every", 0.1)
 ok(fake.focused[#fake.focused] == 33, "release still picks after backward cycling")
 
--- screen names render in the subtext on multi-display rows
+-- screen name IS the subtext (app name dropped -- the icon carries it), and
+-- only when the display is reported (native reports it only on multi-display)
 fake.windows = {
     { id = 11, title = "W1", appName = "AppA", bundleID = "com.a", screenName = "Studio Display" },
     { id = 22, title = "W2", appName = "AppB", bundleID = "com.b" },
@@ -140,8 +144,8 @@ fake.windows = {
 fake.modifiers.alt = true
 fake.pressHotkey("tab")
 ch = fake.visibleChooser()
-ok(ch.choices[1].subText == "AppA (Studio Display)" and ch.choices[2].subText == "AppB",
-    "screen name appended to the subtext only when reported")
+ok(ch.choices[1].subText == "Studio Display" and ch.choices[2].subText == nil,
+    "screen name is the subtext when reported; nil collapses the row to one line")
 ch.userSelect(1)
 fake.modifiers.alt = false
 
