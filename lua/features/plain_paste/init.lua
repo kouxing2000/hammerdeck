@@ -43,6 +43,8 @@ return {
         .. "the copied text and pastes it (or types it as keystrokes).",
     version     = "1.2.0",
     category    = "productivity",
+    context     = "textField",
+    requires    = { "accessibility" },
 
     options = {
         { key = "mode", type = "enum", default = "plainText",

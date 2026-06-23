@@ -21,6 +21,7 @@ return {
         .. "bottom of the screen; notifies when time is up.",
     version     = "1.0.0",
     category    = "productivity",
+    context     = "anywhere",
 
     options = {
         { key = "defaultMinutes", type = "int", default = 5,

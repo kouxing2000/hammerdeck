@@ -23,6 +23,8 @@ return {
         .. "mouse, or center it on the focused window.",
     version     = "1.0.0",
     category    = "productivity",
+    context     = "anywhere",
+    requires    = { "accessibility" },
 
     options = {
         { key = "seconds", type = "int", default = 3,

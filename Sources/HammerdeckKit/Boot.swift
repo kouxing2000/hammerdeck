@@ -238,12 +238,13 @@ public func hammerdeckMain() {
     // icon (when shown) reopens the Homepage -- the point of having the icon.
     app.delegate = statusBar
 
-    // First launch: open the Homepage so a new user lands on "here's what
-    // Hammerdeck can do," not a bare menubar icon. Every later launch stays
-    // quiet (it's "Home…" in the menu) -- a login-item menubar app must not
-    // throw a window up on every boot.
+    // First launch: open the Homepage with the Feature Tour so a new user lands
+    // on a live preview of "here's what Hammerdeck can do" and adds what they
+    // want -- not a bare menubar icon, and not all 19 features pre-enabled. Every
+    // later launch stays quiet (it's "Home…" in the menu) -- a login-item menubar
+    // app must not throw a window up on every boot.
     if isFirstRun {
-        homepageWindow.show(.home)
+        homepageWindow.presentTour()
     }
 
     // Debug-only: a file-polled Lua control channel for visual verification
@@ -253,6 +254,10 @@ public func hammerdeckMain() {
         homepageWindow.show(.settings)
         if let id { store.selectedFeatureId = id }
     }
+    DebugControl.openHome = { dest in
+        homepageWindow.show(dest.flatMap(HomeDestination.init(rawValue:)) ?? .home)
+    }
+    DebugControl.presentTour = { homepageWindow.presentTour() }
     #endif
     DebugControl.startIfRequested(lua)
 

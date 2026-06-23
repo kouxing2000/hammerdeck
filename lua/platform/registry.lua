@@ -17,6 +17,7 @@ local adapter  = require("platform.adapter")
 local manifest = require("platform.manifest")
 local triggers = require("platform.triggers")
 local ctxlib   = require("platform.ctx")
+local json     = require("platform.json")
 
 local registry = {}
 
@@ -680,6 +681,9 @@ function registry.describe()
         local row = {
             id = m.id, name = m.name, description = m.description or "",
             category = m.category, version = m.version or "",
+            context = m.context or "anywhere",
+            requires = json.asArray(m.requires or {}),
+            recommended = m.recommended == true,
             kind = m.start and "service" or "action",
             enabled = registry.isEnabled(m.id),
             triggerDesc = describeTrigger(m),

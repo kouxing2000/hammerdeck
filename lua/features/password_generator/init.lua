@@ -79,6 +79,8 @@ return {
     description = "Generate a strong random password and copy it to the clipboard.",
     version     = "1.0.0",
     category    = "productivity",
+    context     = "anywhere",
+    recommended = true,
 
     options = {
         { key = "length",         type = "int",  default = 20, label = "Length",            min = 8, max = 128 },

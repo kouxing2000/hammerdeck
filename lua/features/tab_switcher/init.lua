@@ -348,6 +348,7 @@ return {
         .. "most recently used first, with favicons.",
     version     = "1.1.0",
     category    = "productivity",
+    context     = "web",
 
     options = {},
 

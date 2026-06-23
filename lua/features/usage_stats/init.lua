@@ -406,6 +406,7 @@ return {
         .. "CSV files (idle time excluded), with an optional desktop widget.",
     version     = "1.0.0",
     category    = "productivity",
+    context     = "automatic",
 
     options = {
         { key = "dir", type = "string", default = "~/.computer-usage",

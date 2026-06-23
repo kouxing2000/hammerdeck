@@ -102,6 +102,8 @@ return {
         .. "key -- refine/translate/summarize via AI. Results paste back in place.",
     version     = "1.1.0",
     category    = "productivity",
+    context     = "textField",
+    requires    = { "accessibility" },
 
     options = {
         -- Simple popup transforms (which base actions appear in the "act on

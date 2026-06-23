@@ -42,6 +42,7 @@ return {
         .. "a one-time snooze, and a weekend shift.",
     version     = "1.0.0",
     category    = "health",
+    context     = "automatic",
 
     options = {
         { key = "sleepAt",         type = "time", default = "00:30", label = "Sleep at (HH:MM)" },

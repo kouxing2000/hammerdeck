@@ -35,6 +35,7 @@ return {
         .. "idle-aware, with daily work-time stats.",
     version     = "1.1.0",
     category    = "health",
+    context     = "automatic",
 
     options = {
         { key = "workMin",             type = "int", default = 25, label = "Work interval (min)", min = 5, max = 90 },

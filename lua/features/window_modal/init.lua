@@ -257,6 +257,8 @@ return {
         .. "control without many global hotkeys. Pairs with Window Snap.",
     version     = "1.0.0",
     category    = "productivity",
+    context     = "window",
+    requires    = { "accessibility" },
 
     options = {
         { key = "stepParts", type = "int", default = 30, min = 10, max = 60,

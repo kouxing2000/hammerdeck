@@ -38,17 +38,15 @@ else
     })
 end
 
--- First run only: enable everything so there's something to dogfood. After
--- that, enabled-state is the user's (toggle via registry.setEnabled until the
--- config UI exists). NOTE: the old "re-enable hello every boot" check was a
--- bug -- it overrode a user's disable on the next reload.
--- HAMMERDECK_NO_FIRSTRUN=1 skips the auto-enable (CI / smoke tests).
+-- First run: start BLANK -- nothing enabled. A new user lands in the Feature
+-- Tour (host-side onboarding: a large auto-playing preview per feature, "Add"
+-- to enable) instead of being handed all 19 features at once. We still flip the
+-- `hammerdeck.firstRun.done` flag here so the host knows it's first launch (it
+-- reads the flag BEFORE this boot runs, to decide whether to greet with the
+-- tour). HAMMERDECK_NO_FIRSTRUN=1 skips the flip (CI / smoke tests).
 if os.getenv("HAMMERDECK_NO_FIRSTRUN") == nil
     and adapter.getSetting("hammerdeck.firstRun.done", false) ~= true then
     adapter.setSetting("hammerdeck.firstRun.done", true)
-    for _, m in ipairs(registry.all()) do
-        registry.setEnabled(m.id, true)
-    end
 end
 
 registry.startAll()

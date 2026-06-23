@@ -127,6 +127,8 @@ return {
         .. "from one keystroke.",
     version      = "1.0.0",
     category     = "platform",
+    context     = "anywhere",
+    recommended = true,
     capabilities = { "commands" },   -- opts into the cross-feature ctx methods
 
     options = {

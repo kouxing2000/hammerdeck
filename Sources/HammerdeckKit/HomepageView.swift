@@ -42,6 +42,9 @@ enum HomeDestination: String, CaseIterable, Identifiable, Hashable {
 @MainActor
 final class HomeNav: ObservableObject {
     @Published var destination: HomeDestination = .home
+    /// Drives the first-run (and replayable) Feature Tour sheet. Set by the host
+    /// on first launch, and by the Dashboard's "Take the tour" button.
+    @Published var showTour = false
 }
 
 struct HomepageView: View {
@@ -88,7 +91,8 @@ struct HomepageView: View {
             case .home:
                 DashboardView(store: store,
                               goTo: { nav.destination = $0 },
-                              openSettings: { showSettings() })
+                              openSettings: { showSettings() },
+                              startTour: { nav.showTour = true })
             case .features:
                 FeatureGalleryView(store: store, openSettings: { showSettings($0) })
             case .shortcuts:
@@ -105,6 +109,21 @@ struct HomepageView: View {
         // (sidebar + ~780) without clipping.
         .frame(minWidth: 960, minHeight: 560)
         .onAppear { store.refresh() }
+        // A grant (e.g. Accessibility) lands out-of-process while this window is
+        // already open; refreshing when the app reactivates is what makes
+        // store.axTrusted -- and the "Needs Accessibility -- Grant" badges that
+        // read it -- actually update on return from System Settings.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in store.refresh() }
+        // First-run onboarding (and replayable later): a large auto-playing
+        // preview per feature with a single "Add". Dismissing refreshes so the
+        // shell reflects whatever the user just enabled.
+        .sheet(isPresented: $nav.showTour) {
+            FeatureTourView(store: store) {
+                nav.showTour = false
+                store.refresh()
+            }
+        }
     }
 }
 
@@ -114,10 +133,10 @@ struct DashboardView: View {
     @ObservedObject var store: SettingsStore
     let goTo: (HomeDestination) -> Void
     let openSettings: () -> Void
+    let startTour: () -> Void
 
     @State private var nowMinutes = AutomationTimelineView.currentMinutes()
     @State private var conflicts: Set<String> = []
-    @State private var axTrusted = false
     // The tip feature is pinned for the visit so enabling it from the card
     // doesn't make the tip jump to a different feature mid-glance.
     @State private var tipId: String?
@@ -129,6 +148,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                emptyStateCard
                 tipCard
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                     rightNowCard
@@ -143,10 +163,47 @@ struct DashboardView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Home").font(.title2.weight(.semibold))
-            Text("What's on, what it's doing right now, and what it can do.")
-                .font(.callout).foregroundStyle(.secondary)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Home").font(.title2.weight(.semibold))
+                Text("What's on, what it's doing right now, and what it can do.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button { startTour() } label: {
+                Label("Take the tour", systemImage: "sparkles")
+            }
+            .help("Browse every feature with a live preview and add the ones you want")
+        }
+    }
+
+    // MARK: Empty-state hero (blank-start safety net)
+
+    /// Shown only when nothing is enabled (the blank first-run state, or after a
+    /// user turns everything off): one click to seed the curated Essentials, or
+    /// jump into the Tour -- so an empty deck is a starting line, not a dead end.
+    @ViewBuilder private var emptyStateCard: some View {
+        let enabledCount = store.features.filter { $0.enabled }.count
+        if enabledCount == 0 {
+            let essentials = store.features.filter { $0.recommended && !$0.failed }
+            DashCard(title: "Get started", icon: "sparkles", tint: .accentColor) {
+                Text("Your deck is empty. Turn on a few essentials to get going, "
+                     + "or browse the whole catalog with a live preview.")
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if !essentials.isEmpty {
+                        Button { store.enableEssentials() } label: {
+                            Label("Enable \(essentials.count) Essentials", systemImage: "star.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button { startTour() } label: {
+                        Label("Take the tour", systemImage: "play.fill")
+                    }
+                    Spacer()
+                }
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -266,10 +323,18 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.plain)
             }
-            statusRow(axTrusted ? "checkmark.circle.fill" : "lock.fill",
-                      axTrusted ? .green : .orange,
-                      axTrusted ? "Accessibility granted"
-                                : "Accessibility not granted (window features limited)")
+            if store.axTrusted {
+                statusRow("checkmark.circle.fill", .green, "Accessibility granted")
+            } else {
+                // Tappable: the silently-no-op window/typing features stay dead
+                // until this is granted, so make the row the fix, not just a sign.
+                Button { store.promptAccessibility() } label: {
+                    statusRow("lock.fill", .orange,
+                              "Accessibility not granted — tap to grant "
+                              + "(window & typing features need it)")
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -284,10 +349,9 @@ struct DashboardView: View {
     // MARK: data
 
     private func refresh() {
-        store.refresh()
+        store.refresh()   // also updates the published store.axTrusted the status card reads
         nowMinutes = AutomationTimelineView.currentMinutes()
         conflicts = store.conflictedFeatureIds()
-        axTrusted = store.accessibilityTrusted()
         if tipId == nil {
             tipId = Self.tipFeature(store.features, dayOfYear: Self.currentDayOfYear())?.id
         }

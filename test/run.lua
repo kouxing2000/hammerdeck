@@ -258,6 +258,9 @@ ok(type(jumpDesc.actions[1].mnemonic) == "string" and jumpDesc.actions[1].mnemon
     "per-action mnemonic surfaced in describe()")
 ok(#jumpDesc.options == 0,
     "window_switcher exports no options (cycle modifier derives from the trigger)")
+ok(jumpDesc.context == "window", "describe() surfaces the feature context")
+ok(jumpDesc.requires[1] == "accessibility",
+    "describe() surfaces OS preconditions (window features need Accessibility)")
 -- typed option export incl. enum values, on a synthetic probe
 package.loaded["features._enum_probe"] = {
     api = 1, id = "enum_probe", name = "Enum Probe",
@@ -312,6 +315,41 @@ ok(pcall(manifest.validate, { api = 1, id = "x", name = "X",
     actions = { { id = "a", run = function() end, automatable = true,
         defaultTrigger = { type = "schedule", everyMin = 5 } } } }),
     "an automated defaultTrigger is fine when automatable = true")
+-- context: optional grouping axis (when the feature applies); controlled vocab;
+-- defaults to "anywhere".
+do
+    local m = manifest.validate({ api = 1, id = "ctxd", name = "Ctxd", action = function() end })
+    ok(m.context == "anywhere", "context defaults to anywhere")
+    local m2 = manifest.validate({ api = 1, id = "ctxw", name = "Ctxw", context = "window",
+        action = function() end })
+    ok(m2.context == "window", "context carried through when declared")
+end
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", context = "nope",
+    action = function() end }), "an unknown context value is rejected")
+-- requires: optional OS-precondition list; controlled vocab; defaults to {}.
+do
+    local m = manifest.validate({ api = 1, id = "reqd", name = "Reqd", action = function() end })
+    ok(type(m.requires) == "table" and #m.requires == 0, "requires defaults to an empty list")
+    local m2 = manifest.validate({ api = 1, id = "reqa", name = "Reqa",
+        requires = { "accessibility" }, action = function() end })
+    ok(m2.requires[1] == "accessibility", "requires carried through when declared")
+end
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X",
+    requires = { "telepathy" }, action = function() end }),
+    "an unknown requirement token is rejected")
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X",
+    requires = "accessibility", action = function() end }),
+    "requires must be a list, not a bare string")
+-- recommended: optional boolean; the curated Essentials starter set.
+do
+    local m = manifest.validate({ api = 1, id = "recd", name = "Recd", action = function() end })
+    ok(m.recommended == false, "recommended defaults to false")
+    local m2 = manifest.validate({ api = 1, id = "rece", name = "Rece",
+        recommended = true, action = function() end })
+    ok(m2.recommended == true, "recommended carried through when declared")
+end
+ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X",
+    recommended = "yes", action = function() end }), "recommended must be a boolean")
 -- mnemonic: optional per-action "why this key" string; carried through the
 -- single-action sugar; rejected if not a string.
 do

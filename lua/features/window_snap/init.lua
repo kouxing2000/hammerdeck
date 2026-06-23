@@ -107,6 +107,9 @@ return {
         .. "follows). Best for one-key snaps. Pairs with Window Mode.",
     version     = "1.0.0",
     category    = "productivity",
+    context     = "window",
+    recommended = true,
+    requires    = { "accessibility" },
 
     options = {},
 

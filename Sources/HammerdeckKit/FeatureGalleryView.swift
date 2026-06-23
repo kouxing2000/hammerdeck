@@ -13,7 +13,7 @@ import AppKit
 
 private enum GalleryFilter: Hashable {
     case all, enabled, disabled, conflict
-    case category(String)
+    case context(FeatureContext)
 
     var label: String {
         switch self {
@@ -21,7 +21,7 @@ private enum GalleryFilter: Hashable {
         case .enabled:            return "Enabled"
         case .disabled:           return "Disabled"
         case .conflict:           return "Conflicts"
-        case .category(let c):    return c.capitalized
+        case .context(let c):     return c.title
         }
     }
 }
@@ -90,7 +90,7 @@ struct FeatureGalleryView: View {
                 chip(.disabled)
                 if !conflicts.isEmpty { chip(.conflict) }
                 Divider().frame(height: 16)
-                ForEach(categories, id: \.self) { chip(.category($0)) }
+                ForEach(contexts, id: \.self) { chip(.context($0)) }
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
         }
@@ -102,8 +102,10 @@ struct FeatureGalleryView: View {
             filter = f
         } label: {
             HStack(spacing: 4) {
-                if case .category(let c) = f {
-                    Circle().fill(categoryColor(c)).frame(width: 7, height: 7)
+                if case .context(let c) = f {
+                    Image(systemName: c.icon)
+                        .font(.system(size: 9))
+                        .foregroundStyle(active ? .white : c.color)
                 } else if case .conflict = f {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 9)).foregroundStyle(active ? .white : .orange)
@@ -125,14 +127,17 @@ struct FeatureGalleryView: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(40)
                 }
-                ForEach(visibleCategories, id: \.self) { category in
-                    let cards = visibleFeatures.filter { $0.category == category }
+                ForEach(visibleContexts, id: \.self) { context in
+                    let cards = visibleFeatures.filter { FeatureContext($0.context) == context }
                     if !cards.isEmpty {
-                        HStack(spacing: 6) {
-                            Circle().fill(categoryColor(category)).frame(width: 8, height: 8)
-                            Text(category.capitalized)
+                        HStack(spacing: 7) {
+                            Image(systemName: context.icon)
+                                .font(.system(size: 12)).foregroundStyle(context.color)
+                            Text(context.title)
                                 .font(.subheadline.weight(.semibold))
-                            Text("\(cards.count)").font(.caption2).foregroundStyle(.secondary)
+                            Text(context.scenario)
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("\(cards.count)").font(.caption2).foregroundStyle(.tertiary)
                         }
                         .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
                         LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
@@ -154,15 +159,15 @@ struct FeatureGalleryView: View {
 
     private var enabledCount: Int { store.features.filter { $0.enabled }.count }
 
-    private var categories: [String] {
-        var seen: [String] = []
-        for f in store.features where !seen.contains(f.category) { seen.append(f.category) }
-        return seen
+    /// The context buckets present in the catalog, in their canonical order.
+    private var contexts: [FeatureContext] {
+        let present = Set(store.features.map { FeatureContext($0.context) })
+        return FeatureContext.allCases.filter { present.contains($0) }
     }
 
-    private var visibleCategories: [String] {
-        if case .category(let c) = filter { return [c] }
-        return categories
+    private var visibleContexts: [FeatureContext] {
+        if case .context(let c) = filter { return [c] }
+        return contexts
     }
 
     private var visibleFeatures: [FeatureInfo] {
@@ -177,16 +182,19 @@ struct FeatureGalleryView: View {
         case .enabled:         return f.enabled
         case .disabled:        return !f.enabled
         case .conflict:        return conflicts.contains(f.id)
-        case .category(let c): return f.category == c
+        case .context(let c):  return FeatureContext(f.context) == c
         }
     }
 
     private func matchesSearch(_ f: FeatureInfo) -> Bool {
         guard !search.isEmpty else { return true }
         let q = search.lowercased()
+        let ctx = FeatureContext(f.context)
         return f.name.lowercased().contains(q)
             || f.description.lowercased().contains(q)
             || f.category.lowercased().contains(q)
+            || ctx.title.lowercased().contains(q)
+            || ctx.scenario.lowercased().contains(q)
     }
 
     /// Changes whenever a feature's id/enabled/trigger set changes -- the inputs
@@ -269,6 +277,9 @@ private struct FeatureCard: View {
                 .foregroundStyle(feature.failed ? .red : .secondary)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+            if !unmetRequirements.isEmpty && !feature.failed {
+                requirementBadges
+            }
             Divider()
             footer
         }
@@ -331,6 +342,11 @@ private struct FeatureCard: View {
                     .foregroundStyle(feature.failed ? Color.red : categoryColor(feature.category))
             }
             Spacer()
+            if feature.recommended && !feature.failed {
+                Image(systemName: "star.fill")
+                    .font(.caption2).foregroundStyle(.yellow)
+                    .help("Recommended -- part of the Essentials starter set")
+            }
             if conflicted && !feature.failed {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
@@ -367,6 +383,37 @@ private struct FeatureCard: View {
             .controlSize(.small)
             .labelsHidden()
             .disabled(feature.failed)
+        }
+    }
+
+    /// Preconditions the user hasn't satisfied yet. A granted permission drops
+    /// off the list (no nagging once it's met).
+    private var unmetRequirements: [String] {
+        feature.requires.filter { req in
+            switch req {
+            case "accessibility": return !store.axTrusted
+            default:              return true
+            }
+        }
+    }
+
+    /// Precondition pills that are also the FIX: tapping fires the system grant
+    /// prompt, so "Needs Accessibility" isn't a dead sign -- it's the door. Closes
+    /// the "I added it but nothing happens" trap on the silently-no-op features.
+    private var requirementBadges: some View {
+        HStack(spacing: 6) {
+            ForEach(unmetRequirements, id: \.self) { r in
+                Button { store.promptAccessibility() } label: {
+                    Label("\(requirementLabel(r)) — Grant", systemImage: "lock.shield")
+                        .font(.caption2)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.16)))
+                        .foregroundStyle(.orange)
+                }
+                .buttonStyle(.plain)
+                .help("Open System Settings to grant Accessibility, then it works")
+            }
+            Spacer(minLength: 0)
         }
     }
 

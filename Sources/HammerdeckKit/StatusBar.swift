@@ -315,5 +315,12 @@ final class HomepageWindow {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    /// First-run onboarding: open the window on the Gallery (so dismissing the
+    /// tour reveals whatever the user added) with the Feature Tour sheet up.
+    func presentTour() {
+        show(.features)
+        nav.showTour = true
+    }
 }
 

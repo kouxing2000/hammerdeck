@@ -96,6 +96,8 @@ return {
         .. "in a format you choose (or a custom strftime pattern).",
     version     = "1.0.0",
     category    = "productivity",
+    context     = "textField",
+    requires    = { "accessibility" },
 
     options = {
         { key = "format", type = "enum", default = "%m/%d/%Y %I:%M:%S %p",

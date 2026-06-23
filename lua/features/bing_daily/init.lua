@@ -63,6 +63,7 @@ return {
         .. "refreshed on a schedule.",
     version     = "1.1.0",
     category    = "appearance",
+    context     = "automatic",
 
     options = {
         { key = "applyTo", type = "enum", default = "all",

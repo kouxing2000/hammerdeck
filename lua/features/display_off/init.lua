@@ -24,6 +24,7 @@ return {
         .. "with a short warning first.",
     version     = "1.1.0",
     category    = "health",
+    context     = "automatic",
 
     options = {
         { key = "idleThresholdMin", type = "int", default = 5,

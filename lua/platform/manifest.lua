@@ -45,7 +45,10 @@
 --   name        = "Rest Timer",          -- shown in config UI
 --   description = "Reminds you to rest", -- shown in config UI
 --   version     = "1.0.0",               -- feature version (optional)
---   category    = "health",              -- groups features in the UI
+--   category    = "health",              -- domain tag (text/windows/web/...), shown as a small label
+--   context     = "automatic",           -- WHEN the feature applies (the primary grouping axis):
+--                                         --   textField | window | web | anywhere | automatic
+--   requires    = { "accessibility" },   -- OS preconditions the user must grant for it to work
 --   options     = {                      -- typed -> the settings form generates itself
 --     { key = "intervalMin", type = "int", default = 25, label = "Interval (min)", min = 5, max = 90 },
 --   },
@@ -72,6 +75,26 @@ local VALID_OPTION_TYPES = {
 -- ctx.commands() / ctx.runCommand() -- the cross-feature reach the command
 -- palette needs and a normal feature must never have.
 local KNOWN_CAPABILITIES = { commands = true }
+
+-- `context` is the PRIMARY way features are grouped in the UI (Gallery sections,
+-- Tour order): it answers "when does this apply / what must I be doing for it to
+-- be useful," which matters more to a new user than the domain. Orthogonal to
+-- `category` (the domain tag). Controlled vocabulary so the host can map each to
+-- a fixed label + icon and the buckets stay balanced:
+--   textField -- acts on / types into a focused text field (insert date, plain paste)
+--   window    -- needs a focused window (snap, switch, modal)
+--   web       -- operates on the browser (tab/site switchers)
+--   anywhere  -- ambient, no precondition (clipboard, palette, password)
+--   automatic -- runs itself on a schedule/event, no user action (wallpaper, sleep)
+local KNOWN_CONTEXTS = {
+    textField = true, window = true, web = true, anywhere = true, automatic = true,
+}
+
+-- `requires` lists OS preconditions a user must grant before the feature works
+-- (distinct from `context`: WHEN it applies vs WHAT it needs). Controlled vocab
+-- so the host surfaces a consistent "Needs Accessibility" badge and can check
+-- the live grant. Keystroke synthesis and window manipulation both need it.
+local KNOWN_REQUIREMENTS = { accessibility = true }
 
 -- Validate a manifest table; raises on error. Normalizes in place (category and
 -- options defaults; the single-action sugar becomes a one-entry `actions` list
@@ -192,6 +215,36 @@ function manifest.validate(m)
     end
 
     m.category = m.category or "general"
+
+    -- context: the primary grouping axis (when the feature applies). Optional;
+    -- defaults to "anywhere" (ambient) so an unannotated feature still slots in.
+    if m.context ~= nil then
+        assert(type(m.context) == "string" and KNOWN_CONTEXTS[m.context],
+            "feature '" .. m.id .. "': unknown context '" .. tostring(m.context) ..
+            "' (expected textField|window|web|anywhere|automatic)")
+    end
+    m.context = m.context or "anywhere"
+
+    -- requires: OS preconditions (Accessibility, ...). Optional; defaults to none.
+    if m.requires ~= nil then
+        assert(type(m.requires) == "table",
+            "feature '" .. m.id .. "': requires must be a list of strings")
+        for _, r in ipairs(m.requires) do
+            assert(type(r) == "string" and KNOWN_REQUIREMENTS[r],
+                "feature '" .. m.id .. "': unknown requirement '" .. tostring(r) ..
+                "' (expected one of: accessibility)")
+        end
+    end
+    m.requires = m.requires or {}
+
+    -- recommended: part of the curated "Essentials" starter set the blank-start
+    -- UI offers to enable in one click. Optional boolean, default false.
+    if m.recommended ~= nil then
+        assert(type(m.recommended) == "boolean",
+            "feature '" .. m.id .. "': recommended must be true/false")
+    end
+    m.recommended = (m.recommended == true)
+
     m.options = m.options or {}
     -- Index options by key so cross-references (gatedBy / valuesFrom) can be
     -- checked against real, validate-able options below.

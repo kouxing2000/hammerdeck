@@ -85,6 +85,7 @@ return {
         .. "focus its tab (or open it). cmd+<number> jumps straight to a row.",
     version     = "1.3.0",
     category    = "productivity",
+    context     = "web",
 
     options = {
         { key = "sites", type = "string", multiline = true, default = "",

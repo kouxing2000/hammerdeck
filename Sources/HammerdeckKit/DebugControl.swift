@@ -37,6 +37,13 @@ enum DebugControl {
     /// screenshot flow verify the config UI, not just the native panels.
     static var openSettings: ((String?) -> Void)?
 
+    /// Switch the Homepage to a tab ("@home[:features|timeline|shortcuts|home]")
+    /// and present the first-run Feature Tour ("@tour"). Host UI the Lua eval
+    /// channel can't reach -- lets the screenshot flow verify the Gallery grouping
+    /// and the onboarding Tour without resetting the user's defaults.
+    static var openHome: ((String?) -> Void)?
+    static var presentTour: (() -> Void)?
+
     static func startIfRequested(_ lua: LuaState) {
         guard let dir = ProcessInfo.processInfo.environment["HAMMERDECK_CONTROL_DIR"],
               !dir.isEmpty else { return }
@@ -60,6 +67,14 @@ enum DebugControl {
                         .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
                     DebugControl.openSettings?(id.isEmpty ? nil : id)
                     out = "opened settings\(id.isEmpty ? "" : ":" + id)"
+                } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@tour" {
+                    DebugControl.presentTour?()
+                    out = "presented tour"
+                } else if code == "@home" || code.hasPrefix("@home:") {
+                    let dest = String(code.dropFirst("@home".count))
+                        .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
+                    DebugControl.openHome?(dest.isEmpty ? nil : dest)
+                    out = "opened home\(dest.isEmpty ? "" : ":" + dest)"
                 } else {
                     do {
                         out = DebugControl.render(try lua.eval(code))

@@ -110,6 +110,8 @@ return {
         .. "most recently used first.",
     version     = "1.2.0",
     category    = "productivity",
+    context     = "window",
+    requires    = { "accessibility" },
 
     options = {},
 

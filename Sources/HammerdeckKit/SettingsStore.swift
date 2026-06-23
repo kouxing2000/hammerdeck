@@ -183,7 +183,10 @@ struct FeatureInfo: Identifiable {
     let id: String
     let name: String
     let description: String
-    let category: String
+    let category: String        // domain tag (text/windows/web/...), shown as a small label
+    let context: String         // WHEN it applies -- the primary grouping axis (FeatureContext)
+    let requires: [String]      // OS preconditions, e.g. ["accessibility"]
+    let recommended: Bool       // part of the curated "Essentials" starter set
     let version: String
     let kind: String        // action | service
     var enabled: Bool
@@ -200,6 +203,9 @@ struct FeatureInfo: Identifiable {
         self.name = name
         self.description = dict["description"] as? String ?? ""
         self.category = dict["category"] as? String ?? "general"
+        self.context = dict["context"] as? String ?? "anywhere"
+        self.requires = (dict["requires"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.recommended = dict["recommended"] as? Bool ?? false
         self.version = dict["version"] as? String ?? ""
         self.kind = dict["kind"] as? String ?? "action"
         self.enabled = dict["enabled"] as? Bool ?? false
@@ -242,6 +248,11 @@ final class SettingsStore: ObservableObject {
     /// straight to that feature's detail; SettingsPane binds its list selection to it.
     @Published var selectedFeatureId: String?
 
+    /// Live Accessibility-grant state, refreshed by `refresh()`. Published so the
+    /// gallery/tour permission badges and the Dashboard status row react when the
+    /// grant lands (the user returns from System Settings and the window refocuses).
+    @Published private(set) var axTrusted = false
+
     private let lua: LuaState
 
     init(lua: LuaState) {
@@ -255,6 +266,17 @@ final class SettingsStore: ObservableObject {
             return
         }
         features = list.compactMap { $0 as? [String: Any] }.compactMap(FeatureInfo.init)
+        axTrusted = accessibilityTrusted()
+    }
+
+    /// Enable the curated "Essentials" set (features marked `recommended`) in one
+    /// go -- the blank-start safety net so closing the Tour at zero isn't a dead
+    /// app. No-op for already-enabled or broken features.
+    func enableEssentials() {
+        for f in features where f.recommended && !f.failed && !f.enabled {
+            _ = try? lua.call("platform.registry", "setEnabled", [.string(f.id), .bool(true)])
+        }
+        refresh()
     }
 
     func setEnabled(_ id: String, _ on: Bool) {
@@ -335,6 +357,14 @@ final class SettingsStore: ObservableObject {
     /// API from the UI. Powers the Dashboard's permission status row.
     func accessibilityTrusted() -> Bool {
         (try? lua.call("platform.adapter", "axTrusted").first ?? nil) as? Bool ?? false
+    }
+
+    /// Fire the system Accessibility prompt THROUGH THE SEAM (never a direct OS
+    /// call from the UI -- the one inviolable rule). The dialog offers to open
+    /// System Settings; the grant lands out-of-process, so `axTrusted` updates on
+    /// the next refresh() (window refocus), not synchronously here.
+    func promptAccessibility() {
+        _ = try? lua.call("platform.adapter", "axPrompt")
     }
 
     /// Swap two actions' triggers (the Shortcut Map drag-to-swap). Atomic and
