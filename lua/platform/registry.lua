@@ -25,8 +25,8 @@ local bound    = {}   -- id -> { ctx, scope } (when enabled)
 local catalog  = {}   -- the module-name list, remembered so reload() can re-run it
 local discoverDir = nil   -- when set, the catalog is re-scanned from disk on reload
 
--- Defined below (after specDesc, whose trigger-formatting it reuses). Injected
--- into the ctx of features holding the "commands" capability as ctx.commands().
+-- Defined below. Injected into the ctx of features holding the "commands"
+-- capability as ctx.commands().
 local buildCommandList
 
 -- Quarantine bookkeeping: a broken plugin must never take the whole app down.
@@ -531,72 +531,10 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Catalog description for the config UI. Returns plain serializable tables
--- (no functions) -- the Swift settings window renders forms from this.
+-- (no functions) -- the Swift settings window renders forms from this. The
+-- spec -> string formatting lives in triggers.lua (triggers.describe / .glyph);
+-- this layer just aggregates the live registry state.
 -- ---------------------------------------------------------------------------
-
-local function specDesc(spec)
-    if not spec then return "no trigger" end
-    if spec.type == "hotkey" then
-        return "hotkey: " .. table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
-    elseif spec.type == "chord" then
-        local prefix = table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
-        return "chord: " .. prefix .. " then " .. table.concat(spec.follows or {}, " ")
-    elseif spec.type == "schedule" then
-        if spec.everyMin then return "schedule: every " .. spec.everyMin .. " min" end
-        return "schedule: daily at " .. tostring(spec.at)
-    elseif spec.type == "event" then
-        return "event: " .. tostring(spec.event)
-    end
-    return tostring(spec.type)
-end
-
--- Compact, menubar-style glyphs for a trigger (e.g. "⇧⌘V", "every 180m") --
--- the form the command palette shows in its right-flush shortcut column, where
--- the verbose specDesc would just truncate. Mirrors StatusBar's shortcutText.
-local function modGlyphs(mods)
-    local has = {}
-    for _, m in ipairs(mods or {}) do has[m:lower()] = true end
-    local s = ""
-    if has.ctrl or has.control then s = s .. "⌃" end
-    if has.alt or has.option then s = s .. "⌥" end
-    if has.shift then s = s .. "⇧" end
-    if has.cmd or has.command then s = s .. "⌘" end
-    return s
-end
-
-local KEY_GLYPHS = {
-    tab = "⇥", ["return"] = "↩", enter = "↩", space = "␣",
-    delete = "⌫", backspace = "⌫", escape = "⎋", esc = "⎋",
-    left = "←", right = "→", up = "↑", down = "↓",
-}
-local function keyGlyph(key)
-    key = tostring(key)
-    local g = KEY_GLYPHS[key:lower()]
-    if g then return g end
-    return #key == 1 and key:upper() or key
-end
-
-local function specGlyph(spec)
-    if not spec then return nil end
-    if spec.type == "hotkey" then
-        return modGlyphs(spec.mods) .. keyGlyph(spec.key)
-    elseif spec.type == "chord" then
-        local follows = {}
-        for _, f in ipairs(spec.follows or {}) do follows[#follows + 1] = keyGlyph(f) end
-        return modGlyphs(spec.mods) .. keyGlyph(spec.key) .. " " .. table.concat(follows, " ")
-    elseif spec.type == "schedule" then
-        if spec.everyMin then return "every " .. spec.everyMin .. "m" end
-        return "at " .. tostring(spec.at)
-    elseif spec.type == "event" then
-        return "on " .. tostring(spec.event)
-    end
-    return nil
-end
-
--- Exposed for the Swift<->Lua glyph parity test: this is the one Lua glyph
--- copy, KeyGlyphs.swift is the one Swift copy, and IntegrationTests asserts the
--- two agree so they can't drift (see REFACTOR_TODO #1).
-registry.specGlyph = specGlyph
 
 -- Flatten the catalog into a command list for a "commands"-capability holder:
 -- one entry per action of every OTHER ENABLED feature (self excluded -- the
@@ -615,8 +553,8 @@ function buildCommandList(selfId)
                     -- single-action features read better as the feature name;
                     -- multi-action ones need the per-action label to disambiguate.
                     label       = (#m.actions > 1) and a.label or m.name,
-                    triggerDesc = specDesc(triggerFor(m, a)),
-                    triggerGlyph = specGlyph(triggerFor(m, a)),
+                    triggerDesc = triggers.describe(triggerFor(m, a)),
+                    triggerGlyph = triggers.glyph(triggerFor(m, a)),
                     -- "why this key" hint, only while the default still holds
                     -- (an override would make the mnemonic lie).
                     mnemonic    = (storedTrigger(m, a) == nil) and a.mnemonic or nil,
@@ -661,7 +599,7 @@ end
 
 local function describeTrigger(m)
     if m.start then return "always-on service" end
-    if #m.actions == 1 then return specDesc(triggerFor(m, m.actions[1])) end
+    if #m.actions == 1 then return triggers.describe(triggerFor(m, m.actions[1])) end
     return #m.actions .. " actions"
 end
 
@@ -762,7 +700,7 @@ function registry.describe()
                 trigger = current,
                 defaultTrigger = a.defaultTrigger,
                 triggerOverridden = storedTrigger(m, a) ~= nil,
-                triggerDesc = specDesc(current),
+                triggerDesc = triggers.describe(current),
             }
         end
         row.actions = actions

@@ -465,6 +465,23 @@ ok(not pcall(triggers.validate, { type = "hotkey" }), "validate rejects a hotkey
 ok(not pcall(triggers.validate, { type = "event", event = "nope" }), "validate rejects an unknown event")
 ok(not pcall(triggers.validate, { type = "schedule" }), "validate rejects a schedule with no when")
 
+-- spec -> string formatters (the verbose describe + compact glyph forms)
+ok(triggers.describe(nil) == "no trigger", "describe: nil -> no trigger")
+ok(triggers.describe({ type = "hotkey", mods = { "cmd", "shift" }, key = "v" })
+    == "hotkey: cmd+shift+v", "describe: hotkey")
+ok(triggers.describe({ type = "chord", mods = { "cmd" }, key = "a", follows = { "b", "c" } })
+    == "chord: cmd+a then b c", "describe: chord")
+ok(triggers.describe({ type = "schedule", everyMin = 25 }) == "schedule: every 25 min", "describe: schedule-every")
+ok(triggers.describe({ type = "schedule", at = "00:30" }) == "schedule: daily at 00:30", "describe: schedule-at")
+ok(triggers.describe({ type = "event", event = "wake" }) == "event: wake", "describe: event")
+ok(triggers.glyph(nil) == nil, "glyph: nil -> nil")
+ok(triggers.glyph({ type = "hotkey", mods = { "cmd", "shift" }, key = "v" }) == "⇧⌘V", "glyph: hotkey canonical order + upcase")
+ok(triggers.glyph({ type = "hotkey", mods = { "control", "option" }, key = "left" }) == "⌃⌥←",
+    "glyph: long-form mod aliases + named key")
+ok(triggers.glyph({ type = "chord", mods = { "cmd" }, key = "a", follows = { "b" } }) == "⌘A B", "glyph: chord (follow keys upcased)")
+ok(triggers.glyph({ type = "schedule", everyMin = 180 }) == "every 180m", "glyph: schedule-every")
+ok(triggers.glyph({ type = "event", event = "wake" }) == "on wake", "glyph: event")
+
 -- live rebind on a synthetic probe (counter action, no chooser state to manage)
 local fires = 0
 package.loaded["features._rebind_probe"] = {

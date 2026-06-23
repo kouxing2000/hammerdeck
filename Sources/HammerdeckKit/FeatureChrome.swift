@@ -32,7 +32,7 @@ func categoryIcon(_ category: String) -> String {
 // Compact glyph string for a trigger (e.g. "⌃⌥⌘←"). Thin wrappers over
 // `KeyGlyphs` (the single Swift glyph source) for callers that want the
 // free-function form (the SwiftUI views, ShortcutRecorder, StatusBar); the
-// AppKit HUD panels call KeyGlyphs directly. Mirrors registry.lua's specGlyph.
+// AppKit HUD panels call KeyGlyphs directly. Mirrors triggers.lua's `glyph`.
 func keyGlyph(_ key: String) -> String { KeyGlyphs.glyph(key) }
 
 func modGlyphs(_ mods: [String]) -> String { KeyGlyphs.modifiers(mods) }

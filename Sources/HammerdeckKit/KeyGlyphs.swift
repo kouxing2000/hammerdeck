@@ -3,7 +3,7 @@
 // via the thin free-function wrappers in FeatureChrome.swift (keyGlyph/
 // modGlyphs/shortcutGlyph), by the SwiftUI feature views and ShortcutRecorder.
 // One table, one modifier order, so none of those surfaces can drift.
-// (The Lua side keeps its own copy in registry.lua's specGlyph -- the
+// (The Lua side keeps its own copy in triggers.lua's `glyph` -- the
 // irreducible cross-language minimum; surface parity is asserted in tests.)
 
 import AppKit

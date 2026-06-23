@@ -165,7 +165,7 @@ final class IntegrationTests: XCTestCase {
     }
 
     /// Trigger-glyph rendering exists once per language (KeyGlyphs.swift on the
-    /// Swift side, registry.lua's specGlyph on the Lua side -- the irreducible
+    /// Swift side, triggers.lua's `glyph` on the Lua side -- the irreducible
     /// cross-language minimum after the Swift copies were merged, REFACTOR #1).
     /// This drives BOTH with the same specs and asserts they agree, so the two
     /// copies can't silently drift (a new named key, a reordered modifier).
@@ -200,7 +200,7 @@ final class IntegrationTests: XCTestCase {
         specs.append(TriggerSpec(type: "event", event: "wake"))
 
         for spec in specs {
-            let lua = eval("return require('platform.registry').specGlyph(\(spec.luaLiteral))") as? String
+            let lua = eval("return require('platform.triggers').glyph(\(spec.luaLiteral))") as? String
             XCTAssertEqual(lua, shortcutGlyph(spec),
                            "glyph drift for \(spec.luaLiteral): Lua=\(lua ?? "nil") Swift=\(shortcutGlyph(spec))")
         }

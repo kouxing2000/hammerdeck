@@ -294,4 +294,75 @@ function triggers.advisories(spec)
     return out
 end
 
+-- ---------------------------------------------------------------------------
+-- Presentation: a spec -> human-readable string. Lives here (with the rest of
+-- spec knowledge) rather than in the registry so the lifecycle core stays free
+-- of view-layer formatting; the registry/UI just call these.
+-- ---------------------------------------------------------------------------
+
+-- A verbose, self-describing line for a spec (the Settings trigger column).
+---@param spec table|nil a trigger spec, or nil for an unbound action
+---@return string
+function triggers.describe(spec)
+    if not spec then return "no trigger" end
+    if spec.type == "hotkey" then
+        return "hotkey: " .. table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
+    elseif spec.type == "chord" then
+        local prefix = table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
+        return "chord: " .. prefix .. " then " .. table.concat(spec.follows or {}, " ")
+    elseif spec.type == "schedule" then
+        if spec.everyMin then return "schedule: every " .. spec.everyMin .. " min" end
+        return "schedule: daily at " .. tostring(spec.at)
+    elseif spec.type == "event" then
+        return "event: " .. tostring(spec.event)
+    end
+    return tostring(spec.type)
+end
+
+-- Compact, menubar-style glyphs for a spec (e.g. "⇧⌘V", "every 180m") -- the
+-- form the command palette shows in its right-flush shortcut column, where the
+-- verbose describe() would just truncate. The one Lua glyph copy; KeyGlyphs.swift
+-- is the one Swift copy, and IntegrationTests asserts the two agree (REFACTOR #1).
+local function modGlyphs(mods)
+    local has = {}
+    for _, m in ipairs(mods or {}) do has[m:lower()] = true end
+    local s = ""
+    if has.ctrl or has.control then s = s .. "⌃" end
+    if has.alt or has.option then s = s .. "⌥" end
+    if has.shift then s = s .. "⇧" end
+    if has.cmd or has.command then s = s .. "⌘" end
+    return s
+end
+
+local KEY_GLYPHS = {
+    tab = "⇥", ["return"] = "↩", enter = "↩", space = "␣",
+    delete = "⌫", backspace = "⌫", escape = "⎋", esc = "⎋",
+    left = "←", right = "→", up = "↑", down = "↓",
+}
+local function keyGlyph(key)
+    key = tostring(key)
+    local g = KEY_GLYPHS[key:lower()]
+    if g then return g end
+    return #key == 1 and key:upper() or key
+end
+
+---@param spec table|nil a trigger spec
+---@return string|nil glyph string, or nil for nil/unknown specs
+function triggers.glyph(spec)
+    if not spec then return nil end
+    if spec.type == "hotkey" then
+        return modGlyphs(spec.mods) .. keyGlyph(spec.key)
+    elseif spec.type == "chord" then
+        local follows = {}
+        for _, f in ipairs(spec.follows or {}) do follows[#follows + 1] = keyGlyph(f) end
+        return modGlyphs(spec.mods) .. keyGlyph(spec.key) .. " " .. table.concat(follows, " ")
+    elseif spec.type == "schedule" then
+        if spec.everyMin then return "every " .. spec.everyMin .. "m" end
+        return "at " .. tostring(spec.at)
+    elseif spec.type == "event" then
+        return "on " .. tostring(spec.event)
+    end
+    return nil
+end
+
 return triggers
