@@ -183,6 +183,14 @@ extension Native {
         return 1
     }
 
+    // The user's home directory -- features build their durable-storage paths
+    // off this (e.g. usage_stats' configurable ~/.computer-usage folder), so
+    // the seam stays the only thing that reads the OS environment.
+    func homeDir(_ L: OpaquePointer?) -> Int32 {
+        lua_pushstring(L, NSHomeDirectory())
+        return 1
+    }
+
     func mkdir(_ L: OpaquePointer?) -> Int32 {
         guard let path = LuaState.string(L, 1) else { return luaError(L, "mkdir: path required") }
         let ok = (try? FileManager.default.createDirectory(
@@ -191,21 +199,31 @@ extension Native {
         return 1
     }
 
-    // remove_data_path(relpath) -> bool. CURATED delete: only paths UNDER the
-    // app's data dir, relative, no traversal -- the retention sweep's tool,
-    // never a general rm.
-    func removeDataPath(_ L: OpaquePointer?) -> Int32 {
-        guard let rel = LuaState.string(L, 1),
+    // remove_subdir(base, relpath) -> bool. CURATED delete: removes base/relpath
+    // only when `base` resolves INSIDE the user's home tree and `relpath` is a
+    // safe relative path (non-empty, no leading slash, no `..`). The retention
+    // sweep's tool, never a general rm -- a base outside home (e.g. an external
+    // backup volume) is refused, so the sweep simply no-ops there rather than
+    // risk deleting a system path. Subsumes the old dataDir-only delete: callers
+    // pass dataDir (or any configured durable dir under home) as `base`.
+    func removeSubdir(_ L: OpaquePointer?) -> Int32 {
+        guard let base = LuaState.string(L, 1), let rel = LuaState.string(L, 2),
+              base.hasPrefix("/"), !base.contains(".."),
               !rel.isEmpty, !rel.hasPrefix("/"), !rel.contains("..") else {
-            return luaError(L, "remove_data_path: a relative path under the data dir is required")
+            return luaError(L, "remove_subdir: absolute base + safe relative path required")
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory,
-                                            in: .userDomainMask).first?
-            .appendingPathComponent("Hammerdeck", isDirectory: true)
-        guard let target = base?.appendingPathComponent(rel) else {
-            lua_pushboolean(L, 0)
+        // Resolve symlinks on BOTH sides before the containment test -- a lexical
+        // (standardized-only) check would let a base symlinked out of home (e.g.
+        // ~/.computer-usage -> /Volumes/ext) pass and then delete off-tree.
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+            .resolvingSymlinksInPath().standardizedFileURL.path
+        let baseURL = URL(fileURLWithPath: base)
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard baseURL.path == home || baseURL.path.hasPrefix(home + "/") else {
+            lua_pushboolean(L, 0)   // base outside home: refuse, no-op
             return 1
         }
+        let target = baseURL.appendingPathComponent(rel)
         let ok = (try? FileManager.default.removeItem(at: target)) != nil
         lua_pushboolean(L, ok ? 1 : 0)
         return 1

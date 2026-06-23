@@ -169,8 +169,9 @@ function M.make(m, resolveTrigger, extra)
 
     -- data files (durable feature-owned storage) ---------------------------------
     function ctx.dataDir()                return adapter.dataDir() end
+    function ctx.homeDir()                return adapter.homeDir() end
     function ctx.mkdir(path)              return adapter.mkdir(path) end
-    function ctx.removeDataPath(rel)      return adapter.removeDataPath(rel) end
+    function ctx.removeSubdir(base, rel)  return adapter.removeSubdir(base, rel) end
     function ctx.fileRead(path)           return adapter.fileRead(path) end
     function ctx.fileWrite(path, text)    return adapter.fileWrite(path, text) end
     function ctx.fileAppend(path, line)   return adapter.fileAppend(path, line) end

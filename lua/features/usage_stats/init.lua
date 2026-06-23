@@ -3,8 +3,15 @@
 -- Tracks computer usage to daily CSV files (ported from myHammerSpoon
 -- modules/timers/usageTracker.lua + usageWidget.lua -- the widget renders
 -- natively from snapshot() data; no HTML/webview):
---   <dataDir>/usage/YYYY-MM/YYYY-MM-DD.csv        sessions (wake,sleep,minutes)
---   <dataDir>/usage/YYYY-MM/YYYY-MM-DD-apps.csv   per-app focus time (seconds)
+--   <dir>/YYYY-MM/YYYY-MM-DD.csv        sessions (wake,sleep,minutes)
+--   <dir>/YYYY-MM/YYYY-MM-DD-apps.csv   per-app focus time (seconds)
+--
+-- <dir> is the `dir` option (default ~/.computer-usage): a user-owned,
+-- app-name-neutral home, NOT under Application Support -- this is a personal
+-- dataset you keep across renames and may git-commit, so it shouldn't be
+-- namespaced under the app or buried in the Library. Resolved once at start();
+-- changing it in Settings takes effect on the next enable/restart (existing
+-- data is not auto-moved).
 --
 -- Sessions span unlock/wake -> lock/sleep. App focus time accrues to the
 -- frontmost app, with idle time subtracted at each flush. The donor's
@@ -14,8 +21,9 @@
 -- the context changes mid-app (tab switch, project switch).
 --
 -- Deliberate departures from the donor: no git auto-commit of the data dir
--- (plain CSVs; commit yourself if you want history), and storage lives under
--- Application Support instead of ~/.hammerspoon/.usage.
+-- (plain CSVs; commit yourself if you want history), and the storage root is a
+-- configurable, app-name-neutral folder (default ~/.computer-usage) instead of
+-- the donor's hard-coded ~/.hammerspoon/.usage.
 --
 -- SERVICE feature: all bindings go through ctx, so disable tears them down.
 -- stop() records the open session so disable/quit doesn't lose the day.
@@ -116,8 +124,27 @@ local function start(ctx)
         return ""
     end
 
+    -- Storage root, resolved once: the `dir` option with a leading ~ expanded
+    -- via the seam (the feature never reads HOME itself). Empty falls back to
+    -- the default. Months live directly under here (no extra "usage/" segment;
+    -- the chosen folder IS the usage folder).
+    local function expandTilde(p)
+        if p == "~" then return ctx.homeDir() end
+        local rest = p:match("^~/(.*)$")
+        if rest then return ctx.homeDir() .. "/" .. rest end
+        return p
+    end
+    local dirOpt = ctx.opt("dir")
+    if not dirOpt or dirOpt == "" then dirOpt = "~/.computer-usage" end
+    local base = expandTilde(dirOpt)
+    -- A non-absolute result (a bare relative path, no ~ or /) would otherwise
+    -- write relative to the app CWD AND silently disable retention (removeSubdir
+    -- only sweeps absolute, under-home bases). Anchor it under home so writes
+    -- land somewhere predictable and the sweep still runs.
+    if not base:match("^/") then base = ctx.homeDir() .. "/" .. base end
+
     local function dateStr(t) return os.date("%Y-%m-%d", t) end
-    local function monthDir(d) return ctx.dataDir() .. "/usage/" .. d:sub(1, 7) end
+    local function monthDir(d) return base .. "/" .. d:sub(1, 7) end
     local function appsPath(d) return monthDir(d) .. "/" .. d .. "-apps.csv" end
     local function sessionsPath(d) return monthDir(d) .. "/" .. d .. ".csv" end
 
@@ -257,7 +284,7 @@ local function start(ctx)
 
     -- Retention: delete month dirs older than keepMonths (0 = keep forever).
     -- Runs at most once per day, piggybacked on the flush cadence. Deletion
-    -- goes through the CURATED removeDataPath (under dataDir only).
+    -- goes through the CURATED removeSubdir (base must be under home).
     local function sweepRetention()
         local keep = ctx.opt("keepMonths")
         if not keep or keep <= 0 then return end
@@ -267,7 +294,7 @@ local function start(ctx)
         for k = keep, keep + 23 do
             local m = { year = t.year, month = t.month - k, day = 1, hour = 12 }
             local ym = os.date("%Y-%m", os.time(m))
-            ctx.removeDataPath("usage/" .. ym)
+            ctx.removeSubdir(base, ym)
         end
     end
 
@@ -381,6 +408,9 @@ return {
     category    = "productivity",
 
     options = {
+        { key = "dir", type = "string", default = "~/.computer-usage",
+          collapsible = true,
+          label = "Storage folder (~ allowed; restart to apply)" },
         { key = "showWidget", type = "bool", default = true,
           label = "Show desktop widget" },
         { key = "screen", type = "enum", default = "primary",

@@ -1128,6 +1128,9 @@ pin20.hour, pin20.min, pin20.sec = 9, 0, 0
 fake.clockOffset = os.time(pin20) - os.time()
 fake.idle = 0
 
+-- pin the storage folder to an absolute path (no ~ expansion) so the CSV
+-- paths below stay deterministic; the months live directly under it
+fake.settings["hammerdeck.opt.usage_stats.dir"] = "/fake/data/usage"
 local day20 = os.date("%Y-%m-%d", fake.now())
 local appsCsv = "/fake/data/usage/" .. day20:sub(1, 7) .. "/" .. day20 .. "-apps.csv"
 local sessCsv = "/fake/data/usage/" .. day20:sub(1, 7) .. "/" .. day20 .. ".csv"
@@ -1283,6 +1286,7 @@ ok(fake.files[appsCsv]:match('\n"Excel, Inc%.",') ~= nil,
     "the quoted app round-trips through reload (parsed back, not column-shifted)")
 
 registry.setEnabled("usage_stats", false)
+fake.settings["hammerdeck.opt.usage_stats.dir"] = nil
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage_stats test")
 
 -- T21: Accessibility onboarding (window_switcher with no windows) ------------------

@@ -348,14 +348,22 @@ function adapter.dataDir()
     return native.data_dir()
 end
 
+-- The user's home directory -- a feature resolves a user-visible storage path
+-- (e.g. ~/.computer-usage) off this without touching the OS itself.
+function adapter.homeDir()
+    return native.home_dir()
+end
+
 function adapter.mkdir(path)
     return native.mkdir(path)
 end
 
--- Delete a file/dir UNDER dataDir (relative path, no traversal) -- the
--- retention sweep's curated tool; there is deliberately no general delete.
-function adapter.removeDataPath(rel)
-    return native.remove_data_path(rel) == true
+-- Delete `base/rel` -- the retention sweep's curated tool; there is
+-- deliberately no general delete. `base` must resolve inside the user's home
+-- tree (a path outside it is refused), `rel` is relative with no traversal.
+-- Pass dataDir() for app-internal data, or a feature's configured durable dir.
+function adapter.removeSubdir(base, rel)
+    return native.remove_subdir(base, rel) == true
 end
 
 -- Plain text file helpers. Implemented with Lua's io here IN THE ADAPTER (the
@@ -370,11 +378,27 @@ function adapter.fileRead(path)
     return s
 end
 
+-- Atomic full-file write: write to a sibling temp file, then rename it over the
+-- target. rename(2) is atomic on the same filesystem, so a crash or error
+-- mid-write can never truncate or blank an existing file -- a reader always sees
+-- either the old contents or the complete new ones, never a half-written file.
+-- The temp lives beside the target to guarantee the same volume. This is the
+-- durability net for every full-rewrite caller (usage_stats' per-flush apps CSV,
+-- tab_switcher's MRU, clipboard history) -- no git/snapshot dependency needed.
 function adapter.fileWrite(path, text)
-    local f = io.open(path, "w")
+    local tmp = path .. ".tmp"
+    local f = io.open(tmp, "w")
     if not f then return false end
-    f:write(text)
-    f:close()
+    local okWrite = f:write(text)
+    local okClose = f:close()
+    if not (okWrite and okClose) then
+        os.remove(tmp)
+        return false
+    end
+    if not os.rename(tmp, path) then
+        os.remove(tmp)
+        return false
+    end
     return true
 end
 

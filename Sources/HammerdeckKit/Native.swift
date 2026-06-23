@@ -138,8 +138,9 @@ final class Native {
             "on_app_activated": { L in MainActor.assumeIsolated { Native.shared.onAppActivated(L) } },
             // data files (feature-owned storage under Application Support)
             "data_dir":         { L in MainActor.assumeIsolated { Native.shared.dataDir(L) } },
+            "home_dir":         { L in MainActor.assumeIsolated { Native.shared.homeDir(L) } },
             "mkdir":            { L in MainActor.assumeIsolated { Native.shared.mkdir(L) } },
-            "remove_data_path": { L in MainActor.assumeIsolated { Native.shared.removeDataPath(L) } },
+            "remove_subdir":    { L in MainActor.assumeIsolated { Native.shared.removeSubdir(L) } },
             // input synthesis (CGEvent posting -- needs Accessibility)
             "key_stroke":   { L in MainActor.assumeIsolated { Native.shared.keyStroke(L) } },
             "type_text":    { L in MainActor.assumeIsolated { Native.shared.typeText(L) } },

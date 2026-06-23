@@ -353,17 +353,18 @@ fake.files  = {}   -- path -> content string
 fake.mkdirs = {}   -- recorded mkdir calls
 
 function adapter.dataDir() return "/fake/data" end
+function adapter.homeDir() return "/fake/home" end
 
 function adapter.mkdir(path)
     fake.mkdirs[#fake.mkdirs + 1] = path
     return true
 end
 
-fake.removedDataPaths = {}   -- recorded removeDataPath calls
+fake.removedSubdirs = {}   -- recorded removeSubdir calls
 
-function adapter.removeDataPath(rel)
-    fake.removedDataPaths[#fake.removedDataPaths + 1] = rel
-    local prefix = "/fake/data/" .. rel
+function adapter.removeSubdir(base, rel)
+    fake.removedSubdirs[#fake.removedSubdirs + 1] = { base = base, rel = rel }
+    local prefix = base .. "/" .. rel
     local removed = false
     for path in pairs(fake.files) do
         if path == prefix or path:sub(1, #prefix + 1) == prefix .. "/" then
