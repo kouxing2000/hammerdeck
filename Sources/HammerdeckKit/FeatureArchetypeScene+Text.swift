@@ -15,8 +15,12 @@ import SwiftUI
 struct TypeKeystrokesArchetypeScene: View {
     let playing: Bool
 
-    private let full = "Hello, clipboard"
-    private let holdFrames = 6              // pause on the full line before looping
+    // The typed line and the badge caption default to the clipboard-type-out
+    // case (plain_paste) but are overridable so other "synthesize keystrokes"
+    // features can reuse this scene (e.g. insert_datetime types a timestamp).
+    var full = "Hello, clipboard"
+    var caption = "Typed as keystrokes"
+    let holdFrames = 6                      // pause on the full line before looping
     @State private var step = 0
 
     private var cycle: Int { full.count + holdFrames }
@@ -53,7 +57,7 @@ struct TypeKeystrokesArchetypeScene: View {
                 // a keyboard glyph: these are synthesized keystrokes, not a paste
                 HStack(spacing: 3) {
                     Image(systemName: "keyboard").font(.system(size: 8, weight: .bold))
-                    Text("Typed as keystrokes").font(.system(size: 8, weight: .semibold))
+                    Text(caption).font(.system(size: 8, weight: .semibold))
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 2)

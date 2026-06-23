@@ -38,6 +38,7 @@ enum FeatureArchetype {
     case chart                      // per-app focus-time bars grow into a usage dashboard (usage stats)
     case wallpaperSwap              // the desktop wallpaper crossfades to a fresh photo (bing daily)
     case textTransform(TextTransformSample) // selected text transforms in place (case change / strip formatting)
+    case typeText(String)                   // a generated string is typed out as keystrokes (insert date/time)
 
     /// POC mapping. Will become metadata-driven (manifest `archetype` + sample,
     /// or derived from which adapter primitives the feature uses).
@@ -61,6 +62,7 @@ enum FeatureArchetype {
         case "bing_daily":        return .wallpaperSwap
         case "text_actions":      return .chooser(.textActions)
         case "plain_paste":       return .textTransform(.stripFormat)
+        case "insert_datetime":   return .typeText("06/23/2026 03:04 PM")  // matches the default format's shape
         default:                  return .none
         }
     }
@@ -84,6 +86,7 @@ enum FeatureArchetype {
         case .chart:                return 1.6 * 2     // grow + reset
         case .wallpaperSwap:        return 1.9 * 2     // two wallpapers
         case .textTransform:        return 1.5 * 2     // before + after
+        case .typeText(let s):      return 0.16 * Double(s.count + 6)  // heartbeat x (chars + hold)
         }
     }
 
@@ -102,6 +105,7 @@ enum FeatureArchetype {
         case .chart:                 UsageChartArchetypeScene(playing: playing)
         case .wallpaperSwap:         WallpaperSwapArchetypeScene(playing: playing)
         case .textTransform(let s):  TextTransformArchetypeScene(sample: s, playing: playing)
+        case .typeText(let s):       TypeKeystrokesArchetypeScene(playing: playing, full: s, caption: "Date & time typed in")
         }
     }
 }
