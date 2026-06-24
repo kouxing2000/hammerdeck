@@ -197,6 +197,10 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     /// a short, titled list of actions where an empty search box is just noise).
     func setSearchHidden(_ hidden: Bool) {
         searchHidden = hidden
+        // Reload, not just re-layout: the keycap chips render their text from
+        // this flag ("N" vs "⌘N"), so the cells must rebuild -- otherwise a flip
+        // after setChoices() leaves stale "⌘N" caps. (show() re-selects.)
+        tableView.reloadData()
         layout()
     }
 
@@ -259,20 +263,33 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         onHide()
     }
 
-    // MARK: quick-pick (cmd+1..9 fires the Nth visible row)
+    // MARK: quick-pick (a digit fires the Nth visible row)
 
-    /// While the chooser is key, cmd+<digit> selects and triggers that row of
-    /// the CURRENT (filtered) list -- the digits shown in the left gutter. A
-    /// local monitor (not a keyEquivalent) keeps it from colliding with typing.
+    /// While the chooser is key, a gutter digit selects/triggers that row of the
+    /// CURRENT (filtered) list. With a search field visible the digit must stay
+    /// free to type, so it requires cmd (cmd+1..9). A search-free dialog
+    /// (askChoice) is a plain pick-list, so a BARE digit selects -- and ordinary
+    /// typing is swallowed, since the off-screen field must not invisibly filter
+    /// the choices. A local monitor (not a keyEquivalent) keeps this from
+    /// colliding with the field editor.
     private func installQuickKeys() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.panel.isVisible, self.panel.isKeyWindow,
-                  event.modifierFlags.contains(.command),
-                  let ch = event.charactersIgnoringModifiers, let d = Int(ch),
-                  d >= 1, d <= 9 else { return event }
-            self.quickPick(d)
-            return nil   // consume even when no such row, so it never beeps/types
+            guard let self, self.panel.isVisible, self.panel.isKeyWindow else { return event }
+            let cmd = event.modifierFlags.contains(.command)
+            let ch = event.charactersIgnoringModifiers
+            if self.searchHidden {
+                if let ch, let d = Int(ch), d >= 1, d <= 9 { self.quickPick(d); return nil }
+                // Swallow ordinary printable typing (0x20..<0xF700, no cmd) so the
+                // hidden field can't filter; let control keys (return/esc/tab),
+                // the function-key block (arrows), and cmd-combos pass through.
+                if !cmd, let s = ch?.unicodeScalars.first, s.value >= 0x20, s.value < 0xF700 {
+                    return nil
+                }
+                return event
+            }
+            if cmd, let ch, let d = Int(ch), d >= 1, d <= 9 { self.quickPick(d); return nil }
+            return event
         }
     }
 
@@ -568,16 +585,20 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         let E = ChooserPanel.edgeInset
         var rightEdge = ChooserPanel.width - E
 
-        // Quick-pick hint (cmd+1..9), rendered as a key-cap chip flush-right for
-        // the first nine SELECTABLE rows -- where the eye expects a shortcut on
-        // macOS. Vertically centered so it reads as the row's affordance whether
-        // the row is one or two lines. Info rows (valid=false) get none.
+        // Quick-pick hint, rendered as a key-cap chip flush-right for the first
+        // nine SELECTABLE rows -- where the eye expects a shortcut on macOS.
+        // Bare "N" in a search-free dialog (a plain pick-list), "⌘N" when a
+        // search field is present (the modifier is what frees the digit to type).
+        // Vertically centered so it reads as the row's affordance whether the row
+        // is one or two lines. Info rows (valid=false) get none.
         if row < 9 && e.valid {
-            let cap = ChooserPanel.keycap("⌘\(row + 1)")
-            cap.frame.origin = NSPoint(x: rightEdge - ChooserPanel.keycapWidth,
+            let capText = searchHidden ? "\(row + 1)" : "⌘\(row + 1)"
+            let capW: CGFloat = searchHidden ? ChooserPanel.keycapHeight + 3 : ChooserPanel.keycapWidth
+            let cap = ChooserPanel.keycap(capText, width: capW)
+            cap.frame.origin = NSPoint(x: rightEdge - capW,
                                        y: (rowH - ChooserPanel.keycapHeight) / 2)
             cell.addSubview(cap)
-            rightEdge -= ChooserPanel.keycapWidth + 10
+            rightEdge -= capW + 10
         }
 
         // Trigger/shortcut preview (command palette), right-aligned, left of the chip.
@@ -662,8 +683,8 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     /// A small rounded key-cap chip (e.g. "⌘1"), readable on the vibrant menu
     /// material in both light and dark appearance.
-    private static func keycap(_ text: String) -> NSView {
-        let v = NSView(frame: NSRect(x: 0, y: 0, width: keycapWidth, height: keycapHeight))
+    private static func keycap(_ text: String, width: CGFloat = keycapWidth) -> NSView {
+        let v = NSView(frame: NSRect(x: 0, y: 0, width: width, height: keycapHeight))
         v.wantsLayer = true
         v.layer?.cornerRadius = 5
         v.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.16).cgColor
@@ -673,7 +694,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         l.font = .systemFont(ofSize: 11, weight: .medium)
         l.textColor = .secondaryLabelColor
         l.alignment = .center
-        l.frame = NSRect(x: 0, y: (keycapHeight - 14) / 2 - 0.5, width: keycapWidth, height: 14)
+        l.frame = NSRect(x: 0, y: (keycapHeight - 14) / 2 - 0.5, width: width, height: 14)
         v.addSubview(l)
         return v
     }
