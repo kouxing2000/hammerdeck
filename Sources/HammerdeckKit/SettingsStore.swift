@@ -179,6 +179,22 @@ struct ScheduleEntry: Identifiable {
     }
 }
 
+/// A feature-contributed native PAGE: the manifest's `page = {title, icon}`
+/// declaration. The feature names the page (title + SF Symbol); the actual
+/// SwiftUI view is supplied host-side by FeaturePageRegistry, keyed by feature
+/// id. This is what makes a native UI "plug in" -- the sidebar is driven by these
+/// declarations, with no central enum/switch to edit per page.
+struct PageInfo {
+    let title: String
+    let icon: String
+
+    init?(_ dict: [String: Any]?) {
+        guard let dict, let title = dict["title"] as? String, !title.isEmpty else { return nil }
+        self.title = title
+        self.icon = dict["icon"] as? String ?? "doc"
+    }
+}
+
 struct FeatureInfo: Identifiable {
     let id: String
     let name: String
@@ -196,6 +212,7 @@ struct FeatureInfo: Identifiable {
     let errorMessage: String
     let actions: [ActionInfo]   // one trigger editor per entry; empty for pure services
     let schedule: [ScheduleEntry]   // self-reported internal schedule (Timeline); may be empty
+    let page: PageInfo?         // a contributed native Homepage page, if declared
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
@@ -221,6 +238,7 @@ struct FeatureInfo: Identifiable {
         self.schedule = (dict["schedule"] as? [Any])?
             .compactMap { $0 as? [String: Any] }
             .compactMap(ScheduleEntry.init) ?? []
+        self.page = PageInfo(dict["page"] as? [String: Any])
     }
 }
 
@@ -267,6 +285,22 @@ final class SettingsStore: ObservableObject {
         }
         features = list.compactMap { $0 as? [String: Any] }.compactMap(FeatureInfo.init)
         axTrusted = accessibilityTrusted()
+    }
+
+    /// Feature-contributed native pages to dock in the Homepage sidebar: every
+    /// non-failed feature whose manifest DECLARES a page AND has a Swift view
+    /// REGISTERED for its id. Both halves are required -- a declaration with no
+    /// registered view (or vice versa) is silently skipped, so the sidebar never
+    /// offers a dead link. Catalog order is preserved.
+    func featurePages() -> [FeatureInfo] {
+        features.filter { !$0.failed && $0.page != nil && FeaturePageRegistry.shared.isRegistered($0.id) }
+    }
+
+    /// Narrow seam a host-side PAGE view uses to pull data from a feature reader
+    /// module (`module.function(args)` -> first result), mirroring how the rest
+    /// of the store reaches the registry. Returns nil on any Lua error.
+    func readerCall(_ module: String, _ function: String, _ args: [LuaArg] = []) -> Any? {
+        (try? lua.call(module, function, args).first) ?? nil
     }
 
     /// Enable the curated "Essentials" set (features marked `recommended`) in one

@@ -196,12 +196,9 @@ final class UsageWidgetPanel {
         }
     }
 
-    static func formatTime(_ secs: Double) -> String {
-        if secs < 60 { return "<1m" }
-        let h = Int(secs) / 3600
-        let m = (Int(secs) % 3600) / 60
-        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-    }
+    // Delegates to the shared usageTimeString so the widget and the Usage report
+    // format time identically (see FeatureChrome.swift).
+    static func formatTime(_ secs: Double) -> String { usageTimeString(secs) }
 
     func close() { panel.orderOut(nil) }
 }

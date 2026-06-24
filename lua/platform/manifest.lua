@@ -146,6 +146,23 @@ function manifest.validate(m)
         assert(type(m.defaultTrigger) == "table" and m.defaultTrigger.type,
             "feature '" .. m.id .. "': defaultTrigger must be a trigger spec table")
     end
+    -- Optional: page = { title, icon } declares that this feature contributes a
+    -- NATIVE host PAGE (a full SwiftUI view docked in the Homepage sidebar), not
+    -- just the manifest-generated Settings form. Pure metadata -- Lua cannot
+    -- author SwiftUI, so it only NAMES the page (title + SF Symbol); the host
+    -- renders whatever view is registered for this feature id (the Swift-side
+    -- FeaturePageRegistry). describe() surfaces it so the sidebar is data-driven:
+    -- a feature "plugs in" its native page by declaring this, with no central
+    -- enum/switch to edit. The page reads its data via a feature reader module
+    -- (e.g. usage_stats' report.lua), so it works even when the feature is off.
+    if m.page ~= nil then
+        assert(type(m.page) == "table",
+            "feature '" .. m.id .. "': page must be a table { title, icon }")
+        assert(type(m.page.title) == "string" and m.page.title ~= "",
+            "feature '" .. m.id .. "': page.title must be a non-empty string")
+        assert(m.page.icon == nil or type(m.page.icon) == "string",
+            "feature '" .. m.id .. "': page.icon must be a string (SF Symbol name)")
+    end
 
     -- Normalize the sugar, then validate the (possibly synthesized) list.
     if hasAction then

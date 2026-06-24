@@ -17,6 +17,15 @@ func categoryColor(_ category: String) -> Color {
     }
 }
 
+/// Usage time format ("<1m" / "Nm" / "Hh Mm"), shared by the desktop usage
+/// widget and the Usage report so the two renderings can never drift.
+func usageTimeString(_ secs: Double) -> String {
+    if secs < 60 { return "<1m" }
+    let h = Int(secs) / 3600
+    let m = (Int(secs) % 3600) / 60
+    return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+}
+
 /// An SF Symbol glyph for a manifest category. Features don't declare their own
 /// icons yet (Gallery spec, open question 1) -- v1 derives one from category.
 func categoryIcon(_ category: String) -> String {

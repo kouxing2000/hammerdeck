@@ -2331,4 +2331,107 @@ ok(hasWarn(triggers.advisories({ type = "hotkey", mods = { "ctrl", "shift" }, ke
     "My Custom Action"), "live-read system shortcut is detected")
 fake.systemHotkeys = {}
 
+-- T32: usage_stats report.range -- historical aggregation over the CSVs --------
+-- The Homepage "Usage" tab calls features.usage_stats.report.range(from,to) via
+-- lua.call; it reads straight from disk (works even when the feature is off).
+-- Seed a few daily apps/sessions CSVs under the default dir (~/.computer-usage,
+-- so /fake/home/.computer-usage) and assert the rolled-up shape.
+do
+    local function approx(a, b) return math.abs(a - b) < 1e-6 end
+    local U = "/fake/home/.computer-usage"
+    -- range 2026-06-20 .. 22 (22 has no data -> inactive day)
+    fake.files[U .. "/2026-06/2026-06-20-apps.csv"] =
+        "app,context,seconds\nCode,projA,3600\nGoogle Chrome,github.com,1800\n"
+    fake.files[U .. "/2026-06/2026-06-21-apps.csv"] =
+        "app,context,seconds\nCode,projA,1200\nGoogle Chrome,news.example,600\nSlack,,300\n"
+    fake.files[U .. "/2026-06/2026-06-20.csv"] =
+        "wake_time,sleep_time,duration_min\n09:00:00,17:00:00,480\n"
+    -- a day in the PRECEDING equal-length period (17..19) -> drives prevTotal
+    fake.files[U .. "/2026-06/2026-06-19-apps.csv"] =
+        "app,context,seconds\nCode,projA,1000\n"
+
+    local report = require("features.usage_stats.report")
+    local r = report.range("2026-06-20", "2026-06-22")
+
+    ok(r.total == 7500, "report total sums all apps across the range")
+    ok(r.dayCount == 3, "dayCount counts every day in the range")
+    ok(r.activeDays == 2, "activeDays counts only days with recorded time")
+    ok(r.dailyAvg == 3750, "dailyAvg = total / active days")
+    ok(#r.days == 3 and r.days[3].date == "2026-06-22" and r.days[3].secs == 0,
+        "days series has an entry per day, empty day = 0")
+
+    ok(#r.apps == 3, "all apps ranked (uncapped)")
+    ok(r.apps[1].app == "Code" and r.apps[1].secs == 4800, "apps ranked by total secs")
+    ok(r.apps[2].app == "Google Chrome" and r.apps[2].secs == 2400, "second-ranked app")
+    ok(r.apps[3].app == "Slack" and r.apps[3].secs == 300, "long-tail app kept")
+    ok(approx(r.apps[1].share, 4800 / 7500), "app share = secs / range total")
+    ok(r.busiestApp == "Code", "busiestApp is the top app")
+
+    -- contexts merge across days and carry a within-app share
+    ok(#r.apps[1].contexts == 1 and r.apps[1].contexts[1].name == "projA"
+        and r.apps[1].contexts[1].secs == 4800, "context merged across days")
+    ok(approx(r.apps[1].contexts[1].share, 1.0), "single-context app -> share 1.0")
+    ok(#r.apps[2].contexts == 2, "two distinct browser domains kept as contexts")
+    ok(r.apps[2].contexts[1].name == "github.com" and r.apps[2].contexts[1].secs == 1800,
+        "top context first")
+    ok(approx(r.apps[2].contexts[1].share, 1800 / 2400), "context share is within its app")
+
+    ok(r.busiestDay and r.busiestDay.date == "2026-06-20" and r.busiestDay.secs == 5400,
+        "busiestDay is the highest-total day")
+
+    -- sessions (machine-active spans)
+    ok(#r.sessions == 1 and r.sessions[1].date == "2026-06-20", "session row read")
+    ok(r.sessions[1].wakeMin == 540 and r.sessions[1].sleepMin == 1020,
+        "session wake/sleep parsed to minutes-of-day")
+    ok(r.firstWakeMin == 540 and r.lastSleepMin == 1020, "first wake / last sleep")
+    ok(r.sessionCount == 1 and r.longestSessionMin == 480 and r.activeMinutes == 480,
+        "session summary metrics")
+
+    -- previous equal-length period (17..19): only 19 seeded
+    ok(r.prevTotal == 1000 and r.prevHasData == true,
+        "prevTotal sums the preceding equal-length period")
+
+    -- empty range -> safe zeros, empty arrays (the report's empty state)
+    local e = report.range("2025-01-01", "2025-01-03")
+    ok(e.total == 0 and e.activeDays == 0 and #e.apps == 0 and e.busiestApp == nil,
+        "empty history -> zeroed report, no apps")
+
+    -- tidy up so later code never trips over the seeded files
+    fake.files[U .. "/2026-06/2026-06-20-apps.csv"] = nil
+    fake.files[U .. "/2026-06/2026-06-21-apps.csv"] = nil
+    fake.files[U .. "/2026-06/2026-06-20.csv"] = nil
+    fake.files[U .. "/2026-06/2026-06-19-apps.csv"] = nil
+end
+
+-- T33: manifest `page` -- feature-contributed native pages -------------------
+-- A feature may declare page = { title, icon } to dock a native Homepage view.
+-- Validate the shape, and that describe() passes it through for the host.
+do
+    local mok = manifest.validate({ api = 1, id = "p1", name = "P1",
+        action = function() end, page = { title = "Usage", icon = "chart.bar.xaxis" } })
+    ok(mok.page.title == "Usage" and mok.page.icon == "chart.bar.xaxis",
+        "valid page declaration accepted")
+    -- icon is optional (host defaults it)
+    ok(pcall(manifest.validate, { api = 1, id = "p2", name = "P2",
+        action = function() end, page = { title = "Just Title" } }),
+        "page.icon is optional")
+    rejects({ api = 1, id = "p3", name = "P3", action = function() end, page = {} },
+        "page without a title")
+    rejects({ api = 1, id = "p4", name = "P4", action = function() end,
+        page = { title = "X", icon = 42 } }, "page.icon must be a string")
+    rejects({ api = 1, id = "p5", name = "P5", action = function() end, page = "Usage" },
+        "page must be a table")
+
+    -- describe() surfaces it (with the icon defaulted) so the sidebar is data-driven
+    local reg2 = require("platform.registry")
+    reg2.register({ api = 1, id = "page_probe", name = "Page Probe",
+        action = function() end, page = { title = "Probe" } })
+    local found
+    for _, row in ipairs(reg2.describe()) do
+        if row.id == "page_probe" then found = row end
+    end
+    ok(found and found.page and found.page.title == "Probe" and found.page.icon == "doc",
+        "describe() emits page with a defaulted icon")
+end
+
 print("OK -- " .. passed .. " assertions passed (" .. _VERSION .. ")")

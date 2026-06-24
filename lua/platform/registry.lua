@@ -690,6 +690,9 @@ function registry.describe()
             options = opts,
             failed = startFailures[m.id] ~= nil,
             error = startFailures[m.id],
+            -- A feature-contributed native page (Homepage sidebar), if declared.
+            -- Pure metadata; the host renders the view registered for this id.
+            page = m.page and { title = m.page.title, icon = m.page.icon or "doc" } or nil,
         }
         -- Each action carries its editable trigger (current + default) and
         -- whether a user override is in effect, so the config UI renders one

@@ -42,20 +42,24 @@ enum DebugShot {
             ?? NSApp.keyWindow ?? NSApp.mainWindow
     }
 
-    /// The detail form is the RIGHTMOST scroll view (the sidebar's is on the
-    /// left); its documentView holds the full, un-clipped form content.
+    /// The detail content is the WIDEST scroll view's documentView -- the sidebar
+    /// is a narrow (~184pt) column, the detail form / feature page is the wide
+    /// one; ties break to the taller. (Width beats "rightmost": a feature page is
+    /// a single detail ScrollView whose window-x can sit at the split, where a
+    /// minX comparison mis-picks the sidebar.) The documentView holds the full,
+    /// un-clipped content, so below-the-fold is captured without scrolling.
     private static func detailScrollDocument(in root: NSView) -> NSView? {
-        var scrolls: [NSScrollView] = []
+        var docs: [NSView] = []
         func walk(_ v: NSView) {
-            if let s = v as? NSScrollView { scrolls.append(s) }
+            if let s = v as? NSScrollView, let d = s.documentView { docs.append(d) }
             v.subviews.forEach(walk)
         }
         walk(root)
-        // Rightmost by frame origin in window coordinates.
-        let rightmost = scrolls.max { a, b in
-            a.convert(a.bounds, to: nil).minX < b.convert(b.bounds, to: nil).minX
+        return docs.max { a, b in
+            a.bounds.width != b.bounds.width
+                ? a.bounds.width < b.bounds.width
+                : a.bounds.height < b.bounds.height
         }
-        return rightmost?.documentView
     }
 
     /// Blank-render detector (the classic layer-backed cacheDisplay failure):

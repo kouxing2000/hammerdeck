@@ -36,59 +36,14 @@ local MIN_ENTRY_SECONDS   = 30        -- drop sub-30s apps from the CSV
 local TOP_APPS            = 5         -- widget shows this many rows
 local TOP_CONTEXTS        = 3         -- context sub-rows per app (donor)
 local IDLE_POLL_SKIP      = 5 * 60    -- skip context polling while idle
-local DAY_LABELS = { "S", "M", "T", "W", "T", "F", "S" }
 local IGNORE_APPS  = { loginwindow = true }
 local BROWSER_APPS = { ["Google Chrome"] = true, ["Safari"] = true }
 local EDITOR_APPS  = { ["Code"] = true, ["Cursor"] = true }
 
 local getDomain = require("platform.urls").getDomain
-
--- CSV (RFC 4180) for the apps file. An app name ("Excel, Inc.") or a
--- title-derived context can contain a comma; quote any field with a comma,
--- quote, or newline and double its internal quotes, so a row never shifts
--- columns on reload. seconds is always a clean integer (never quoted), so
--- readDayTotal's trailing ",(%d+)$" still finds the total.
-local function csvField(s)
-    if s:find('[",\n]') then
-        return '"' .. s:gsub('"', '""') .. '"'
-    end
-    return s
-end
-
--- Parse one apps-CSV data row -> app, context (number) seconds; nil if
--- malformed. Honors quoted fields with escaped ("") quotes.
-local function parseAppsRow(line)
-    local fields, i, n = {}, 1, #line
-    while i <= n do
-        local field
-        if line:sub(i, i) == '"' then
-            i = i + 1
-            local buf = {}
-            while i <= n do
-                local c = line:sub(i, i)
-                if c == '"' then
-                    if line:sub(i + 1, i + 1) == '"' then
-                        buf[#buf + 1] = '"'; i = i + 2
-                    else
-                        i = i + 1; break
-                    end
-                else
-                    buf[#buf + 1] = c; i = i + 1
-                end
-            end
-            field = table.concat(buf)
-        else
-            local j = line:find(",", i, true) or (n + 1)
-            field = line:sub(i, j - 1)
-            i = j
-        end
-        fields[#fields + 1] = field
-        if line:sub(i, i) == "," then i = i + 1 end
-    end
-    local secs = tonumber(fields[3])
-    if not (fields[1] and secs) then return nil end
-    return fields[1], fields[2] or "", secs
-end
+-- The on-disk CSV format (parse, dir resolution, path builders, aggregation) is
+-- shared with the historical report reader (report.lua) so the two never drift.
+local store = require("features.usage_stats.store")
 
 -- start() publishes its closures here so the manifest-level stop() can reach
 -- them (same shared-upvalue pattern as count_down's cross-action state).
@@ -124,29 +79,15 @@ local function start(ctx)
         return ""
     end
 
-    -- Storage root, resolved once: the `dir` option with a leading ~ expanded
-    -- via the seam (the feature never reads HOME itself). Empty falls back to
-    -- the default. Months live directly under here (no extra "usage/" segment;
-    -- the chosen folder IS the usage folder).
-    local function expandTilde(p)
-        if p == "~" then return ctx.homeDir() end
-        local rest = p:match("^~/(.*)$")
-        if rest then return ctx.homeDir() .. "/" .. rest end
-        return p
-    end
-    local dirOpt = ctx.opt("dir")
-    if not dirOpt or dirOpt == "" then dirOpt = "~/.computer-usage" end
-    local base = expandTilde(dirOpt)
-    -- A non-absolute result (a bare relative path, no ~ or /) would otherwise
-    -- write relative to the app CWD AND silently disable retention (removeSubdir
-    -- only sweeps absolute, under-home bases). Anchor it under home so writes
-    -- land somewhere predictable and the sweep still runs.
-    if not base:match("^/") then base = ctx.homeDir() .. "/" .. base end
+    -- Storage root, resolved once via the shared resolver: the `dir` option with
+    -- a leading ~ expanded via the seam (the feature never reads HOME itself),
+    -- defaulted and anchored under home. Months live directly under here.
+    local base = store.resolveDir(ctx.opt("dir"), ctx.homeDir())
 
-    local function dateStr(t) return os.date("%Y-%m-%d", t) end
-    local function monthDir(d) return base .. "/" .. d:sub(1, 7) end
-    local function appsPath(d) return monthDir(d) .. "/" .. d .. "-apps.csv" end
-    local function sessionsPath(d) return monthDir(d) .. "/" .. d .. ".csv" end
+    local function dateStr(t)     return store.dateStr(t) end
+    local function monthDir(d)    return store.monthDir(base, d) end
+    local function appsPath(d)    return store.appsPath(base, d) end
+    local function sessionsPath(d) return store.sessionsPath(base, d) end
 
     -- Move elapsed time onto the current app+context, minus the trailing
     -- idle stretch.
@@ -174,7 +115,7 @@ local function start(ctx)
         local out = { "app,context,seconds" }
         for _, r in ipairs(rows) do
             if r.secs >= MIN_ENTRY_SECONDS then
-                out[#out + 1] = csvField(r.app) .. "," .. csvField(r.context)
+                out[#out + 1] = store.csvField(r.app) .. "," .. store.csvField(r.context)
                     .. "," .. math.floor(r.secs)
             end
         end
@@ -201,7 +142,7 @@ local function start(ctx)
             if first then
                 first = false
             else
-                local app, context, value = parseAppsRow(line)
+                local app, context, value = store.parseAppsRow(line)
                 if app then
                     st.appTime[app .. "\t" .. context] = value
                 end
@@ -217,14 +158,7 @@ local function start(ctx)
 
     local function readDayTotal(d)
         if st.dayCache[d] then return st.dayCache[d] end
-        local total = 0
-        local body = ctx.fileRead(appsPath(d))
-        if body then
-            for line in body:gmatch("[^\n]+") do
-                local v = line:match(",(%d+)$")
-                if v then total = total + tonumber(v) end
-            end
-        end
+        local total = store.readDayTotal(ctx.fileRead, base, d)
         st.dayCache[d] = total
         return total
     end
@@ -234,28 +168,7 @@ local function start(ctx)
     -- series, and the average over past days. The widget renders this.
     local function snapshot(topN)
         local now = ctx.now()
-        local byApp, rows = {}, {}
-        for key, secs in pairs(st.appTime) do
-            local app, context = key:match("^(.-)\t(.*)$")
-            app = app or key
-            local g = byApp[app]
-            if not g then
-                g = { app = app, secs = 0, contexts = {} }
-                byApp[app] = g
-                rows[#rows + 1] = g
-            end
-            g.secs = g.secs + secs
-            if context and context ~= "" then
-                g.contexts[#g.contexts + 1] = { name = context, secs = math.floor(secs) }
-            end
-        end
-        table.sort(rows, function(a, b) return a.secs > b.secs end)
-        while topN and #rows > topN do rows[#rows] = nil end
-        for _, g in ipairs(rows) do
-            g.secs = math.floor(g.secs)
-            table.sort(g.contexts, function(a, b) return a.secs > b.secs end)
-            while #g.contexts > TOP_CONTEXTS do g.contexts[#g.contexts] = nil end
-        end
+        local rows = store.aggregate(st.appTime, topN, TOP_CONTEXTS)
 
         local week, weekTotal, pastTotal, pastDays = {}, 0, 0, 0
         for i = 6, 0, -1 do
@@ -267,7 +180,7 @@ local function start(ctx)
                 pastTotal = pastTotal + secs
             end
             week[#week + 1] = {
-                label = DAY_LABELS[tonumber(os.date("%w", t)) + 1],
+                label = store.DAY_LABELS[tonumber(os.date("%w", t)) + 1],
                 secs = math.floor(secs),
                 today = (i == 0),
             }
@@ -407,6 +320,11 @@ return {
     version     = "1.0.0",
     category    = "productivity",
     context     = "automatic",
+
+    -- Contributes a native Homepage page (the rich Usage Report). The view
+    -- lives host-side (FeaturePageRegistry -> UsageReportView) and reads history
+    -- via report.lua, so it works even when this feature is disabled.
+    page = { title = "Usage", icon = "chart.bar.xaxis" },
 
     options = {
         { key = "dir", type = "string", default = "~/.computer-usage",

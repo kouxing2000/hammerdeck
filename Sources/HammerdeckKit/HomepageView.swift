@@ -13,17 +13,49 @@ import AppKit
 // uses an HSplitView (not a nested NavigationSplitView), so it docks cleanly in
 // the shell's detail column alongside the Gallery / Shortcut Map / Timeline.
 
-enum HomeDestination: String, CaseIterable, Identifiable, Hashable {
+enum HomeDestination: Hashable, Identifiable {
     case home, features, shortcuts, timeline, settings
+    case feature(String)   // a feature-contributed native page, keyed by feature id
+
     var id: String { rawValue }
+
+    /// Built-in tabs (the feature pages are appended dynamically by the sidebar).
+    static let builtins: [HomeDestination] = [.home, .features, .shortcuts, .timeline, .settings]
+
+    /// Stable string key -- also the persisted / deep-link form. Feature pages
+    /// serialize as "feature:<id>" so Boot's rawValue deep-link round-trips.
+    var rawValue: String {
+        switch self {
+        case .home:             return "home"
+        case .features:         return "features"
+        case .shortcuts:        return "shortcuts"
+        case .timeline:         return "timeline"
+        case .settings:         return "settings"
+        case .feature(let fid): return "feature:" + fid
+        }
+    }
+
+    init?(rawValue: String) {
+        switch rawValue {
+        case "home":      self = .home
+        case "features":  self = .features
+        case "shortcuts": self = .shortcuts
+        case "timeline":  self = .timeline
+        case "settings":  self = .settings
+        default:
+            guard rawValue.hasPrefix("feature:") else { return nil }
+            self = .feature(String(rawValue.dropFirst("feature:".count)))
+        }
+    }
 
     var title: String {
         switch self {
-        case .home:      return "Home"
-        case .features:  return "Features"
-        case .shortcuts: return "Shortcuts"
-        case .timeline:  return "Timeline"
-        case .settings:  return "Settings"
+        case .home:             return "Home"
+        case .features:         return "Features"
+        case .shortcuts:        return "Shortcuts"
+        case .timeline:         return "Timeline"
+        case .settings:         return "Settings"
+        case .feature(let fid): return fid   // the sidebar shows the manifest title instead
         }
     }
     var icon: String {
@@ -33,6 +65,7 @@ enum HomeDestination: String, CaseIterable, Identifiable, Hashable {
         case .shortcuts: return "keyboard.fill"
         case .timeline:  return "clock.fill"
         case .settings:  return "gearshape.fill"
+        case .feature:   return "doc"
         }
     }
 }
@@ -62,8 +95,19 @@ struct HomepageView: View {
         NavigationSplitView {
             List(selection: $nav.destination) {
                 // The content lenses up top; Settings + utilities set apart below.
-                ForEach(HomeDestination.allCases.filter { $0 != .settings }) { dest in
+                ForEach(HomeDestination.builtins.filter { $0 != .settings }) { dest in
                     Label(dest.title, systemImage: dest.icon).tag(dest)
+                }
+                // Feature-contributed native pages (manifest `page` + a registered
+                // view) -- the sidebar is data-driven, so a new page just appears.
+                let pages = store.featurePages()
+                if !pages.isEmpty {
+                    Section("Feature Pages") {
+                        ForEach(pages) { f in
+                            Label(f.page?.title ?? f.name, systemImage: f.page?.icon ?? "doc")
+                                .tag(HomeDestination.feature(f.id))
+                        }
+                    }
                 }
                 Section {
                     Label(HomeDestination.settings.title,
@@ -101,6 +145,14 @@ struct HomepageView: View {
                 AutomationTimelineView(store: store)
             case .settings:
                 SettingsPane(store: store)
+            case .feature(let fid):
+                if let view = FeaturePageRegistry.shared.view(for: fid, store: store) {
+                    view
+                } else {
+                    // Stale selection (page declared but no registered view, or
+                    // the feature vanished on reload) -- fall back to Home.
+                    Text("This page is unavailable.").foregroundStyle(.secondary)
+                }
             }
         }
         // The shell is the single source of truth for the minimum size; the
@@ -435,23 +487,42 @@ struct DashboardView: View {
 
 // MARK: - A dashboard card shell
 
-private struct DashCard<Content: View>: View {
+// Shared card shell across the Homepage tabs (Dashboard + the Usage report).
+// `onTitleTap`, when set, makes the header a button (e.g. a drill-in's back).
+struct DashCard<Content: View>: View {
     let title: String
     let icon: String
     let tint: Color
+    var onTitleTap: (() -> Void)?
     @ViewBuilder let content: () -> Content
+
+    init(title: String, icon: String, tint: Color,
+         onTitleTap: (() -> Void)? = nil,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.title = title; self.icon = icon; self.tint = tint
+        self.onTitleTap = onTitleTap; self.content = content
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).foregroundStyle(tint)
-                Text(title).font(.headline)
-            }
+            header
             content()
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.secondary.opacity(0.15)))
+    }
+
+    @ViewBuilder private var header: some View {
+        let label = HStack(spacing: 6) {
+            Image(systemName: icon).foregroundStyle(tint)
+            Text(title).font(.headline)
+        }
+        if let onTitleTap {
+            Button(action: onTitleTap) { label }.buttonStyle(.plain)
+        } else {
+            label
+        }
     }
 }
