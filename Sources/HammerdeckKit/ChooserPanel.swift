@@ -22,6 +22,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private let titleIcon = NSImageView()   // optional leading glyph in the header
     private let badgeLabel = NSTextField(labelWithString: "")  // optional right-flush count badge
     private let searchField = NSTextField()
+    private let searchIcon = NSImageView()    // leading magnifier glyph (the "type to filter" affordance)
     private let searchDivider = NSView()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
@@ -34,6 +35,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private var titleSymbol: String?     // optional SF Symbol shown before the title
     private var titleBadge: String?      // optional count/status badge, right-flush on the title line
     private var footerLines: [String] = []  // empty = no footer strip
+    private var searchHidden = false     // true = render no search field (fixed-choice askChoice dialogs)
     private let searchSubText: Bool
     private let onSelect: (Int?) -> Void
     private let onHide: () -> Void
@@ -54,6 +56,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private static let searchHeight: CGFloat = 34
     private static let titleHeight: CGFloat = 46
     private static let footerLineHeight: CGFloat = 20
+    private static let footerInset: CGFloat = 28   // roomier than edgeInset -- footer stats shouldn't hug the left
     private static let keycapWidth: CGFloat = 32
     private static let keycapHeight: CGFloat = 19
     private static let edgeInset: CGFloat = 18   // one consistent left/right margin for header, rows, chips
@@ -123,6 +126,16 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         searchField.delegate = self
         content.addSubview(searchField)
 
+        // Leading magnifier glyph: the universal "type here to filter" cue. Dim
+        // (tertiary) so it reads as chrome, not content; decorative to VoiceOver
+        // (the field itself is the search control).
+        searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+        searchIcon.contentTintColor = .tertiaryLabelColor
+        searchIcon.imageScaling = .scaleProportionallyDown
+        searchIcon.setAccessibilityElement(false)
+        content.addSubview(searchIcon)
+
         searchDivider.wantsLayer = true
         searchDivider.layer?.backgroundColor = NSColor.separatorColor.cgColor
         content.addSubview(searchDivider)
@@ -159,7 +172,8 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         footerDivider.layer?.backgroundColor = NSColor.separatorColor.cgColor
         content.addSubview(footerDivider)
         footerView.wantsLayer = true
-        footerView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.10).cgColor
+        // Background tone is set in layout() resolved for the live appearance --
+        // a hardcoded color here can't adapt to light/dark.
         content.addSubview(footerView)
 
         panel.contentView = content
@@ -169,7 +183,21 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     // MARK: public API (mirrors the adapter chooser handle)
 
     func setPlaceholder(_ text: String) {
-        searchField.placeholderString = text
+        // Attributed (not plain placeholderString) so we can dim it to a clearly
+        // secondary tone -- otherwise an 18pt placeholder reads like typed text.
+        searchField.placeholderAttributedString = NSAttributedString(
+            string: text,
+            attributes: [
+                .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: searchField.font ?? .systemFont(ofSize: 18),
+            ])
+    }
+
+    /// Render the panel with no search field (fixed-choice askChoice dialogs:
+    /// a short, titled list of actions where an empty search box is just noise).
+    func setSearchHidden(_ hidden: Bool) {
+        searchHidden = hidden
+        layout()
     }
 
     /// A prominent header title above the search field (its own bold label, not
@@ -270,7 +298,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     var isKey: Bool { panel.isKeyWindow }
     /// The search-field placeholder -- lets a test tell choosers apart by purpose
     /// ("Run a command" vs "Search windows") without depending on ids.
-    var placeholder: String { searchField.placeholderString ?? "" }
+    var placeholder: String { searchField.placeholderAttributedString?.string ?? searchField.placeholderString ?? "" }
     /// Visible (post-filter) row count.
     var visibleRowCount: Int { filtered.count }
     /// The visible rows' primary text, in display order.
@@ -373,7 +401,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
         let total = topPad
             + (hasTitle ? ChooserPanel.titleHeight + titleGap : 0)
-            + ChooserPanel.searchHeight + afterSearch
+            + (searchHidden ? 0 : ChooserPanel.searchHeight + afterSearch)
             + listHeight
             + footerHeight
             + bottomPad
@@ -451,11 +479,27 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             headerBackground.isHidden = true
         }
 
-        searchField.frame = NSRect(x: E, y: y - ChooserPanel.searchHeight + 4,
-                                   width: W - 2 * E, height: 26)
-        y -= ChooserPanel.searchHeight
-        searchDivider.frame = NSRect(x: E, y: y + afterSearch / 2 - 0.5, width: W - 2 * E, height: 1)
-        y -= afterSearch
+        if searchHidden {
+            // Collapse the field off the masked content so it can stay first
+            // responder (arrow/return/esc routing) without drawing a caret; hide
+            // its glyph + divider. The title band sits directly above the list.
+            searchField.frame = NSRect(x: -20, y: -20, width: 1, height: 1)
+            searchIcon.isHidden = true
+            searchDivider.isHidden = true
+        } else {
+            searchIcon.isHidden = false
+            searchDivider.isHidden = false
+            let glyphSize: CGFloat = 16, glyphGap: CGFloat = 8
+            let fieldX = E + glyphSize + glyphGap
+            let fieldRect = NSRect(x: fieldX, y: y - ChooserPanel.searchHeight + 4,
+                                   width: W - E - fieldX, height: 26)
+            searchField.frame = fieldRect
+            searchIcon.frame = NSRect(x: E, y: fieldRect.midY - glyphSize / 2,
+                                      width: glyphSize, height: glyphSize)
+            y -= ChooserPanel.searchHeight
+            searchDivider.frame = NSRect(x: E, y: y + afterSearch / 2 - 0.5, width: W - 2 * E, height: 1)
+            y -= afterSearch
+        }
 
         // Full-width scroll/table; cell margins (edgeInset) live inside the cells,
         // so row content lines up with the header and divider above.
@@ -468,16 +512,22 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             footerView.isHidden = false
             footerDivider.frame = NSRect(x: E, y: y, width: W - 2 * E, height: 1)
             footerView.frame = NSRect(x: 0, y: bottomPad, width: W, height: footerHeight)
+            // Adaptive tone, resolved for the panel's live appearance so the strip
+            // reads in both light and dark (the old hardcoded black was invisible
+            // in dark mode).
+            footerView.effectiveAppearance.performAsCurrentDrawingAppearance {
+                footerView.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
+            }
             // Lay the lines top-down inside the strip's own coordinate space.
+            let fx = ChooserPanel.footerInset
             footerView.subviews.forEach { $0.removeFromSuperview() }
             for (i, line) in footerLines.enumerated() {
-                let label = NSTextField(labelWithString: line)
-                label.font = .systemFont(ofSize: 11.5)
-                label.textColor = .secondaryLabelColor
+                let label = NSTextField(labelWithString: "")
+                label.attributedStringValue = ChooserPanel.footerLine(line)
                 label.lineBreakMode = .byTruncatingTail
-                label.frame = NSRect(x: E,
+                label.frame = NSRect(x: fx,
                                      y: footerHeight - footerPad - CGFloat(i + 1) * ChooserPanel.footerLineHeight + 2,
-                                     width: W - 2 * E, height: 16)
+                                     width: W - 2 * fx, height: 16)
                 footerView.addSubview(label)
             }
         } else {
@@ -549,7 +599,15 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         if let token = e.iconToken, let icon = ChooserPanel.icon(for: token) {
             let iv = NSImageView(frame: NSRect(x: x, y: (rowH - 32) / 2, width: 32, height: 32))
             iv.image = icon
-            iv.imageScaling = .scaleProportionallyUpOrDown
+            if token.hasPrefix("symbol:") {
+                // SF Symbols sit at their native size, tinted -- unlike app icons,
+                // which fill the slot. Dim valid rows' glyph slightly less than the
+                // text so it reads as an affordance, not a disabled marker.
+                iv.imageScaling = .scaleProportionallyDown
+                iv.contentTintColor = e.valid ? .secondaryLabelColor : .tertiaryLabelColor
+            } else {
+                iv.imageScaling = .scaleProportionallyUpOrDown
+            }
             cell.addSubview(iv)
             x += 40   // 32px icon + 8px gap
         }
@@ -581,6 +639,25 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             cell.addSubview(title)
         }
         return cell
+    }
+
+    /// A footer stat line "Label: value" with a dim label and a stronger value,
+    /// so the number reads first. No ": " -> the whole line is the dim label
+    /// (generic; the panel doesn't know the caller's exact wording).
+    private static func footerLine(_ line: String) -> NSAttributedString {
+        let labelAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11.5),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        guard let r = line.range(of: ": ") else {
+            return NSAttributedString(string: line, attributes: labelAttrs)
+        }
+        let s = NSMutableAttributedString(string: String(line[..<r.upperBound]), attributes: labelAttrs)
+        s.append(NSAttributedString(string: String(line[r.upperBound...]), attributes: [
+            .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ]))
+        return s
     }
 
     /// A small rounded key-cap chip (e.g. "⌘1"), readable on the vibrant menu
@@ -659,6 +736,16 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         if token.hasPrefix("file:") {
             // An image on disk (e.g. a cached favicon); nil when missing.
             return NSImage(contentsOfFile: String(token.dropFirst("file:".count)))
+        }
+        if token.hasPrefix("symbol:") {
+            // An SF Symbol glyph (e.g. "symbol:moon.stars") -- monochrome, theme-
+            // aware, the native choice for action-row icons. Rendered as a
+            // template so the row tints it; nil for an unknown symbol name.
+            let name = String(token.dropFirst("symbol:".count))
+            let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+            img?.isTemplate = true
+            return img
         }
         return nil
     }

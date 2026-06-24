@@ -160,7 +160,13 @@ return {
                     "Worked today: " .. durationInfo(s.workSeconds),
                     "Elapsed today: " .. durationInfo(now - s.lastStartWorkStamp),
                 },
-                actions = { POSTPONE_1, POSTPONE_5, SCREENSAVER, LOCK_SCREEN, SYSTEM_SLEEP },
+                actions = {
+                    { label = POSTPONE_1,   icon = "symbol:clock" },
+                    { label = POSTPONE_5,   icon = "symbol:clock.arrow.circlepath" },
+                    { label = SCREENSAVER,  icon = "symbol:moon.stars" },
+                    { label = LOCK_SCREEN,  icon = "symbol:lock" },
+                    { label = SYSTEM_SLEEP, icon = "symbol:powersleep" },
+                },
                 onChoose = function(choice)
                     s.dialog = nil
                     s.showingRestOption = false

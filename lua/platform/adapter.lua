@@ -181,17 +181,30 @@ end
 -- A one-shot "pick an action" dialog. opts:
 --   title    = placeholder text
 --   infos    = { "info line", ... }   -- non-selectable context rows
---   actions  = { "Action A", ... }    -- selectable rows
+--   actions  = { "Action A", ... }    -- selectable rows; each entry is either a
+--              plain label string OR a table { label = "...", icon = "<token>" }
+--              where icon is an icon token ("symbol:moon.stars", "appicon:...",
+--              "file:..."). onChoose still receives the LABEL string either way.
 --   onChoose(actionText|nil)          -- nil = dismissed without choosing
 -- The dialog frees itself after completion. dismiss() cancels (-> onChoose(nil)).
 function adapter.askChoice(opts)
-    local actions = opts.actions or {}
+    local raw = opts.actions or {}
+    local labels, items = {}, {}
+    for i, a in ipairs(raw) do
+        if type(a) == "table" then
+            labels[i] = a.label or a.text or ""
+            items[i] = { text = labels[i], image = a.icon }
+        else
+            labels[i] = a
+            items[i] = { text = a }
+        end
+    end
     local id = native.ask_choice(
         opts.title or "",
         opts.infos or {},
-        actions,
+        items,
         function(idx)
-            if opts.onChoose then opts.onChoose(idx and actions[idx] or nil) end
+            if opts.onChoose then opts.onChoose(idx and labels[idx] or nil) end
         end)
     return {
         dismiss = function() native.ask_choice_dismiss(id) end,

@@ -188,7 +188,9 @@ extension Native {
     func askChoice(_ L: OpaquePointer?) -> Int32 {
         let title = LuaState.string(L, 1) ?? ""
         let infos = LuaState.stringArray(L, 2)
-        let actions = LuaState.stringArray(L, 3)
+        // actions arrive as { text =, image = <icon token> } dicts (the adapter
+        // normalizes plain-string actions into this shape too).
+        let actions = LuaState.dictArray(L, 3)
         let ref = lua.makeRef(at: 4)
 
         let id = allocId()
@@ -208,10 +210,14 @@ extension Native {
             },
             onHide: {}
         )
-        let entries = actions.map { ChooserEntry(text: $0, subText: nil, iconToken: nil, valid: true) }
+        let entries = actions.map { d in
+            ChooserEntry(text: d["text"] as? String ?? "", subText: nil,
+                         iconToken: d["image"] as? String, valid: true)
+        }
         panel.setChoices(entries)
         panel.setTitle(title)        // real header band, not the dim search placeholder
         panel.setFooter(infos)       // pinned context strip, not blurred-in list rows
+        panel.setSearchHidden(true)  // fixed-choice dialog: an empty search box is just noise
         panel.show()
 
         cancellers[id] = {
