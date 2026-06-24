@@ -156,6 +156,14 @@ final class ChordHintPanel {
         return row
     }
 
+    /// Per-follow-key cap colors, cycled by row so each key reads as its own
+    /// distinct chip -- easier to scan than a column of identical caps. Native
+    /// system colors so they stay vivid yet at home on the dark HUD.
+    private static let capPalette: [NSColor] = [
+        .systemTeal, .systemOrange, .systemPink, .systemGreen,
+        .systemPurple, .systemYellow, .systemBlue, .systemRed,
+    ]
+
     /// One [key-cap  label] row per follow key. Fixed-width caps make every
     /// label start at the same x, so the labels read as a tidy column (the fix
     /// for them being hard to track) without NSGridView's column-sizing quirks.
@@ -164,12 +172,14 @@ final class ChordHintPanel {
         col.orientation = .vertical
         col.alignment = .leading
         col.spacing = 7
-        for r in rows {
+        for (i, r) in rows.enumerated() {
             let line = NSStackView()
             line.orientation = .horizontal
             line.alignment = .centerY
             line.spacing = 11
-            line.addArrangedSubview(keyCap(KeyGlyphs.glyph(r.key), fontSize: 13, height: 24, fixedWidth: 26))
+            let tint = Self.capPalette[i % Self.capPalette.count]
+            line.addArrangedSubview(keyCap(KeyGlyphs.glyph(r.key), fontSize: 13, height: 24,
+                                           fixedWidth: 26, tint: tint))
             line.addArrangedSubview(labelField(r.label))
             col.addArrangedSubview(line)
         }
@@ -186,20 +196,32 @@ final class ChordHintPanel {
     /// A boxed key-cap: the glyph in a faint rounded rect, like a keyboard key.
     /// `fixedWidth` pins the cap to a constant width so a column of single-key
     /// caps aligns its labels; otherwise the cap hugs its glyph (header/footer).
+    /// `tint` colors the cap (fill/border/glyph) so each follow key reads as a
+    /// distinct chip; nil gives the neutral white cap (header/footer).
     private func keyCap(_ glyph: String, fontSize: CGFloat, height: CGFloat,
-                        fixedWidth: CGFloat? = nil) -> NSView {
+                        fixedWidth: CGFloat? = nil, tint: NSColor? = nil) -> NSView {
+        let base = tint ?? .white
         let label = NSTextField(labelWithString: glyph)
         label.font = .monospacedSystemFont(ofSize: fontSize, weight: .semibold)
-        label.textColor = .labelColor
+        // A tinted cap brightens its glyph to the color; neutral caps stay label-colored.
+        label.textColor = tint.map { $0.blended(withFraction: 0.35, of: .white) ?? $0 } ?? .labelColor
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
 
         let cap = NSView()
         cap.wantsLayer = true
-        cap.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
         cap.layer?.cornerRadius = 5
         cap.layer?.borderWidth = 1
-        cap.layer?.borderColor = NSColor.white.withAlphaComponent(0.20).cgColor
+        // Resolve the (dynamic, catalog) system colors against the HUD's forced
+        // dark appearance, not the ambient drawing appearance -- `.cgColor` is a
+        // one-shot snapshot that would otherwise track whatever's current.
+        let fill = base.withAlphaComponent(tint == nil ? 0.10 : 0.22)
+        let stroke = base.withAlphaComponent(tint == nil ? 0.20 : 0.55)
+        (NSAppearance(named: .vibrantDark) ?? NSAppearance.currentDrawing())
+            .performAsCurrentDrawingAppearance {
+                cap.layer?.backgroundColor = fill.cgColor
+                cap.layer?.borderColor = stroke.cgColor
+            }
         cap.translatesAutoresizingMaskIntoConstraints = false
         cap.addSubview(label)
 
