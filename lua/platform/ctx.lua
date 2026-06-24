@@ -206,6 +206,9 @@ function M.make(m, resolveTrigger, extra)
     function ctx.focusBrowserTab(pattern, fallbackURL)
         return adapter.focusBrowserTab(pattern, fallbackURL)
     end
+    function ctx.focusSafariTab(pattern, fallbackURL)
+        return adapter.focusSafariTab(pattern, fallbackURL)
+    end
     function ctx.defaultBrowser()    return adapter.defaultBrowser() end
     function ctx.openSiteApp(pattern, url)
         return adapter.openSiteApp(pattern, url)

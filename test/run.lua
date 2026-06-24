@@ -1692,7 +1692,7 @@ fake.chromeFavicons = {}
 -- JSON storage with per-site browser + Chrome profile routing
 fake.settings["hammerdeck.opt.site_switcher.sites"] =
     '[{"name":"Otter","url":"otter.ai","browser":"com.google.Chrome","profile":"Profile 2","app":true},'
-    .. '{"name":"News","url":"news.ycombinator.com","browser":"com.apple.Safari"}]'
+    .. '{"name":"News","url":"news.ycombinator.com","browser":"org.mozilla.firefox"}]'
 fake.browserTabs = {}
 fake.siteOpens = {}
 fake.appWindows = {}
@@ -1708,12 +1708,29 @@ ok(#fake.siteOpens == 1
     and fake.siteOpens[1].url == "https://otter.ai",
     "a Chrome-profile app site routes through openSite with the profile + app flag")
 fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
-fake.visibleChooser().userSelect(2)   -- News: Safari -> openSite (plain tab)
+fake.visibleChooser().userSelect(2)   -- News: Firefox (non-scriptable) -> openSite tab
 ok(#fake.siteOpens == 2
-    and fake.siteOpens[2].bundleId == "com.apple.Safari"
+    and fake.siteOpens[2].bundleId == "org.mozilla.firefox"
     and fake.siteOpens[2].app == false
     and fake.siteOpens[2].url == "https://news.ycombinator.com",
-    "a site routed to a non-default browser opens via openSite")
+    "a site routed to a non-scriptable browser opens via openSite")
+
+-- a Safari-routed site (no app) focuses its existing Safari tab via focusSafariTab
+-- (NOT openSite), and opens it when absent
+fake.settings["hammerdeck.opt.site_switcher.sites"] =
+    '[{"name":"News","url":"news.ycombinator.com","browser":"com.apple.Safari"}]'
+fake.browserTabs = { "https://news.ycombinator.com/item?id=1" }
+fake.siteOpens = {}
+fake.focusedTabs = {}
+fake.openedNewTabs = {}
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })   -- one site -> jumps straight
+ok(#fake.siteOpens == 0
+    and fake.focusedTabs[#fake.focusedTabs] == "https://news.ycombinator.com/item?id=1",
+    "a Safari-routed site focuses its open Safari tab (not openSite)")
+fake.browserTabs = {}
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://news.ycombinator.com",
+    "a Safari-routed site with no open tab opens it")
 
 -- no sites at all -> a clear hint, not silence
 fake.settings["hammerdeck.opt.site_switcher.sites"] = nil

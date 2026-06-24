@@ -506,6 +506,19 @@ function adapter.openSite(bundleId, profile, app, url)
     return true
 end
 
+-- Safari focus-or-open mirrors focusBrowserTab (same recorders) -- the routing
+-- test distinguishes it from openSite by asserting siteOpens stays empty.
+function adapter.focusSafariTab(pattern, fallbackURL)
+    for _, url in ipairs(fake.browserTabs) do
+        if url:find(pattern, 1, true) then
+            fake.focusedTabs[#fake.focusedTabs + 1] = url
+            return true
+        end
+    end
+    fake.openedNewTabs[#fake.openedNewTabs + 1] = fallbackURL
+    return false
+end
+
 function adapter.isAppRunning(name)
     return fake.runningApps[name] == true
 end

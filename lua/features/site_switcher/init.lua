@@ -35,20 +35,10 @@
 
 local getDomain = require("platform.urls").getDomain
 local json = require("platform.json")
+local favicons = require("platform.favicons")
 
 local CHROME_BUNDLE = "com.google.Chrome"
-local FAVICON_URL = "https://%s/favicon.ico"
-
--- Image magic bytes (PNG / ICO / GIF / JPEG / BMP / RIFF-WEBP): a cached
--- favicon must start like an image or it is ignored (some sites answer
--- /favicon.ico with an HTML page and status 200). Mirrors tab_switcher.
-local function looksLikeImage(bytes)
-    if not bytes or #bytes < 4 then return false end
-    local b4 = bytes:sub(1, 4)
-    return b4 == "\137PNG" or b4 == "\0\0\1\0" or b4:sub(1, 3) == "GIF8"
-        or bytes:byte(1) == 255 and bytes:byte(2) == 216   -- JPEG
-        or b4:sub(1, 2) == "BM" or b4 == "RIFF"
-end
+local SAFARI_BUNDLE = "com.apple.Safari"
 
 -- Give a bare host a scheme: "bing.com" -> "https://bing.com". Without it the
 -- open path (`make new tab {URL:"bing.com"}`) creates a dead tab that never
@@ -138,63 +128,18 @@ local function configuredSites(ctx)
     return sites
 end
 
--- Favicons -------------------------------------------------------------------
--- Read-from / fetch-into the cache Tab Switcher already populates, so a favicon
--- either feature pulled shows for both.
 
-local function iconsDir(ctx) return ctx.cacheDir() .. "/favicons" end
-local function iconPath(ctx, domain) return iconsDir(ctx) .. "/" .. domain .. ".png" end
-
-local function iconFor(ctx, url)
-    local domain = getDomain(url)
-    if not domain then return nil end
-    local p = iconPath(ctx, domain)
-    if ctx.fileExists(p) and looksLikeImage(ctx.fileRead(p)) then
-        return "file:" .. p
-    end
-    return nil
-end
-
--- Fetch any missing favicons in the background (shown on the next open):
--- Chrome's local icon DB first, then the site's own /favicon.ico. `st.fetching`
--- dedupes in-flight downloads across opens.
-local function prefetchFavicons(ctx, st, sites)
-    ctx.mkdir(iconsDir(ctx))
-    local missing, seen = {}, {}
-    for _, site in ipairs(sites) do
-        local domain = getDomain(site.url)
-        if domain and not seen[domain] and not st.fetching[domain]
-            and not ctx.fileExists(iconPath(ctx, domain)) then
-            seen[domain] = true
-            st.fetching[domain] = true
-            missing[#missing + 1] = domain
-        end
-    end
-    if #missing == 0 then return end
-    ctx.extractFavicons(iconsDir(ctx), missing, function(saved)
-        local got = {}
-        for _, d in ipairs(saved or {}) do
-            got[d] = true
-            st.fetching[d] = nil
-        end
-        for _, d in ipairs(missing) do
-            if not got[d] then
-                ctx.downloadFile(FAVICON_URL:format(d), iconPath(ctx, d),
-                    function() st.fetching[d] = nil end)
-            end
-        end
-    end)
-end
-
--- Jump to a site. Four behaviors, picked by the site's routing:
+-- Jump to a site. Behaviors, picked by the site's routing:
 --   * Chrome, default profile, tab  -> focus the exact existing tab, else open
 --     it (the precise AppleScript "jumper" -- the common case).
 --   * Chrome, default profile, app  -> focus the existing app window, else open
 --     a chromeless app window.
---   * any other browser/profile     -> launch into that browser (and Chrome
---     profile / app window) via the CLI seam. Routing is authoritative;
---     focus-if-already-open is best-effort. Non-Chromium browsers (Safari,
---     Firefox) open a plain tab -- profile/app don't apply.
+--   * Safari, no app                -> focus the existing Safari tab, else open
+--     it (Safari's own AppleScript; profile/app don't apply).
+--   * anything else (a Chrome profile, app on a non-Chrome browser, Firefox,
+--     ...) -> launch into that browser (Chrome profile / app window) via the CLI
+--     seam. Routing is authoritative; focus-if-already-open is best-effort.
+--     Non-scriptable browsers (Firefox) just open a plain tab.
 -- An unset browser falls back to the system default browser.
 local function jump(ctx, site)
     local pattern = siteName(site.url)
@@ -205,6 +150,7 @@ local function jump(ctx, site)
     local browser = (site.browser and site.browser ~= "") and site.browser
         or ctx.defaultBrowser()
     local isChrome = browser == CHROME_BUNDLE
+    local isSafari = browser == SAFARI_BUNDLE
     local hasProfile = site.profile ~= nil and site.profile ~= ""
 
     if isChrome and not hasProfile and not site.app then
@@ -214,6 +160,9 @@ local function jump(ctx, site)
         local found = ctx.openSiteApp(pattern, site.url)
         ctx.log(found and ("focused app window " .. pattern)
             or ("opened app window " .. site.url))
+    elseif isSafari and not site.app then
+        local found = ctx.focusSafariTab(pattern, site.url)
+        ctx.log(found and ("focused Safari " .. pattern) or ("opened Safari " .. site.url))
     else
         ctx.openSite(browser or "", site.profile or "", site.app == true, site.url)
         ctx.log(("opened %s [%s]%s%s"):format(site.url, browser or "default",
@@ -222,12 +171,12 @@ local function jump(ctx, site)
     end
 end
 
--- One reusable chooser + favicon-fetch state per enablement (a fresh ctx =>
--- fresh state, so a disable/enable cycle never reuses a torn-down handle).
+-- One reusable chooser + favicon cache per enablement (a fresh ctx => fresh
+-- state, so a disable/enable cycle never reuses a torn-down handle).
 local cached = nil
 local function state(ctx)
     if not cached or cached.ctx ~= ctx then
-        cached = { ctx = ctx, chooser = nil, fetching = {} }
+        cached = { ctx = ctx, chooser = nil, fav = favicons.new(ctx) }
     end
     return cached
 end
@@ -267,7 +216,9 @@ return {
         end
 
         local st = state(ctx)
-        prefetchFavicons(ctx, st, sites)
+        local urls = {}
+        for _, site in ipairs(sites) do urls[#urls + 1] = site.url end
+        st.fav.prefetch(urls)
         if not st.chooser then
             st.chooser = ctx.chooser {
                 searchSubText = true,
@@ -286,7 +237,7 @@ return {
             choices[#choices + 1] = {
                 text = site.name, subText = site.url, url = site.url,
                 app = site.app, browser = site.browser, profile = site.profile,
-                image = iconFor(ctx, site.url),
+                image = st.fav.iconFor(site.url),
             }
         end
         st.chooser.setPlaceholder("Jump to site")

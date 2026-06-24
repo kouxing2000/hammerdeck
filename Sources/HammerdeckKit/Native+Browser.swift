@@ -95,14 +95,52 @@ extension Native {
         end if
         return found
         """
+        return runFoundScript(script)
+    }
+
+    // Run a curated focus-or-open AppleScript ending in `return found`. Returns
+    // the boolean, or nil on a script error (browser missing / Automation
+    // denied) -- callers degrade nil to "not found".
+    private func runFoundScript(_ script: String) -> Bool? {
         var errInfo: NSDictionary?
         let result = NSAppleScript(source: script)?.executeAndReturnError(&errInfo)
         if let errInfo {
-            print("[hammerdeck] chrome focus tab failed: "
+            print("[hammerdeck] focus tab failed: "
                 + ((errInfo[NSAppleScript.errorMessage] as? String) ?? "\(errInfo)"))
             return nil
         }
         return result?.booleanValue == true
+    }
+
+    // Safari analog of chromeFocusTab: focus the first Safari tab whose URL
+    // contains `pattern`, else open `openFallback` (Safari's dialect differs --
+    // `current tab` / `tabs of window` / `open location`; a tab's URL can be
+    // `missing value`, which must be guarded before coercion). Curated template.
+    private func safariFocusTab(matching pattern: String, openFallback: String?) -> Bool? {
+        let fallbackClause = openFallback.map { "open location \"\(escAppleScript($0))\"" } ?? ""
+        let script = """
+        tell application "Safari"
+            activate
+            set found to false
+            repeat with w in windows
+                repeat with t in tabs of w
+                    set u to URL of t
+                    if u is not missing value and (u as text) contains "\(escAppleScript(pattern))" then
+                        set current tab of w to t
+                        set index of w to 1
+                        set found to true
+                        exit repeat
+                    end if
+                end repeat
+                if found then exit repeat
+            end repeat
+            if not found then
+                \(fallbackClause)
+            end if
+            return found
+        end tell
+        """
+        return runFoundScript(script)
     }
 
     // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
@@ -116,6 +154,19 @@ extension Native {
         }
         // nil (script error) degrades to "not found" -- the caller logged why.
         let found = chromeFocusTab(matching: pattern, openFallback: fallback) ?? false
+        lua_pushboolean(L, found ? 1 : 0)
+        return 1
+    }
+
+    // focus_safari_tab(pattern, fallbackURL) -> found. The Safari counterpart of
+    // focus_browser_tab, so a Safari-routed Quick Site focuses its open tab
+    // instead of always opening a new one. First use triggers the Automation
+    // prompt ("control Safari").
+    func focusSafariTab(_ L: OpaquePointer?) -> Int32 {
+        guard let pattern = LuaState.string(L, 1), let fallback = LuaState.string(L, 2) else {
+            return luaError(L, "focus_safari_tab: pattern and fallbackURL required")
+        }
+        let found = safariFocusTab(matching: pattern, openFallback: fallback) ?? false
         lua_pushboolean(L, found ? 1 : 0)
         return 1
     }

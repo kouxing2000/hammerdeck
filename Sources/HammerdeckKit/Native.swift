@@ -149,6 +149,7 @@ final class Native {
             "activate_app": { L in MainActor.assumeIsolated { Native.shared.activateApp(L) } },
             "launch_or_focus_app": { L in MainActor.assumeIsolated { Native.shared.launchOrFocusApp(L) } },
             "focus_browser_tab": { L in MainActor.assumeIsolated { Native.shared.focusBrowserTab(L) } },
+            "focus_safari_tab":  { L in MainActor.assumeIsolated { Native.shared.focusSafariTab(L) } },
             "open_site_app":     { L in MainActor.assumeIsolated { Native.shared.openSiteApp(L) } },
             "open_site":         { L in MainActor.assumeIsolated { Native.shared.openSite(L) } },
             "default_browser_bundle_id": { L in MainActor.assumeIsolated { Native.shared.defaultBrowserBundleId(L) } },

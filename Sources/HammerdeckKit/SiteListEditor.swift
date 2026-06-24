@@ -19,6 +19,21 @@ struct SiteRow: Identifiable, Equatable, Codable {
 
     enum CodingKeys: String, CodingKey { case name, url, browser, profile, app }
 
+    init() {}
+
+    // Tolerant decode: a missing key falls back to the property default rather
+    // than failing the whole array (Swift's synthesized Decodable ignores
+    // property defaults and would throw on any absent key -- so a hand-edited or
+    // partially-written record must not wipe the list).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        browser = try c.decodeIfPresent(String.self, forKey: .browser) ?? ""
+        profile = try c.decodeIfPresent(String.self, forKey: .profile) ?? ""
+        app = try c.decodeIfPresent(Bool.self, forKey: .app) ?? false
+    }
+
     static func encode(_ rows: [SiteRow]) -> String {
         let enc = JSONEncoder()
         enc.outputFormatting = [.withoutEscapingSlashes]

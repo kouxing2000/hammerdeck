@@ -31,21 +31,10 @@ local BUNDLE_BY_NAME = {}
 for _, b in ipairs(BROWSERS) do BUNDLE_BY_NAME[b.name] = b.bundle end
 local POLL_SECONDS = 10
 local PRUNE_AGE = 30 * 24 * 3600
-local FAVICON_URL = "https://%s/favicon.ico"
-
--- Image magic bytes (PNG / ICO / GIF / JPEG / BMP / RIFF-WEBP): a cached
--- favicon must start like an image or it is ignored (some sites answer
--- /favicon.ico with an HTML page and status 200).
-local function looksLikeImage(bytes)
-    if not bytes or #bytes < 4 then return false end
-    local b4 = bytes:sub(1, 4)
-    return b4 == "\137PNG" or b4 == "\0\0\1\0" or b4:sub(1, 3) == "GIF8"
-        or bytes:byte(1) == 255 and bytes:byte(2) == 216   -- JPEG
-        or b4:sub(1, 2) == "BM" or b4 == "RIFF"
-end
 
 local json = require("platform.json")
 local getDomain = require("platform.urls").getDomain
+local favicons = require("platform.favicons")
 -- Release-to-jump watches the modifier of the hotkey that fired this action
 -- (shared with window_switcher; nil when fired without a hotkey -> pick on Enter).
 local cycleModifier = require("platform.hotkeys").cycleModifier
@@ -58,13 +47,12 @@ local function jumperFor(ctx)
         chooser = nil,
         altTimer = nil,
         lastActive = {},   -- browser name -> last polled url
-        fetching = {},     -- domain -> true (favicon download in flight)
         refreshing = false,
     }
 
     local dataDir = ctx.dataDir() .. "/tab_switcher"
     local mruPath = dataDir .. "/mru.json"
-    local iconsDir = ctx.cacheDir() .. "/favicons"
+    local fav = favicons.new(ctx)   -- shared favicon cache (see platform.favicons)
 
     -- MRU persistence ---------------------------------------------------------
 
@@ -98,65 +86,11 @@ local function jumperFor(ctx)
         saveMru()
     end
 
-    -- Favicons ----------------------------------------------------------------
-
-    local function iconPath(domain) return iconsDir .. "/" .. domain .. ".png" end
-
-    -- Validity cache: domain -> true/false (checked once per enablement).
-    local iconValid = {}
-
+    -- Favicons: a "file:<domain>.png" icon token when cached, else the browser's
+    -- app icon. `fav.prefetch` fills the shared cache (Chrome's icon DB first,
+    -- then /favicon.ico) -- see platform.favicons.
     local function iconFor(url, bundle)
-        local domain = getDomain(url)
-        if domain then
-            if iconValid[domain] == nil then
-                local p = iconPath(domain)
-                iconValid[domain] = ctx.fileExists(p)
-                    and looksLikeImage(ctx.fileRead(p)) or false
-            end
-            if iconValid[domain] then return "file:" .. iconPath(domain) end
-        end
-        return ctx.appIcon(bundle)
-    end
-
-    -- Fetch missing favicons in the background (shown on the next open):
-    -- Chrome's local icon DB first (REAL icons, offline, covers <link rel>
-    -- sites -- the donor's mechanism), then the site's own /favicon.ico for
-    -- whatever Chrome doesn't know (e.g. Safari-only sites).
-    local function fetchMissingFavicons(urls)
-        ctx.mkdir(iconsDir)
-        local missing, seen = {}, {}
-        for _, url in ipairs(urls) do
-            local domain = getDomain(url)
-            if domain and not seen[domain] and not st.fetching[domain]
-                and not ctx.fileExists(iconPath(domain)) then
-                seen[domain] = true
-                st.fetching[domain] = true
-                missing[#missing + 1] = domain
-            end
-        end
-        if #missing == 0 then return end
-        ctx.extractFavicons(iconsDir, missing, function(saved)
-            local got = {}
-            for _, d in ipairs(saved or {}) do
-                got[d] = true
-                iconValid[d] = nil          -- re-validate on next open
-                st.fetching[d] = nil
-            end
-            ctx.log("favicons: " .. #(saved or {}) .. "/" .. #missing
-                .. " from the Chrome icon DB")
-            for _, d in ipairs(missing) do
-                if not got[d] then
-                    ctx.downloadFile(FAVICON_URL:format(d), iconPath(d),
-                        function(okDl)
-                            st.fetching[d] = nil
-                            iconValid[d] = nil
-                            if not okDl then
-                                ctx.log("favicon fetch failed: " .. d)
-                            end
-                        end)
-                end
-            end
-        end)
+        return fav.iconFor(url, ctx.appIcon(bundle))
     end
 
     -- Choices -----------------------------------------------------------------
@@ -208,7 +142,7 @@ local function jumperFor(ctx)
             st.dirty = false
             local urls = {}
             for _, c in ipairs(choices) do urls[#urls + 1] = c.subText end
-            fetchMissingFavicons(urls)
+            fav.prefetch(urls)
             if done then done() end
         end)
     end

@@ -511,6 +511,12 @@ function adapter.focusBrowserTab(pattern, fallbackURL)
     return native.focus_browser_tab(pattern, fallbackURL) == true
 end
 
+-- Safari counterpart of focusBrowserTab (focus the first Safari tab whose URL
+-- contains `pattern`, else open fallbackURL). Returns whether a tab was found.
+function adapter.focusSafariTab(pattern, fallbackURL)
+    return native.focus_safari_tab(pattern, fallbackURL) == true
+end
+
 -- The bundle id of the browser macOS would use for an https URL right now (the
 -- user's default browser), or nil. Lets a feature offer browser-specific
 -- behavior only when that browser is the one in charge.
