@@ -206,6 +206,13 @@ function M.make(m, resolveTrigger, extra)
     function ctx.focusBrowserTab(pattern, fallbackURL)
         return adapter.focusBrowserTab(pattern, fallbackURL)
     end
+    function ctx.defaultBrowser()    return adapter.defaultBrowser() end
+    function ctx.openSiteApp(pattern, url)
+        return adapter.openSiteApp(pattern, url)
+    end
+    function ctx.openSite(bundleId, profile, app, url)
+        return adapter.openSite(bundleId, profile, app, url)
+    end
     function ctx.isAppRunning(name)  return adapter.isAppRunning(name) end
     function ctx.browserListTabs(app, cb)  adapter.browserListTabs(app, cb) end
     function ctx.browserFocusTab(app, winId, tabIndex, cb)

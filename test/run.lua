@@ -1573,8 +1573,9 @@ ok(fake.alerts[#fake.alerts]:match("Nothing selected") ~= nil, "empty selection 
 registry.setEnabled("text_actions", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after text_actions test")
 
--- T23: site_switcher (a list of favorite sites in a searchable chooser; pick a row
--- -- click, Enter, or cmd+<n> -- to focus that site's tab, or open it) --------
+-- T23: site_switcher / "Quick Sites" (a list of favorite sites in a searchable
+-- chooser; pick a row -- click, Enter, or cmd+<n> -- to focus that site's tab,
+-- open it, or open it as a standalone app window) ----------------------------
 registry.register(require("features.site_switcher"))
 registry.setEnabled("site_switcher", true)
 
@@ -1638,13 +1639,96 @@ ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
     "the legacy openURL migrates as the one site when the list is empty")
 fake.settings["hammerdeck.opt.site_switcher.openURL"] = nil
 
+-- a `Name | URL` line shows the friendly name (URL as subtext), with a favicon
+-- once it is cached
+fake.settings["hammerdeck.opt.site_switcher.openURL"] = nil
+fake.chromeFavicons = { ["github.com"] = true }
+fake.settings["hammerdeck.opt.site_switcher.sites"] =
+    "GitHub | github.com\nGmail | mail.google.com"
+fake.browserTabs = {}
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+local nc = fake.visibleChooser()
+ok(nc ~= nil and nc.choices[1].text == "GitHub"
+    and nc.choices[1].subText == "https://github.com"
+    and nc.choices[2].text == "Gmail",
+    "a `Name | URL` line shows the friendly name (URL as subtext)")
+ok(nc.choices[1].image == "file:/tmp/hammerdeck-fake-cache/favicons/github.com.png",
+    "a cached favicon renders next to its row")
+nc.userSelect(0)   -- dismiss
+
+-- `| app` opens a standalone Chrome app window when Chrome is the default browser
+fake.defaultBrowserBundle = "com.google.Chrome"
+fake.settings["hammerdeck.opt.site_switcher.sites"] = "Gmail | mail.google.com | app"
+fake.browserTabs = {}
+fake.appWindows = {}
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+ok(fake.visibleChooser() == nil
+    and fake.appWindows[#fake.appWindows] == "https://mail.google.com",
+    "an `| app` site with no open tab opens a standalone app window")
+
+-- an already-open app site is focused, not relaunched
+fake.appWindows = {}
+fake.browserTabs = { "https://mail.google.com/u/0/inbox" }
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+ok(#fake.appWindows == 0
+    and fake.focusedTabs[#fake.focusedTabs] == "https://mail.google.com/u/0/inbox",
+    "an open app site is focused instead of relaunched")
+
+-- when the resolved browser isn't Chrome, an app site routes through openSite to
+-- that browser (which opens a plain tab -- app/profile don't apply there)
+fake.defaultBrowserBundle = "com.apple.Safari"
+fake.appWindows = {}
+fake.siteOpens = {}
+fake.browserTabs = {}
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+ok(#fake.appWindows == 0
+    and fake.siteOpens[#fake.siteOpens] ~= nil
+    and fake.siteOpens[#fake.siteOpens].bundleId == "com.apple.Safari"
+    and fake.siteOpens[#fake.siteOpens].url == "https://mail.google.com",
+    "an app site whose browser isn't Chrome routes through openSite (no app window)")
+fake.defaultBrowserBundle = "com.google.Chrome"
+fake.chromeFavicons = {}
+
+-- JSON storage with per-site browser + Chrome profile routing
+fake.settings["hammerdeck.opt.site_switcher.sites"] =
+    '[{"name":"Otter","url":"otter.ai","browser":"com.google.Chrome","profile":"Profile 2","app":true},'
+    .. '{"name":"News","url":"news.ycombinator.com","browser":"com.apple.Safari"}]'
+fake.browserTabs = {}
+fake.siteOpens = {}
+fake.appWindows = {}
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+local jc = fake.visibleChooser()
+ok(jc ~= nil and jc.choices[1].text == "Otter" and jc.choices[2].text == "News",
+    "JSON site records render as named rows")
+jc.userSelect(1)   -- Otter: Chrome + a non-default profile + app -> routed launch
+ok(#fake.siteOpens == 1
+    and fake.siteOpens[1].bundleId == "com.google.Chrome"
+    and fake.siteOpens[1].profile == "Profile 2"
+    and fake.siteOpens[1].app == true
+    and fake.siteOpens[1].url == "https://otter.ai",
+    "a Chrome-profile app site routes through openSite with the profile + app flag")
+fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+fake.visibleChooser().userSelect(2)   -- News: Safari -> openSite (plain tab)
+ok(#fake.siteOpens == 2
+    and fake.siteOpens[2].bundleId == "com.apple.Safari"
+    and fake.siteOpens[2].app == false
+    and fake.siteOpens[2].url == "https://news.ycombinator.com",
+    "a site routed to a non-default browser opens via openSite")
+
 -- no sites at all -> a clear hint, not silence
+fake.settings["hammerdeck.opt.site_switcher.sites"] = nil
 fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
 ok(fake.alerts[#fake.alerts]:match("No sites yet") ~= nil,
     "empty config alerts instead of doing nothing")
 
 registry.setEnabled("site_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after site_switcher test")
+
+-- Quick Sites' favicon prefetch writes into the same global recorders that
+-- later feature tests inspect; reset them so those assert only on their own activity.
+fake.downloads = {}
+fake.extractedBatches = {}
+fake.chromeFavicons = {}
 
 -- T24: window_snap (snap halves, max toggle, throw across screens) ---------
 registry.register(require("features.window_snap"))

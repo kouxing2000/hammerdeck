@@ -511,6 +511,28 @@ function adapter.focusBrowserTab(pattern, fallbackURL)
     return native.focus_browser_tab(pattern, fallbackURL) == true
 end
 
+-- The bundle id of the browser macOS would use for an https URL right now (the
+-- user's default browser), or nil. Lets a feature offer browser-specific
+-- behavior only when that browser is the one in charge.
+function adapter.defaultBrowser()
+    return native.default_browser_bundle_id()
+end
+
+-- Focus the first Chrome tab/app-window whose URL contains `pattern`; when none
+-- exists, open the site as a chromeless Chrome APP WINDOW (`chrome --app`).
+-- Returns whether an existing window was found. Chrome-only (curated automation).
+function adapter.openSiteApp(pattern, url)
+    return native.open_site_app(pattern, url) == true
+end
+
+-- Open `url` in a SPECIFIC browser (bundle id), routing to a Chrome `profile`
+-- and/or opening it as a chromeless `app` window when that browser is Chromium.
+-- Non-Chromium browsers (Safari, Firefox) open a plain tab; profile/app are
+-- ignored. An empty profile means the browser's default/current profile.
+function adapter.openSite(bundleId, profile, app, url)
+    return native.open_site(bundleId, profile, app == true, url) == true
+end
+
 -- Is an app with this localized name currently running?
 function adapter.isAppRunning(name)
     return native.app_running(name) == true

@@ -39,8 +39,10 @@ myHammerSpoon:
   wallpaper: today's top apps, bars, and a 7-day chart.
 - **Text Actions** (action) -- act on the selected text anywhere: open URLs,
   change case, calculate, dictionary lookup; transforms paste back in place.
-- **Site Switcher** (action) -- focus the browser tab for a configured site
-  (or open it) with one shortcut.
+- **Quick Sites** (action) -- jump to a favorite site: focus its browser tab if
+  open, else open it. Per-site routing -- pick the browser, a Chrome profile,
+  and whether to open it as a standalone app window. One shortcut, or
+  cmd+<number> straight to a row.
 - **Window Snap** (7 actions) -- snap the focused window to screen halves,
   toggle maximize/75%, or throw it to the next screen (pointer follows).
 - **Window Mode** (2 actions) -- a modal keyboard layer: enter the mode, tap

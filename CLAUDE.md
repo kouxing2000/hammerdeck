@@ -130,11 +130,19 @@ run the UI tests while they may be at the keyboard -- ask first.
 To screenshot the **SwiftUI Settings window** (the chord/trigger editors, option
 forms -- NOT a native panel, so the Lua eval channel can't reach it), use the
 host-UI deep link: `scripts/control.sh '@settings:<featureId>'` opens Settings
-straight to that feature's detail (e.g. `@settings:count_down`), then
-`scripts/shot.sh`. Bare `@settings` just opens the tab. (DebugControl intercepts
-the `@settings` prefix before the Lua eval; it's DEBUG-only.) Reach for this
-BEFORE blind-iterating on config-UI pixels -- the chord-row layout took 3 blind
-rounds before this deep link existed.
+straight to that feature's detail (e.g. `@settings:count_down`), then capture
+with **`scripts/control.sh '@shot:<path>'`** -- the app renders its OWN detail
+form to a PNG in-process (DebugShot). Strongly prefer `@shot` over
+`scripts/shot.sh` (whole-screen screencapture) for the Settings window: it needs
+no Screen Recording, does not care if the window is frontmost / occluded / off-
+screen, and captures the scroll view's FULL content height, so options below the
+fold (long forms, an expanded row editor) are included without scrolling. Bare
+`@settings` just opens the tab. (DebugControl intercepts `@settings` / `@shot`
+before the Lua eval; DEBUG-only.) `scripts/shot.sh` stays the tool for native
+panels (chooser/banner), which live outside the Settings window. Reach for this
+BEFORE blind-iterating on config-UI pixels -- driving the live window via
+osascript clicks/scrolls is a rabbit hole (focus theft, below-the-fold content);
+in-process self-capture sidesteps all of it.
 
 Pixel fixes -- probe before iterating (the project instance of the global
 "probe the constraint" rule): a native-AppKit visual fix that misses once is

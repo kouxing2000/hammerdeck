@@ -478,6 +478,34 @@ function adapter.focusBrowserTab(pattern, fallbackURL)
     return false
 end
 
+fake.defaultBrowserBundle = "com.google.Chrome"   -- the simulated default browser
+fake.appWindows = {}   -- recorded openSiteApp app-window opens (url strings)
+
+function adapter.defaultBrowser()
+    return fake.defaultBrowserBundle
+end
+
+-- Mirrors focusBrowserTab, but a miss is recorded as an app-window open
+-- (rather than a new tab) -- the "site as a standalone app" path.
+function adapter.openSiteApp(pattern, url)
+    for _, tab in ipairs(fake.browserTabs) do
+        if tab:find(pattern, 1, true) then
+            fake.focusedTabs[#fake.focusedTabs + 1] = tab
+            return true
+        end
+    end
+    fake.appWindows[#fake.appWindows + 1] = url
+    return false
+end
+
+fake.siteOpens = {}   -- recorded openSite calls {bundleId, profile, app, url}
+
+function adapter.openSite(bundleId, profile, app, url)
+    fake.siteOpens[#fake.siteOpens + 1] =
+        { bundleId = bundleId, profile = profile, app = app, url = url }
+    return true
+end
+
 function adapter.isAppRunning(name)
     return fake.runningApps[name] == true
 end

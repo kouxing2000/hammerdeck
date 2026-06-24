@@ -52,22 +52,23 @@ extension Native {
         return 1
     }
 
-    // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
-    // Chrome tab whose URL contains `pattern` to front; opens fallbackURL in a
-    // new tab when absent (the donor miscBindings "locate otter" flow,
-    // parameterized). CURATED AppleScript: the script is a fixed template in
-    // the seam -- features never run arbitrary osascript. First use triggers
-    // the macOS Automation permission prompt ("control Google Chrome").
-    func focusBrowserTab(_ L: OpaquePointer?) -> Int32 {
-        guard let pattern = LuaState.string(L, 1), let fallback = LuaState.string(L, 2) else {
-            return luaError(L, "focus_browser_tab: pattern and fallbackURL required")
-        }
-        func esc(_ s: String) -> String {
-            s.replacingOccurrences(of: "\\", with: "\\\\")
-             .replacingOccurrences(of: "\"", with: "\\\"")
-        }
-        // The donor's script shape: snapshot all tab URLs first, then act by
-        // indices (mutating window order while iterating live lists misbehaves).
+    private func escAppleScript(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+         .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    // Snapshot all Chrome tab URLs, then raise + activate the first window whose
+    // tab URL contains `pattern`. When none matches and `openFallback` is set,
+    // open it as a new tab. Returns whether a match was found, or nil on script
+    // error (Chrome missing / Automation denied). The donor's "snapshot then act
+    // by index" shape -- mutating window order while iterating live lists
+    // misbehaves. CURATED template: features never run arbitrary osascript.
+    // An app-mode window is just a Chrome window with one tab, so this raises
+    // those too. Shared by focus_browser_tab and open_site_app.
+    private func chromeFocusTab(matching pattern: String, openFallback: String?) -> Bool? {
+        let fallbackClause = openFallback.map {
+            "tell application \"Google Chrome\" to make new tab at window 1 with properties {URL:\"\(escAppleScript($0))\"}"
+        } ?? ""
         let script = """
         activate application "Google Chrome"
         tell application "Google Chrome" to set windowTabList to URL of tabs of every window
@@ -76,7 +77,7 @@ extension Native {
         repeat with thisWindowsTabs in windowTabList
             set tabIndex to 1
             repeat with tabURL in thisWindowsTabs
-                if tabURL as text contains "\(esc(pattern))" then
+                if tabURL as text contains "\(escAppleScript(pattern))" then
                     tell application "Google Chrome"
                         set index of window windowIndex to 1
                         set active tab index of window 1 to tabIndex
@@ -90,20 +91,134 @@ extension Native {
             set windowIndex to windowIndex + 1
         end repeat
         if not found then
-            tell application "Google Chrome" to make new tab at window 1 with properties {URL:"\(esc(fallback))"}
+            \(fallbackClause)
         end if
         return found
         """
         var errInfo: NSDictionary?
         let result = NSAppleScript(source: script)?.executeAndReturnError(&errInfo)
         if let errInfo {
-            // Chrome missing / Automation permission denied: degrade, log why.
-            print("[hammerdeck] focus_browser_tab failed: "
+            print("[hammerdeck] chrome focus tab failed: "
                 + ((errInfo[NSAppleScript.errorMessage] as? String) ?? "\(errInfo)"))
+            return nil
+        }
+        return result?.booleanValue == true
+    }
+
+    // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
+    // Chrome tab whose URL contains `pattern` to front; opens fallbackURL in a
+    // new tab when absent (the donor miscBindings "locate otter" flow,
+    // parameterized). First use triggers the macOS Automation permission prompt
+    // ("control Google Chrome").
+    func focusBrowserTab(_ L: OpaquePointer?) -> Int32 {
+        guard let pattern = LuaState.string(L, 1), let fallback = LuaState.string(L, 2) else {
+            return luaError(L, "focus_browser_tab: pattern and fallbackURL required")
+        }
+        // nil (script error) degrades to "not found" -- the caller logged why.
+        let found = chromeFocusTab(matching: pattern, openFallback: fallback) ?? false
+        lua_pushboolean(L, found ? 1 : 0)
+        return 1
+    }
+
+    // Launch a Chromium browser's executable with `args`, logging a failure
+    // instead of swallowing it. Afterward raises an already-running instance (the
+    // bare exe hand-off opens the window but may not front it; a fresh launch
+    // fronts itself). Returns whether the launch was dispatched.
+    @discardableResult
+    private func launchChromium(_ exe: URL, bundleId: String, args: [String]) -> Bool {
+        let p = Process()
+        p.executableURL = exe
+        p.arguments = args
+        do {
+            try p.run()
+        } catch {
+            print("[hammerdeck] open_site: launch failed for \(bundleId): \(error)")
+            return false
+        }
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
+        if #available(macOS 14.0, *) { running?.activate() } else { running?.activate(options: []) }
+        return true
+    }
+
+    // open_site_app(pattern, url) -> found. Like focus_browser_tab, but when no
+    // existing Chrome tab/window matches, it opens the site as a CHROMELESS
+    // CHROME APP WINDOW (`chrome --app=<url>`) instead of a normal tab -- the
+    // "site as a standalone app" flow. An already-open app window is just a
+    // Chrome window, so the shared snapshot raises it. Chrome-only; callers gate
+    // on default_browser_bundle_id and fall back to a tab otherwise.
+    func openSiteApp(_ L: OpaquePointer?) -> Int32 {
+        guard let pattern = LuaState.string(L, 1), let url = LuaState.string(L, 2) else {
+            return luaError(L, "open_site_app: pattern and url required")
+        }
+        if chromeFocusTab(matching: pattern, openFallback: nil) == true {
+            lua_pushboolean(L, 1)
+            return 1
+        }
+        // No existing window (or script error): launch a fresh app-mode window.
+        // Invoke Chrome's executable directly -- `open --args` is ignored once
+        // Chrome is already running, but the binary hands --app to that instance.
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
+           let exe = Bundle(url: appURL)?.executableURL {
+            launchChromium(exe, bundleId: "com.google.Chrome", args: ["--app=\(url)"])
+        }
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // open_site(bundleId, profile, app, url) -> launched. Open `url` in a
+    // SPECIFIC browser. For a Chromium browser this launches its executable with
+    // `--profile-directory=<profile>` (when set) and either `--app=<url>` (a
+    // chromeless app window) or `<url>` (a tab) -- the only reliable way to
+    // target a profile / app window. For a non-Chromium browser (Safari,
+    // Firefox) it opens the URL as a plain tab; profile/app don't apply.
+    func openSite(_ L: OpaquePointer?) -> Int32 {
+        guard let bundleId = LuaState.string(L, 1), let url = LuaState.string(L, 4) else {
+            return luaError(L, "open_site: bundleId and url required")
+        }
+        let profile = LuaState.string(L, 2) ?? ""
+        let app = LuaState.bool(L, 3)
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            print("[hammerdeck] open_site: no app for bundle id \(bundleId)")
             lua_pushboolean(L, 0)
             return 1
         }
-        lua_pushboolean(L, result?.booleanValue == true ? 1 : 0)
+        if BrowserCatalog.isChromium(bundleId), let exe = Bundle(url: appURL)?.executableURL {
+            var args: [String] = []
+            if !profile.isEmpty { args.append("--profile-directory=\(profile)") }
+            if app {
+                args.append("--app=\(url)")          // `=`-bound: cannot introduce a new switch
+            } else {
+                // `--` ends switch parsing, so a URL that happens to start with
+                // `-` can't be read as a Chrome flag (e.g. --disable-web-security).
+                args.append("--")
+                args.append(url)
+            }
+            lua_pushboolean(L, launchChromium(exe, bundleId: bundleId, args: args) ? 1 : 0)
+            return 1
+        }
+        if let u = URL(string: url) {
+            // Non-Chromium: open the URL in that browser (profile/app ignored).
+            let cfg = NSWorkspace.OpenConfiguration()
+            cfg.activates = true
+            NSWorkspace.shared.open([u], withApplicationAt: appURL, configuration: cfg, completionHandler: nil)
+            lua_pushboolean(L, 1)
+            return 1
+        }
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // default_browser_bundle_id() -> bundleId|nil. The app macOS would use to
+    // open an https URL right now (the user's default browser). Lets a feature
+    // gate browser-specific behavior on the user's chosen browser.
+    func defaultBrowserBundleId(_ L: OpaquePointer?) -> Int32 {
+        if let u = URL(string: "https://example.com"),
+           let appURL = NSWorkspace.shared.urlForApplication(toOpen: u),
+           let id = Bundle(url: appURL)?.bundleIdentifier {
+            lua_pushstring(L, id)
+        } else {
+            lua_pushnil(L)
+        }
         return 1
     }
 

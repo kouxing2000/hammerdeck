@@ -246,7 +246,9 @@ private struct OptionEditor: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 editor
-                if store.isOptionOverridden(featureId, opt) { resetButton }
+                // siteList manages its own rows (add/remove); a blanket reset
+                // would be confusing, so it has no reset affordance.
+                if store.isOptionOverridden(featureId, opt) && opt.type != "siteList" { resetButton }
             }
             hintView
             actionButton
@@ -424,6 +426,15 @@ private struct OptionEditor: View {
                     Text(appListSelectionLabel).lineLimit(1)
                 }
                 .frame(maxWidth: 240)
+            }
+        case "siteList":
+            VStack(alignment: .leading, spacing: 4) {
+                if !opt.collapsible { Text(opt.label) }
+                SiteListEditor(
+                    json: store.optionValue(featureId, opt) as? String
+                        ?? (opt.defaultValue as? String ?? ""),
+                    onChange: { store.setOptionValue(featureId, opt, $0) }
+                )
             }
         default:
             LabeledContent(opt.label, value: "(\(opt.type) editor not built yet)")

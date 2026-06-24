@@ -8,7 +8,14 @@ import Foundation
 /// the live app show a UI, so a screenshot can be taken and checked. The flow:
 ///   1. scripts/app.sh start         (sets HAMMERDECK_CONTROL_DIR)
 ///   2. scripts/control.sh '<lua>'   (e.g. open the palette) -- this file evals it
-///   3. scripts/shot.sh out.png      (screencapture)
+///   3. scripts/shot.sh out.png      (whole-screen screencapture, for panels)
+///
+/// For the SwiftUI Settings window specifically, prefer `@shot:<path>` over
+/// screencapture: it asks the app to render its OWN detail form to a PNG
+/// in-process (see DebugShot) -- no Screen Recording, no frontmost/occlusion
+/// dependence, and it captures the scroll view's FULL content height, so nothing
+/// below the fold is missed. The `@settings` / `@home` / `@tour` / `@shot`
+/// commands below are host-UI hooks the Lua eval channel can't reach.
 ///
 /// When `HAMMERDECK_CONTROL_DIR` is set, a main-thread timer polls
 /// `<dir>/cmd.lua`; on finding one it consumes it, evaluates the Lua via the
@@ -67,6 +74,12 @@ enum DebugControl {
                         .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
                     DebugControl.openSettings?(id.isEmpty ? nil : id)
                     out = "opened settings\(id.isEmpty ? "" : ":" + id)"
+                } else if code == "@shot" || code.hasPrefix("@shot:") || code.hasPrefix("@shot ") {
+                    // In-process self-capture (see DebugShot) -- no Screen
+                    // Recording / frontmost / scrolling needed.
+                    let path = String(code.dropFirst("@shot".count))
+                        .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
+                    out = DebugShot.capture(to: path.isEmpty ? "/tmp/hammerdeck-shot.png" : path)
                 } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@tour" {
                     DebugControl.presentTour?()
                     out = "presented tour"

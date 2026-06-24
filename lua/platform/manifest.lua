@@ -66,7 +66,7 @@ manifest.API_VERSION = 1
 -- declare a plaintext `default` (enforced below).
 local VALID_OPTION_TYPES = {
     bool = true, int = true, string = true, enum = true, time = true, appList = true,
-    secret = true,
+    siteList = true, secret = true,
 }
 
 -- Privileged ctx extensions a feature may opt into via `capabilities = {...}`.
