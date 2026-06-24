@@ -80,6 +80,10 @@ enum DebugControl {
                     let path = String(code.dropFirst("@shot".count))
                         .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
                     out = DebugShot.capture(to: path.isEmpty ? "/tmp/hammerdeck-shot.png" : path)
+                } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@chordhint" {
+                    // Preview the chord which-key hint card (pixels only).
+                    ChordCenter.shared.debugPreviewHint()
+                    out = "showed chord hint"
                 } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@tour" {
                     DebugControl.presentTour?()
                     out = "presented tour"

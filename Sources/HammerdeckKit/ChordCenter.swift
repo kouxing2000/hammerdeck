@@ -21,7 +21,7 @@ final class ChordCenter {
     private init() {}
 
     /// How long an armed chord waits for the next follow key before giving up.
-    var timeout: TimeInterval = 1.5
+    var timeout: TimeInterval = 2.1
 
     private struct Chord {
         let id: UInt32
@@ -195,6 +195,24 @@ final class ChordCenter {
     }
 
     // MARK: - Which-key hint
+
+#if DEBUG
+    /// Render the hint card with sample rows for a visual check (DebugControl
+    /// `@chordhint`). Bypasses the real arm/event path -- pixels only.
+    func debugPreviewHint() {
+        if hintPanel == nil { hintPanel = ChordHintPanel() }
+        let rows = [
+            ChordHintPanel.Row(key: "w", label: "Window switcher"),
+            ChordHintPanel.Row(key: "p", label: "Command palette"),
+            ChordHintPanel.Row(key: "s", label: "Site switcher"),
+            ChordHintPanel.Row(key: "r", label: "Refresh wallpaper"),
+            ChordHintPanel.Row(key: "c", label: "more..."),
+        ]
+        hintPanel?.update(prefixMods: ["cmd", "shift"], prefixKey: "a", rows: rows,
+                          remaining: timeout, total: timeout)
+        hintShown = true
+    }
+#endif
 
     /// Show the hint after `hintDelay`, reading live state when it fires.
     private func scheduleHint() {
