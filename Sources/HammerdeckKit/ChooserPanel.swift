@@ -53,7 +53,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private static let rowHeight: CGFloat = 38        // single-line row (no source/subtitle)
     private static let rowHeightTwoLine: CGFloat = 52 // stacked: title over a dim source line
     private static let maxListHeight: CGFloat = 460   // cap before the list scrolls
-    private static let searchHeight: CGFloat = 34
+    private static let searchHeight: CGFloat = 46
     private static let titleHeight: CGFloat = 46
     private static let footerLineHeight: CGFloat = 20
     private static let footerInset: CGFloat = 28   // roomier than edgeInset -- footer stats shouldn't hug the left
@@ -130,7 +130,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         // (tertiary) so it reads as chrome, not content; decorative to VoiceOver
         // (the field itself is the search control).
         searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+            .withSymbolConfiguration(.init(pointSize: 17, weight: .regular))
         searchIcon.contentTintColor = .tertiaryLabelColor
         searchIcon.imageScaling = .scaleProportionallyDown
         searchIcon.setAccessibilityElement(false)
@@ -506,10 +506,12 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         } else {
             searchIcon.isHidden = false
             searchDivider.isHidden = false
-            let glyphSize: CGFloat = 16, glyphGap: CGFloat = 8
+            let glyphSize: CGFloat = 18, glyphGap: CGFloat = 8
             let fieldX = E + glyphSize + glyphGap
-            let fieldRect = NSRect(x: fieldX, y: y - ChooserPanel.searchHeight + 4,
-                                   width: W - E - fieldX, height: 26)
+            // Vertically center the field (and its glyph) in the taller search zone.
+            let fieldH: CGFloat = 30
+            let fieldY = y - ChooserPanel.searchHeight + (ChooserPanel.searchHeight - fieldH) / 2
+            let fieldRect = NSRect(x: fieldX, y: fieldY, width: W - E - fieldX, height: fieldH)
             searchField.frame = fieldRect
             searchIcon.frame = NSRect(x: E, y: fieldRect.midY - glyphSize / 2,
                                       width: glyphSize, height: glyphSize)
