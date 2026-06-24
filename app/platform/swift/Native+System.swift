@@ -20,12 +20,11 @@ extension Native {
                 let full = (dir as NSString).appendingPathComponent(entry)
                 var isDir: ObjCBool = false
                 fm.fileExists(atPath: full, isDirectory: &isDir)
-                if isDir.boolValue {
-                    if fm.fileExists(atPath: (full as NSString).appendingPathComponent("init.lua")) {
-                        names.insert(entry)
-                    }
-                } else if entry.hasSuffix(".lua"), entry != "init.lua" {
-                    names.insert(String(entry.dropLast(4)))
+                // Co-located layout: a feature is a folder whose Lua entry point
+                // lives at <id>/lua/init.lua (the sibling swift/ is the native UI).
+                if isDir.boolValue,
+                   fm.fileExists(atPath: (full as NSString).appendingPathComponent("lua/init.lua")) {
+                    names.insert(entry)
                 }
             }
         }

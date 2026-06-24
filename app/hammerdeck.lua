@@ -6,8 +6,8 @@
 --
 -- During development, load this from your real ~/.hammerspoon/init.lua with:
 --   package.path = package.path
---       .. ";" .. os.getenv("HOME") .. "/workspaces/git/hammerdeck/lua/?.lua"
---       .. ";" .. os.getenv("HOME") .. "/workspaces/git/hammerdeck/lua/?/init.lua"
+--       .. ";" .. os.getenv("HOME") .. "/workspaces/git/hammerdeck/app/?.lua"
+--       .. ";" .. os.getenv("HOME") .. "/workspaces/git/hammerdeck/app/?/init.lua"
 --   hammerdeck = require("hammerdeck")   -- global, so the HS console can toggle features
 --
 -- Bootstrap order: register every feature, then bind the enabled ones.
@@ -18,6 +18,11 @@ local here = debug.getinfo(1, "S").source:match("^@(.*)[/\\]hammerdeck%.lua$")
 if here then
     package.path = package.path .. ";" .. here .. "/?.lua;" .. here .. "/?/init.lua"
 end
+
+-- Co-located layout: platform/feature Lua lives under `lua/` subfolders. Install
+-- the searcher that maps the require names onto them BEFORE the first such
+-- require (loader itself sits at app root, found by the package.path above).
+require("loader").install()
 
 local adapter  = require("platform.adapter")
 local registry = require("platform.registry")

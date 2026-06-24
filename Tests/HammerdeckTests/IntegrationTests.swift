@@ -42,7 +42,7 @@ final class TestHost {
         lua = LuaState()
         Native.shared.attach(lua)
         Native.shared.installBindings()
-        try! bootLua(lua, luaDir: TestHost.repoRoot + "/lua")
+        try! bootLua(lua, luaDir: TestHost.repoRoot + "/app")
         store = SettingsStore(lua: lua)
     }
 
@@ -61,19 +61,16 @@ final class TestHost {
     // breaking every time a feature is added or removed.
     static var diskFeatureCount: Int {
         let fm = FileManager.default
-        let dir = repoRoot + "/lua/features"
+        let dir = repoRoot + "/app/features"
         guard let entries = try? fm.contentsOfDirectory(atPath: dir) else { return 0 }
         var names = Set<String>()
         for entry in entries where !entry.hasPrefix(".") {
             let full = (dir as NSString).appendingPathComponent(entry)
             var isDir: ObjCBool = false
             fm.fileExists(atPath: full, isDirectory: &isDir)
-            if isDir.boolValue {
-                if fm.fileExists(atPath: (full as NSString).appendingPathComponent("init.lua")) {
-                    names.insert(entry)
-                }
-            } else if entry.hasSuffix(".lua"), entry != "init.lua" {
-                names.insert(String(entry.dropLast(4)))
+            if isDir.boolValue,
+               fm.fileExists(atPath: (full as NSString).appendingPathComponent("lua/init.lua")) {
+                names.insert(entry)
             }
         }
         return names.count
@@ -142,7 +139,7 @@ final class IntegrationTests: XCTestCase {
     /// one feature at runtime. The demanded set is derived from the adapter
     /// source, so it stays correct as the seam grows -- no list to maintain.
     func testNativeSurfaceMatchesAdapterDemand() {
-        let adapterPath = TestHost.repoRoot + "/lua/platform/adapter.lua"
+        let adapterPath = TestHost.repoRoot + "/app/platform/lua/adapter.lua"
         guard let raw = try? String(contentsOfFile: adapterPath, encoding: .utf8) else {
             return XCTFail("could not read adapter.lua at \(adapterPath)")
         }
@@ -814,17 +811,22 @@ final class IntegrationTests: XCTestCase {
     func testDiscoveryScansTheRealFilesystem() throws {
         let tmp = NSTemporaryDirectory() + "hammerdeck-it-\(getpid())"
         let fm = FileManager.default
-        try fm.createDirectory(atPath: tmp + "/foo", withIntermediateDirectories: true)
+        // Co-located layout: a feature is a folder whose Lua entry point is at
+        // <id>/lua/init.lua. A bare init.lua at the folder root (old layout), a
+        // flat <name>.lua, and junk all fail to count.
+        try fm.createDirectory(atPath: tmp + "/foo/lua", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: tmp + "/old_layout", withIntermediateDirectories: true)
         try fm.createDirectory(atPath: tmp + "/not_a_feature", withIntermediateDirectories: true)
-        try "return {}".write(toFile: tmp + "/foo/init.lua", atomically: true, encoding: .utf8)
+        try "return {}".write(toFile: tmp + "/foo/lua/init.lua", atomically: true, encoding: .utf8)
+        try "return {}".write(toFile: tmp + "/old_layout/init.lua", atomically: true, encoding: .utf8)
         try "return {}".write(toFile: tmp + "/bar.lua", atomically: true, encoding: .utf8)
         try "junk".write(toFile: tmp + "/junk.txt", atomically: true, encoding: .utf8)
         defer { try? fm.removeItem(atPath: tmp) }
 
         let raw = eval("return require('platform.adapter').discoverFeatures('\(tmp)')") as? [Any]
         let names = raw?.compactMap { $0 as? String }.sorted()
-        XCTAssertEqual(names, ["bar", "foo"],
-                       "dir-with-init.lua and flat .lua count; junk and bare dirs don't")
+        XCTAssertEqual(names, ["foo"],
+                       "only a folder with lua/init.lua counts; bare init.lua, flat .lua, and junk don't")
     }
 
     func testHotReloadPreservesEnabledState() {

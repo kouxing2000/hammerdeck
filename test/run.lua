@@ -6,7 +6,11 @@
 -- lifecycle, the three MVP features' main flows, and the scoped-ctx guarantee
 -- that disable leaks nothing.
 
-package.path = "lua/?.lua;lua/?/init.lua;test/?.lua;" .. package.path
+package.path = "app/?.lua;app/?/init.lua;test/?.lua;" .. package.path
+
+-- Co-located layout: install the searcher that resolves platform/feature module
+-- names into their `lua/` subfolders, before any platform require below.
+require("loader").install()
 
 local fake = require("fake_adapter")
 package.loaded["platform.adapter"] = fake.adapter   -- preempt the seam

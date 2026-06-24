@@ -10,9 +10,10 @@ enum DevEnv {
     /// Repo-root `.env`, derived from this file's location (robust to the launch
     /// working directory, like defaultLuaDir/makeDockIcon).
     private static var dotEnvURL: URL {
-        URL(fileURLWithPath: #filePath)        // .../Sources/HammerdeckKit/DevEnv.swift
-            .deletingLastPathComponent()        // .../Sources/HammerdeckKit
-            .deletingLastPathComponent()        // .../Sources
+        URL(fileURLWithPath: #filePath)        // .../app/platform/swift/DevEnv.swift
+            .deletingLastPathComponent()        // .../app/platform/swift
+            .deletingLastPathComponent()        // .../app/platform
+            .deletingLastPathComponent()        // .../app
             .deletingLastPathComponent()        // repo root
             .appendingPathComponent(".env")
     }

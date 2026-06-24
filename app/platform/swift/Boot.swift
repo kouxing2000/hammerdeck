@@ -10,11 +10,11 @@ func defaultLuaDir() -> String {
     if let env = ProcessInfo.processInfo.environment["HAMMERDECK_LUA_DIR"] {
         return env
     }
-    return URL(fileURLWithPath: #filePath)          // .../Sources/HammerdeckKit/Boot.swift
-        .deletingLastPathComponent()                 // .../Sources/HammerdeckKit
-        .deletingLastPathComponent()                 // .../Sources
-        .deletingLastPathComponent()                 // repo root
-        .appendingPathComponent("lua").path
+    return URL(fileURLWithPath: #filePath)          // .../app/platform/swift/Boot.swift
+        .deletingLastPathComponent()                 // .../app/platform/swift
+        .deletingLastPathComponent()                 // .../app/platform
+        .deletingLastPathComponent()                 // .../app  (the Lua payload root)
+        .path
 }
 
 /// Whether to greet the user with the Homepage on launch: only on the very
@@ -117,9 +117,10 @@ enum CapsHyperPreference {
 func makeDockIcon() -> NSImage {
     // The designed icon lives at the repo root (resolved from this file's path so
     // it works regardless of the launch working directory).
-    let artwork = URL(fileURLWithPath: #filePath)   // .../Sources/HammerdeckKit/Boot.swift
-        .deletingLastPathComponent()                 // .../Sources/HammerdeckKit
-        .deletingLastPathComponent()                 // .../Sources
+    let artwork = URL(fileURLWithPath: #filePath)   // .../app/platform/swift/Boot.swift
+        .deletingLastPathComponent()                 // .../app/platform/swift
+        .deletingLastPathComponent()                 // .../app/platform
+        .deletingLastPathComponent()                 // .../app
         .deletingLastPathComponent()                 // repo root
         .appendingPathComponent("design/AppIcon.png")
     if let designed = NSImage(contentsOf: artwork) {
