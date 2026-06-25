@@ -284,19 +284,26 @@ struct UsageReportView: View {
 
     @ViewBuilder private var rhythmCard: some View {
         if !data.sessions.isEmpty {
+            let days = groupedByDay(data.sessions)
             DashCard(title: "Daily Rhythm", icon: "clock.fill", tint: .teal) {
-                Text("When the machine was awake (sessions). \(data.sessionCount) "
-                     + "\(data.sessionCount == 1 ? "session" : "sessions"), longest "
+                Text("When the machine was awake, by day. \(data.sessionCount) "
+                     + "\(data.sessionCount == 1 ? "session" : "sessions") across \(days.count) "
+                     + "\(days.count == 1 ? "day" : "days"); longest "
                      + usageTimeString(Double(data.longestSessionMin * 60)) + ".")
                     .font(.caption).foregroundStyle(.secondary)
-                ForEach(data.sessions) { s in
+                // 0–24h scale, shown once and aligned to the track column.
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0).frame(width: 84)
+                    hourAxis
+                    Spacer(minLength: 0).frame(width: 56)
+                }
+                .padding(.top, 2)
+                ForEach(days, id: \.date) { day in
                     HStack(spacing: 10) {
-                        Text(s.date).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                        Text(day.date).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
                             .frame(width: 84, alignment: .leading)
-                        if let w = s.wakeMin, let sl = s.sleepMin {
-                            sessionBand(wakeMin: w, sleepMin: sl)
-                        }
-                        Text(usageTimeString(s.minutes * 60))
+                        dayTrack(day.sessions)
+                        Text(usageTimeString(day.totalMin * 60))
                             .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                             .frame(width: 56, alignment: .trailing)
                     }
@@ -305,23 +312,67 @@ struct UsageReportView: View {
         }
     }
 
-    /// A 24h track with the wake->sleep span filled (a simple rhythm band). A
-    /// session that crosses midnight has sleepMin < wakeMin; clamp its end to
-    /// midnight so the band fills to the day's edge instead of going negative.
-    private func sessionBand(wakeMin: Double, sleepMin: Double) -> some View {
+    /// Collapse the flat session list to one entry per day (preserving the day
+    /// order report.lua emits), summing each day's awake minutes for the total.
+    private func groupedByDay(_ sessions: [UsageSession])
+        -> [(date: String, sessions: [UsageSession], totalMin: Double)] {
+        var order: [String] = []
+        var byDay: [String: [UsageSession]] = [:]
+        for s in sessions {
+            if byDay[s.date] == nil { order.append(s.date) }
+            byDay[s.date, default: []].append(s)
+        }
+        return order.map { d in
+            let ss = byDay[d] ?? []
+            return (date: d, sessions: ss, totalMin: ss.reduce(0) { $0 + $1.minutes })
+        }
+    }
+
+    /// A compact 00–24h scale; each label is CENTERED on its quarter-day gridline
+    /// (the ends nudged just inside the track so "00"/"24" don't clip), so the
+    /// axis shares one coordinate system with the gridlines and bands below.
+    private var hourAxis: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let end = sleepMin >= wakeMin ? sleepMin : 1440
-            let x0 = w * (wakeMin / 1440)
-            let x1 = w * (end / 1440)
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.gray.opacity(0.12))
-                Capsule().fill(Color.teal.opacity(0.7))
-                    .frame(width: max(3, x1 - x0))
-                    .offset(x: x0)
+            ForEach(0...4, id: \.self) { i in
+                Text(i == 0 ? "00" : (i == 4 ? "24" : String(format: "%02d", i * 6)))
+                    .font(.system(size: 8).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
+                    .position(x: min(max(w * (Double(i) / 4), 7), w - 7), y: 5)
             }
         }
-        .frame(height: 7)
+        .frame(height: 10)
+    }
+
+    /// One day's 24h track: faint quarter-day gridlines + every session for that
+    /// day drawn as a teal band positioned by wake->sleep time. A session that
+    /// crosses midnight (sleepMin < wakeMin) clamps to the day's edge.
+    private func dayTrack(_ sessions: [UsageSession]) -> some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.gray.opacity(0.12))
+                ForEach([0.25, 0.5, 0.75], id: \.self) { f in
+                    Rectangle().fill(Color.gray.opacity(0.18))
+                        .frame(width: 1).offset(x: w * f)
+                }
+                ForEach(sessions) { s in
+                    if let wm = s.wakeMin, let sl = s.sleepMin {
+                        // sl < wm means the span crossed midnight (clamp to the
+                        // day's edge) -- but only when the gap is real; a small
+                        // backward step (clock skew / truncated seconds) collapses
+                        // to a sliver instead of a bogus full-evening band.
+                        let end = sl >= wm ? sl : (wm - sl > 720 ? 1440 : sl)
+                        Capsule().fill(Color.teal.opacity(0.75))
+                            .frame(width: max(3, w * ((end - wm) / 1440)))
+                            .offset(x: w * (wm / 1440))
+                    }
+                }
+            }
+            .clipShape(Capsule())   // keep min-width bands from poking past the track edge
+        }
+        .frame(height: 9)
     }
 
     // MARK: empty state
