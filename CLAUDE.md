@@ -11,9 +11,9 @@ payload (the feature platform). They meet at one bridge.
 
 ## The one inviolable rule
 
-**Only the Swift bridge (`Sources/HammerdeckKit/LuaState.swift` +
+**Only the Swift bridge (`app/platform/swift/LuaState.swift` +
 `Native.swift` and its `Native+*.swift` domain extensions) and the Lua seam
-(`lua/platform/adapter.lua`) may touch native / OS APIs.** `Native.swift` holds
+(`app/platform/lua/adapter.lua`) may touch native / OS APIs.** `Native.swift` holds
 the class, shared state and `installBindings`; the actual OS calls live in
 `Native+Triggers/Storage/Panels/Network/Windows/System/Input/Browser.swift`
 (same type, extensions). New OS surface grows in whichever `Native+*` slice fits
@@ -23,23 +23,36 @@ platform module go through the adapter. This keeps the host
 swappable and the layers clean. If you need a native call elsewhere, add it to
 the bridge + adapter, never reach past the seam.
 
-> Current state (2026-06-11): **no Hammerspoon anywhere** -- dropped entirely
-> as a backend by owner decision. `adapter.lua` targets the `native.*` table
-> that `Sources/HammerdeckKit/Native.swift` injects; `swift run` boots
-> `lua/hammerdeck.lua` (features autodiscovered from `lua/features/`).
-> Window listing is REAL now (AXUIElement; window_switcher prompts for the
-> Accessibility grant when missing). See docs/HANDOVER.md.
+> Current state (2026-06-24): **no Hammerspoon** -- dropped as a backend by
+> owner decision. **Co-located layout** (refactor of 2026-06-24): everything
+> lives under `app/` -- `app/platform/{lua,swift}/`, and each feature is
+> `app/features/<id>/` with a `feature.json` (declarative identity/presentation),
+> a `lua/` subfolder (the plugin code), and an optional `swift/` subfolder
+> (native UI it contributes). `app/loader.lua` installs a custom
+> `package.searcher` so the stable require names
+> (`require("features.usage_stats.store")`, `require("platform.adapter")`)
+> resolve into those `lua/` subfolders UNCHANGED. `adapter.lua` targets the
+> `native.*` table that `Native.swift` injects; `swift run` boots
+> `app/hammerdeck.lua` (features autodiscovered by scanning `app/features/` for a
+> `<id>/lua/init.lua`). Window listing is REAL (AXUIElement; window_switcher
+> prompts for the Accessibility grant when missing). See docs/HANDOVER.md.
 
 ## Layers (top depends on bottom only)
 
-`lua/features/*` -> `registry` -> `triggers` / `manifest` -> `adapter` (Lua seam)
+`app/features/*/lua` -> `registry` -> `triggers` / `manifest` -> `adapter` (Lua seam)
 -> `LuaState.swift` (Swift bridge) -> macOS APIs
 
-- **lua/features/** -- logic only; declares a manifest (`api = 1`; ACTIONS =
+- **app/features/<id>/** -- one feature, three co-located parts: `feature.json`
+  (DECLARATIVE identity/presentation -- name, version, description, category,
+  context, and optional requires/recommended/page; no code), `lua/` (the plugin
+  code: `init.lua` returns the manifest table -- `id` (the anchor) + `api` +
+  behavior), and an optional `swift/` (native UI the feature contributes, e.g.
+  usage_stats' report page). The registry OVERLAYS feature.json onto the manifest
+  at register time. The `lua/init.lua` declares (`api = 1`; ACTIONS =
   `actions = {{id, label, defaultTrigger?, automatable?, run}, ...}` -- one plugin,
   several independently rebindable shortcuts; single-action sugar
   `defaultTrigger`+`action(ctx)` still works; SERVICE = `start(ctx)`+optional
-  `stop`, may also declare `actions`), receives the scoped `ctx` as its native
+  `stop`, may also declare `actions`), and receives the scoped `ctx` as its native
   surface. Never touches native APIs or the seam/stateful platform modules
   (`adapter`, `ctx`, `registry`, `triggers`, `manifest`, `modal`); MAY `require`
   the pure leaf util modules (`platform.json`, `platform.urls`, `platform.hotkeys`,
@@ -47,8 +60,14 @@ the bridge + adapter, never reach past the seam.
   `ctx.now()` (never bare `os.time()`/`os.date()`, which read the uncontrolled
   wall clock and tests can't drive); `os.date`/`os.time` are fine for FORMATTING
   or decomposing a time you already got from `ctx.now()`.
-- **lua/platform/manifest.lua** -- validates a feature's declared shape; resolves defaults.
-- **lua/platform/triggers.lua** -- declarative trigger spec -> live binding. Any
+- **app/loader.lua** -- installs the `package.searcher` that maps the stable
+  `platform.*` / `features.<id>.*` require names onto their `lua/` subfolders, so
+  the co-located layout needs zero require rewrites. Exposes `appdir` (the
+  registry uses it to locate `<id>/feature.json`). The `swift/` sibling is
+  invisible to `require`.
+- **app/platform/lua/manifest.lua** -- validates a feature's MERGED shape
+  (feature.json overlaid onto the lua manifest by the registry); resolves defaults.
+- **app/platform/lua/triggers.lua** -- declarative trigger spec -> live binding. Any
   trigger can fire any action (the core idea). Types split into MANUAL (a human
   presses keys, so live UI context is meaningful) -- hotkey, chord (prefix
   hotkey + an ordered follow-key sequence, e.g. cmd+shift+a then b -- a modal
@@ -61,26 +80,26 @@ the bridge + adapter, never reach past the seam.
   automatable action, and the registry seam refuses such a spec on rebind (and
   silently ignores a stale stored one on load -- falling back to the default).
   State-changers that need no context (refresh wallpaper, toggle a setting) opt in.
-- **lua/platform/modal.lua** -- modal hotkey groups (enter a keyboard mode:
+- **app/platform/lua/modal.lua** -- modal hotkey groups (enter a keyboard mode:
   bare-key hotkeys live until Escape/exit; banner legend). Pure Lua over
   adapter primitives; reach it via ctx.modal().
-- **lua/platform/registry.lua** -- registers features, persists enabled-state +
+- **app/platform/lua/registry.lua** -- registers features, persists enabled-state +
   option values per id, runs lifecycle (bind trigger / start), scoped teardown.
-- **lua/platform/ctx.lua** -- builds the scoped, curated ctx (the plugin API);
+- **app/platform/lua/ctx.lua** -- builds the scoped, curated ctx (the plugin API);
   every handle a feature creates is tracked and stopped on disable. A feature
   that declares `capabilities = {"commands"}` gets privileged cross-feature
   reach injected here (`ctx.commands()` / `ctx.runCommand()`, least-privilege --
   powers the command palette). Contract design: `docs/PLUGIN_SYSTEM.md`.
-- **lua/platform/adapter.lua** -- the seam (Lua side); every binding it returns
+- **app/platform/lua/adapter.lua** -- the seam (Lua side); every binding it returns
   is a handle with `.stop()`.
-- **Sources/HammerdeckKit/LuaState.swift** -- the bridge mechanics: owns the
+- **app/platform/swift/LuaState.swift** -- the bridge mechanics: owns the
   Lua state, runs Lua, callback refs, table readers, `eval`.
-- **Sources/HammerdeckKit/Native.swift + Native+*.swift** (+ HotkeyCenter/ChordCenter
+- **app/platform/swift/Native.swift + Native+*.swift** (+ HotkeyCenter/ChordCenter
   and per-panel UI files) -- the seam (Swift side): the `native` table the adapter
   calls. `Native.swift` is the class + shared state + `installBindings`; the OS
   calls are grouped into `Native+<domain>.swift` extensions. The only place
   macOS-API surface should grow.
-- **Sources/HammerdeckKit/SettingsStore/SettingsView/StatusBar.swift** --
+- **app/platform/swift/SettingsStore/SettingsView/StatusBar.swift** --
   config UI: menubar (QUICK TRIGGERS: every enabled feature's actions fire on
   demand via registry.runAction; enable/disable lives in Settings only) +
   SwiftUI settings window; forms are GENERATED from
@@ -154,7 +173,7 @@ a menubar/panel pixel fix misses, read the layout model or run ONE throwaway
 `scripts/shot.sh` probe to learn what the mechanism physically can/can't do,
 pick it once, then implement -- don't trial-and-error.
 
-Lua syntax check: `luac -p lua/**/*.lua`. Version skew: `lua test/run.lua` runs
+Lua syntax check: `luac -p app/**/*.lua`. Version skew: `lua test/run.lua` runs
 on Homebrew Lua (currently 5.5) while the embedded engine is vendored 5.4.7 --
 keep all Lua code 5.4-compatible. `scripts/test-lua.sh` closes the gap: it
 compiles a standalone interpreter from `Sources/CLua` (the exact embedded
@@ -174,13 +193,19 @@ table mixing array entries with string keys is rejected loudly, never dropped.
 
 ## Adding a feature
 
-ACTION feature: copy `lua/features/window_switcher/`. SERVICE feature: copy
-`lua/features/sleep_schedule/` (directory form; `init.lua` returns the
-manifest -- a flat `features/<name>.lua` file also works for trivial features).
-Features are **autodiscovered** by scanning `lua/features/` -- just drop the
-folder in (no catalog to edit; menubar "Reload Features" or a restart picks it
-up). Then cover its main flow in `test/run.lua` (register it there directly --
-the test harness uses its own catalog, not disk discovery). If an action is a
+ACTION feature: copy `app/features/window_switcher/`. SERVICE feature: copy
+`app/features/sleep_schedule/`. A feature is a folder
+`app/features/<id>/` with: `feature.json` (identity/presentation -- name,
+version, description, category, context, optional requires/recommended/page),
+`lua/init.lua` (returns the manifest table: `id` + `api` + behavior), and an
+optional `swift/` (native UI; register it in `FeaturePageRegistry` and declare a
+`page` in feature.json). Features are **autodiscovered** by scanning
+`app/features/` for a `<id>/lua/init.lua` -- just drop the folder in (no catalog
+to edit; menubar "Reload Features" or a restart picks it up; if you add a
+`swift/`, add its dir to `Package.swift` `sources` and rebuild). Then cover its
+main flow in `test/run.lua` (register it there directly -- the test harness uses
+its own catalog, not disk discovery; a real feature's `feature.json` is read
+from disk via io, so its metadata merges in tests too). If an action is a
 context-free state-changer a user might want to schedule or fire on a system
 event (e.g. bing_daily's "Refresh wallpaper now", which ships with a schedule
 as its default trigger), mark it `automatable = true`;
