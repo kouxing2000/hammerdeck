@@ -38,7 +38,7 @@ local VALID_EVENTS = {
 ---@param spec table a trigger spec
 ---@return boolean
 function triggers.isAutomated(spec)
-    return spec.type == "schedule" or spec.type == "event"
+    return spec.type == "schedule" or spec.type == "event" or spec.type == "state"
 end
 
 -- Validate a trigger spec (used before persisting a user rebind). Throws on a
@@ -71,6 +71,15 @@ function triggers.validate(spec)
         end
     elseif spec.type == "event" then
         assert(VALID_EVENTS[spec.event], "unknown event '" .. tostring(spec.event) .. "'")
+    elseif spec.type == "state" then
+        -- A STATE trigger fires when a state signal crosses a value: `becomes`
+        -- (false->true) or `leaves` (true->false), exactly one of the two. The
+        -- signal NAME is validated by the rules engine (it owns the signal
+        -- registry); here we only enforce shape. State triggers are bound by the
+        -- rules engine, not triggers.bind.
+        assert(type(spec.signal) == "string" and #spec.signal > 0, "state trigger needs a signal")
+        local hasBecomes, hasLeaves = spec.becomes ~= nil, spec.leaves ~= nil
+        assert(hasBecomes ~= hasLeaves, "state trigger needs exactly one of becomes/leaves")
     else
         error("unknown trigger type '" .. tostring(spec.type) .. "'")
     end
@@ -97,8 +106,12 @@ function triggers.encode(spec)
     elseif spec.type == "schedule" then
         if spec.everyMin then return "schedule|every|" .. tostring(spec.everyMin) end
         return "schedule|at|" .. tostring(spec.at)
-    else -- event
+    elseif spec.type == "event" then
         return "event|" .. spec.event
+    else
+        -- `state` (and any future rules-only trigger) persists as JSON through
+        -- the rules engine, never through this scalar per-action codec.
+        error("trigger type '" .. tostring(spec.type) .. "' is not encodable")
     end
 end
 
@@ -161,6 +174,9 @@ function triggers.bind(spec, action, label)
 
     elseif spec.type == "event" then
         return adapter.onSystemEvent(spec.event, action)
+
+    elseif spec.type == "state" then
+        error("state triggers are bound by the rules engine, not triggers.bind")
     end
 
     error("unknown trigger type '" .. tostring(spec.type) .. "'")
@@ -315,6 +331,12 @@ function triggers.describe(spec)
         return "schedule: daily at " .. tostring(spec.at)
     elseif spec.type == "event" then
         return "event: " .. tostring(spec.event)
+    elseif spec.type == "state" then
+        local enter = spec.becomes ~= nil
+        local val
+        if enter then val = spec.becomes else val = spec.leaves end
+        return "state: " .. tostring(spec.signal) .. " "
+            .. (enter and "becomes" or "leaves") .. " " .. tostring(val)
     end
     return tostring(spec.type)
 end
@@ -361,6 +383,10 @@ function triggers.glyph(spec)
         return "at " .. tostring(spec.at)
     elseif spec.type == "event" then
         return "on " .. tostring(spec.event)
+    elseif spec.type == "state" then
+        local val
+        if spec.becomes ~= nil then val = spec.becomes else val = spec.leaves end
+        return "→ " .. tostring(val)
     end
     return nil
 end

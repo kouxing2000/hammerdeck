@@ -253,6 +253,65 @@ enum ValidationState: Equatable {
     case failed(String)
 }
 
+// MARK: - Automation rules (the Rules tab)
+
+/// One row of the Rules list -- the serializable shape rules.describe() emits.
+struct RuleInfo: Identifiable {
+    let id: String
+    let enabled: Bool
+    let triggerDesc: String      // "state: frontmostApp becomes Safari", "event: wake", ...
+    let effectDesc: String       // 'Notify "Safari is front"', "Run bing_daily.refresh"
+    let on: [String: Any]        // raw trigger spec -- pre-fills the edit form
+    let effect: [String: Any]    // raw effect node -- pre-fills the edit form
+
+    init?(_ dict: [String: Any]) {
+        guard let id = dict["id"] as? String else { return nil }
+        self.id = id
+        self.enabled = dict["enabled"] as? Bool ?? true
+        self.triggerDesc = dict["triggerDesc"] as? String ?? ""
+        self.effectDesc = dict["effectDesc"] as? String ?? ""
+        self.on = dict["on"] as? [String: Any] ?? [:]
+        self.effect = dict["effect"] as? [String: Any] ?? [:]
+    }
+}
+
+/// One selectable effect for the Add-rule form's "Do" dropdown (effects.catalog).
+struct RuleEffectOption: Identifiable, Hashable {
+    let kind: String             // notify | command
+    let label: String
+    let feature: String?
+    let action: String?
+    var id: String { kind == "command" ? "command:\(feature ?? "").\(action ?? "")" : kind }
+
+    init?(_ dict: [String: Any]) {
+        guard let kind = dict["kind"] as? String else { return nil }
+        self.kind = kind
+        self.label = dict["label"] as? String ?? kind
+        self.feature = dict["feature"] as? String
+        self.action = dict["action"] as? String
+    }
+}
+
+/// Everything the Add-rule form needs to populate its dropdowns (rules.formOptions).
+struct RuleFormOptions {
+    let signals: [String]
+    let signalCandidates: [String: [String]]
+    let events: [String]
+    let effects: [RuleEffectOption]
+
+    init(_ dict: [String: Any]) {
+        self.signals = (dict["signals"] as? [Any])?.compactMap { $0 as? String } ?? []
+        var cand: [String: [String]] = [:]
+        if let c = dict["signalCandidates"] as? [String: Any] {
+            for (k, v) in c { cand[k] = (v as? [Any])?.compactMap { $0 as? String } ?? [] }
+        }
+        self.signalCandidates = cand
+        self.events = (dict["events"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.effects = (dict["effects"] as? [Any])?
+            .compactMap { $0 as? [String: Any] }.compactMap(RuleEffectOption.init) ?? []
+    }
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     @Published private(set) var features: [FeatureInfo] = []
@@ -265,6 +324,10 @@ final class SettingsStore: ObservableObject {
     /// sets this before switching to the Settings tab so a card click deep-links
     /// straight to that feature's detail; SettingsPane binds its list selection to it.
     @Published var selectedFeatureId: String?
+
+    /// The automation rules, as the Rules tab renders them. Loaded by
+    /// refreshRules() (the Rules detail calls it onAppear and after each edit).
+    @Published private(set) var rules: [RuleInfo] = []
 
     /// Live Accessibility-grant state, refreshed by `refresh()`. Published so the
     /// gallery/tour permission badges and the Dashboard status row react when the
@@ -335,6 +398,57 @@ final class SettingsStore: ObservableObject {
     func reload() {
         _ = try? lua.call("platform.registry", "reload")
         refresh()
+    }
+
+    // MARK: - Automation rules (Rules tab; delegates to the tested rules.lua engine)
+
+    /// Re-read the rule list from the engine into `rules`.
+    func refreshRules() {
+        guard let raw = try? lua.call("platform.rules", "describe").first ?? nil,
+              let list = raw as? [Any] else { rules = []; return }
+        rules = list.compactMap { $0 as? [String: Any] }.compactMap(RuleInfo.init)
+    }
+
+    /// The dropdown source for the Add-rule form (signals, candidates, events, effects).
+    func ruleFormOptions() -> RuleFormOptions {
+        guard let raw = try? lua.call("platform.rules", "formOptions").first ?? nil,
+              let dict = raw as? [String: Any] else { return RuleFormOptions([:]) }
+        return RuleFormOptions(dict)
+    }
+
+    /// Toggle a rule on/off (binds/unbinds in the engine + persists).
+    func setRuleEnabled(_ id: String, _ on: Bool) {
+        _ = try? lua.call("platform.rules", "setEnabled", [.string(id), .bool(on)])
+        refreshRules()
+    }
+
+    /// Delete a rule.
+    func removeRule(_ id: String) {
+        _ = try? lua.call("platform.rules", "remove", [.string(id)])
+        refreshRules()
+    }
+
+    /// Add a rule from a JSON spec string. The engine validates (shape + context
+    /// policy); returns nil on success or a human-readable reason on refusal.
+    func addRule(_ json: String) -> String? {
+        defer { refreshRules() }
+        guard let r = try? lua.call("platform.rules", "addJSON", [.string(json)], results: 2) else {
+            return "could not add rule"
+        }
+        if (r[0] as? Bool) == true { return nil }
+        return (r[1] as? String) ?? "invalid rule"
+    }
+
+    /// Update an existing rule in place from a JSON spec (the edit form's "Save
+    /// changes"). Keeps the id; same validation as add. nil on success / reason on refusal.
+    func updateRule(_ id: String, _ json: String) -> String? {
+        defer { refreshRules() }
+        guard let r = try? lua.call("platform.rules", "updateJSON",
+                                    [.string(id), .string(json)], results: 2) else {
+            return "could not update rule"
+        }
+        if (r[0] as? Bool) == true { return nil }
+        return (r[1] as? String) ?? "invalid rule"
     }
 
     // MARK: - Trigger rebinding (delegates to the tested registry.setTrigger)

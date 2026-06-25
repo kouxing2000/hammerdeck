@@ -56,6 +56,19 @@ end
 
 registry.startAll()
 
-print("[hammerdeck] started; features registered=" .. #registry.all())
+-- Automation rules: bind author-configured trigger->effect rules over the live
+-- catalog (M0: `command` effects that run a feature action). The rules config is
+-- read from the `hammerdeck.rules` setting (JSON) -- the same key a future
+-- builder UI will write. Quarantined: a bad rules config logs and is skipped, it
+-- never breaks feature boot.
+local rules = require("platform.rules")
+local okRules, errRules = pcall(function()
+    rules.loadFromSettings()
+    rules.startAll()
+end)
+if not okRules then adapter.log("rules engine boot FAILED: " .. tostring(errRules)) end
+
+print("[hammerdeck] started; features=" .. #registry.all()
+    .. ", rules=" .. rules.count())
 
 return registry

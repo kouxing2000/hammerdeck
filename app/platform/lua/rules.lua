@@ -1,0 +1,335 @@
+-- platform/rules.lua
+--
+-- The automation rules engine -- domain logic (pure Lua over the adapter seam).
+-- A RULE binds a TRIGGER to an EFFECT, with a per-rule enabled flag:
+--
+--   { id = "safari-front", enabled = true,
+--     on = { type = "state", signal = "frontmostApp", becomes = "Safari" },
+--     effect = { kind = "notify", title = "Hammerdeck", text = "Safari is front" } }
+--
+-- This is the generalization of "any trigger can fire any action": a rule binds
+-- ANY trigger to ANY effect, across features, without belonging to one.
+--
+-- Triggers: the existing hotkey/chord/schedule/event specs (bound via triggers.lua),
+-- PLUS `state` triggers (M1) -- a STATE SIGNAL crossing a value, fired on the
+-- false->true (`becomes`) or true->false (`leaves`) transition. State triggers are
+-- bound HERE (signal subscription), not via triggers.bind (which maps 1:1 to an
+-- adapter primitive).
+--
+-- Effects: command / notify (see effects.lua).
+--
+-- Persistence: the rule set lives in the `hammerdeck.rules` setting (JSON) -- the
+-- same key the Settings Rules tab reads + writes. Mutations (add/remove/setEnabled)
+-- persist and re-bind. Lifecycle mirrors the registry's; every binding is a handle
+-- with .stop(), tracked so teardown leaks nothing.
+
+local triggers = require("platform.triggers")
+local effects  = require("platform.effects")
+local signals  = require("platform.signals")
+local adapter  = require("platform.adapter")
+local json     = require("platform.json")
+
+local rules = {}
+
+local specs = {}   -- id -> spec
+local live  = {}   -- id -> handle (.stop()), only for ENABLED + bound rules
+
+local RULES_SETTING = "hammerdeck.rules"
+
+local function isEnabled(spec) return spec.enabled ~= false end
+
+--- Validate a rule spec. Throws on malformed; returns the spec on success.
+--- Enforces the CONTEXT POLICY: an automated trigger (schedule/event/state --
+--- nobody present) may only run a context-free effect (mirrors the registry's
+--- per-action automatable gate, applied to the whole effect).
+---@param spec table a rule spec
+---@return table
+function rules.validate(spec)
+    assert(type(spec) == "table", "rule must be a table")
+    assert(type(spec.id) == "string" and #spec.id > 0, "rule needs a string id")
+    assert(type(spec.on) == "table", "rule '" .. spec.id .. "' needs an `on` trigger spec")
+    if spec.enabled ~= nil then
+        assert(type(spec.enabled) == "boolean", "rule '" .. spec.id .. "' enabled must be boolean")
+    end
+    triggers.validate(spec.on)
+    if spec.on.type == "state" then
+        assert(signals.exists(spec.on.signal),
+            "rule '" .. spec.id .. "': unknown signal '" .. tostring(spec.on.signal) .. "'")
+    end
+    effects.validate(spec.effect)
+    if triggers.isAutomated(spec.on) and effects.requiresContext(spec.effect) then
+        error("rule '" .. spec.id .. "': an automated trigger (" .. spec.on.type
+            .. ") cannot run a context-dependent effect -- its action is not automatable. "
+            .. "Use a hotkey/chord trigger, or mark the action automatable.")
+    end
+    return spec
+end
+
+local function loadOne(spec)
+    rules.validate(spec)
+    assert(not specs[spec.id], "duplicate rule id: " .. spec.id)
+    specs[spec.id] = spec
+end
+
+--- Replace the rule set with `list` (stops running rules first; does NOT start
+--- the new ones -- call startAll). Each rule is validated under quarantine: a
+--- malformed rule is logged and skipped so one typo never drops the rest. Does
+--- NOT persist (it is the LOAD direction). Returns the count kept.
+---@param list table[]|nil
+---@return integer
+function rules.load(list)
+    rules.stopAll()
+    specs = {}
+    for _, spec in ipairs(list or {}) do
+        local ok, err = pcall(loadOne, spec)
+        if not ok then
+            local who = (type(spec) == "table" and spec.id) or "?"
+            adapter.log("rule load FAILED [" .. tostring(who) .. "]: " .. tostring(err))
+        end
+    end
+    return rules.count()
+end
+
+-- Dispatch a rule's effect, logging the outcome either way. The SUCCESS log
+-- matters: a rule that silently never runs (a typo'd app name that no app ever
+-- matches, an effect targeting a now-disabled feature) is otherwise impossible
+-- to diagnose -- this trace ("Open Logs" in the menubar) is the only window in.
+local function fire(id, spec)
+    local ok, reason = effects.dispatch(spec.effect)
+    if ok then
+        adapter.log("rule '" .. id .. "' fired -> " .. effects.describe(spec.effect))
+    else
+        adapter.log("rule '" .. id .. "' effect FAILED: " .. tostring(reason))
+    end
+end
+
+-- Bind one rule's trigger to its effect, returning a .stop() handle. State
+-- triggers subscribe to the signal and fire on the matching transition; all
+-- other types go through the adapter via triggers.bind.
+local function bindOne(id, spec)
+    if spec.on.type == "state" then
+        local sig = signals.get(spec.on.signal)   -- existence guaranteed by validate
+        local wantEnter = spec.on.becomes ~= nil
+        -- NB: explicit branch, not `wantEnter and spec.on.becomes or spec.on.leaves`
+        -- -- that idiom collapses to leaves when becomes is the boolean `false`
+        -- (e.g. a future "onAC becomes false" rule).
+        local target
+        if wantEnter then target = spec.on.becomes else target = spec.on.leaves end
+        -- Seed from the CURRENT value so we only fire on a real change, never on bind.
+        local matched = (sig.read() == target)
+        return sig.subscribe(function(v)
+            local now = (v == target)
+            if now ~= matched then
+                if (wantEnter and now) or ((not wantEnter) and (not now)) then
+                    fire(id, spec)
+                end
+                matched = now
+            end
+        end)
+    end
+    return triggers.bind(spec.on, function() fire(id, spec) end, "rule:" .. id)
+end
+
+--- Bind every ENABLED rule that is not already live. A bind throw is quarantined
+--- per-rule, not fatal to the rest.
+function rules.startAll()
+    for id, spec in pairs(specs) do
+        if isEnabled(spec) and not live[id] then
+            local ok, handle = pcall(bindOne, id, spec)
+            if ok then
+                live[id] = handle
+                adapter.log("rule '" .. id .. "' bound (" .. spec.on.type .. ")")
+            else
+                adapter.log("rule '" .. id .. "' bind FAILED: " .. tostring(handle))
+            end
+        end
+    end
+end
+
+--- Stop every live rule binding. Idempotent.
+function rules.stopAll()
+    for id, handle in pairs(live) do
+        if handle and handle.stop then handle.stop() end
+        live[id] = nil
+    end
+end
+
+-- Persist the current set (id-sorted) to the settings store, and re-bind. A full
+-- rebuild on each mutation (the set is small) avoids partial-state bugs.
+local function save()
+    local encoded = json.encode(rules.all())
+    if type(encoded) ~= "string" then
+        -- Never write a nil (which would CLEAR the key and wipe every rule); a
+        -- valid rule set always encodes, so this only guards a genuine bug.
+        adapter.log("rules save FAILED: encode returned non-string; persisted rules left untouched")
+        return
+    end
+    adapter.setSetting(RULES_SETTING, encoded)
+end
+local function restart()
+    rules.stopAll()
+    rules.startAll()
+end
+
+--- Read the rules config from the `hammerdeck.rules` setting (a JSON array),
+--- decode, and load it -- the source the boot uses and the Settings UI writes.
+--- Missing / empty / malformed -> zero rules (logged), never a throw.
+---@return integer
+function rules.loadFromSettings()
+    local raw = adapter.getSetting(RULES_SETTING, nil)
+    if type(raw) ~= "string" or #raw == 0 then return 0 end
+    local data, err = json.decode(raw)
+    if type(data) ~= "table" then
+        adapter.log("rules config is not valid JSON: " .. tostring(err))
+        return 0
+    end
+    return rules.load(data)
+end
+
+-- The lowest unused "ruleN" id (so generated ids stay stable + collision-free).
+local function freshId()
+    local n = 1
+    while specs["rule" .. n] do n = n + 1 end
+    return "rule" .. n
+end
+
+--- Add a rule (the UI "Add" action). Assigns an id if absent, validates, then
+--- persists + binds. Returns (true, id) or (false, reason).
+---@param spec table
+---@return boolean ok
+---@return string reason_or_id
+function rules.add(spec)
+    if type(spec) ~= "table" then return false, "rule must be a table" end
+    if spec.id == nil then spec.id = freshId() end
+    local okV, err = pcall(rules.validate, spec)
+    if not okV then return false, tostring(err) end
+    if specs[spec.id] then return false, "duplicate rule id: " .. spec.id end
+    specs[spec.id] = spec
+    save(); restart()
+    return true, spec.id
+end
+
+--- Add a rule from a JSON string (the host builds the spec, passes JSON).
+---@param str string
+---@return boolean ok
+---@return string reason_or_id
+function rules.addJSON(str)
+    local data, err = json.decode(tostring(str))
+    if type(data) ~= "table" then return false, "invalid JSON: " .. tostring(err) end
+    return rules.add(data)
+end
+
+--- Remove a rule by id. Returns (true) or (false, reason).
+function rules.remove(id)
+    if not specs[id] then return false, "no such rule: " .. tostring(id) end
+    specs[id] = nil
+    save(); restart()
+    return true
+end
+
+--- Toggle a rule on/off (kept in the set either way). Returns (true) or (false, reason).
+function rules.setEnabled(id, on)
+    local spec = specs[id]
+    if not spec then return false, "no such rule: " .. tostring(id) end
+    spec.enabled = (on == true)
+    save(); restart()
+    return true
+end
+
+--- Replace an EXISTING rule's spec in place (the UI "Save changes" on edit). The
+--- id is preserved -- editing keeps the rule's identity and list position --
+--- whatever id the incoming spec carried. Validated under the same policy as add.
+--- Returns (true) or (false, reason).
+---@param id string
+---@param spec table
+---@return boolean ok
+---@return string|nil reason
+function rules.update(id, spec)
+    if not specs[id] then return false, "no such rule: " .. tostring(id) end
+    if type(spec) ~= "table" then return false, "rule must be a table" end
+    spec.id = id
+    local okV, err = pcall(rules.validate, spec)
+    if not okV then return false, tostring(err) end
+    specs[id] = spec
+    save(); restart()
+    return true
+end
+
+--- Update a rule from a JSON spec string (the host builds the spec, passes JSON).
+---@param id string
+---@param str string
+---@return boolean ok
+---@return string|nil reason
+function rules.updateJSON(id, str)
+    local data, err = json.decode(tostring(str))
+    if type(data) ~= "table" then return false, "invalid JSON: " .. tostring(err) end
+    return rules.update(id, data)
+end
+
+--- Number of loaded rules.
+---@return integer
+function rules.count()
+    local n = 0
+    for _ in pairs(specs) do n = n + 1 end
+    return n
+end
+
+--- Number of currently-bound rules (tests / diagnostics).
+---@return integer
+function rules.liveCount()
+    local n = 0
+    for _ in pairs(live) do n = n + 1 end
+    return n
+end
+
+--- The loaded rules (full specs), id-sorted. Backs persistence + describe.
+---@return table[]
+function rules.all()
+    local out = {}
+    for _, spec in pairs(specs) do out[#out + 1] = spec end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Serializable rows for the Settings Rules list: { id, enabled, triggerDesc,
+--- effectDesc }. The host renders this; the spec -> string formatting lives in
+--- triggers.describe / effects.describe.
+---@return table[]
+function rules.describe()
+    local out = {}
+    for _, spec in ipairs(rules.all()) do
+        out[#out + 1] = {
+            id          = spec.id,
+            enabled     = isEnabled(spec),
+            triggerDesc = triggers.describe(spec.on),
+            effectDesc  = effects.describe(spec.effect),
+            -- the raw spec halves, so the Settings Rules tab can PRE-FILL the edit
+            -- form (the reverse of the Add form's buildSpec).
+            on          = spec.on,
+            effect      = spec.effect,
+        }
+    end
+    return out
+end
+
+--- Everything the Add-rule form needs to populate its dropdowns, in one call:
+--- the supported trigger types, the state signals + their candidate values, the
+--- system events, and the selectable effects. Effects are the CONTEXT-FREE set
+--- (`catalog(true)`): the form only offers AUTOMATED triggers (state/event/
+--- schedule), and the context policy refuses a context-dependent effect on any
+--- automated trigger -- so listing one would be a guaranteed dead-end "Run ..."
+--- the user could never add. The engine still validates on add as the backstop.
+---@return table
+function rules.formOptions()
+    local cand = {}
+    for _, name in ipairs(signals.list()) do cand[name] = signals.candidates(name) end
+    return {
+        triggerTypes     = { "state", "event", "schedule" },
+        signals          = signals.list(),
+        signalCandidates = json.asObject(cand),
+        events           = { "wake", "sleep", "screenLock", "screenUnlock", "screenChanged" },
+        effects          = effects.catalog(true),
+    }
+end
+
+return rules

@@ -2438,4 +2438,240 @@ do
         "describe() emits page with a defaulted icon")
 end
 
+-- T34: rules engine (M0) -- bind ANY trigger to ANY effect across features -----
+-- The automation framework spine: a rule fires an effect (M0 effect = run a
+-- feature action) on a trigger, with the same automatable context policy the
+-- registry enforces per action. Pure Lua over the fake adapter.
+do
+    local rules = require("platform.rules")
+    local json  = require("platform.json")
+
+    -- An AUTOMATABLE target action (so event/schedule rules are allowed) with
+    -- no defaultTrigger -- it exists only to be fired by rules.
+    local ranAuto = 0
+    package.loaded["features._rule_auto"] = {
+        api = 1, id = "rule_auto", name = "Rule Auto",
+        actions = { { id = "go", label = "Go", automatable = true,
+                      run = function() ranAuto = ranAuto + 1 end } },
+    }
+    -- A NON-automatable target (context-dependent -- the default).
+    package.loaded["features._rule_manual"] = {
+        api = 1, id = "rule_manual", name = "Rule Manual",
+        actions = { { id = "go", run = function() end } },
+    }
+    registry.load("features._rule_auto")
+    registry.load("features._rule_manual")
+    registry.setEnabled("rule_auto", true)
+    registry.setEnabled("rule_manual", true)
+
+    -- (a) an event rule fires the target action
+    ok(rules.load({
+        { id = "wake-go", on = { type = "event", event = "wake" },
+          effect = { kind = "command", feature = "rule_auto", action = "go" } },
+    }) == 1, "rules.load keeps a valid rule")
+    rules.startAll()
+    ok(rules.liveCount() == 1, "startAll bound the rule")
+    fake.systemEvent("wake")
+    ok(ranAuto == 1, "event rule fired the target feature's action")
+
+    -- (b) a manual hotkey rule fires the same action
+    ok(rules.load({
+        { id = "hk-go", on = { type = "hotkey", mods = { "ctrl" }, key = "f13" },
+          effect = { kind = "command", feature = "rule_auto", action = "go" } },
+    }) == 1, "load replaces the rule set")
+    rules.startAll()
+    fake.systemEvent("wake")
+    ok(ranAuto == 1, "the replaced (event) rule no longer fires after reload")
+    fake.pressHotkey("f13", { "ctrl" })
+    ok(ranAuto == 2, "hotkey rule fired the action")
+
+    -- (c) CONTEXT POLICY: an automated trigger on a non-automatable effect is
+    -- refused at load; a manual trigger on the same effect loads fine.
+    local kept = rules.load({
+        { id = "bad-auto", on = { type = "event", event = "wake" },
+          effect = { kind = "command", feature = "rule_manual", action = "go" } },
+        { id = "ok-manual", on = { type = "hotkey", mods = { "ctrl" }, key = "f14" },
+          effect = { kind = "command", feature = "rule_manual", action = "go" } },
+    })
+    ok(kept == 1, "automated trigger on a non-automatable effect refused; manual kept")
+    local ids = {}
+    for _, r in ipairs(rules.all()) do ids[r.id] = true end
+    ok(ids["ok-manual"] and not ids["bad-auto"],
+        "the manual rule survived; the context-violating automated rule was dropped")
+
+    -- (d) malformed rules are quarantined (no id, unknown effect kind), valid kept
+    ok(rules.load({
+        { id = "good", on = { type = "event", event = "wake" },
+          effect = { kind = "command", feature = "rule_auto", action = "go" } },
+        { on = { type = "event", event = "wake" },                       -- no id
+          effect = { kind = "command", feature = "rule_auto", action = "go" } },
+        { id = "badeffect", on = { type = "event", event = "wake" },
+          effect = { kind = "teleport" } },                              -- unknown kind
+    }) == 1, "malformed rules quarantined; the valid one is kept")
+
+    -- (e) a rule whose target feature is DISABLED still loads, and firing it is a
+    -- logged no-op (not a crash)
+    registry.setEnabled("rule_auto", false)
+    ok(rules.load({
+        { id = "disabled-target", on = { type = "hotkey", mods = { "ctrl" }, key = "f15" },
+          effect = { kind = "command", feature = "rule_auto", action = "go" } },
+    }) == 1, "a rule targeting a disabled feature still loads (manual trigger)")
+    rules.startAll()
+    local before = ranAuto
+    fake.pressHotkey("f15", { "ctrl" })
+    ok(ranAuto == before, "firing a rule whose target is disabled is a no-op, not a crash")
+
+    -- (f) loadFromSettings reads the JSON `hammerdeck.rules` key (the M4-UI source)
+    registry.setEnabled("rule_auto", true)
+    fake.settings["hammerdeck.rules"] = json.encode({
+        { id = "from-settings", on = { type = "event", event = "wake" },
+          effect = { kind = "command", feature = "rule_auto", action = "go" } },
+    })
+    ok(rules.loadFromSettings() == 1, "loadFromSettings decodes + loads the rules JSON setting")
+    rules.startAll()
+    before = ranAuto
+    fake.systemEvent("wake")
+    ok(ranAuto == before + 1, "a rule loaded from settings fires")
+    fake.settings["hammerdeck.rules"] = nil
+
+    -- (g) teardown leaks nothing
+    rules.stopAll()
+    ok(rules.liveCount() == 0, "stopAll unbound every rule")
+    rules.load({})
+    ok(rules.count() == 0, "rules.load({}) clears the set")
+
+    registry.setEnabled("rule_auto", false)
+    registry.setEnabled("rule_manual", false)
+    registry.unregister("rule_auto")
+    registry.unregister("rule_manual")
+    ok(fake.liveHandles == 0, "no native handle leaked across the rules engine tests")
+end
+
+-- T35: rules engine (M1) -- state-signal triggers, notify effect, mutation API --
+-- The condition/state half of the framework: a rule fires on a STATE SIGNAL
+-- crossing a value (frontmostApp becomes/leaves), the observable `notify` effect,
+-- and the add/setEnabled/remove + describe surface the Settings Rules tab calls.
+do
+    local rules = require("platform.rules")
+    local json  = require("platform.json")
+
+    -- (a) a `state` trigger fires on the enter transition, not on stay/leave
+    fake.frontmost = "Finder"
+    local nB = #fake.notifications
+    ok(rules.load({
+        { id = "safari-front",
+          on = { type = "state", signal = "frontmostApp", becomes = "Safari" },
+          effect = { kind = "notify", title = "HD", text = "Safari front" } },
+    }) == 1, "state-trigger rule with a notify effect loads (notify is context-free)")
+    rules.startAll()
+    ok(rules.liveCount() == 1, "state rule bound")
+    fake.activateApp("Mail")
+    ok(#fake.notifications == nB, "switching to a non-target app does not fire")
+    fake.activateApp("Safari")
+    ok(#fake.notifications == nB + 1, "frontmost BECOMES Safari -> notify fires (enter)")
+    fake.activateApp("Safari")
+    ok(#fake.notifications == nB + 1, "re-activating Safari (no value change) does not re-fire")
+    fake.activateApp("Notes")
+    ok(#fake.notifications == nB + 1, "leaving Safari does not fire a 'becomes' rule")
+
+    -- (b) a `leaves` trigger fires on the exit transition, not on enter
+    rules.load({
+        { id = "safari-leave",
+          on = { type = "state", signal = "frontmostApp", leaves = "Safari" },
+          effect = { kind = "notify", title = "HD", text = "left Safari" } },
+    })
+    rules.startAll()
+    local nL = #fake.notifications
+    fake.activateApp("Safari")
+    ok(#fake.notifications == nL, "a 'leaves' rule does not fire on enter")
+    fake.activateApp("Mail")
+    ok(#fake.notifications == nL + 1, "frontmost LEAVES Safari -> notify fires (exit)")
+
+    -- (c) context policy: a state trigger (automated) cannot run a non-automatable command
+    package.loaded["features._m1_manual"] = {
+        api = 1, id = "m1_manual", name = "M1 Manual",
+        actions = { { id = "go", run = function() end } },
+    }
+    registry.load("features._m1_manual"); registry.setEnabled("m1_manual", true)
+    ok(rules.load({
+        { id = "bad", on = { type = "state", signal = "frontmostApp", becomes = "X" },
+          effect = { kind = "command", feature = "m1_manual", action = "go" } },
+    }) == 0, "state trigger on a non-automatable command is refused (context policy)")
+
+    -- (d) an unknown signal is refused
+    ok(rules.load({
+        { id = "badsig", on = { type = "state", signal = "ghost", becomes = "X" },
+          effect = { kind = "notify", title = "x" } },
+    }) == 0, "a rule on an unknown signal is refused")
+
+    -- (e) mutation API + persistence + describe (the UI surface)
+    local ran = 0
+    package.loaded["features._m1_auto"] = {
+        api = 1, id = "m1_auto", name = "M1 Auto",
+        actions = { { id = "go", automatable = true, run = function() ran = ran + 1 end } },
+    }
+    registry.load("features._m1_auto"); registry.setEnabled("m1_auto", true)
+    fake.settings["hammerdeck.rules"] = nil
+    rules.load({})
+    local okAdd, rid = rules.add({ on = { type = "event", event = "wake" },
+        effect = { kind = "command", feature = "m1_auto", action = "go" } })
+    ok(okAdd and type(rid) == "string", "add() assigns an id and returns it")
+    ok(rules.count() == 1 and rules.liveCount() == 1, "added rule is loaded + bound")
+    ok(type(fake.settings["hammerdeck.rules"]) == "string", "add() persisted to hammerdeck.rules")
+    local persisted = json.decode(fake.settings["hammerdeck.rules"])
+    ok(type(persisted) == "table" and persisted[1].id == rid, "persisted JSON carries the rule")
+
+    local d = rules.describe()
+    ok(#d == 1 and d[1].id == rid and d[1].enabled == true
+        and d[1].triggerDesc:find("wake") and d[1].effectDesc:find("Run m1_auto"),
+        "describe() yields {id, enabled, triggerDesc, effectDesc} for the UI")
+
+    local logsBefore = #fake.logs
+    fake.systemEvent("wake")
+    ok(ran == 1, "the added rule fires")
+    local sawFireLog = false
+    for i = logsBefore + 1, #fake.logs do
+        if fake.logs[i]:find("fired") then sawFireLog = true end
+    end
+    ok(sawFireLog, "a fired rule logs a diagnostic trace (so silent no-fires are debuggable)")
+    ok(rules.setEnabled(rid, false) == true, "setEnabled(false) succeeds")
+    ok(rules.count() == 1 and rules.liveCount() == 0, "a disabled rule stays loaded but unbound")
+    fake.systemEvent("wake")
+    ok(ran == 1, "a disabled rule does not fire")
+    ok(rules.setEnabled(rid, true) == true, "setEnabled(true) re-binds")
+    fake.systemEvent("wake")
+    ok(ran == 2, "the re-enabled rule fires again")
+
+    -- update in place: keep the id, change the effect (the UI "Save changes")
+    ok(rules.update(rid, { on = { type = "event", event = "wake" },
+        effect = { kind = "notify", title = "updated" } }) == true,
+        "update() replaces a rule's spec in place")
+    local du = rules.describe()
+    ok(#du == 1 and du[1].id == rid and du[1].effectDesc:find("updated") ~= nil,
+        "update kept the id and changed the effect")
+    ok(du[1].on ~= nil and du[1].effect ~= nil,
+        "describe() carries the raw on/effect spec (so the edit form can pre-fill)")
+    -- the context policy is enforced on update too, not just add
+    ok(rules.update(rid, { on = { type = "state", signal = "frontmostApp", becomes = "X" },
+        effect = { kind = "command", feature = "m1_manual", action = "go" } }) == false,
+        "update() refuses a context-violating change (policy enforced on edit)")
+
+    ok(rules.remove(rid) == true and rules.count() == 0, "remove() drops the rule")
+
+    -- (f) formOptions feeds the Add form's dropdowns
+    local fo = rules.formOptions()
+    ok(type(fo.signals) == "table" and fo.signals[1] == "frontmostApp",
+        "formOptions lists the available signals")
+    local sawNotify = false
+    for _, e in ipairs(fo.effects) do if e.kind == "notify" then sawNotify = true end end
+    ok(sawNotify, "formOptions offers the notify effect")
+
+    -- cleanup
+    rules.load({})
+    fake.settings["hammerdeck.rules"] = nil
+    registry.setEnabled("m1_manual", false); registry.unregister("m1_manual")
+    registry.setEnabled("m1_auto", false); registry.unregister("m1_auto")
+    ok(fake.liveHandles == 0, "no native handle leaked across the M1 rules tests")
+end
+
 print("OK -- " .. passed .. " assertions passed (" .. _VERSION .. ")")

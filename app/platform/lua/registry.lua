@@ -526,6 +526,43 @@ function registry.runAction(id, actionId)
     return true
 end
 
+-- Is one action automatable -- may it be fired by an AUTOMATED trigger
+-- (schedule/event) with nobody present? Resolves from the REGISTERED manifest
+-- (independent of enabled-state), so the rules engine can apply the same
+-- context policy the registry enforces per action. Returns nil for an unknown
+-- feature/action (caller treats the unknown as context-dependent -- the safe
+-- default). This is the single public read of the `automatable` flag.
+function registry.isActionAutomatable(id, actionId)
+    local m = features[id]
+    if not m then return nil end
+    local okA, a = pcall(resolveAction, m, actionId)
+    if not okA then return nil end
+    return a.automatable == true
+end
+
+-- Every action of every ENABLED feature, flattened -- the data source for the
+-- rules UI's "Do: Run ..." effect picker. Each row: { featureId, featureName,
+-- actionId, label, automatable }. `label` disambiguates multi-action features
+-- ("Feature -- Action") and collapses single-action ones to the feature name,
+-- matching the command palette's convention.
+function registry.enabledActions()
+    local out = {}
+    for _, m in ipairs(registry.all()) do
+        if registry.isEnabled(m.id) then
+            for _, a in ipairs(m.actions) do
+                out[#out + 1] = {
+                    featureId   = m.id,
+                    featureName = m.name,
+                    actionId    = a.id,
+                    label       = (#m.actions > 1) and (m.name .. " -- " .. (a.label or a.id)) or m.name,
+                    automatable = a.automatable == true,
+                }
+            end
+        end
+    end
+    return out
+end
+
 -- Run a feature's option-action (the handler behind a Settings "Test" button,
 -- declared in m.optionActions[optKey]) with the feature's live ctx. Requires the
 -- feature enabled (it needs a bound ctx). Errors are contained + logged.

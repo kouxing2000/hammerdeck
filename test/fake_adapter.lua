@@ -122,7 +122,12 @@ function adapter.alert(text)
     fake.alerts[#fake.alerts + 1] = text
 end
 
-function adapter.log(...) end   -- silent in tests; flip to print(...) to debug
+fake.logs = {}                  -- captured adapter.log lines (for diagnostics assertions)
+function adapter.log(...)        -- silent in tests, but recorded so tests can assert traces
+    local parts = {}
+    for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+    fake.logs[#fake.logs + 1] = table.concat(parts, " ")
+end
 
 -- UI ------------------------------------------------------------------------------
 
