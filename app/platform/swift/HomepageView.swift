@@ -146,11 +146,13 @@ struct HomepageView: View {
             case .settings:
                 SettingsPane(store: store)
             case .feature(let fid):
-                if let view = FeaturePageRegistry.shared.view(for: fid, store: store) {
+                if store.showsPage(fid),
+                   let view = FeaturePageRegistry.shared.view(for: fid, store: store) {
                     view
                 } else {
-                    // Stale selection (page declared but no registered view, or
-                    // the feature vanished on reload) -- fall back to Home.
+                    // Stale selection (feature disabled or vanished on reload, page
+                    // declared but no registered view) -- the sidebar no longer lists
+                    // it; show a neutral placeholder.
                     Text("This page is unavailable.").foregroundStyle(.secondary)
                 }
             }

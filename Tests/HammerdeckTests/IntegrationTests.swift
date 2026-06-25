@@ -333,6 +333,26 @@ final class IntegrationTests: XCTestCase {
         XCTAssertNotNil(countDown?.actions.first?.defaultTrigger)
     }
 
+    // The "safe gate" for native pages: the Swift FeaturePageRegistry.roster and
+    // the on-disk feature.json `page` declarations are coupled ONLY by a matching
+    // id string, with no compiler check -- a typo or a forgotten half makes the
+    // page silently never render. This test is that check, run as part of
+    // `swift test` (the pre-package CI gate): roster ids and declared-page ids
+    // must be the same set, in BOTH directions, and it names the offender.
+    func testFeaturePageRosterMatchesDeclarations() {
+        host.store.refresh()
+        let declared = Set(host.store.features.filter { $0.page != nil }.map(\.id))
+        let registered = FeaturePageRegistry.shared.registeredIds
+
+        let providerWithoutPage = registered.subtracting(declared).sorted()
+        XCTAssertEqual(providerWithoutPage, [],
+            "FeaturePageRegistry.roster names provider(s) whose feature.json declares no `page`: \(providerWithoutPage)")
+
+        let pageWithoutProvider = declared.subtracting(registered).sorted()
+        XCTAssertEqual(pageWithoutProvider, [],
+            "feature.json declares a `page` with no provider in FeaturePageRegistry.roster (it will never render): \(pageWithoutProvider)")
+    }
+
     func testSettingsBridgeRoundTrip() {
         eval("require('platform.adapter').setSetting('hammerdeck.it.num', 42); return true")
         XCTAssertEqual(UserDefaults.standard.double(forKey: "hammerdeck.it.num"), 42)

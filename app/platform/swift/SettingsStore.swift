@@ -288,13 +288,21 @@ final class SettingsStore: ObservableObject {
     }
 
     /// Feature-contributed native pages to dock in the Homepage sidebar: every
-    /// non-failed feature whose manifest DECLARES a page AND has a Swift view
-    /// REGISTERED for its id. Both halves are required -- a declaration with no
+    /// ENABLED, non-failed feature whose manifest DECLARES a page AND has a Swift
+    /// view REGISTERED for its id. All three are required -- a declaration with no
     /// registered view (or vice versa) is silently skipped, so the sidebar never
-    /// offers a dead link. Catalog order is preserved.
+    /// offers a dead link, and a disabled feature withdraws its page along with the
+    /// rest of its surface. Catalog order is preserved.
     func featurePages() -> [FeatureInfo] {
-        features.filter { !$0.failed && $0.page != nil && FeaturePageRegistry.shared.isRegistered($0.id) }
+        features.filter { $0.enabled && !$0.failed && $0.page != nil
+            && FeaturePageRegistry.shared.isRegistered($0.id) }
     }
+
+    /// Whether `id`'s contributed page should render in the detail pane -- the SAME
+    /// gate as featurePages(), so a stale `.feature` selection (e.g. the user just
+    /// disabled the feature whose page was open) falls back instead of stranding an
+    /// orphaned page next to a sidebar that no longer lists it.
+    func showsPage(_ id: String) -> Bool { featurePages().contains { $0.id == id } }
 
     /// Narrow seam a host-side PAGE view uses to pull data from a feature reader
     /// module (`module.function(args)` -> first result), mirroring how the rest

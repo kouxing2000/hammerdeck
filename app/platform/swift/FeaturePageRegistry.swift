@@ -21,8 +21,10 @@ import SwiftUI
 //
 // A provider receives only the SettingsStore: it carries the catalog (enable
 // state, the page's own FeatureInfo) and the `readerCall` seam a page uses to
-// pull its data from a feature reader module (e.g. usage_stats' report.lua), so
-// a page works even when its feature is disabled.
+// pull its data from a feature reader module (e.g. usage_stats' report.lua)
+// without the feature's live runtime. A page is only docked/rendered while its
+// feature is ENABLED, though (SettingsStore.featurePages / showsPage) -- disabling
+// withdraws the page along with the feature's other surface.
 
 /// The extension point a feature implements to contribute a native Homepage
 /// page. Live next to the feature's view, in its own `swift/` folder -- the
@@ -61,6 +63,11 @@ struct FeaturePageRegistry {
     }
 
     func isRegistered(_ featureId: String) -> Bool { builders[featureId] != nil }
+
+    /// Every feature id with a registered page provider. Exists for the build-time
+    /// consistency gate (testFeaturePageRosterMatchesDeclarations): the roster and
+    /// the feature.json `page` declarations must agree, or a page silently no-ops.
+    var registeredIds: Set<String> { Set(builders.keys) }
 
     /// The contributed view for a feature id, or nil if none. The host filters to
     /// registered+declared pages before ever calling this (SettingsStore.featurePages),
