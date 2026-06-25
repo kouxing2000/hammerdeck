@@ -201,8 +201,13 @@ version, description, category, context, optional requires/recommended/page),
 optional `swift/` (native UI; register it in `FeaturePageRegistry` and declare a
 `page` in feature.json). Features are **autodiscovered** by scanning
 `app/features/` for a `<id>/lua/init.lua` -- just drop the folder in (no catalog
-to edit; menubar "Reload Features" or a restart picks it up; if you add a
-`swift/`, add its dir to `Package.swift` `sources` and rebuild). Then cover its
+to edit; menubar "Reload Features" or a restart picks it up). To keep `swift
+build` warning-free, also add the new feature to `Package.swift`'s
+`HammerdeckKit` target: a Lua-only feature -> add `"features/<id>"` to `exclude`;
+a feature WITH a `swift/` -> add `"features/<id>/swift"` to `sources` and
+`"features/<id>/lua"` + `"features/<id>/feature.json"` to `exclude`. (SwiftPM
+scans the whole `app/` subtree for resources; skipping the exclude just brings
+back the harmless "N unhandled files" warning -- the feature still loads.) Then cover its
 main flow in `test/run.lua` (register it there directly -- the test harness uses
 its own catalog, not disk discovery; a real feature's `feature.json` is read
 from disk via io, so its metadata merges in tests too). If an action is a

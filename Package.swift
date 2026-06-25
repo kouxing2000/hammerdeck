@@ -21,15 +21,52 @@ let package = Package(
         // `app/hammerdeck.lua`). A SwiftPM target compiles ONE subtree, so the
         // host Swift lives under it too -- `app/platform/swift/` for the platform,
         // `app/features/<id>/swift/` for a feature's native UI. `sources` lists
-        // ONLY the Swift dirs, so the co-located `.lua` files are simply not part
-        // of the target (no "unhandled resource" diagnostic). The Lua is loaded
-        // at runtime by path (Boot.defaultLuaDir -> `app/`), never bundled. A
-        // `swift/` subfolder under a feature = "this feature has native UI" at a
-        // glance; add the feature's `swift` dir here when it grows one.
+        // ONLY the Swift dirs, so just those compile -- but SwiftPM still SCANS
+        // the whole `app/` subtree for resources and warns ("N unhandled files")
+        // about every co-located `.lua`/`.json`. `sources` limits compilation,
+        // NOT the resource scan, so we must also `exclude` the Lua payload to
+        // keep the build clean. (`exclude` overrides `sources`, so a broad
+        // `exclude: ["features"]` would drop a feature's swift too -- list each
+        // Lua-only feature dir individually, and the non-swift parts of any
+        // feature that DOES have swift.) The Lua is loaded at runtime by path
+        // (Boot.defaultLuaDir -> `app/`), never bundled; the warning is cosmetic
+        // but we silence it. A `swift/` subfolder under a feature = "this feature
+        // has native UI" at a glance.
+        //
+        // MAINTENANCE when adding a feature `app/features/<id>/`:
+        //   - Lua-only feature -> add `"features/<id>"` to `exclude` below.
+        //   - feature WITH a `swift/` -> add `"features/<id>/swift"` to `sources`
+        //     AND `"features/<id>/lua"` + `"features/<id>/feature.json"` to `exclude`.
+        // (Skipping the exclude just brings the harmless warning back for that feature.)
         .target(
             name: "HammerdeckKit",
             dependencies: ["CLua"],
             path: "app",
+            exclude: [
+                "hammerdeck.lua",
+                "loader.lua",
+                "platform/lua",
+                "features/bing_daily",
+                "features/break_reminder",
+                "features/clipboard_history",
+                "features/command_palette",
+                "features/count_down",
+                "features/display_off",
+                "features/insert_datetime",
+                "features/locate_pointer",
+                "features/password_generator",
+                "features/plain_paste",
+                "features/pointer_follows_window",
+                "features/site_switcher",
+                "features/sleep_schedule",
+                "features/tab_switcher",
+                "features/text_actions",
+                "features/usage_stats/lua",
+                "features/usage_stats/feature.json",
+                "features/window_modal",
+                "features/window_snap",
+                "features/window_switcher",
+            ],
             sources: [
                 "platform/swift",
                 "features/usage_stats/swift",
