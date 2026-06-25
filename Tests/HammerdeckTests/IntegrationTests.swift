@@ -945,6 +945,12 @@ final class IntegrationTests: XCTestCase {
             "needs Accessibility (grant it to the terminal running `swift test`)")
         try XCTSkipUnless(!sessionLocked(),
             "screen is locked; AX lists no windows behind the lock")
+        // A CI runner can report AX-trusted yet have a windowless virtual desktop
+        // (no apps on it), so the "at least one window" assertion below would fail
+        // for an environment reason, not a regression. This test needs a real
+        // interactive session; skip it on CI.
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
+            "CI session has no real desktop windows to list")
 
         XCTAssertEqual(eval("return require('platform.adapter').axTrusted()") as? Bool, true)
 
