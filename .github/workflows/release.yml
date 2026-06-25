@@ -1,0 +1,52 @@
+name: Release
+
+# Tag-driven release: push a version tag (e.g. `v0.1.0`) and this builds the
+# .app on a macOS runner via the SAME scripts/package.sh used locally, then
+# attaches the zip to a GitHub Release for that tag. The tag IS the version
+# (single source of truth) -- nothing here is hand-edited per release.
+#
+# Tier A (see docs/DISTRIBUTION.md): the artifact is AD-HOC signed -- it runs for
+# YOU (download via the release page / `gh release download`), but Gatekeeper
+# still blocks it on a stranger's Mac. Tier B (Developer ID signing + notarization)
+# layers on later: import the cert from a secret, swap the codesign identity in
+# package.sh, add `notarytool submit --wait` + `stapler staple` before the upload.
+#
+# Note: the repo is PRIVATE, so release assets require auth to download. Fine
+# while it's just you; public distribution needs a public releases-only repo or a
+# static host (keeps source closed) -- a deliberate Gate-A decision, not now.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # create the Release and upload assets
+
+jobs:
+  release:
+    runs-on: macos-15   # Apple Silicon; produces an arm64 build (universal = Tier B)
+    steps:
+      - uses: actions/checkout@v4
+
+      # Package.swift is swift-tools-version 6.0, so the toolchain MUST be Swift 6
+      # (Xcode 16+). Don't rely on the image default -- select the newest Xcode 16
+      # present so a runner-image default bump can't silently downgrade us.
+      - name: Select Xcode 16 (Swift 6)
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Package
+        # package.sh runs `swift test` (the pre-package gate) before building.
+        run: scripts/package.sh "${{ github.ref_name }}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/Hammerdeck-*.zip \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

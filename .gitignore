@@ -15,4 +15,12 @@ Package.resolved
 
 # Local dev secrets (e.g. OPENAI_KEY for text_actions) -- never commit
 .env
-/design
+
+# Dev artwork scratch (mockups, screenshots) stays out of git -- EXCEPT the
+# runtime app icon, which the packaged .app bundles, so it must be tracked for a
+# clean checkout / CI build to be reproducible (resourceRoot()/design/AppIcon.png).
+/design/*
+!/design/AppIcon.png
+
+# Packaged build output
+/dist/

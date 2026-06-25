@@ -4,17 +4,39 @@ import AppKit
 // backend (Native.swift) and runs the app loop. Lives in the Kit (not the
 // executable) so the integration tests can boot the same stack in-process.
 
-/// Locate the Lua payload: env override first (packaging, tests), then the
-/// dev-checkout fallback derived from this source file's location.
-func defaultLuaDir() -> String {
-    if let env = ProcessInfo.processInfo.environment["HAMMERDECK_LUA_DIR"] {
+/// Root that holds the runtime-loaded resources (the Lua payload `app/` and the
+/// `design/` artwork). Two homes, probed in order:
+///   1. `HAMMERDECK_RESOURCE_DIR` env override -- packaging / tests can point anywhere.
+///   2. A packaged `.app`: the build copies these under `Contents/Resources`, so
+///      `Bundle.main.resourcePath` is the root (gated on the Lua anchor existing,
+///      so a SwiftPM `swift run` -- whose resourcePath is `.build/...` without it --
+///      falls through instead of matching a bare binary dir).
+///   3. Dev checkout: derive the repo root from THIS source file's location.
+/// Both defaultLuaDir() and makeDockIcon() hang off this, so a bundle relocates
+/// every runtime resource by changing one function.
+func resourceRoot() -> String {
+    if let env = ProcessInfo.processInfo.environment["HAMMERDECK_RESOURCE_DIR"] {
         return env
+    }
+    if let res = Bundle.main.resourcePath,
+       FileManager.default.fileExists(atPath: res + "/app/hammerdeck.lua") {
+        return res
     }
     return URL(fileURLWithPath: #filePath)          // .../app/platform/swift/Boot.swift
         .deletingLastPathComponent()                 // .../app/platform/swift
         .deletingLastPathComponent()                 // .../app/platform
-        .deletingLastPathComponent()                 // .../app  (the Lua payload root)
+        .deletingLastPathComponent()                 // .../app
+        .deletingLastPathComponent()                 // repo root (holds app/ and design/)
         .path
+}
+
+/// Locate the Lua payload: explicit `HAMMERDECK_LUA_DIR` override first (the
+/// integration tests pass their own path), then the resource root's `app/`.
+func defaultLuaDir() -> String {
+    if let env = ProcessInfo.processInfo.environment["HAMMERDECK_LUA_DIR"] {
+        return env
+    }
+    return resourceRoot() + "/app"
 }
 
 /// Whether to greet the user with the Homepage on launch: only on the very
@@ -115,14 +137,9 @@ enum CapsHyperPreference {
 /// from the same PNG and set `CFBundleIconFile` in the bundle instead.
 @MainActor
 func makeDockIcon() -> NSImage {
-    // The designed icon lives at the repo root (resolved from this file's path so
-    // it works regardless of the launch working directory).
-    let artwork = URL(fileURLWithPath: #filePath)   // .../app/platform/swift/Boot.swift
-        .deletingLastPathComponent()                 // .../app/platform/swift
-        .deletingLastPathComponent()                 // .../app/platform
-        .deletingLastPathComponent()                 // .../app
-        .deletingLastPathComponent()                 // repo root
-        .appendingPathComponent("design/AppIcon.png")
+    // The designed icon lives under the resource root (repo root in dev,
+    // Contents/Resources in a packaged .app -- see resourceRoot()).
+    let artwork = URL(fileURLWithPath: resourceRoot() + "/design/AppIcon.png")
     if let designed = NSImage(contentsOf: artwork) {
         return designed
     }
