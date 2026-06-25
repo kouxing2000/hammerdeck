@@ -101,15 +101,6 @@ local MODS = { "cmd", "alt", "ctrl" }
 return {
     api         = 1,
     id          = "window_snap",
-    name        = "Window Snap",
-    description = "Direct hotkeys for the common arrangements -- snap to a "
-        .. "half, toggle maximize/75%, throw to the next screen (pointer "
-        .. "follows). Best for one-key snaps. Pairs with Window Mode.",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "window",
-    recommended = true,
-    requires    = { "accessibility" },
 
     options = {},
 

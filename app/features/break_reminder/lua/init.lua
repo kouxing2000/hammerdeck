@@ -30,12 +30,6 @@ end
 return {
     api         = 1,
     id          = "break_reminder",
-    name        = "Break Reminder",
-    description = "Reminds you to rest your eyes after a work interval; "
-        .. "idle-aware, with daily work-time stats.",
-    version     = "1.1.0",
-    category    = "health",
-    context     = "automatic",
 
     options = {
         { key = "workMin",             type = "int", default = 25, label = "Work interval (min)", min = 5, max = 90 },

@@ -122,13 +122,6 @@ end
 return {
     api          = 1,
     id           = "command_palette",
-    name         = "Command Palette",
-    description  = "Fuzzy-search and run any action of any enabled feature "
-        .. "from one keystroke.",
-    version      = "1.0.0",
-    category     = "platform",
-    context     = "anywhere",
-    recommended = true,
     capabilities = { "commands" },   -- opts into the cross-feature ctx methods
 
     options = {

@@ -16,7 +16,8 @@
 local M = {}
 
 -- The app root, derived from THIS file's own location (robust to the launch
--- working directory, like the Swift-side defaultLuaDir).
+-- working directory, like the Swift-side defaultLuaDir). Exposed as M.appdir so
+-- the registry can locate a feature's co-located feature.json (<id>/feature.json).
 local APPDIR = debug.getinfo(1, "S").source:match("^@(.*)[/\\]loader%.lua$")
 
 -- Map a dotted module name to its on-disk path under the lua/ subfolder, or nil
@@ -63,5 +64,9 @@ function M.install()
     table.insert(package.searchers, 2, searcher)
     M._installed = true
 end
+
+-- The resolved app root (absolute in the real app, "app" relative to the repo
+-- root in the headless test). Callers append "/features/<id>/..." etc.
+M.appdir = APPDIR
 
 return M

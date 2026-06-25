@@ -1,0 +1,8 @@
+{
+  "name": "Pointer",
+  "version": "1.0.0",
+  "description": "On-demand pointer helpers -- flash a crosshair to find the mouse, or center it on the focused window.",
+  "category": "productivity",
+  "context": "anywhere",
+  "requires": ["accessibility"]
+}

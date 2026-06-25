@@ -37,12 +37,6 @@ end
 return {
     api         = 1,
     id          = "sleep_schedule",
-    name        = "Sleep Schedule",
-    description = "Forces system sleep at a set time, with graduated warnings, "
-        .. "a one-time snooze, and a weekend shift.",
-    version     = "1.0.0",
-    category    = "health",
-    context     = "automatic",
 
     options = {
         { key = "sleepAt",         type = "time", default = "00:30", label = "Sleep at (HH:MM)" },

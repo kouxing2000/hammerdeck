@@ -184,14 +184,6 @@ end
 return {
     api         = 1,
     id          = "site_switcher",
-    name        = "Quick Sites",
-    description = "Jump to a favorite site -- focuses its tab if it's already "
-        .. "open, opens it if not. Per site, pick the browser, a Chrome profile, "
-        .. "and whether to open it as a standalone app window. cmd+<number> "
-        .. "jumps straight to a row.",
-    version     = "1.4.0",
-    category    = "productivity",
-    context     = "web",
 
     options = {
         { key = "sites", type = "siteList", default = "",

@@ -1,0 +1,7 @@
+{
+  "name": "Sleep Schedule",
+  "version": "1.0.0",
+  "description": "Forces system sleep at a set time, with graduated warnings, a one-time snooze, and a weekend shift.",
+  "category": "health",
+  "context": "automatic"
+}

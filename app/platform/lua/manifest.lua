@@ -38,22 +38,35 @@
 -- Rules: at least one of actions/action/start; `action` (sugar) excludes both
 -- `actions` and `start` -- a service with shortcuts uses the explicit list.
 --
--- Manifest shape:
--- {
---   api         = 1,                     -- ctx contract version (required)
---   id          = "break_reminder",          -- unique, stable, settings key prefix
---   name        = "Rest Timer",          -- shown in config UI
---   description = "Reminds you to rest", -- shown in config UI
---   version     = "1.0.0",               -- feature version (optional)
---   category    = "health",              -- domain tag (text/windows/web/...), shown as a small label
---   context     = "automatic",           -- WHEN the feature applies (the primary grouping axis):
---                                         --   textField | window | web | anywhere | automatic
---   requires    = { "accessibility" },   -- OS preconditions the user must grant for it to work
---   options     = {                      -- typed -> the settings form generates itself
---     { key = "intervalMin", type = "int", default = 25, label = "Interval (min)", min = 5, max = 90 },
---   },
---   actions / defaultTrigger+action / start / stop = ...,   -- see above
--- }
+-- Manifest shape -- split across two co-located files:
+--
+--   feature.json (DECLARATIVE identity / presentation -- no code, overlaid onto
+--   the manifest at register time by the registry; the JSON wins):
+--     {
+--       "name":        "Rest Timer",          -- shown in config UI
+--       "description": "Reminds you to rest",
+--       "version":     "1.0.0",
+--       "category":    "health",              -- domain tag, shown as a small label
+--       "context":     "automatic",           -- WHEN it applies: textField|window|web|anywhere|automatic
+--       "requires":    ["accessibility"],     -- OS preconditions the user must grant
+--       "recommended": false,                 -- part of the curated Essentials set?
+--       "page":        { "title": "...", "icon": "..." }   -- contributes a native Homepage page
+--     }
+--
+--   lua/init.lua (id + api + BEHAVIOR -- returns the manifest table):
+--     {
+--       api     = 1,                     -- ctx contract version (required)
+--       id      = "break_reminder",      -- unique, stable, settings key prefix + the anchor
+--                                         --   that locates this feature's feature.json
+--       options = {                      -- typed -> the settings form generates itself
+--         { key = "intervalMin", type = "int", default = 25, label = "Interval (min)", min = 5, max = 90 },
+--       },
+--       actions / defaultTrigger+action / start / stop = ...,   -- see above
+--     }
+--
+-- validate() runs on the MERGED table, so name/category/... below are required
+-- via feature.json (a feature may also still declare them inline -- the merge
+-- overlays JSON on top, and test fixtures with no feature.json keep inline values).
 
 local manifest = {}
 

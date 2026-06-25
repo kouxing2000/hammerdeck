@@ -277,12 +277,6 @@ end
 return {
     api         = 1,
     id          = "tab_switcher",
-    name        = "Tab Switcher",
-    description = "Searchable switcher across all Chrome + Safari tabs, "
-        .. "most recently used first, with favicons.",
-    version     = "1.1.0",
-    category    = "productivity",
-    context     = "web",
 
     options = {},
 

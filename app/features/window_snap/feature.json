@@ -1,0 +1,9 @@
+{
+  "name": "Window Snap",
+  "version": "1.0.0",
+  "description": "Direct hotkeys for the common arrangements -- snap to a half, toggle maximize/75%, throw to the next screen (pointer follows). Best for one-key snaps. Pairs with Window Mode.",
+  "category": "productivity",
+  "context": "window",
+  "requires": ["accessibility"],
+  "recommended": true
+}

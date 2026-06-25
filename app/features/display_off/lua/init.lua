@@ -19,12 +19,6 @@ local WARN_SECONDS  = 10   -- warning lead time before the display sleeps
 return {
     api         = 1,
     id          = "display_off",
-    name        = "Turn Off Display When Idle",
-    description = "Turns the display off after a period of no activity, "
-        .. "with a short warning first.",
-    version     = "1.1.0",
-    category    = "health",
-    context     = "automatic",
 
     options = {
         { key = "idleThresholdMin", type = "int", default = 5,

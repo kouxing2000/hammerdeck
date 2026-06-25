@@ -19,13 +19,6 @@
 return {
     api         = 1,
     id          = "pointer_follows_window",
-    name        = "Pointer Follows Moved Window",
-    description = "When a window-movement feature repositions the focused "
-        .. "window, the pointer rides along, keeping its place inside it.",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "window",
-    requires    = { "accessibility" },
 
     -- A pure toggle: enabling it flips the behavior at the window-move seam.
     -- No timers, watchers, or hotkeys -- start() is just a breadcrumb in the log.

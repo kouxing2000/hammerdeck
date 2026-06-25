@@ -96,14 +96,6 @@ end
 return {
     api         = 1,
     id          = "text_actions",
-    name        = "Text Actions",
-    description = "Act on the selected text anywhere: open URLs, change case, "
-        .. "calculate, look up in the macOS Dictionary, and -- with an OpenAI "
-        .. "key -- refine/translate/summarize via AI. Results paste back in place.",
-    version     = "1.1.0",
-    category    = "productivity",
-    context     = "textField",
-    requires    = { "accessibility" },
 
     options = {
         -- Simple popup transforms (which base actions appear in the "act on

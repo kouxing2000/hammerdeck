@@ -314,17 +314,9 @@ end
 return {
     api         = 1,
     id          = "usage_stats",
-    name        = "Usage Stats",
-    description = "Tracks wake/sleep sessions and per-app focus time to daily "
-        .. "CSV files (idle time excluded), with an optional desktop widget.",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "automatic",
-
-    -- Contributes a native Homepage page (the rich Usage Report). The view
-    -- lives host-side (FeaturePageRegistry -> UsageReportView) and reads history
-    -- via report.lua, so it works even when this feature is disabled.
-    page = { title = "Usage", icon = "chart.bar.xaxis" },
+    -- Identity / presentation (name, version, description, category, context,
+    -- page) lives in feature.json beside this lua/. `id` stays here as the
+    -- structural anchor; api + behavior below.
 
     options = {
         { key = "dir", type = "string", default = "~/.computer-usage",

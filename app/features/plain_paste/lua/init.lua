@@ -38,13 +38,6 @@ end
 return {
     api         = 1,
     id          = "plain_paste",
-    name        = "Paste as Plain Text",
-    description = "Paste without formatting: strips fonts/colors/links from "
-        .. "the copied text and pastes it (or types it as keystrokes).",
-    version     = "1.2.0",
-    category    = "productivity",
-    context     = "textField",
-    requires    = { "accessibility" },
 
     options = {
         { key = "mode", type = "enum", default = "plainText",

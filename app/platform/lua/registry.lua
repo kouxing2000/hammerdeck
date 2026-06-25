@@ -36,10 +36,50 @@ local startFailures = {}   -- id -> error string -- registered but failed to sta
 
 local function enabledKey(id) return "hammerdeck.enabled." .. id end
 
--- Register a feature module (its validated manifest). Throws on a bad manifest
--- or duplicate id -- callers that must survive a broken plugin use
--- registry.load() (below), which quarantines those throws.
+-- A feature's DECLARATIVE identity/presentation lives in a co-located
+-- feature.json (language-agnostic, no code), beside its lua/. These keys are
+-- overlaid onto the manifest table its lua/init.lua returns (which keeps `id`
+-- as the structural anchor + `api` + the behavioral surface). The JSON wins.
+local META_FIELDS = {
+    "name", "version", "description", "category", "context",
+    "requires", "recommended", "page",
+}
+
+-- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
+-- io (like the module loader / require), NOT via the adapter seam: feature.json
+-- is a co-located build-time asset, read once at feature-load time -- the same
+-- class of access as loading the feature's .lua. Raises on malformed JSON so a
+-- typo surfaces loudly instead of silently dropping metadata.
+local function readFeatureMeta(id)
+    local path = require("loader").appdir .. "/features/" .. id .. "/feature.json"
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local raw = f:read("*a")
+    f:close()
+    local data, err = json.decode(raw)
+    assert(data ~= nil, "feature.json at " .. path .. " is not valid JSON: " .. tostring(err))
+    assert(type(data) == "table" and #data == 0,
+        "feature.json at " .. path .. " must be a JSON object (not an array or scalar)")
+    return data
+end
+
+-- Overlay a feature's feature.json metadata onto its manifest table, if present.
+local function applyFeatureMeta(m)
+    if type(m) ~= "table" or type(m.id) ~= "string" then return end
+    local meta = readFeatureMeta(m.id)
+    if not meta then return end
+    for _, k in ipairs(META_FIELDS) do
+        if meta[k] ~= nil then m[k] = meta[k] end
+    end
+end
+
+-- Register a feature module (its validated manifest). First overlays the
+-- feature's co-located feature.json (applyFeatureMeta), so it now also reads a
+-- file and THROWS on malformed JSON / a non-object root -- on top of throwing on
+-- a bad manifest or duplicate id. Callers that must survive a broken plugin use
+-- registry.load() (below), which quarantines all of those throws.
 function registry.register(m)
+    applyFeatureMeta(m)
     manifest.validate(m)
     assert(not features[m.id], "duplicate feature id: " .. m.id)
     features[m.id] = m

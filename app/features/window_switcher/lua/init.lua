@@ -105,13 +105,6 @@ end
 return {
     api         = 1,
     id          = "window_switcher",
-    name        = "Window Switcher",
-    description = "Searchable Alt-Tab: switch windows across all apps, "
-        .. "most recently used first.",
-    version     = "1.2.0",
-    category    = "productivity",
-    context     = "window",
-    requires    = { "accessibility" },
 
     options = {},
 

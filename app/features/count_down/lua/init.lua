@@ -16,12 +16,6 @@
 return {
     api         = 1,
     id          = "count_down",
-    name        = "Countdown",
-    description = "Ask for minutes, then run a thin progress strip along the "
-        .. "bottom of the screen; notifies when time is up.",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "anywhere",
 
     options = {
         { key = "defaultMinutes", type = "int", default = 5,

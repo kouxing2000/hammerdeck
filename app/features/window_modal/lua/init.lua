@@ -251,14 +251,6 @@ end
 return {
     api         = 1,
     id          = "window_modal",
-    name        = "Window Mode",
-    description = "A modal keyboard layer for finer arranging -- move/resize/"
-        .. "corners/center/undo under one key until Escape. Best when you want "
-        .. "control without many global hotkeys. Pairs with Window Snap.",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "window",
-    requires    = { "accessibility" },
 
     options = {
         { key = "stepParts", type = "int", default = 30, min = 10, max = 60,

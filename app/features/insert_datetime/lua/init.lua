@@ -91,13 +91,6 @@ end
 return {
     api         = 1,
     id          = "insert_datetime",
-    name        = "Insert Date/Time",
-    description = "Type the current date and time into the focused field, "
-        .. "in a format you choose (or a custom strftime pattern).",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "textField",
-    requires    = { "accessibility" },
 
     options = {
         { key = "format", type = "enum", default = "%m/%d/%Y %I:%M:%S %p",

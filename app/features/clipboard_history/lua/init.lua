@@ -135,17 +135,9 @@ end
 return {
     api         = 1,
     id          = "clipboard_history",
-    name        = "Clipboard History",
-    description = "Keeps a searchable history of copied text; pick an entry "
-        .. "to paste it. Password-manager entries are never recorded.",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "anywhere",
     -- The default "Paste on select" path synthesizes Cmd+V (keyStroke -> CGEvents),
     -- which the OS silently drops without the Accessibility grant -- so it needs
     -- the same precondition badge as the other keystroke-synthesizing features.
-    requires    = { "accessibility" },
-    recommended = true,
 
     options = {
         { key = "historySize", type = "int", default = 100, min = 10, max = 500,

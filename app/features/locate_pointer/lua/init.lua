@@ -18,13 +18,6 @@
 return {
     api         = 1,
     id          = "locate_pointer",
-    name        = "Pointer",
-    description = "On-demand pointer helpers -- flash a crosshair to find the "
-        .. "mouse, or center it on the focused window.",
-    version     = "1.0.0",
-    category    = "productivity",
-    context     = "anywhere",
-    requires    = { "accessibility" },
 
     options = {
         { key = "seconds", type = "int", default = 3,

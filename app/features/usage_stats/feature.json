@@ -1,0 +1,8 @@
+{
+  "name": "Usage Stats",
+  "version": "1.0.0",
+  "description": "Tracks wake/sleep sessions and per-app focus time to daily CSV files (idle time excluded), with an optional desktop widget.",
+  "category": "productivity",
+  "context": "automatic",
+  "page": { "title": "Usage", "icon": "chart.bar.xaxis" }
+}
