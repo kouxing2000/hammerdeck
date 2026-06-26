@@ -52,6 +52,9 @@ function rules.validate(spec)
     if spec.enabled ~= nil then
         assert(type(spec.enabled) == "boolean", "rule '" .. spec.id .. "' enabled must be boolean")
     end
+    if spec.name ~= nil then
+        assert(type(spec.name) == "string", "rule '" .. spec.id .. "' name must be a string")
+    end
     triggers.validate(spec.on)
     if spec.on.type == "state" then
         assert(signals.exists(spec.on.signal),
@@ -95,17 +98,21 @@ end
 -- matters: a rule that silently never runs (a typo'd app name that no app ever
 -- matches, an effect targeting a now-disabled feature) is otherwise impossible
 -- to diagnose -- this trace ("Open Logs" in the menubar) is the only window in.
-local function fire(id, spec)
+local function fire(id, spec, via)
     local ok, note = effects.dispatch(spec.effect)
+    -- A manual test ("Test" button) tags the trace as [test] so it never reads
+    -- like the trigger itself fired -- this log is the only window into what ran.
+    local tag = (type(via) == "string" and via ~= "") and (" [" .. via .. "]") or ""
     if ok then
-        local msg = "rule '" .. id .. "' fired -> " .. effects.describe(spec.effect)
+        local msg = "rule '" .. id .. "'" .. tag .. " fired -> " .. effects.describe(spec.effect)
         -- A partial success (e.g. a layout that moved some-but-not-all windows)
         -- carries a note -- append it so a half-firing rule isn't silently "fired".
         if type(note) == "string" and note ~= "" then msg = msg .. " (" .. note .. ")" end
         adapter.log(msg)
     else
-        adapter.log("rule '" .. id .. "' effect FAILED: " .. tostring(note))
+        adapter.log("rule '" .. id .. "'" .. tag .. " effect FAILED: " .. tostring(note))
     end
+    return ok, note
 end
 
 -- Bind one rule's trigger to its effect, returning a .stop() handle. State
@@ -288,6 +295,21 @@ function rules.specJSON(id)
     return str
 end
 
+--- Fire a rule's effect ON DEMAND -- the Settings "Test" button. Bypasses the
+--- trigger entirely, so a user can verify the effect works WITHOUT staging the
+--- real-world condition (plugging in a monitor, switching apps). Works on a
+--- DISABLED rule too (you're testing the effect, not the binding). Returns
+--- (ok, note_or_reason): `note` is a partial-success message (e.g. a layout that
+--- moved some-but-not-all windows), `reason` is the failure cause.
+---@param id string
+---@return boolean ok
+---@return string|nil noteOrReason
+function rules.fire(id)
+    local spec = specs[id]
+    if not spec then return false, "no such rule: " .. tostring(id) end
+    return fire(id, spec, "test")
+end
+
 --- Number of loaded rules.
 ---@return integer
 function rules.count()
@@ -322,6 +344,7 @@ function rules.describe()
     for _, spec in ipairs(rules.all()) do
         out[#out + 1] = {
             id          = spec.id,
+            name        = spec.name or "",   -- the user's label (blank if unnamed)
             enabled     = isEnabled(spec),
             triggerDesc = triggers.describe(spec.on),
             effectDesc  = effects.describe(spec.effect),

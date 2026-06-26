@@ -258,6 +258,7 @@ enum ValidationState: Equatable {
 /// One row of the Rules list -- the serializable shape rules.describe() emits.
 struct RuleInfo: Identifiable {
     let id: String
+    let name: String             // the user's label (blank if unnamed -> fall back to triggerDesc)
     let enabled: Bool
     let triggerDesc: String      // "state: frontmostApp becomes Safari", "event: wake", ...
     let effectDesc: String       // 'Notify "Safari is front"', "Run bing_daily.refresh"
@@ -267,6 +268,7 @@ struct RuleInfo: Identifiable {
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
         self.id = id
+        self.name = dict["name"] as? String ?? ""
         self.enabled = dict["enabled"] as? Bool ?? true
         self.triggerDesc = dict["triggerDesc"] as? String ?? ""
         self.effectDesc = dict["effectDesc"] as? String ?? ""
@@ -476,6 +478,17 @@ final class SettingsStore: ObservableObject {
     func removeRule(_ id: String) {
         _ = try? lua.call("platform.rules", "remove", [.string(id)])
         refreshRules()
+    }
+
+    /// Fire a rule's effect ON DEMAND (the Rules list "Test" button) -- bypasses
+    /// the trigger so the user can verify the effect without staging the real
+    /// condition (plugging in a monitor, switching apps). Returns (ok, message):
+    /// message is a partial-success note or a failure reason ("" on a clean fire).
+    func fireRule(_ id: String) -> (ok: Bool, message: String) {
+        guard let r = try? lua.call("platform.rules", "fire", [.string(id)], results: 2) else {
+            return (false, "could not run the rule")
+        }
+        return ((r[0] as? Bool) == true, (r[1] as? String) ?? "")
     }
 
     /// Add a rule from a JSON spec string. The engine validates (shape + context

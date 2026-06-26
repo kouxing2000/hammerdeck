@@ -2702,6 +2702,53 @@ do
     for _, e in ipairs(fo.effects) do if e.kind == "notify" then sawNotify = true end end
     ok(sawNotify, "formOptions offers the notify effect")
 
+    -- (g) rule NAMES + the on-demand "Test" (rules.fire) ----------------------
+    -- Wrapped in a nested do...end so its locals release before the block's tail
+    -- (Lua caps a function at 200 locals; this big T35 block runs close).
+    do
+        rules.load({})
+        local okN, nid = rules.add({ name = "Dock at desk",
+            on = { type = "event", event = "wake" },
+            effect = { kind = "notify", title = "HD", text = "docked" } })
+        ok(okN, "add() accepts an optional rule name")
+        ok(rules.describe()[1].name == "Dock at desk", "describe() surfaces the rule name")
+
+        -- an UNNAMED rule reports name == "" -- the fallback the list row leans on
+        -- (it shows the trigger text when the name is blank, never a nil/"rule2").
+        local _, nid2 = rules.add({ on = { type = "event", event = "wake" },
+            effect = { kind = "notify", title = "HD" } })
+        local unnamed
+        for _, r in ipairs(rules.describe()) do if r.id == nid2 then unnamed = r end end
+        ok(unnamed ~= nil and unnamed.name == "", "an unnamed rule reports name == \"\" (list-row fallback)")
+        rules.remove(nid2)
+
+        -- fire() runs the effect ON DEMAND, bypassing the trigger (the Test button)
+        local nF = #fake.notifications
+        local fOk, fNote = rules.fire(nid)
+        ok(fOk == true and #fake.notifications == nF + 1,
+            "fire() runs the effect on demand -- no trigger needed")
+        ok(fNote == nil or fNote == "", "a clean fire returns no partial-success note")
+
+        -- a manual test tags the log [test] so it never reads like a real trigger fire
+        local taggedTest = false
+        for i = 1, #fake.logs do if fake.logs[i]:find("%[test%]") then taggedTest = true end end
+        ok(taggedTest, "fire() tags its log trace as a manual [test]")
+
+        -- fire() tests a DISABLED rule too (you verify the effect, not the binding)
+        rules.setEnabled(nid, false)
+        local nD = #fake.notifications
+        ok(select(1, rules.fire(nid)) == true and #fake.notifications == nD + 1,
+            "fire() tests a disabled rule (verify the effect before enabling it)")
+
+        ok(select(1, rules.fire("nope")) == false, "fire(unknown id) returns false + reason")
+
+        -- a non-string name is refused by validate (guards the JSON path too)
+        ok(select(1, rules.add({ name = 123,
+            on = { type = "event", event = "wake" },
+            effect = { kind = "notify", title = "x" } })) == false,
+            "add() rejects a non-string name")
+    end
+
     -- cleanup
     rules.load({})
     fake.settings["hammerdeck.rules"] = nil

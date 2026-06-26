@@ -97,13 +97,54 @@ private struct RulePageRow: View {
     let rule: RuleInfo
     let onDelete: () -> Void
 
+    // The last "Test" outcome, shown in a popover anchored to the Test button
+    // (click anywhere to dismiss; nil = no popover). A struct so .popover(item:)
+    // drives it.
+    @State private var testResult: TestResult?
+    // A pending Test on a DISRUPTIVE effect (lockScreen), held for confirmation --
+    // "Test" reads like a preview, so firing one that locks the screen needs a
+    // heads-up. Benign effects fire straight away (the tight verify loop).
+    @State private var confirmDisruptiveTest = false
+
+    private struct TestResult: Identifiable {
+        let id = UUID()
+        let icon: String
+        let color: Color
+        let message: String
+    }
+
+    // A named rule shows its name on top with trigger -> effect beneath; an
+    // unnamed one keeps the original trigger / effect two-liner.
+    private var primary: String { rule.name.isEmpty ? rule.triggerDesc : rule.name }
+    private var secondary: String {
+        rule.name.isEmpty ? rule.effectDesc : "\(rule.triggerDesc) -> \(rule.effectDesc)"
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(rule.triggerDesc).font(.callout).lineLimit(1)
-                Text(rule.effectDesc).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(primary).font(.callout).lineLimit(1)
+                Text(secondary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
+            Button(action: runTest) {
+                Image(systemName: "play.circle").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Test this rule now -- fire its effect without waiting for the trigger")
+            .popover(item: $testResult) { r in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: r.icon).foregroundStyle(r.color)
+                    Text(r.message).font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10).frame(maxWidth: 300)
+            }
+            .confirmationDialog("Test \"\(primary)\"? This will lock your screen now.",
+                                isPresented: $confirmDisruptiveTest, titleVisibility: .visible) {
+                Button("Lock screen", role: .destructive) { fireNow() }
+                Button("Cancel", role: .cancel) {}
+            }
             Toggle("", isOn: Binding(get: { rule.enabled },
                                      set: { store.setRuleEnabled(rule.id, $0) }))
                 .toggleStyle(.switch).controlSize(.mini).labelsHidden()
@@ -115,6 +156,35 @@ private struct RulePageRow: View {
         }
         .padding(.vertical, 2)
         .opacity(rule.enabled ? 1 : 0.55)
+    }
+
+    // Disruptive built-in effects whose Test should confirm first (locking the
+    // screen on a "preview" click is a nasty surprise). Other effects -- including
+    // user-authored runShortcut/command, whose whole point is to run -- fire
+    // immediately. Widen this if a sleep/shutdown-style effect is ever added.
+    private static let disruptiveTestKinds: Set<String> = ["lockScreen"]
+
+    private func runTest() {
+        if let kind = rule.effect["kind"] as? String,
+           Self.disruptiveTestKinds.contains(kind) {
+            confirmDisruptiveTest = true   // hand the real fire to the dialog's button
+            return
+        }
+        fireNow()
+    }
+
+    private func fireNow() {
+        let (ok, message) = store.fireRule(rule.id)
+        // Three outcomes: clean fire (green check), partial fire (orange triangle
+        // + the note: "moved 1/2 -- no window for: Mail"), failure (red x + reason).
+        if ok && message.isEmpty {
+            testResult = TestResult(icon: "checkmark.circle.fill", color: .green, message: "Fired")
+        } else if ok {
+            testResult = TestResult(icon: "exclamationmark.triangle.fill", color: .orange, message: message)
+        } else {
+            testResult = TestResult(icon: "xmark.circle.fill", color: .red,
+                                    message: message.isEmpty ? "Effect failed" : message)
+        }
     }
 }
 
@@ -136,6 +206,9 @@ private struct AddRuleForm: View {
     @Binding var editing: RuleInfo?
 
     @State private var opts = RuleFormOptions([:])
+    // An optional human label for the rule -- the list shows it instead of the
+    // terse trigger text ("Dock at desk" reads better than "displaysPresent ...").
+    @State private var name = ""
     // Trigger. triggerType is "state:<signal>" | "event" | "schedule" -- the chosen
     // "When" IS the signal (Frontmost app / Connected display), so there is no
     // separate Signal sub-picker; each state signal is its own top-level choice.
@@ -164,27 +237,30 @@ private struct AddRuleForm: View {
 
     var body: some View {
         Section(isEditing ? "Edit rule" : "Add a rule") {
-            // Form is the default; JSON (advanced) edits the rule's full spec --
-            // the escape hatch for what the guided form can't express (e.g. a
-            // placement's titlePattern). One rule, one JSON. The binding GUARDS
-            // the JSON->Form switch when the editor is dirty, so a mis-tap can't
-            // silently throw away typed JSON.
-            Picker("Edit mode", selection: modeBinding) {
-                Text("Form").tag(false)
-                Text("JSON (advanced)").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .confirmationDialog("Discard your JSON edits?",
-                                isPresented: $confirmLeaveJSON, titleVisibility: .visible) {
-                Button("Discard edits", role: .destructive) { advanced = false }
-                Button("Keep editing JSON", role: .cancel) {}
-            } message: {
-                Text("Switching to the form discards the changes you made in the JSON editor.")
+            // The form is THE editor; JSON is a discreet escape hatch shown only
+            // where it pays off -- a `layout` effect, the one thing the form can't
+            // fully express (a placement's titlePattern). For every other effect
+            // the form is complete, so the link would be noise. It stays visible in
+            // JSON mode regardless, so "Use the form" is always a way back.
+            // toggleMode GUARDS the JSON->Form switch when the editor is dirty.
+            if advanced || selectedEffect?.kind == "layout" {
+                HStack {
+                    Spacer()
+                    Button(action: toggleMode) {
+                        Label(advanced ? "Use the form" : "Edit as JSON",
+                              systemImage: advanced ? "list.bullet" : "curlybraces")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.link)
+                    .help(advanced ? "Switch back to the guided form"
+                                   : "Edit this rule's raw JSON spec -- reaches a window's titlePattern")
+                }
             }
 
             if advanced {
                 jsonEditor
             } else {
+            TextField("Name (optional)", text: $name)
             Picker("When", selection: $triggerType) {
                 // Each state signal is its own top-level choice (Frontmost app,
                 // Connected display, ...) -- no nested "Signal" picker.
@@ -271,6 +347,15 @@ private struct AddRuleForm: View {
             }
         }
         .onAppear(perform: reloadOptions)
+        // Hosted on the Section (always present), not the conditional link above,
+        // so the dialog is never torn down mid-presentation when the link hides.
+        .confirmationDialog("Discard your JSON edits?",
+                            isPresented: $confirmLeaveJSON, titleVisibility: .visible) {
+            Button("Discard edits", role: .destructive) { advanced = false }
+            Button("Keep editing JSON", role: .cancel) {}
+        } message: {
+            Text("Switching to the form discards the changes you made in the JSON editor.")
+        }
         // Entering JSON mode seeds the editor with the rule's current spec and
         // records that seed (so the toggle binding can tell if it was edited).
         .onChange(of: advanced) { on in
@@ -352,19 +437,15 @@ private struct AddRuleForm: View {
         }
     }
 
-    // Guards the Form/JSON toggle: switching JSON->Form while the editor is dirty
+    // Guards the Form/JSON toggle: leaving the JSON editor while it's dirty
     // (jsonText differs from its seed) asks first, so a mis-tap never silently
-    // discards typed JSON. Every other transition switches immediately.
-    private var modeBinding: Binding<Bool> {
-        Binding(
-            get: { advanced },
-            set: { wantAdvanced in
-                if advanced && !wantAdvanced && jsonText != jsonSeed {
-                    confirmLeaveJSON = true     // dirty JSON -> confirm before leaving
-                } else {
-                    advanced = wantAdvanced
-                }
-            })
+    // discards typed JSON. Entering JSON (form -> JSON) always switches at once.
+    private func toggleMode() {
+        if advanced && jsonText != jsonSeed {
+            confirmLeaveJSON = true     // dirty JSON -> confirm before leaving
+        } else {
+            advanced.toggle()
+        }
     }
 
     // The "When" choice encodes the signal as "state:<signal>"; these unpack it.
@@ -493,6 +574,7 @@ private struct AddRuleForm: View {
         // Default to the app signal (not whichever sorts first), so a fresh rule
         // starts on the familiar "frontmost app" case.
         let defSig = opts.signals.contains("frontmostApp") ? "frontmostApp" : (opts.signals.first ?? "frontmostApp")
+        name = ""
         triggerType = "state:" + defSig
         transition = "becomes"
         stateValue = ""
@@ -518,6 +600,7 @@ private struct AddRuleForm: View {
         advanced = false   // selecting a rule starts in the guided form
         jsonText = ""
         jsonSeed = ""
+        name = rule.name
         let on = rule.on
         let type = on["type"] as? String ?? "state"
         if type == "state" {
@@ -677,6 +760,9 @@ private struct AddRuleForm: View {
             effect = ["kind": "command", "feature": eff.feature ?? ""]
             if let a = eff.action { effect["action"] = a }
         }
-        return ["on": on, "effect": effect]
+        var spec: [String: Any] = ["on": on, "effect": effect]
+        let label = name.trimmingCharacters(in: .whitespaces)
+        if !label.isEmpty { spec["name"] = label }
+        return spec
     }
 }
