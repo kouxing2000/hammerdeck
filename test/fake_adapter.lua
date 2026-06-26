@@ -286,7 +286,7 @@ end
 
 -- Focused-window frame surface (window_snap) -----------------------------------
 
-fake.screenList     = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
+fake.screenList     = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1, builtin = true } }
 fake.focusedWindow  = nil   -- {x,y,w,h, fullscreen?, screenIndex?} preset by tests
 fake.windowFrames   = {}    -- recorded setFocusedWindowFrame calls
 fake.windowFrameSets = {}   -- recorded setWindowFrame(id, f) calls: {id, x, y, w, h}
@@ -317,7 +317,12 @@ end
 -- Move a listed window by id (the layout engine). Records the call and, if a
 -- fake.windows row has that id, updates its frame so a capture-after-apply
 -- round-trip reflects the move.
+-- fake.failWindowFrameIds[id] = true makes a move on that window FAIL (returns
+-- false, records nothing) -- lets a test exercise the matched-but-move-failed path
+-- (the real AX setFrame can refuse on a fullscreen/just-closed window).
+fake.failWindowFrameIds = {}
 function adapter.setWindowFrame(id, f)
+    if fake.failWindowFrameIds[id] then return false end
     fake.windowFrameSets[#fake.windowFrameSets + 1] =
         { id = id, x = f.x, y = f.y, w = f.w, h = f.h }
     for _, w in ipairs(fake.windows) do

@@ -109,7 +109,8 @@ end
 
 --- Does a window row (from adapter.listWindows) match a placement's selector?
 --- Matches by exact app name; an optional `titlePattern` is a plain (non-Lua-
---- pattern) substring of the title. A placement with neither matches nothing.
+--- pattern), CASE-INSENSITIVE substring of the title. A placement with neither
+--- matches nothing.
 ---@param w table a window row { appName, title, ... }
 ---@param p table a placement { app, titlePattern? }
 ---@return boolean
@@ -117,7 +118,11 @@ function M.windowMatches(w, p)
     if type(p.app) ~= "string" or #p.app == 0 then return false end
     if w.appName ~= p.app then return false end
     if type(p.titlePattern) == "string" and #p.titlePattern > 0 then
-        if type(w.title) ~= "string" or not w.title:find(p.titlePattern, 1, true) then
+        -- Case-insensitive: users type "docs", the title reads "Docs - report".
+        -- NOTE: string.lower is ASCII-only, so non-ASCII titles (accented / CJK)
+        -- aren't case-folded -- a best-effort disambiguator, not full Unicode.
+        if type(w.title) ~= "string"
+            or not w.title:lower():find(p.titlePattern:lower(), 1, true) then
             return false
         end
     end

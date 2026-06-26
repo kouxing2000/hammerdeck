@@ -1031,6 +1031,9 @@ final class IntegrationTests: XCTestCase {
         let s0 = screens[0]
         XCTAssertGreaterThan(s0["w"] as? Double ?? 0, 0)
         XCTAssertGreaterThan(s0["h"] as? Double ?? 0, 0)
+        // Every screen carries a `builtin` flag (CGDisplayIsBuiltin) -- capture
+        // uses it to keep only external displays.
+        XCTAssertNotNil(s0["builtin"] as? Bool, "screen rows expose a `builtin` flag")
 
         let mouse = eval("return require('platform.adapter').mousePosition()") as? [String: Any]
         XCTAssertNotNil(mouse?["x"] as? Double)

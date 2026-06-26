@@ -340,9 +340,10 @@ function adapter.setFocusedWindowFullscreen(on)
     return native.set_focused_window_fullscreen(on == true) == true
 end
 
--- Visible frame of every screen (primary first): { x,y,w,h, name, index } rows;
--- screenIndex indexes this. `name` is the display's localizedName -- the layout
--- engine targets a display by it.
+-- Visible frame of every screen (primary first): { x,y,w,h, name, index, builtin }
+-- rows; screenIndex indexes this. `name` is the display's localizedName -- the
+-- layout engine targets a display by it; `builtin` is true for the laptop's own
+-- panel (capture skips it to keep only external displays).
 function adapter.screenFrames()
     return native.screen_frames()
 end

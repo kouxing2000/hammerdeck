@@ -22,33 +22,71 @@ local windows  = require("platform.windows")
 
 local effects = {}
 
+-- A placement's human label for the diagnostic note: "Safari 'Docs' on DELL".
+local function placementLabel(p)
+    local who = tostring(p.app or "?")
+    if type(p.titlePattern) == "string" and #p.titlePattern > 0 then
+        who = who .. " '" .. p.titlePattern .. "'"
+    end
+    return who .. " on " .. tostring(p.screen)
+end
+
 -- Apply a `layout` effect: for each placement, resolve its target display (a
 -- placement whose display is absent is SKIPPED -- self-gating, so a "dock"
 -- layout only acts when the monitor is plugged in), compute the rect from the
 -- position ratios, and move the FIRST not-yet-placed window matching
--- {app,titlePattern} there. Returns (true) if any window moved, else
--- (false, reason) so a no-op (display unplugged / app not running) is logged
--- rather than silently doing nothing.
+-- {app,titlePattern} there.
+--
+-- Three counts, kept DISTINCT so the diagnostic never lies:
+--   present -- placements whose target display is connected (the note's denominator;
+--              an ABSENT-display placement is self-gated, NOT counted as a failure).
+--   moved   -- of those, the move (setWindowFrame) actually succeeded.
+--   misses  -- present-display placements that matched NO window (app closed).
+--   failed  -- matched a window but the move itself failed (AX can refuse).
+-- Returns:
+--   (false, reason)  -- moved nothing: reason distinguishes no-match from all-moves-failed.
+--   (true, note)     -- moved some but not all: note names the misses AND move-failures,
+--                       so a partial fire is visible in the log, never silently dropped.
+--   (true)           -- every present-display placement moved cleanly.
 local function applyLayout(node)
     local wins    = adapter.listWindows() or {}
     local screens = adapter.screenFrames() or {}
     local used    = {}    -- window id -> true (one window consumed per placement)
+    local present = 0
     local moved   = 0
+    local misses  = {}
+    local failed  = {}
     for _, p in ipairs(node.placements) do
         local screen = windows.resolveScreen(screens, p.screen)
         local ratios = windows.ratiosFor(p.pos)
         if screen and ratios then
+            present = present + 1
             local rect = windows.rectFromRatios(screen, ratios.x, ratios.y, ratios.w, ratios.h)
+            local matched = false
             for _, w in ipairs(wins) do
                 if not used[w.id] and windows.windowMatches(w, p) then
                     used[w.id] = true
-                    if adapter.setWindowFrame(w.id, rect) then moved = moved + 1 end
+                    matched = true
+                    if adapter.setWindowFrame(w.id, rect) then moved = moved + 1
+                    else failed[#failed + 1] = placementLabel(p) end
                     break
                 end
             end
+            if not matched then misses[#misses + 1] = placementLabel(p) end
         end
     end
-    if moved == 0 then return false, "no matching windows on present displays" end
+    if moved == 0 then
+        if #failed > 0 then
+            return false, "matched window(s) but every move failed: " .. table.concat(failed, ", ")
+        end
+        return false, "no matching windows on present displays"
+    end
+    local notes = {}
+    if #misses > 0 then notes[#notes + 1] = "no window for: " .. table.concat(misses, ", ") end
+    if #failed > 0 then notes[#notes + 1] = "move failed: " .. table.concat(failed, ", ") end
+    if #notes > 0 then
+        return true, "moved " .. moved .. "/" .. present .. " -- " .. table.concat(notes, "; ")
+    end
     return true
 end
 
@@ -79,6 +117,11 @@ function effects.validate(node)
                 "layout placement #" .. i .. " needs a screen (display name)")
             assert(windows.ratiosFor(p.pos) ~= nil,
                 "layout placement #" .. i .. " needs a valid position")
+            -- Optional window disambiguator: a plain substring of the title (lets
+            -- a rule target ONE of several same-app windows). The advanced JSON
+            -- editor is the way to set it; the guided form doesn't expose it.
+            assert(p.titlePattern == nil or type(p.titlePattern) == "string",
+                "layout placement #" .. i .. " titlePattern must be a string")
         end
     elseif kind == "runShortcut" then
         assert(type(node.name) == "string" and #node.name > 0,
@@ -115,12 +158,13 @@ function effects.requiresContext(node)
     return true
 end
 
---- Run an effect node. Returns true on success, or false + reason. Never throws
---- for known kinds (registry.runAction is pcall-guarded; notify is contained),
---- so a failing effect surfaces as a return value the caller can log.
+--- Run an effect node. Returns (true) on success, (false, reason) on failure, or
+--- (true, note) on a PARTIAL success the caller should log (e.g. a layout that
+--- moved some-but-not-all windows). Never throws for known kinds (registry.runAction
+--- is pcall-guarded; notify is contained), so an outcome always surfaces as a return.
 ---@param node table an effect node
 ---@return boolean ok
----@return string|nil reason
+---@return string|nil reasonOrNote  failure reason, or a partial-success note
 function effects.dispatch(node)
     if node.kind == "command" then
         return registry.runAction(node.feature, node.action)
@@ -199,20 +243,33 @@ end
 
 --- Snapshot the CURRENT window arrangement as a layout effect's placement list:
 --- one entry per on-screen window, tagged with its app, the display it sits on,
---- and its EXACT position ratios on that display (not snapped to the grid).
---- Backs the Settings "Capture current layout" button -- arrange windows by
---- hand, capture, then save as a rule. Windows whose display can't be resolved
---- (or zero-sized) are skipped. Returns the placements array (possibly empty).
+--- and its EXACT position ratios on that display (not snapped to the grid). Backs
+--- the Settings "Capture current layout" button -- arrange windows by hand,
+--- capture, then save as a rule.
+---
+--- Scope:
+---  * `onlyDisplay` set (a display NAME) -- capture ONLY windows on that one
+---    display. This is what a "when <display> connects" rule wants: with 3
+---    monitors, it grabs just the display the rule is about, not the others.
+---  * `onlyDisplay` nil/empty -- capture every EXTERNAL display's windows; the
+---    BUILT-IN panel is skipped (a captured layout restores a display that comes
+---    and goes, and the built-in is always present, so it's never the subject).
+--- Either way, windows whose display can't be resolved (or zero-sized) are
+--- skipped. Returns the placements array (possibly empty).
+---@param onlyDisplay string|nil restrict capture to this display's windows
 ---@return table[]
-function effects.captureLayout()
+function effects.captureLayout(onlyDisplay)
     local wins    = adapter.listWindows() or {}
     local screens = adapter.screenFrames() or {}
+    local scoped  = type(onlyDisplay) == "string" and onlyDisplay ~= ""
     local out = {}
     for _, w in ipairs(wins) do
         if type(w.w) == "number" and w.w > 0 and type(w.h) == "number" and w.h > 0
             and type(w.x) == "number" and type(w.y) == "number" then
             local s = windows.screenOfFrame(screens, w)
-            if s and s.name and s.w > 0 and s.h > 0 then
+            local keep = s and s.name and s.w > 0 and s.h > 0
+                and (scoped and (s.name == onlyDisplay) or (not scoped and not s.builtin))
+            if keep then
                 out[#out + 1] = {
                     app    = w.appName,
                     screen = s.name,

@@ -293,10 +293,12 @@ extension Native {
         return 1
     }
 
-    // screen_frames() -> array of { x,y,w,h, name, index } visible frames
+    // screen_frames() -> array of { x,y,w,h, name, index, builtin } visible frames
     // (top-left-origin), the order NSScreen.screens gives (primary first). The
     // name (localizedName, e.g. "Built-in Retina Display", "DELL U2720Q") is the
-    // stable-ish key the window-layout engine targets a display by.
+    // stable-ish key the window-layout engine targets a display by; `builtin`
+    // (CGDisplayIsBuiltin) flags the laptop's own panel so "Capture current
+    // layout" can keep just the EXTERNAL displays (the ones a connect rule is for).
     func screenFrames(_ L: OpaquePointer?) -> Int32 {
         let screens = NSScreen.screens
         lua_createtable(L, Int32(screens.count), 0)
@@ -304,6 +306,10 @@ extension Native {
             pushRect(L, axRect(s.visibleFrame))   // leaves a {x,y,w,h} table on top
             lua_pushstring(L, s.localizedName);       lua_setfield(L, -2, "name")
             lua_pushinteger(L, lua_Integer(i + 1));   lua_setfield(L, -2, "index")
+            let num = (s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                       as? NSNumber)?.uint32Value ?? 0
+            lua_pushboolean(L, CGDisplayIsBuiltin(num) != 0 ? 1 : 0)
+            lua_setfield(L, -2, "builtin")
             lua_rawseti(L, -2, lua_Integer(i + 1))
         }
         return 1

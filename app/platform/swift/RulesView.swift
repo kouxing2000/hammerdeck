@@ -154,11 +154,37 @@ private struct AddRuleForm: View {
     @State private var shortcutName = ""              // runShortcut
     @State private var openURLValue = ""              // openURL
     @State private var formError: String?
+    // Advanced "Edit as JSON" mode: one rule, one JSON spec.
+    @State private var advanced = false
+    @State private var jsonText = ""
+    @State private var jsonSeed = ""            // what jsonText was seeded with (dirty check)
+    @State private var confirmLeaveJSON = false
 
     private var isEditing: Bool { editing != nil }
 
     var body: some View {
         Section(isEditing ? "Edit rule" : "Add a rule") {
+            // Form is the default; JSON (advanced) edits the rule's full spec --
+            // the escape hatch for what the guided form can't express (e.g. a
+            // placement's titlePattern). One rule, one JSON. The binding GUARDS
+            // the JSON->Form switch when the editor is dirty, so a mis-tap can't
+            // silently throw away typed JSON.
+            Picker("Edit mode", selection: modeBinding) {
+                Text("Form").tag(false)
+                Text("JSON (advanced)").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .confirmationDialog("Discard your JSON edits?",
+                                isPresented: $confirmLeaveJSON, titleVisibility: .visible) {
+                Button("Discard edits", role: .destructive) { advanced = false }
+                Button("Keep editing JSON", role: .cancel) {}
+            } message: {
+                Text("Switching to the form discards the changes you made in the JSON editor.")
+            }
+
+            if advanced {
+                jsonEditor
+            } else {
             Picker("When", selection: $triggerType) {
                 // Each state signal is its own top-level choice (Frontmost app,
                 // Connected display, ...) -- no nested "Signal" picker.
@@ -226,6 +252,7 @@ private struct AddRuleForm: View {
             } else if selectedEffect?.kind == "openURL" {
                 TextField("URL (https://… , or an app scheme like raycast://…)", text: $openURLValue)
             }
+            }   // end of the Form-mode (!advanced) fields
 
             if let formError {
                 Label(formError, systemImage: "exclamationmark.triangle")
@@ -237,11 +264,18 @@ private struct AddRuleForm: View {
                 if isEditing {
                     Button("Cancel") { editing = nil }   // onChange resets the form
                 }
-                Button(isEditing ? "Save changes" : "Add rule") { submit() }
-                    .disabled(!canSubmit)
+                Button(isEditing ? "Save changes" : "Add rule") {
+                    advanced ? submitJSON() : submit()
+                }
+                .disabled(!canSubmit)
             }
         }
         .onAppear(perform: reloadOptions)
+        // Entering JSON mode seeds the editor with the rule's current spec and
+        // records that seed (so the toggle binding can tell if it was edited).
+        .onChange(of: advanced) { on in
+            if on { jsonText = currentSpecJSON(); jsonSeed = jsonText }
+        }
         // Drive the form from the selection: a rule -> pre-fill (edit), nil -> reset (add).
         .onChange(of: editing?.id) { _ in
             if let rule = editing { loadForEdit(rule) } else { resetForm() }
@@ -250,6 +284,25 @@ private struct AddRuleForm: View {
         .onChange(of: effectId) { _ in
             if selectedEffect?.kind == "layout" && placements.isEmpty { addPlacement() }
         }
+    }
+
+    // The advanced raw-JSON editor for one rule's full spec. Saving validates
+    // through the same engine path as the form (addJSON / updateJSON), so a bad
+    // spec comes back as an inline error, never a crash.
+    @ViewBuilder private var jsonEditor: some View {
+        Text("Edit this rule's full spec as JSON -- this reaches what the form can't. "
+             + "Each layout window shows a \"titlePattern\": fill it with part of a "
+             + "window's title (case-insensitive) to target one of several same-app "
+             + "windows (leave \"\" to match any). Saving validates the spec.")
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        TextEditor(text: $jsonText)
+            .font(.system(.callout, design: .monospaced))
+            .frame(minHeight: 220)
+            .padding(4)
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.gray.opacity(0.3)))
+            .autocorrectionDisabled()
     }
 
     // The repeatable window-placement editor (shown when the effect is "layout").
@@ -299,6 +352,21 @@ private struct AddRuleForm: View {
         }
     }
 
+    // Guards the Form/JSON toggle: switching JSON->Form while the editor is dirty
+    // (jsonText differs from its seed) asks first, so a mis-tap never silently
+    // discards typed JSON. Every other transition switches immediately.
+    private var modeBinding: Binding<Bool> {
+        Binding(
+            get: { advanced },
+            set: { wantAdvanced in
+                if advanced && !wantAdvanced && jsonText != jsonSeed {
+                    confirmLeaveJSON = true     // dirty JSON -> confirm before leaving
+                } else {
+                    advanced = wantAdvanced
+                }
+            })
+    }
+
     // The "When" choice encodes the signal as "state:<signal>"; these unpack it.
     private var isStateTrigger: Bool { triggerType.hasPrefix("state:") }
     private var signal: String {
@@ -336,11 +404,21 @@ private struct AddRuleForm: View {
         placements.append(Placement(screen: opts.layoutDisplays.last ?? "", pos: "full"))
     }
 
-    /// Replace the rows with a snapshot of the current window arrangement.
+    /// Replace the rows with a snapshot of the current window arrangement. When the
+    /// trigger names a specific display ("when <display> connects"), capture is
+    /// scoped to THAT display -- so a 3-monitor setup grabs only the display the
+    /// rule is about, not the others. Otherwise it captures every external display.
     private func capture() {
-        let snap = store.captureLayout()
+        let onlyDisplay = (signal == "displaysPresent")
+            ? stateValue.trimmingCharacters(in: .whitespaces) : ""
+        let snap = store.captureLayout(onlyDisplay: onlyDisplay)
         guard !snap.isEmpty else {
-            formError = "Nothing to capture -- open some windows (and grant Accessibility)."
+            formError = onlyDisplay.isEmpty
+                ? "Nothing to capture -- capture takes only EXTERNAL-display windows "
+                    + "(the built-in screen is skipped). Put a window on an external "
+                    + "monitor, and make sure Hammerdeck has Accessibility."
+                : "No windows on \"\(onlyDisplay)\" to capture -- move some there first "
+                    + "(or it isn't connected right now)."
             return
         }
         placements = snap.map(placement(from:))
@@ -376,6 +454,9 @@ private struct AddRuleForm: View {
     }
 
     private var canSubmit: Bool {
+        if advanced {
+            return !jsonText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         if isStateTrigger,
            stateValue.trimmingCharacters(in: .whitespaces).isEmpty { return false }
         if selectedEffect?.kind == "notify",
@@ -426,11 +507,17 @@ private struct AddRuleForm: View {
         shortcutName = ""
         openURLValue = ""
         formError = nil
+        advanced = false
+        jsonText = ""
+        jsonSeed = ""
     }
 
     /// Reverse of buildSpec: seed the form fields from an existing rule's spec.
     private func loadForEdit(_ rule: RuleInfo) {
         formError = nil
+        advanced = false   // selecting a rule starts in the guided form
+        jsonText = ""
+        jsonSeed = ""
         let on = rule.on
         let type = on["type"] as? String ?? "state"
         if type == "state" {
@@ -490,6 +577,52 @@ private struct AddRuleForm: View {
             resetForm()
         }
     }
+
+    /// Save from the advanced JSON editor -- same engine path as the form, just
+    /// the raw spec instead of the built one.
+    private func submitJSON() {
+        let text = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { formError = "the JSON is empty"; return }
+        let reason = isEditing ? store.updateRule(editing!.id, text) : store.addRule(text)
+        if let reason {
+            formError = reason
+        } else {
+            editing = nil
+            resetForm()
+        }
+    }
+
+    /// The JSON to seed the advanced editor with. Editing an existing rule shows
+    /// its SAVED spec (lossless -- preserves advanced fields the form can't hold);
+    /// a new rule shows the in-progress form as JSON, or a starter template.
+    private func currentSpecJSON() -> String {
+        if let rule = editing {
+            let s = store.ruleSpecJSON(rule.id)
+            if !s.isEmpty { return s }
+        }
+        if let spec = buildSpec(),
+           let data = try? JSONSerialization.data(
+            withJSONObject: spec,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+           let s = String(data: data, encoding: .utf8) {
+            return s
+        }
+        return Self.jsonTemplate
+    }
+
+    // A starter spec for a brand-new rule authored straight in JSON -- shows the
+    // shape AND the titlePattern field (the thing the form can't express).
+    private static let jsonTemplate = """
+        {
+          "on" : { "type" : "state", "signal" : "displaysPresent", "becomes" : "DELL U2720Q" },
+          "effect" : {
+            "kind" : "layout",
+            "placements" : [
+              { "app" : "Safari", "titlePattern" : "", "screen" : "DELL U2720Q", "pos" : "left" }
+            ]
+          }
+        }
+        """
 
     private func buildSpec() -> [String: Any]? {
         var on: [String: Any]

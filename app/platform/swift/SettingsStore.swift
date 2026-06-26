@@ -456,9 +456,12 @@ final class SettingsStore: ObservableObject {
 
     /// Snapshot the current window arrangement as layout placements (the layout
     /// editor's "Capture current layout"). Each dict is { app, screen, pos } where
-    /// pos is a { x,y,w,h } ratio table.
-    func captureLayout() -> [[String: Any]] {
-        guard let raw = try? lua.call("platform.rules", "captureLayout").first ?? nil,
+    /// pos is a { x,y,w,h } ratio table. `onlyDisplay` (the rule's trigger display)
+    /// restricts the snapshot to that one display; empty captures every external
+    /// display.
+    func captureLayout(onlyDisplay: String = "") -> [[String: Any]] {
+        let args: [LuaArg] = onlyDisplay.isEmpty ? [] : [.string(onlyDisplay)]
+        guard let raw = try? lua.call("platform.rules", "captureLayout", args).first ?? nil,
               let list = raw as? [Any] else { return [] }
         return list.compactMap { $0 as? [String: Any] }
     }
@@ -484,6 +487,47 @@ final class SettingsStore: ObservableObject {
         }
         if (r[0] as? Bool) == true { return nil }
         return (r[1] as? String) ?? "invalid rule"
+    }
+
+    /// One rule's stored spec as pretty-printed JSON (the advanced "Edit as JSON"
+    /// editor's source). The engine emits canonical (compact) JSON; we re-indent it
+    /// for editing and SURFACE optional fields so they're discoverable -- a layout
+    /// placement that has no `titlePattern` gets an empty one, so the editor shows
+    /// the field exists (an unfilled "" is ignored at match time). Returns "" if the
+    /// rule is unknown / unencodable.
+    func ruleSpecJSON(_ id: String) -> String {
+        guard let raw = try? lua.call("platform.rules", "specJSON", [.string(id)]).first ?? nil,
+              let compact = raw as? String else { return "" }
+        guard let data = compact.data(using: .utf8),
+              var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return Self.prettyJSON(compact) }
+        if var effect = obj["effect"] as? [String: Any],
+           effect["kind"] as? String == "layout",
+           let places = effect["placements"] as? [[String: Any]] {
+            effect["placements"] = places.map { p -> [String: Any] in
+                var p = p
+                if p["titlePattern"] == nil { p["titlePattern"] = "" }  // surface the field
+                return p
+            }
+            obj["effect"] = effect
+        }
+        guard let pretty = try? JSONSerialization.data(
+                withJSONObject: obj,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+              let s = String(data: pretty, encoding: .utf8) else { return Self.prettyJSON(compact) }
+        return s
+    }
+
+    /// Re-indent a compact JSON string for human editing (sorted keys, 2-space).
+    /// Falls back to the input unchanged if it can't be parsed.
+    static func prettyJSON(_ compact: String) -> String {
+        guard let data = compact.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(
+                withJSONObject: obj,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+              let s = String(data: pretty, encoding: .utf8) else { return compact }
+        return s
     }
 
     /// Update an existing rule in place from a JSON spec (the edit form's "Save

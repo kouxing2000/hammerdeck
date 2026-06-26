@@ -96,11 +96,15 @@ end
 -- matches, an effect targeting a now-disabled feature) is otherwise impossible
 -- to diagnose -- this trace ("Open Logs" in the menubar) is the only window in.
 local function fire(id, spec)
-    local ok, reason = effects.dispatch(spec.effect)
+    local ok, note = effects.dispatch(spec.effect)
     if ok then
-        adapter.log("rule '" .. id .. "' fired -> " .. effects.describe(spec.effect))
+        local msg = "rule '" .. id .. "' fired -> " .. effects.describe(spec.effect)
+        -- A partial success (e.g. a layout that moved some-but-not-all windows)
+        -- carries a note -- append it so a half-firing rule isn't silently "fired".
+        if type(note) == "string" and note ~= "" then msg = msg .. " (" .. note .. ")" end
+        adapter.log(msg)
     else
-        adapter.log("rule '" .. id .. "' effect FAILED: " .. tostring(reason))
+        adapter.log("rule '" .. id .. "' effect FAILED: " .. tostring(note))
     end
 end
 
@@ -269,6 +273,21 @@ function rules.updateJSON(id, str)
     return rules.update(id, data)
 end
 
+--- The canonical JSON of ONE rule's stored spec (the advanced "Edit as JSON"
+--- editor loads this, so it sees the rule's FULL shape -- including advanced
+--- fields the guided form can't represent, e.g. a placement's titlePattern).
+--- Returns (json) or (nil, reason).
+---@param id string
+---@return string|nil json
+---@return string|nil reason
+function rules.specJSON(id)
+    local spec = specs[id]
+    if not spec then return nil, "no such rule: " .. tostring(id) end
+    local str, err = json.encode(spec)
+    if not str then return nil, "encode failed: " .. tostring(err) end
+    return str
+end
+
 --- Number of loaded rules.
 ---@return integer
 function rules.count()
@@ -355,11 +374,14 @@ function rules.formOptions()
 end
 
 --- Snapshot the current window arrangement as a layout placement list (the
---- Settings "Capture current layout" button). Delegates to effects.captureLayout;
+--- Settings "Capture current layout" button). `onlyDisplay` (a display name, e.g.
+--- the rule's trigger display) restricts the snapshot to that one display;
+--- nil/empty captures every external display. Delegates to effects.captureLayout;
 --- tagged as an array so an empty capture still crosses the bridge as `[]`.
+---@param onlyDisplay string|nil restrict capture to this display's windows
 ---@return table[]
-function rules.captureLayout()
-    return json.asArray(effects.captureLayout())
+function rules.captureLayout(onlyDisplay)
+    return json.asArray(effects.captureLayout(onlyDisplay))
 end
 
 return rules
