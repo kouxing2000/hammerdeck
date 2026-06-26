@@ -1002,6 +1002,21 @@ fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
 fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "c" })
 ok(fake.mousePos.x == 300 and fake.mousePos.y == 250, "Hyper+M C centers the pointer on the window")
 ok(fake.mouseLocates[#fake.mouseLocates] == 1, "and flashes the locator")
+-- center the pointer on a screen (Hyper+M N = next display, wraps; Hyper+M S = main)
+fake.screenList = {
+    { x = 0,    y = 0, w = 1440, h = 900,  name = "Built-in", index = 1 },
+    { x = 1440, y = 0, w = 2560, h = 1440, name = "DELL",     index = 2 },
+}
+fake.mousePos = { x = 10, y = 10 }   -- pointer parked on the Built-in screen
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "n" })
+ok(fake.mousePos.x == 2720 and fake.mousePos.y == 720, "Hyper+M N flings the pointer to the next display's center")
+ok(fake.mouseLocates[#fake.mouseLocates] == 1, "and flashes the locator")
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "n" })   -- now on DELL -> wraps back to the first
+ok(fake.mousePos.x == 720 and fake.mousePos.y == 450, "Hyper+M N wraps from the last display back to the first")
+fake.mousePos = { x = 2000, y = 100 }   -- pointer parked on DELL
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "s" })
+ok(fake.mousePos.x == 720 and fake.mousePos.y == 450, "Hyper+M S centers the pointer on the main screen")
+fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
 registry.setEnabled("locate_pointer", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after locate_pointer test")
 
