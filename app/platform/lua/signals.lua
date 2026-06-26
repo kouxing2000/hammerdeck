@@ -22,7 +22,13 @@ local signals = {}
 -- installs the single underlying adapter watcher (returns a .stop() handle) and
 -- calls emit(value) on each change. We fan that one watcher out to N subscribers
 -- so 10 rules watching frontmostApp cost exactly one onAppActivated registration.
----@param def { read: fun():any, observe: fun(emit:fun(v:any)):table }
+--
+-- `def.match(value, target)` decides whether the signal's current value satisfies
+-- a rule's target -- defaulting to scalar equality (frontmostApp == "Safari"). A
+-- SET-valued signal (displaysPresent, whose value is a list of display names)
+-- overrides it with membership, so "becomes DELL" means "DELL entered the set"
+-- (a monitor connected) and "leaves DELL" means it left (disconnected).
+---@param def { read: fun():any, observe: fun(emit:fun(v:any)):table, match: fun(v:any,t:any):boolean|nil }
 local function pushSignal(def)
     local subs = {}       -- token -> cb
     local nextTok = 0
@@ -31,6 +37,15 @@ local function pushSignal(def)
     local sig = {}
 
     function sig.read() return def.read() end
+
+    -- Does the current value `v` satisfy target `t`? Scalar equality by default.
+    sig.match = def.match or function(v, t) return v == t end
+
+    -- UI metadata (label / value noun / transition verbs) so the Rules form
+    -- renders a signal with zero Swift per-signal code, and an optional
+    -- candidates() provider for the value dropdown.
+    sig.meta = def.meta
+    sig.candidates = def.candidates
 
     --- Subscribe to changes. Returns a handle with .stop().
     function sig.subscribe(cb)
@@ -55,13 +70,97 @@ local function pushSignal(def)
     return sig
 end
 
+-- The set of currently-connected display names (the value of displaysPresent).
+local function readDisplayNames()
+    local out = {}
+    local ok, screens = pcall(adapter.screenFrames)
+    if ok and type(screens) == "table" then
+        for _, s in ipairs(screens) do
+            if type(s) == "table" and type(s.name) == "string" then out[#out + 1] = s.name end
+        end
+    end
+    return out
+end
+
+-- Set-membership match (a value crosses INTO/OUT OF a list): used by signals
+-- whose value is a set -- displaysPresent (connected monitors), runningApps.
+local function membership(v, target)
+    if type(v) ~= "table" then return false end
+    for _, x in ipairs(v) do if x == target then return true end end
+    return false
+end
+
 -- The signal registry. Built at load (no side effects -- pushSignal installs its
--- watcher lazily, on first subscribe).
+-- watcher lazily, on first subscribe). Each signal: read()+observe(emit), an
+-- optional match (default scalar ==), `meta` (Rules-form labels), and an optional
+-- candidates() for the value dropdown. An observe that re-reads on a coarse event
+-- (the displaysPresent/powerSource/... pattern) keeps every signal one shape.
 local REGISTRY = {
     frontmostApp = pushSignal {
         read    = function() return adapter.frontmostApp() end,
         observe = function(emit) return adapter.onAppActivated(emit) end,
+        meta    = { label = "Frontmost app", valueLabel = "App name",
+                    enterVerb = "becomes", leaveVerb = "leaves", example = "Safari" },
+        candidates = function()
+            local out = { adapter.frontmostApp() }
+            local ok, wins = pcall(adapter.listWindows)
+            if ok and type(wins) == "table" then
+                for _, w in ipairs(wins) do out[#out + 1] = w.appName end
+            end
+            return out
+        end,
     },
+    -- The set of connected displays (by name). Re-read on every screenChanged;
+    -- membership match turns "connects <name>" into "that monitor connected" and
+    -- "disconnects <name>" into "unplugged". The precise, monitor-named form of
+    -- the coarse `screenChanged` event.
+    displaysPresent = pushSignal {
+        read    = readDisplayNames,
+        observe = function(emit)
+            return adapter.onSystemEvent("screenChanged", function() emit(readDisplayNames()) end)
+        end,
+        match   = membership,
+        meta    = { label = "Connected display", valueLabel = "Display name",
+                    enterVerb = "connects", leaveVerb = "disconnects", example = "DELL U2720Q" },
+        candidates = readDisplayNames,
+    },
+    -- System appearance: "dark" / "light". Re-read on the appearance-changed
+    -- distributed notification.
+    appearance = pushSignal {
+        read    = function() return adapter.appearance() end,
+        observe = function(emit)
+            return adapter.onSystemEvent("appearanceChanged", function() emit(adapter.appearance()) end)
+        end,
+        meta    = { label = "Appearance", valueLabel = "Mode",
+                    enterVerb = "becomes", leaveVerb = "leaves", example = "dark" },
+        candidates = function() return { "dark", "light" } end,
+    },
+    -- The set of running apps (by name). "launches <name>" = it started,
+    -- "quits <name>" = it terminated. Re-read on app launch/quit.
+    runningApps = pushSignal {
+        read    = function() return adapter.runningApps() end,
+        observe = function(emit)
+            return adapter.onSystemEvent("appsChanged", function() emit(adapter.runningApps()) end)
+        end,
+        match   = membership,
+        meta    = { label = "Running app", valueLabel = "App name",
+                    enterVerb = "launches", leaveVerb = "quits", example = "Slack" },
+        candidates = function() return adapter.runningApps() end,
+    },
+    -- Power source: "ac" (plugged in) / "battery". Re-read on power change.
+    powerSource = pushSignal {
+        read    = function() return adapter.powerSource() end,
+        observe = function(emit)
+            return adapter.onSystemEvent("powerChanged", function() emit(adapter.powerSource()) end)
+        end,
+        meta    = { label = "Power source", valueLabel = "Source",
+                    enterVerb = "becomes", leaveVerb = "leaves", example = "battery" },
+        candidates = function() return { "ac", "battery" } end,
+    },
+    -- NOTE: `ssid` (Wi-Fi network) is deferred -- reading the SSID needs the
+    -- Location permission on macOS 14+, so it requires CLLocationManager + an
+    -- Info.plist usage string + a runtime prompt (a product decision). Wire it as
+    -- a follow-up; the shape is identical to the signals above.
 }
 
 --- Get a signal by name, or nil if unknown.
@@ -83,24 +182,29 @@ function signals.list()
     return out
 end
 
---- Best-effort candidate values for a signal, for the UI dropdown. For
---- frontmostApp: the current frontmost + the app names of open windows (the
---- window scan is guarded -- it needs Accessibility, so a denial just yields the
---- frontmost alone; the UI also allows free text).
+--- UI metadata for a signal (label, value noun, transition verbs), or nil.
+---@param name string
+---@return table|nil
+function signals.meta(name)
+    local sig = REGISTRY[name]
+    return sig and sig.meta or nil
+end
+
+--- Best-effort candidate values for a signal's value dropdown -- deduped + sorted,
+--- pulled from the signal's own candidates() provider (guarded: a provider that
+--- needs a permission may yield fewer / none; the UI also allows free text).
 ---@param name string
 ---@return string[]
 function signals.candidates(name)
+    local sig = REGISTRY[name]
+    if not sig or type(sig.candidates) ~= "function" then return {} end
     local out, seen = {}, {}
-    local function add(s)
-        if type(s) == "string" and #s > 0 and not seen[s] then
-            seen[s] = true; out[#out + 1] = s
-        end
-    end
-    if name == "frontmostApp" then
-        add(adapter.frontmostApp())
-        local ok, wins = pcall(adapter.listWindows)
-        if ok and type(wins) == "table" then
-            for _, w in ipairs(wins) do add(w.appName) end
+    local ok, list = pcall(sig.candidates)
+    if ok and type(list) == "table" then
+        for _, s in ipairs(list) do
+            if type(s) == "string" and #s > 0 and not seen[s] then
+                seen[s] = true; out[#out + 1] = s
+            end
         end
     end
     table.sort(out)

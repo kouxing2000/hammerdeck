@@ -1,101 +1,145 @@
 import SwiftUI
 
-// The Rules tab (Automation framework, M1 UI). Lists the automation rules with
-// on/off toggles, edit + delete, and a GUIDED add/edit form that builds a rule
-// from dropdowns over the trigger + effect types the engine supports. All
-// mutation delegates to the tested rules.lua engine via the store -- this view is
-// pure presentation, like the generated feature forms.
+// The Rules page (Automation framework). A first-class automation manager in the
+// home shell -- a peer of the Shortcut Map / Timeline, NOT a Settings row, since
+// rules span features. MASTER-DETAIL: the rule list on the left, a GUIDED add/edit
+// form on the right that builds a rule from dropdowns over the trigger + effect
+// types the engine supports. All mutation delegates to the tested rules.lua engine
+// via the store -- this view is pure presentation, like the generated feature forms.
 //
 // Trigger types offered here: App-state (frontmost becomes/leaves), System event,
 // Schedule. Hotkey/chord rules are authored via each feature's own trigger editor
 // (they need the shortcut recorder), so they're intentionally absent from this form.
 
-struct RulesDetail: View {
+struct RulesPageView: View {
     @ObservedObject var store: SettingsStore
 
-    // The rule currently being edited (nil = the form is in "add" mode). Lifted
-    // here so a row's Edit button can drive the form below it.
+    // The single source of truth: nil = the form is in "add" mode (the "New rule"
+    // row is selected); a RuleInfo = editing that rule. The list selection is a
+    // pure function of this, so the two never drift.
     @State private var editing: RuleInfo?
 
-    var body: some View {
-        Form {
-            Section {
-                Text("Rules fire an effect when something happens -- when an app comes "
-                     + "to the front, on wake, or on a schedule. Add one below, edit it, "
-                     + "toggle it on/off, or delete it.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    private let newRowId = "__new__"
 
-            Section("Rules") {
+    var body: some View {
+        HSplitView {
+            ruleList
+                .frame(minWidth: 220, idealWidth: 280, maxWidth: 360)
+            detail
+                .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+        }
+        // Uses HSplitView (not a nested NavigationSplitView) so it docks in the
+        // home shell's detail column -- the same pattern as SettingsPane.
+        .onAppear { store.refreshRules() }
+    }
+
+    // List selection derived from `editing` (one source of truth): the rule's id,
+    // or the "New rule" sentinel when adding.
+    private var selection: Binding<String?> {
+        Binding(
+            get: { editing?.id ?? newRowId },
+            set: { row in
+                editing = (row == nil || row == newRowId)
+                    ? nil : store.rules.first { $0.id == row }
+            })
+    }
+
+    private var ruleList: some View {
+        List(selection: selection) {
+            Section {
+                Label("New rule", systemImage: "plus.circle.fill")
+                    .foregroundStyle(.tint).tag(newRowId)
+            }
+            Section("Rules (\(store.rules.count))") {
                 if store.rules.isEmpty {
-                    Label("No rules yet -- add one below.", systemImage: "wand.and.stars")
-                        .foregroundStyle(.secondary)
+                    Text("No rules yet -- pick \"New rule\" to add one.")
+                        .font(.caption).foregroundStyle(.secondary)
                 } else {
                     ForEach(store.rules) { rule in
-                        RuleRow(store: store, rule: rule,
-                                isEditing: editing?.id == rule.id,
-                                onEdit: { editing = rule },
-                                onDelete: {
-                                    if editing?.id == rule.id { editing = nil }
-                                    store.removeRule(rule.id)
-                                })
+                        RulePageRow(store: store, rule: rule,
+                                    onDelete: {
+                                        if editing?.id == rule.id { editing = nil }
+                                        store.removeRule(rule.id)
+                                    })
+                            .tag(rule.id)
                     }
                 }
             }
+        }
+    }
 
+    private var detail: some View {
+        Form {
+            Section {
+                Text("Rules fire an effect when something happens -- an app comes to the "
+                     + "front, a display connects, on wake, or on a schedule. Pick a rule to "
+                     + "edit it, or \"New rule\" to add one.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             AddRuleForm(store: store, editing: $editing)
         }
         .formStyle(.grouped)
+        // Cap the form at a readable column width so it doesn't sprawl edge-to-edge
+        // (labels flush-left, values flung to the far-right) in a wide window; the
+        // outer frame centers that column and lets the rest be margin.
+        .frame(maxWidth: 600)
+        .frame(maxWidth: .infinity, alignment: .center)
         .navigationTitle("Rules")
-        .onAppear { store.refreshRules() }
     }
 }
 
-private struct RuleRow: View {
+// One row in the rule list: trigger -> effect, an on/off toggle, and delete.
+// Selecting the row (anywhere else) opens it in the detail editor -- no separate
+// pencil affordance, the selection IS the edit.
+private struct RulePageRow: View {
     @ObservedObject var store: SettingsStore
     let rule: RuleInfo
-    let isEditing: Bool
-    let onEdit: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(rule.triggerDesc)
-                Text(rule.effectDesc).font(.caption).foregroundStyle(.secondary)
+                Text(rule.triggerDesc).font(.callout).lineLimit(1)
+                Text(rule.effectDesc).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
-            Button(action: onEdit) {
-                Image(systemName: "pencil")
-                    .foregroundStyle(isEditing ? Color.accentColor : .secondary)
-            }
-            .buttonStyle(.borderless)
-            .help("Edit this rule")
+            Toggle("", isOn: Binding(get: { rule.enabled },
+                                     set: { store.setRuleEnabled(rule.id, $0) }))
+                .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                .help(rule.enabled ? "Enabled" : "Disabled")
             Button(action: onDelete) {
                 Image(systemName: "trash").foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
-            .help("Delete this rule")
-            Toggle("", isOn: Binding(
-                get: { rule.enabled },
-                set: { store.setRuleEnabled(rule.id, $0) }
-            ))
-            .toggleStyle(.switch).controlSize(.small).labelsHidden()
+            .buttonStyle(.borderless).help("Delete this rule")
         }
         .padding(.vertical, 2)
-        .listRowBackground(isEditing ? Color.accentColor.opacity(0.08) : nil)
+        .opacity(rule.enabled ? 1 : 0.55)
     }
 }
+
+/// One window-placement row in the layout editor: an app, a target display, and
+/// a position. The position is either a named snap-grid id, or -- when the row
+/// came from "Capture current layout" -- exact ratios (`ratios` non-nil, `pos`
+/// holds the captured sentinel so the picker can show it as "Captured").
+private struct Placement: Identifiable {
+    let id = UUID()
+    var app: String = ""
+    var screen: String = ""
+    var pos: String = "full"
+    var ratios: [String: Double]? = nil
+}
+private let capturedPosId = "__captured__"
 
 private struct AddRuleForm: View {
     @ObservedObject var store: SettingsStore
     @Binding var editing: RuleInfo?
 
     @State private var opts = RuleFormOptions([:])
-    // Trigger
-    @State private var triggerType = "state"      // state | event | schedule
-    @State private var signal = "frontmostApp"
+    // Trigger. triggerType is "state:<signal>" | "event" | "schedule" -- the chosen
+    // "When" IS the signal (Frontmost app / Connected display), so there is no
+    // separate Signal sub-picker; each state signal is its own top-level choice.
+    @State private var triggerType = "state:frontmostApp"
     @State private var transition = "becomes"     // becomes | leaves
     @State private var stateValue = ""
     @State private var eventName = "wake"
@@ -106,6 +150,9 @@ private struct AddRuleForm: View {
     @State private var effectId = "notify"
     @State private var notifyTitle = "Hammerdeck"
     @State private var notifyText = ""
+    @State private var placements: [Placement] = []   // the layout effect's rows
+    @State private var shortcutName = ""              // runShortcut
+    @State private var openURLValue = ""              // openURL
     @State private var formError: String?
 
     private var isEditing: Bool { editing != nil }
@@ -113,22 +160,22 @@ private struct AddRuleForm: View {
     var body: some View {
         Section(isEditing ? "Edit rule" : "Add a rule") {
             Picker("When", selection: $triggerType) {
-                Text("App becomes / leaves frontmost").tag("state")
+                // Each state signal is its own top-level choice (Frontmost app,
+                // Connected display, ...) -- no nested "Signal" picker.
+                ForEach(opts.signals, id: \.self) { sig in
+                    Text(signalLabel(sig)).tag("state:" + sig)
+                }
                 Text("System event").tag("event")
                 Text("Schedule").tag("schedule")
             }
 
-            switch triggerType {
-            case "state":
-                Picker("Signal", selection: $signal) {
-                    ForEach(opts.signals, id: \.self) { Text($0).tag($0) }
-                }
+            if isStateTrigger {
                 Picker("Transition", selection: $transition) {
-                    Text("becomes").tag("becomes")
-                    Text("leaves").tag("leaves")
+                    Text(meta?.enterVerb ?? "becomes").tag("becomes")
+                    Text(meta?.leaveVerb ?? "leaves").tag("leaves")
                 }
                 HStack {
-                    TextField("App name (e.g. Safari)", text: $stateValue)
+                    TextField(valuePlaceholder, text: $stateValue)
                     if !candidates.isEmpty {
                         Menu {
                             ForEach(candidates, id: \.self) { c in
@@ -139,18 +186,18 @@ private struct AddRuleForm: View {
                         }
                         .menuStyle(.borderlessButton)
                         .frame(width: 32)
-                        .help("Pick from running apps")
+                        .help("Pick a suggested value")
                     }
                 }
                 if let warning = stateValueWarning {
                     Text(warning).font(.caption).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            case "event":
+            } else if triggerType == "event" {
                 Picker("Event", selection: $eventName) {
                     ForEach(opts.events, id: \.self) { Text($0).tag($0) }
                 }
-            case "schedule":
+            } else if triggerType == "schedule" {
                 Picker("Mode", selection: $scheduleMode) {
                     Text("Every N minutes").tag("everyMin")
                     Text("Daily at").tag("at")
@@ -160,8 +207,6 @@ private struct AddRuleForm: View {
                 } else {
                     TextField("HH:MM", text: $atTime)
                 }
-            default:
-                EmptyView()
             }
 
             Picker("Do", selection: $effectId) {
@@ -170,6 +215,16 @@ private struct AddRuleForm: View {
             if selectedEffect?.kind == "notify" {
                 TextField("Notification title", text: $notifyTitle)
                 TextField("Notification text (optional)", text: $notifyText)
+            } else if selectedEffect?.kind == "layout" {
+                layoutEditor
+            } else if selectedEffect?.kind == "runShortcut" {
+                TextField("Shortcut name (exactly as in the Shortcuts app)", text: $shortcutName)
+                Text("Runs a macOS Shortcut -- the escape hatch to Focus/DND, volume, "
+                     + "HomeKit, and anything Shortcuts can do.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if selectedEffect?.kind == "openURL" {
+                TextField("URL (https://… , or an app scheme like raycast://…)", text: $openURLValue)
             }
 
             if let formError {
@@ -191,33 +246,160 @@ private struct AddRuleForm: View {
         .onChange(of: editing?.id) { _ in
             if let rule = editing { loadForEdit(rule) } else { resetForm() }
         }
+        // Seed a first placement row when the user switches the effect to "layout".
+        .onChange(of: effectId) { _ in
+            if selectedEffect?.kind == "layout" && placements.isEmpty { addPlacement() }
+        }
+    }
+
+    // The repeatable window-placement editor (shown when the effect is "layout").
+    @ViewBuilder private var layoutEditor: some View {
+        if placements.isEmpty {
+            Text("No windows yet -- add one, or capture your current arrangement.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        ForEach(Array(placements.enumerated()), id: \.element.id) { i, p in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    TextField("App (e.g. Safari)", text: $placements[i].app)
+                    if !appCandidates.isEmpty {
+                        Menu {
+                            ForEach(appCandidates, id: \.self) { a in
+                                Button(a) { placements[i].app = a }
+                            }
+                        } label: { Image(systemName: "list.bullet") }
+                        .menuStyle(.borderlessButton).frame(width: 30)
+                        .help("Pick from running apps")
+                    }
+                    Button(role: .destructive) {
+                        placements.removeAll { $0.id == p.id }
+                    } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless).help("Remove this window")
+                }
+                // Stacked (not side-by-side) so a long display name never forces a
+                // wider pane -- the row reflows to whatever width it's given.
+                Picker("Display", selection: $placements[i].screen) {
+                    ForEach(displayOptions(p.screen), id: \.self) { Text($0).tag($0) }
+                }
+                Picker("Position", selection: $placements[i].pos) {
+                    if p.ratios != nil { Text("Captured").tag(capturedPosId) }
+                    ForEach(opts.layoutPositions) { Text($0.label).tag($0.id) }
+                }
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        }
+        HStack {
+            Button { addPlacement() } label: { Label("Add window", systemImage: "plus") }
+            Spacer()
+            Button { capture() } label: {
+                Label("Capture current layout", systemImage: "camera.viewfinder")
+            }
+            .help("Snapshot where your windows are arranged right now")
+        }
+    }
+
+    // The "When" choice encodes the signal as "state:<signal>"; these unpack it.
+    private var isStateTrigger: Bool { triggerType.hasPrefix("state:") }
+    private var signal: String {
+        isStateTrigger ? String(triggerType.dropFirst("state:".count)) : ""
     }
 
     private var candidates: [String] { opts.signalCandidates[signal] ?? [] }
     private var selectedEffect: RuleEffectOption? { opts.effects.first { $0.id == effectId } }
 
-    /// Warn when the typed value isn't a currently-running app (and we have a
-    /// candidate list to compare against). Advisory -- the app may launch later.
+    // Per-signal UI metadata from signals.lua (label, value noun, transition
+    // verbs) -- so the form renders ANY signal with zero per-signal Swift code.
+    private var meta: SignalMeta? { opts.signalMeta[signal] }
+    private func signalLabel(_ s: String) -> String { opts.signalMeta[s]?.label ?? s }
+    private var valuePlaceholder: String {
+        let label = meta?.valueLabel ?? "Value"
+        let ex = meta?.example ?? ""
+        return ex.isEmpty ? label : "\(label) (e.g. \(ex))"
+    }
+
+    // The layout editor's app picker draws from the running apps (same source as
+    // the state trigger's app candidates).
+    private var appCandidates: [String] { opts.signalCandidates["frontmostApp"] ?? [] }
+
+    /// Display options for a placement: the connected displays, plus the
+    /// placement's OWN display if it isn't connected now (so editing a captured
+    /// "DELL" layout while undocked doesn't silently drop it).
+    private func displayOptions(_ current: String) -> [String] {
+        var out = opts.layoutDisplays
+        let c = current.trimmingCharacters(in: .whitespaces)
+        if !c.isEmpty && !out.contains(c) { out.insert(c, at: 0) }
+        return out.isEmpty ? (c.isEmpty ? [] : [c]) : out
+    }
+
+    private func addPlacement() {
+        placements.append(Placement(screen: opts.layoutDisplays.last ?? "", pos: "full"))
+    }
+
+    /// Replace the rows with a snapshot of the current window arrangement.
+    private func capture() {
+        let snap = store.captureLayout()
+        guard !snap.isEmpty else {
+            formError = "Nothing to capture -- open some windows (and grant Accessibility)."
+            return
+        }
+        placements = snap.map(placement(from:))
+        formError = nil
+    }
+
+    /// Map a captured/stored placement dict to an editor row. A string `pos` is a
+    /// grid id; a `{x,y,w,h}` table is exact ratios (captured), flagged as such.
+    private func placement(from d: [String: Any]) -> Placement {
+        var p = Placement()
+        p.app = d["app"] as? String ?? ""
+        p.screen = d["screen"] as? String ?? ""
+        if let s = d["pos"] as? String {
+            p.pos = s
+        } else if let r = d["pos"] as? [String: Any] {
+            func dbl(_ v: Any?) -> Double { (v as? Double) ?? (v as? Int).map(Double.init) ?? 0 }
+            p.ratios = ["x": dbl(r["x"]), "y": dbl(r["y"]), "w": dbl(r["w"]), "h": dbl(r["h"])]
+            p.pos = capturedPosId
+        }
+        return p
+    }
+
+    /// Warn when the typed value isn't currently present and we have a candidate
+    /// list to compare against. Advisory -- naming a not-yet-present target is
+    /// exactly how a "when it appears" rule is written, so the warning only
+    /// stresses exact-match.
     private var stateValueWarning: String? {
-        guard triggerType == "state" else { return nil }
+        guard isStateTrigger else { return nil }
         let v = stateValue.trimmingCharacters(in: .whitespaces)
         guard !v.isEmpty, !candidates.isEmpty, !candidates.contains(v) else { return nil }
-        return "\"\(v)\" isn't running now -- the name must match the app exactly "
-             + "when it is, or the rule never fires."
+        return "\"\(v)\" isn't present right now -- the name must match exactly when it is, "
+            + "or the rule won't fire."
     }
 
     private var canSubmit: Bool {
-        if triggerType == "state",
+        if isStateTrigger,
            stateValue.trimmingCharacters(in: .whitespaces).isEmpty { return false }
         if selectedEffect?.kind == "notify",
            notifyTitle.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        if selectedEffect?.kind == "layout" {
+            return placements.contains {
+                !$0.app.trimmingCharacters(in: .whitespaces).isEmpty
+                    && !$0.screen.trimmingCharacters(in: .whitespaces).isEmpty
+            }
+        }
+        if selectedEffect?.kind == "runShortcut" {
+            return !shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if selectedEffect?.kind == "openURL" {
+            return !openURLValue.trimmingCharacters(in: .whitespaces).isEmpty
+        }
         return selectedEffect != nil
     }
 
     private func reloadOptions() {
         opts = store.ruleFormOptions()
-        if signal.isEmpty || !opts.signals.contains(signal) {
-            signal = opts.signals.first ?? "frontmostApp"
+        // If the selected state signal vanished, fall back to the first available.
+        if isStateTrigger && !opts.signals.contains(signal) {
+            triggerType = "state:" + (opts.signals.first ?? "frontmostApp")
         }
         if !opts.events.contains(eventName) { eventName = opts.events.first ?? "wake" }
         if !opts.effects.contains(where: { $0.id == effectId }) {
@@ -227,8 +409,10 @@ private struct AddRuleForm: View {
 
     /// Reset every field to add-mode defaults.
     private func resetForm() {
-        triggerType = "state"
-        signal = opts.signals.first ?? "frontmostApp"
+        // Default to the app signal (not whichever sorts first), so a fresh rule
+        // starts on the familiar "frontmost app" case.
+        let defSig = opts.signals.contains("frontmostApp") ? "frontmostApp" : (opts.signals.first ?? "frontmostApp")
+        triggerType = "state:" + defSig
         transition = "becomes"
         stateValue = ""
         eventName = opts.events.first ?? "wake"
@@ -238,6 +422,9 @@ private struct AddRuleForm: View {
         effectId = opts.effects.first?.id ?? "notify"
         notifyTitle = "Hammerdeck"
         notifyText = ""
+        placements = []
+        shortcutName = ""
+        openURLValue = ""
         formError = nil
     }
 
@@ -246,27 +433,41 @@ private struct AddRuleForm: View {
         formError = nil
         let on = rule.on
         let type = on["type"] as? String ?? "state"
-        triggerType = ["state", "event", "schedule"].contains(type) ? type : "state"
-        switch type {
-        case "state":
-            signal = on["signal"] as? String ?? (opts.signals.first ?? "frontmostApp")
+        if type == "state" {
+            let sig = on["signal"] as? String ?? (opts.signals.first ?? "frontmostApp")
+            triggerType = "state:" + sig
             if let b = on["becomes"] as? String { transition = "becomes"; stateValue = b }
             else if let l = on["leaves"] as? String { transition = "leaves"; stateValue = l }
             else { transition = "becomes"; stateValue = "" }
-        case "event":
+        } else if type == "event" {
+            triggerType = "event"
             eventName = on["event"] as? String ?? "wake"
-        case "schedule":
+        } else if type == "schedule" {
+            triggerType = "schedule"
             if let e = on["everyMin"] as? Double { scheduleMode = "everyMin"; everyMin = Int(e) }
             else if let e = on["everyMin"] as? Int { scheduleMode = "everyMin"; everyMin = e }
             else if let a = on["at"] as? String { scheduleMode = "at"; atTime = a }
-        default:
-            break
+        } else {
+            triggerType = "state:" + (opts.signals.first ?? "frontmostApp")
         }
         let effect = rule.effect
-        if (effect["kind"] as? String) == "command" {
+        let kind = effect["kind"] as? String
+        if kind == "command" {
             let f = effect["feature"] as? String ?? ""
             if let a = effect["action"] as? String { effectId = "command:\(f).\(a)" }
             else { effectId = "command:\(f)." }
+        } else if kind == "layout" {
+            effectId = "layout"
+            placements = ((effect["placements"] as? [Any]) ?? [])
+                .compactMap { $0 as? [String: Any] }.map(placement(from:))
+        } else if kind == "runShortcut" {
+            effectId = "runShortcut"
+            shortcutName = effect["name"] as? String ?? ""
+        } else if kind == "openURL" {
+            effectId = "openURL"
+            openURLValue = effect["url"] as? String ?? ""
+        } else if kind == "lockScreen" {
+            effectId = "lockScreen"
         } else {
             effectId = "notify"
             notifyTitle = effect["title"] as? String ?? "Hammerdeck"
@@ -292,19 +493,18 @@ private struct AddRuleForm: View {
 
     private func buildSpec() -> [String: Any]? {
         var on: [String: Any]
-        switch triggerType {
-        case "state":
+        if isStateTrigger {
             let v = stateValue.trimmingCharacters(in: .whitespaces)
-            guard !v.isEmpty else { return nil }
+            guard !v.isEmpty, !signal.isEmpty else { return nil }
             on = ["type": "state", "signal": signal]
             on[transition] = v
-        case "event":
+        } else if triggerType == "event" {
             on = ["type": "event", "event": eventName]
-        case "schedule":
+        } else if triggerType == "schedule" {
             on = scheduleMode == "everyMin"
                 ? ["type": "schedule", "everyMin": everyMin]
                 : ["type": "schedule", "at": atTime]
-        default:
+        } else {
             return nil
         }
         guard let eff = selectedEffect else { return nil }
@@ -315,6 +515,31 @@ private struct AddRuleForm: View {
             effect = ["kind": "notify", "title": t]
             let body = notifyText.trimmingCharacters(in: .whitespaces)
             if !body.isEmpty { effect["text"] = body }
+        } else if eff.kind == "layout" {
+            let list: [[String: Any]] = placements.compactMap { p in
+                let app = p.app.trimmingCharacters(in: .whitespaces)
+                let screen = p.screen.trimmingCharacters(in: .whitespaces)
+                guard !app.isEmpty, !screen.isEmpty else { return nil }
+                var entry: [String: Any] = ["app": app, "screen": screen]
+                if p.pos == capturedPosId, let r = p.ratios {
+                    entry["pos"] = r            // exact captured ratios
+                } else {
+                    entry["pos"] = p.pos        // a named snap-grid id
+                }
+                return entry
+            }
+            guard !list.isEmpty else { return nil }
+            effect = ["kind": "layout", "placements": list]
+        } else if eff.kind == "runShortcut" {
+            let n = shortcutName.trimmingCharacters(in: .whitespaces)
+            guard !n.isEmpty else { return nil }
+            effect = ["kind": "runShortcut", "name": n]
+        } else if eff.kind == "openURL" {
+            let u = openURLValue.trimmingCharacters(in: .whitespaces)
+            guard !u.isEmpty else { return nil }
+            effect = ["kind": "openURL", "url": u]
+        } else if eff.kind == "lockScreen" {
+            effect = ["kind": "lockScreen"]
         } else {
             effect = ["kind": "command", "feature": eff.feature ?? ""]
             if let a = eff.action { effect["action"] = a }

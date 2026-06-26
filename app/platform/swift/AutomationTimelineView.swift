@@ -18,8 +18,14 @@ import AppKit
 //      the same path the Settings form uses; derived ones (e.g. a warning offset)
 //      are advisory and read-only here.
 //
-// Hotkey/chord actions have NO place on the time axis and are excluded -- they
-// live in the Shortcut Map. The two views partition the trigger space cleanly.
+// A THIRD source: automation RULES (the Rules page) -- cross-feature
+// automations that also live on the time axis. Their schedule/event triggers map
+// to the same markers; their `state` triggers (frontmostApp becomes X) land in
+// the conditions lane. Rules are READ-ONLY here (edited in the Rules page) and
+// tagged with a wand glyph; their featureId sentinel is `__rules__`.
+//
+// Hotkey/chord actions (and hotkey/chord rules) have NO place on the time axis
+// and are excluded -- they live in the Shortcut Map. The views partition cleanly.
 
 // MARK: - Aggregated item model
 
@@ -45,6 +51,10 @@ private struct TLItem: Identifiable {
     let optionType: String? // "time" | "int" (drives the editor shape)
 
     var editable: Bool { actionId != nil || optionKey != nil }
+
+    // A rule (Rules page) vs a feature automation -- drives the wand glyph. Rules
+    // use the `__rules__` featureId sentinel and are read-only on the timeline.
+    var isRule: Bool { featureId == "__rules__" }
 
     var minutesOfDay: Int? {
         if case let .at(m) = kind { return m }
@@ -91,7 +101,7 @@ struct AutomationTimelineView: View {
             legend
         }
         // Embedded in the Homepage shell, which owns the window minimum size.
-        .onAppear { store.refresh() }
+        .onAppear { store.refresh(); store.refreshRules() }
         .onReceive(tick) { _ in nowMinutes = Self.currentMinutes() }
     }
 
@@ -118,8 +128,12 @@ struct AutomationTimelineView: View {
                     Text(c).font(.caption2).foregroundStyle(.secondary)
                 }
             }
+            HStack(spacing: 4) {
+                Image(systemName: "wand.and.stars").font(.caption2).foregroundStyle(.purple)
+                Text("rule").font(.caption2).foregroundStyle(.secondary)
+            }
             Spacer()
-            Text("Click a marker to edit its time or interval.")
+            Text("Click a feature marker to edit its time; rules are edited in the Rules page.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
@@ -169,7 +183,39 @@ struct AutomationTimelineView: View {
                                   actionId: nil, optionKey: e.optionKey, optionType: optType))
             }
         }
+        // 3. automation rules (the Rules page) -- read-only on the timeline.
+        for r in store.rules where r.enabled || showDisabled {
+            guard let kind = Self.ruleKind(r.on) else { continue }   // hotkey/chord/malformed -> off-axis
+            out.append(TLItem(id: "rule|\(r.id)", featureId: "__rules__",
+                              featureName: "Rule -- \(r.triggerDesc)",
+                              label: r.effectDesc, kind: kind,
+                              category: "platform", enabled: r.enabled,
+                              actionId: nil, optionKey: nil, optionType: nil))
+        }
         return out
+    }
+
+    // Map a rule's raw `on` trigger spec to a timeline kind, or nil when it has
+    // no place on the time axis (hotkey/chord/unknown). Numbers may arrive as Int
+    // or Double across the bridge, so both are accepted.
+    private static func ruleKind(_ on: [String: Any]) -> TLKind? {
+        switch on["type"] as? String {
+        case "schedule":
+            if let n = (on["everyMin"] as? Int) ?? (on["everyMin"] as? Double).map(Int.init) {
+                return .everyMin(n)
+            }
+            if let at = on["at"] as? String, let m = minutesOf(at) { return .at(m) }
+            return nil
+        case "event":
+            return .event(on["event"] as? String ?? "")
+        case "state":
+            let sig = on["signal"] as? String ?? "state"
+            let verb = on["becomes"] != nil ? "becomes" : "leaves"
+            let val = (on["becomes"] as? String) ?? (on["leaves"] as? String) ?? ""
+            return .note("\(sig) \(verb) \(val)")
+        default:
+            return nil
+        }
     }
 
     static func minutesOf(_ hhmm: String) -> Int? {
@@ -298,6 +344,10 @@ private struct DayMarker: View {
                 Text(fmtHM(item.minutesOfDay ?? 0))
                     .font(.caption.monospacedDigit().weight(.medium))
                 Text(item.label).font(.caption).lineLimit(1)
+                if item.isRule {
+                    Image(systemName: "wand.and.stars").font(.system(size: 8))
+                        .foregroundStyle(.purple).help("Automation rule (edit in the Rules page)")
+                }
                 if stacked {
                     Image(systemName: "square.stack.3d.up.fill")
                         .font(.system(size: 9)).foregroundStyle(.orange)
@@ -355,6 +405,10 @@ private struct LaneChip: View {
                     Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
+                if item.isRule {
+                    Image(systemName: "wand.and.stars").font(.system(size: 9))
+                        .foregroundStyle(.purple).help("Automation rule (edit in the Rules page)")
+                }
                 if item.editable {
                     Image(systemName: "pencil").font(.system(size: 8)).foregroundStyle(.secondary)
                 }
@@ -467,6 +521,10 @@ private struct AgendaRow: View {
                 }
             }
             Spacer()
+            if item.isRule {
+                Image(systemName: "wand.and.stars").font(.caption2)
+                    .foregroundStyle(.purple).help("Automation rule (edit in the Rules page)")
+            }
             if !trail.isEmpty {
                 Text(trail).font(.caption).foregroundStyle(.secondary)
             }

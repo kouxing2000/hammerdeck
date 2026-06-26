@@ -152,6 +152,18 @@ extension Native {
         return 0
     }
 
+    // run_shortcut(name): fire a macOS Shortcut by name (fire-and-forget). The
+    // generic automation escape hatch -- a user Shortcut can toggle Focus/DND, set
+    // volume, run HomeKit scenes, and anything else Shortcuts can do, so a rule
+    // reaches all of that without a per-action native atom.
+    func runShortcut(_ L: OpaquePointer?) -> Int32 {
+        guard let name = LuaState.string(L, 1) else {
+            return luaError(L, "run_shortcut: name required")
+        }
+        runCommand("/usr/bin/shortcuts", ["run", name])
+        return 0
+    }
+
     private func runCommand(_ path: String, _ args: [String]) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)

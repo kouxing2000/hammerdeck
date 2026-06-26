@@ -286,9 +286,10 @@ end
 
 -- Focused-window frame surface (window_snap) -----------------------------------
 
-fake.screenList     = { { x = 0, y = 0, w = 1440, h = 900 } }  -- visible frames
+fake.screenList     = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
 fake.focusedWindow  = nil   -- {x,y,w,h, fullscreen?, screenIndex?} preset by tests
 fake.windowFrames   = {}    -- recorded setFocusedWindowFrame calls
+fake.windowFrameSets = {}   -- recorded setWindowFrame(id, f) calls: {id, x, y, w, h}
 fake.fullscreenSets = {}    -- recorded setFocusedWindowFullscreen calls
 fake.mousePos       = { x = 0, y = 0 }
 
@@ -310,6 +311,18 @@ function adapter.setFocusedWindowFrame(f)
     fake.windowFrames[#fake.windowFrames + 1] = f
     local w = fake.focusedWindow
     if w then w.x, w.y, w.w, w.h = f.x, f.y, f.w, f.h end
+    return true
+end
+
+-- Move a listed window by id (the layout engine). Records the call and, if a
+-- fake.windows row has that id, updates its frame so a capture-after-apply
+-- round-trip reflects the move.
+function adapter.setWindowFrame(id, f)
+    fake.windowFrameSets[#fake.windowFrameSets + 1] =
+        { id = id, x = f.x, y = f.y, w = f.w, h = f.h }
+    for _, w in ipairs(fake.windows) do
+        if w.id == id then w.x, w.y, w.w, w.h = f.x, f.y, f.w, f.h end
+    end
     return true
 end
 
@@ -335,6 +348,14 @@ function adapter.discoverFeatures(dir) return fake.featureNames end
 
 fake.frontmost = nil     -- preset by the test for frontmostApp()
 function adapter.frontmostApp() return fake.frontmost end
+
+-- State-signal reads (drive via the fake.* fields + fake.systemEvent("...Changed")).
+fake.appearance     = "light"   -- "dark" | "light"
+fake.runningAppList = {}         -- list of running app names
+fake.power          = "ac"       -- "ac" | "battery"
+function adapter.appearance()  return fake.appearance end
+function adapter.runningApps()  return fake.runningAppList end
+function adapter.powerSource()  return fake.power end
 
 fake.appWatchers = {}    -- {fn, stopped}
 function adapter.onAppActivated(fn)
@@ -449,6 +470,11 @@ end
 function adapter.openURL(url)
     fake.openedUrls[#fake.openedUrls + 1] = url
     return true
+end
+
+fake.shortcutsRun = {}   -- recorded runShortcut names
+function adapter.runShortcut(name)
+    fake.shortcutsRun[#fake.shortcutsRun + 1] = name
 end
 
 function adapter.activateApp(name)

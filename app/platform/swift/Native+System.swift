@@ -168,6 +168,33 @@ extension Native {
         return 1
     }
 
+    // appearance() -> "dark" | "light" -- the system interface style. The global
+    // AppleInterfaceStyle pref is "Dark" only in dark mode (absent = light). Read
+    // via CFPreferences on the global domain (NOT UserDefaults.standard, whose
+    // cached snapshot can lag the appearanceChanged notification that re-reads this).
+    func appearance(_ L: OpaquePointer?) -> Int32 {
+        let style = CFPreferencesCopyAppValue("AppleInterfaceStyle" as CFString,
+                                              kCFPreferencesAnyApplication) as? String
+        let dark = (style ?? "").lowercased() == "dark"
+        lua_pushstring(L, dark ? "dark" : "light")
+        return 1
+    }
+
+    // running_apps() -> [appName] -- localized names of the regular (user-facing)
+    // running apps. Backs the `runningApps` set signal; the appsChanged event
+    // (launch/quit) re-reads it. Filters out background daemons/agents.
+    func runningApps(_ L: OpaquePointer?) -> Int32 {
+        let names = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap { $0.localizedName }
+        lua_createtable(L, Int32(names.count), 0)
+        for (i, n) in names.enumerated() {
+            lua_pushstring(L, n)
+            lua_rawseti(L, -2, lua_Integer(i + 1))
+        }
+        return 1
+    }
+
     // MARK: - Data files (Application Support)
 
     // App-owned durable data directory (distinct from cache_dir: the OS may

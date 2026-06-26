@@ -54,9 +54,28 @@ function adapter.dailyAt(timeStr, fn)
     return handleFor(native.timer_daily_at(timeStr, fn))
 end
 
--- Subscribe to a system event: "sleep","wake","screenLock","screenUnlock".
+-- Subscribe to a system event. Edges (a human may or may not be present):
+-- "sleep","wake","screenLock","screenUnlock","screenChanged", plus the
+-- coarse re-read triggers behind the state signals:
+-- "appearanceChanged","appsChanged","powerChanged".
 function adapter.onSystemEvent(event, fn)
     return handleFor(native.on_system_event(event, fn))
+end
+
+-- State-signal reads (each paired with an onSystemEvent above; see signals.lua).
+-- System appearance: "dark" | "light".
+function adapter.appearance()
+    return native.appearance()
+end
+
+-- Names of all currently-running apps (the runningApps signal's value set).
+function adapter.runningApps()
+    return native.running_apps()
+end
+
+-- Power source: "ac" (plugged in) | "battery".
+function adapter.powerSource()
+    return native.power_source()
 end
 
 -- ---------------------------------------------------------------------------
@@ -273,8 +292,9 @@ end
 -- ---------------------------------------------------------------------------
 
 -- All standard windows, most-recently-focused first: { id, title, appName,
--- bundleID } rows. Returns {} when the Accessibility permission is missing --
--- check axTrusted()/axPrompt() to onboard.
+-- bundleID, x, y, w, h, screenName? } rows (frame in top-left-origin global
+-- points -- the layout engine snapshots it). Returns {} when the Accessibility
+-- permission is missing -- check axTrusted()/axPrompt() to onboard.
 function adapter.listWindows()
     return native.list_windows()
 end
@@ -309,11 +329,20 @@ function adapter.setFocusedWindowFrame(f)
     return native.set_focused_window_frame(f.x, f.y, f.w, f.h) == true
 end
 
+-- Move ANY window by an id from the MOST RECENT listWindows() call (the layout
+-- engine lists, matches, then places each match). Same coordinate system as
+-- setFocusedWindowFrame. Returns true on success.
+function adapter.setWindowFrame(id, f)
+    return native.set_window_frame(id, f.x, f.y, f.w, f.h) == true
+end
+
 function adapter.setFocusedWindowFullscreen(on)
     return native.set_focused_window_fullscreen(on == true) == true
 end
 
--- Visible frame of every screen (primary first); screenIndex indexes this.
+-- Visible frame of every screen (primary first): { x,y,w,h, name, index } rows;
+-- screenIndex indexes this. `name` is the display's localizedName -- the layout
+-- engine targets a display by it.
 function adapter.screenFrames()
     return native.screen_frames()
 end
@@ -622,6 +651,12 @@ end
 
 function adapter.startScreensaver()
     native.start_screensaver()
+end
+
+-- Run a macOS Shortcut by name (fire-and-forget). The automation escape hatch:
+-- a user Shortcut reaches Focus/DND, volume, HomeKit, etc. -- see effects.lua.
+function adapter.runShortcut(name)
+    native.run_shortcut(name)
 end
 
 return adapter

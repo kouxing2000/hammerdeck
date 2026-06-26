@@ -253,7 +253,7 @@ enum ValidationState: Equatable {
     case failed(String)
 }
 
-// MARK: - Automation rules (the Rules tab)
+// MARK: - Automation rules (the Rules page)
 
 /// One row of the Rules list -- the serializable shape rules.describe() emits.
 struct RuleInfo: Identifiable {
@@ -292,12 +292,41 @@ struct RuleEffectOption: Identifiable, Hashable {
     }
 }
 
+/// One named snap position for the layout editor's position picker (id + label,
+/// from windows.POSITION_ORDER / POSITION_LABELS).
+struct LayoutPosition: Identifiable, Hashable {
+    let id: String
+    let label: String
+}
+
+/// UI metadata for a state signal (from signals.lua's `meta`) -- lets the Rules
+/// form render any signal (label, value noun, transition verbs) with no per-signal
+/// Swift code, so a new signal needs zero view changes.
+struct SignalMeta {
+    let label: String
+    let valueLabel: String
+    let enterVerb: String
+    let leaveVerb: String
+    let example: String
+
+    init(_ d: [String: Any]) {
+        label = d["label"] as? String ?? ""
+        valueLabel = d["valueLabel"] as? String ?? "Value"
+        enterVerb = d["enterVerb"] as? String ?? "becomes"
+        leaveVerb = d["leaveVerb"] as? String ?? "leaves"
+        example = d["example"] as? String ?? ""
+    }
+}
+
 /// Everything the Add-rule form needs to populate its dropdowns (rules.formOptions).
 struct RuleFormOptions {
     let signals: [String]
     let signalCandidates: [String: [String]]
+    let signalMeta: [String: SignalMeta]
     let events: [String]
     let effects: [RuleEffectOption]
+    let layoutDisplays: [String]        // currently-connected display names
+    let layoutPositions: [LayoutPosition]
 
     init(_ dict: [String: Any]) {
         self.signals = (dict["signals"] as? [Any])?.compactMap { $0 as? String } ?? []
@@ -306,9 +335,18 @@ struct RuleFormOptions {
             for (k, v) in c { cand[k] = (v as? [Any])?.compactMap { $0 as? String } ?? [] }
         }
         self.signalCandidates = cand
+        var meta: [String: SignalMeta] = [:]
+        if let m = dict["signalMeta"] as? [String: Any] {
+            for (k, v) in m { if let d = v as? [String: Any] { meta[k] = SignalMeta(d) } }
+        }
+        self.signalMeta = meta
         self.events = (dict["events"] as? [Any])?.compactMap { $0 as? String } ?? []
         self.effects = (dict["effects"] as? [Any])?
             .compactMap { $0 as? [String: Any] }.compactMap(RuleEffectOption.init) ?? []
+        self.layoutDisplays = (dict["layoutDisplays"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.layoutPositions = (dict["layoutPositions"] as? [Any])?
+            .compactMap { $0 as? [String: Any] }
+            .compactMap { d in (d["id"] as? String).map { LayoutPosition(id: $0, label: d["label"] as? String ?? $0) } } ?? []
     }
 }
 
@@ -325,7 +363,7 @@ final class SettingsStore: ObservableObject {
     /// straight to that feature's detail; SettingsPane binds its list selection to it.
     @Published var selectedFeatureId: String?
 
-    /// The automation rules, as the Rules tab renders them. Loaded by
+    /// The automation rules, as the Rules page renders them. Loaded by
     /// refreshRules() (the Rules detail calls it onAppear and after each edit).
     @Published private(set) var rules: [RuleInfo] = []
 
@@ -400,7 +438,7 @@ final class SettingsStore: ObservableObject {
         refresh()
     }
 
-    // MARK: - Automation rules (Rules tab; delegates to the tested rules.lua engine)
+    // MARK: - Automation rules (Rules page; delegates to the tested rules.lua engine)
 
     /// Re-read the rule list from the engine into `rules`.
     func refreshRules() {
@@ -414,6 +452,15 @@ final class SettingsStore: ObservableObject {
         guard let raw = try? lua.call("platform.rules", "formOptions").first ?? nil,
               let dict = raw as? [String: Any] else { return RuleFormOptions([:]) }
         return RuleFormOptions(dict)
+    }
+
+    /// Snapshot the current window arrangement as layout placements (the layout
+    /// editor's "Capture current layout"). Each dict is { app, screen, pos } where
+    /// pos is a { x,y,w,h } ratio table.
+    func captureLayout() -> [[String: Any]] {
+        guard let raw = try? lua.call("platform.rules", "captureLayout").first ?? nil,
+              let list = raw as? [Any] else { return [] }
+        return list.compactMap { $0 as? [String: Any] }
     }
 
     /// Toggle a rule on/off (binds/unbinds in the engine + persists).

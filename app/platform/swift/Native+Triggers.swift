@@ -4,6 +4,14 @@
 
 import AppKit
 import CLua
+import IOKit.ps
+
+// Boxes a fire callback so IOPSNotificationCreateRunLoopSource's @convention(c)
+// callback (which can't capture) can reach it through the opaque context pointer.
+private final class PowerNotifyBox {
+    let fire: () -> Void
+    init(_ fire: @escaping () -> Void) { self.fire = fire }
+}
 
 extension Native {
     // MARK: - Triggers
@@ -113,8 +121,6 @@ extension Native {
     func onSystemEvent(_ L: OpaquePointer?) -> Int32 {
         guard let event = LuaState.string(L, 1) else { return luaError(L, "on_system_event: event required") }
         let ref = lua.makeRef(at: 2)
-        let fire = { Native.shared.lua.callRef(ref) }
-
         let cancel: () -> Void
         switch event {
         case "sleep", "wake":
@@ -122,7 +128,7 @@ extension Native {
                                         : NSWorkspace.didWakeNotification
             let center = NSWorkspace.shared.notificationCenter
             let token = center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { fire() }
+                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
             }
             cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
         case "screenLock", "screenUnlock":
@@ -130,7 +136,7 @@ extension Native {
                                                                : "com.apple.screenIsUnlocked")
             let center = DistributedNotificationCenter.default()
             let token = center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { fire() }
+                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
             }
             cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
         case "screenChanged":
@@ -140,9 +146,44 @@ extension Native {
             let center = NotificationCenter.default
             let token = center.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                            object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { fire() }
+                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
             }
             cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+        case "appearanceChanged":
+            // Dark/light mode flip. The re-read trigger behind the `appearance` signal.
+            let center = DistributedNotificationCenter.default()
+            let token = center.addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+                                           object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
+            }
+            cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+        case "appsChanged":
+            // An app launched or quit -- the re-read trigger behind `runningApps`.
+            let center = NSWorkspace.shared.notificationCenter
+            let t1 = center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification,
+                                        object: nil, queue: .main) { _ in MainActor.assumeIsolated { Native.shared.lua.callRef(ref) } }
+            let t2 = center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
+                                        object: nil, queue: .main) { _ in MainActor.assumeIsolated { Native.shared.lua.callRef(ref) } }
+            cancel = { center.removeObserver(t1); center.removeObserver(t2); Native.shared.lua.releaseRef(ref) }
+        case "powerChanged":
+            // AC <-> battery (and battery-level) change, via IOKit's power-source
+            // run-loop source. The re-read trigger behind `powerSource`.
+            let box = PowerNotifyBox { MainActor.assumeIsolated { Native.shared.lua.callRef(ref) } }
+            let ctx = Unmanaged.passRetained(box).toOpaque()
+            guard let src = IOPSNotificationCreateRunLoopSource({ raw in
+                guard let raw else { return }
+                Unmanaged<PowerNotifyBox>.fromOpaque(raw).takeUnretainedValue().fire()
+            }, ctx)?.takeRetainedValue() else {
+                Unmanaged<PowerNotifyBox>.fromOpaque(ctx).release()
+                lua.releaseRef(ref)
+                return luaError(L, "on_system_event: could not observe the power source")
+            }
+            CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
+            cancel = {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
+                Unmanaged<PowerNotifyBox>.fromOpaque(ctx).release()
+                Native.shared.lua.releaseRef(ref)
+            }
         default:
             lua.releaseRef(ref)
             return luaError(L, "on_system_event: unknown event '\(event)'")

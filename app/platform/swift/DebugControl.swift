@@ -44,7 +44,7 @@ enum DebugControl {
     /// screenshot flow verify the config UI, not just the native panels.
     static var openSettings: ((String?) -> Void)?
 
-    /// Switch the Homepage to a tab ("@home[:features|timeline|shortcuts|home]")
+    /// Switch the Homepage to a tab ("@home[:features|shortcuts|rules|timeline|home]")
     /// and present the first-run Feature Tour ("@tour"). Host UI the Lua eval
     /// channel can't reach -- lets the screenshot flow verify the Gallery grouping
     /// and the onboarding Tour without resetting the user's defaults.

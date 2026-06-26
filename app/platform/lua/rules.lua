@@ -28,6 +28,7 @@ local effects  = require("platform.effects")
 local signals  = require("platform.signals")
 local adapter  = require("platform.adapter")
 local json     = require("platform.json")
+local windows  = require("platform.windows")
 
 local rules = {}
 
@@ -115,10 +116,12 @@ local function bindOne(id, spec)
         -- (e.g. a future "onAC becomes false" rule).
         local target
         if wantEnter then target = spec.on.becomes else target = spec.on.leaves end
-        -- Seed from the CURRENT value so we only fire on a real change, never on bind.
-        local matched = (sig.read() == target)
+        -- `sig.match` is scalar `==` for frontmostApp, set-membership for
+        -- displaysPresent ("DELL" is IN the connected-displays list). Seed from the
+        -- CURRENT value so we only fire on a real change, never on bind.
+        local matched = sig.match(sig.read(), target)
         return sig.subscribe(function(v)
-            local now = (v == target)
+            local now = sig.match(v, target)
             if now ~= matched then
                 if (wantEnter and now) or ((not wantEnter) and (not now)) then
                     fire(id, spec)
@@ -321,15 +324,42 @@ end
 --- the user could never add. The engine still validates on add as the backstop.
 ---@return table
 function rules.formOptions()
-    local cand = {}
-    for _, name in ipairs(signals.list()) do cand[name] = signals.candidates(name) end
+    local cand, meta = {}, {}
+    for _, name in ipairs(signals.list()) do
+        cand[name] = signals.candidates(name)
+        meta[name] = signals.meta(name)
+    end
+    -- Connected displays (names) for the layout editor's display picker.
+    local displays = {}
+    local okS, screens = pcall(adapter.screenFrames)
+    if okS and type(screens) == "table" then
+        for _, s in ipairs(screens) do
+            if type(s) == "table" and s.name then displays[#displays + 1] = s.name end
+        end
+    end
+    -- The named snap positions (id + label) for the layout editor's position picker.
+    local positions = {}
+    for _, key in ipairs(windows.POSITION_ORDER) do
+        positions[#positions + 1] = { id = key, label = windows.POSITION_LABELS[key] or key }
+    end
     return {
         triggerTypes     = { "state", "event", "schedule" },
         signals          = signals.list(),
         signalCandidates = json.asObject(cand),
+        signalMeta       = json.asObject(meta),
         events           = { "wake", "sleep", "screenLock", "screenUnlock", "screenChanged" },
         effects          = effects.catalog(true),
+        layoutDisplays   = json.asArray(displays),
+        layoutPositions  = positions,
     }
+end
+
+--- Snapshot the current window arrangement as a layout placement list (the
+--- Settings "Capture current layout" button). Delegates to effects.captureLayout;
+--- tagged as an array so an empty capture still crosses the bridge as `[]`.
+---@return table[]
+function rules.captureLayout()
+    return json.asArray(effects.captureLayout())
 end
 
 return rules

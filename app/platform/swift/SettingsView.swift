@@ -22,10 +22,6 @@ struct SettingsPane: View {
     /// that are not a Lua feature -- Caps->Hyper, Show in Dock).
     static let generalId = "__general__"
 
-    /// Sentinel selection id for the "Rules" pane (the automation rules editor --
-    /// also not a Lua feature; it spans them).
-    static let rulesId = "__rules__"
-
     var body: some View {
         HSplitView {
             List(selection: $store.selectedFeatureId) {
@@ -34,8 +30,6 @@ struct SettingsPane: View {
                 Section("App") {
                     Label("General", systemImage: "gearshape")
                         .tag(Self.generalId)
-                    Label("Rules", systemImage: "wand.and.stars")
-                        .tag(Self.rulesId)
                 }
                 ForEach(groupedCategories, id: \.self) { category in
                     Section(category.capitalized) {
@@ -51,8 +45,6 @@ struct SettingsPane: View {
             Group {
                 if store.selectedFeatureId == Self.generalId {
                     GeneralSettingsDetail()
-                } else if store.selectedFeatureId == Self.rulesId {
-                    RulesDetail(store: store)
                 } else if let id = store.selectedFeatureId,
                    let feature = store.features.first(where: { $0.id == id }) {
                     FeatureDetail(store: store, feature: feature)

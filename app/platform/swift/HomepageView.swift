@@ -14,13 +14,13 @@ import AppKit
 // the shell's detail column alongside the Gallery / Shortcut Map / Timeline.
 
 enum HomeDestination: Hashable, Identifiable {
-    case home, features, shortcuts, timeline, settings
+    case home, features, shortcuts, rules, timeline, settings
     case feature(String)   // a feature-contributed native page, keyed by feature id
 
     var id: String { rawValue }
 
     /// Built-in tabs (the feature pages are appended dynamically by the sidebar).
-    static let builtins: [HomeDestination] = [.home, .features, .shortcuts, .timeline, .settings]
+    static let builtins: [HomeDestination] = [.home, .features, .shortcuts, .rules, .timeline, .settings]
 
     /// Stable string key -- also the persisted / deep-link form. Feature pages
     /// serialize as "feature:<id>" so Boot's rawValue deep-link round-trips.
@@ -29,6 +29,7 @@ enum HomeDestination: Hashable, Identifiable {
         case .home:             return "home"
         case .features:         return "features"
         case .shortcuts:        return "shortcuts"
+        case .rules:            return "rules"
         case .timeline:         return "timeline"
         case .settings:         return "settings"
         case .feature(let fid): return "feature:" + fid
@@ -40,6 +41,7 @@ enum HomeDestination: Hashable, Identifiable {
         case "home":      self = .home
         case "features":  self = .features
         case "shortcuts": self = .shortcuts
+        case "rules":     self = .rules
         case "timeline":  self = .timeline
         case "settings":  self = .settings
         default:
@@ -53,6 +55,7 @@ enum HomeDestination: Hashable, Identifiable {
         case .home:             return "Home"
         case .features:         return "Features"
         case .shortcuts:        return "Shortcuts"
+        case .rules:            return "Rules"
         case .timeline:         return "Timeline"
         case .settings:         return "Settings"
         case .feature(let fid): return fid   // the sidebar shows the manifest title instead
@@ -63,6 +66,7 @@ enum HomeDestination: Hashable, Identifiable {
         case .home:      return "house.fill"
         case .features:  return "square.grid.2x2.fill"
         case .shortcuts: return "keyboard.fill"
+        case .rules:     return "wand.and.stars"
         case .timeline:  return "clock.fill"
         case .settings:  return "gearshape.fill"
         case .feature:   return "doc"
@@ -141,6 +145,8 @@ struct HomepageView: View {
                 FeatureGalleryView(store: store, openSettings: { showSettings($0) })
             case .shortcuts:
                 ShortcutMapView(store: store)
+            case .rules:
+                RulesPageView(store: store)
             case .timeline:
                 AutomationTimelineView(store: store)
             case .settings:

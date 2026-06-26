@@ -2660,8 +2660,9 @@ do
 
     -- (f) formOptions feeds the Add form's dropdowns
     local fo = rules.formOptions()
-    ok(type(fo.signals) == "table" and fo.signals[1] == "frontmostApp",
-        "formOptions lists the available signals")
+    local sawFrontmost = false
+    for _, s in ipairs(fo.signals) do if s == "frontmostApp" then sawFrontmost = true end end
+    ok(type(fo.signals) == "table" and sawFrontmost, "formOptions lists the available signals")
     local sawNotify = false
     for _, e in ipairs(fo.effects) do if e.kind == "notify" then sawNotify = true end end
     ok(sawNotify, "formOptions offers the notify effect")
@@ -2672,6 +2673,300 @@ do
     registry.setEnabled("m1_manual", false); registry.unregister("m1_manual")
     registry.setEnabled("m1_auto", false); registry.unregister("m1_auto")
     ok(fake.liveHandles == 0, "no native handle leaked across the M1 rules tests")
+end
+
+-- T36: window-layout effect (M2) -- place windows on named displays, self-gating,
+-- capture-current-arrangement, and the screenChanged -> layout pipeline ---------
+-- The seed automation: an external monitor connects (screenChanged) and assigned
+-- apps snap to assigned rects on assigned displays. A layout placement is
+-- SELF-GATING -- it targets a display by name, so it no-ops when that monitor is
+-- unplugged, which is why a coarse screenChanged trigger is enough.
+do
+    local effects = require("platform.effects")
+    local rules   = require("platform.rules")
+    local W       = require("platform.windows")
+    local json    = require("platform.json")
+
+    local function approx(a, b) return type(a) == "number" and math.abs(a - b) < 1e-6 end
+
+    -- Two displays: the laptop (primary) + an external to its right.
+    fake.screenList = {
+        { x = 0,    y = 0, w = 1440, h = 900,  name = "Built-in", index = 1 },
+        { x = 1440, y = 0, w = 2560, h = 1440, name = "DELL",     index = 2 },
+    }
+    fake.windows = {
+        { id = 1, appName = "Safari", title = "Safari",   x = 100,  y = 100, w = 400, h = 300 },
+        { id = 2, appName = "Code",   title = "main.lua", x = 1500, y = 100, w = 800, h = 600 },
+    }
+
+    -- (a) layout effects are context-free + validated
+    ok(effects.requiresContext({ kind = "layout", placements = {} }) == false,
+        "a layout effect is context-free (safe on automated triggers)")
+    local okV = pcall(effects.validate, { kind = "layout", placements = {} })
+    ok(okV == false, "validate rejects a layout with no placements")
+    okV = pcall(effects.validate, { kind = "layout",
+        placements = { { app = "Safari", screen = "DELL", pos = "nope" } } })
+    ok(okV == false, "validate rejects a placement with an unknown position")
+
+    -- (b) dispatch places each matching window on its named display's rect
+    local layout = { kind = "layout", placements = {
+        { app = "Safari", screen = "Built-in", pos = "left" },  -- left half of laptop
+        { app = "Code",   screen = "DELL",     pos = "full" },  -- fill the external
+    } }
+    ok(select(1, effects.dispatch(layout)) == true, "layout dispatch reports success")
+    ok(#fake.windowFrameSets == 2, "both matching windows were moved")
+    local s1 = fake.windowFrameSets[1]
+    ok(s1.id == 1 and approx(s1.x, 0) and approx(s1.y, 0) and approx(s1.w, 720) and approx(s1.h, 900),
+        "Safari snapped to the left half of the Built-in display")
+    local s2 = fake.windowFrameSets[2]
+    ok(s2.id == 2 and approx(s2.x, 1440) and approx(s2.y, 0) and approx(s2.w, 2560) and approx(s2.h, 1440),
+        "Code filled the DELL display (offset by its origin)")
+
+    -- (c) self-gating: a placement on an ABSENT display is skipped; an all-absent
+    -- layout reports no-op (so the trace explains why nothing happened)
+    fake.windowFrameSets = {}
+    local okD, reason = effects.dispatch({ kind = "layout",
+        placements = { { app = "Safari", screen = "Thunderbolt 5K", pos = "full" } } })
+    ok(okD == false and type(reason) == "string", "a layout hitting no present display reports a reason")
+    ok(#fake.windowFrameSets == 0, "no window moved when the target display is unplugged")
+
+    -- (d) capture the CURRENT arrangement -> exact ratios on each window's display
+    fake.windows = {
+        { id = 1, appName = "Safari", title = "S", x = 100,  y = 100, w = 720,  h = 900  }, -- Built-in
+        { id = 2, appName = "Code",   title = "C", x = 1440, y = 0,   w = 2560, h = 1440 }, -- DELL, full
+    }
+    local snap = effects.captureLayout()
+    ok(#snap == 2, "captureLayout snapshots one placement per window")
+    local code = (snap[1].app == "Code") and snap[1] or snap[2]
+    ok(code.screen == "DELL" and code.app == "Code"
+        and approx(code.pos.x, 0) and approx(code.pos.y, 0)
+        and approx(code.pos.w, 1) and approx(code.pos.h, 1),
+        "a maximized window on the external captures as full-screen ratios on DELL")
+    -- a captured (explicit-ratio) placement is valid + re-applies
+    ok(pcall(effects.validate, { kind = "layout", placements = snap }) == true,
+        "a captured layout (explicit ratios) validates")
+
+    -- (e) the full pipeline: screenChanged event -> layout, via the rules engine
+    fake.settings["hammerdeck.rules"] = nil
+    rules.load({})
+    fake.windows = {
+        { id = 7, appName = "Safari", title = "S", x = 5, y = 5, w = 50, h = 50 },
+    }
+    fake.windowFrameSets = {}
+    local okAdd = rules.add({
+        on = { type = "event", event = "screenChanged" },
+        effect = { kind = "layout", placements = {
+            { app = "Safari", screen = "DELL", pos = "right" },
+        } },
+    })
+    ok(okAdd == true, "a screenChanged -> layout rule loads (layout is context-free)")
+    local d = rules.describe()
+    ok(d[1].effectDesc == "Arrange 1 window", "describe() labels a single-placement layout")
+    fake.systemEvent("screenChanged")
+    ok(#fake.windowFrameSets == 1 and fake.windowFrameSets[1].id == 7,
+        "firing screenChanged applies the layout (Safari moved)")
+    -- right half of DELL: x = 1440 + 2560*0.5 = 2720, w = 1280
+    ok(approx(fake.windowFrameSets[1].x, 2720) and approx(fake.windowFrameSets[1].w, 1280),
+        "the window landed on the right half of the external display")
+
+    -- (f) formOptions feeds the layout editor's pickers
+    local fo = rules.formOptions()
+    local sawLayout = false
+    for _, e in ipairs(fo.effects) do if e.kind == "layout" then sawLayout = true end end
+    ok(sawLayout, "formOptions offers the layout effect")
+    ok(type(fo.layoutDisplays) == "table" and fo.layoutDisplays[1] == "Built-in"
+        and fo.layoutDisplays[2] == "DELL", "formOptions lists the connected displays")
+    ok(type(fo.layoutPositions) == "table" and #fo.layoutPositions == 9
+        and fo.layoutPositions[1].id == "full" and type(fo.layoutPositions[1].label) == "string",
+        "formOptions lists the named snap positions with labels")
+
+    -- cleanup
+    rules.load({})
+    fake.settings["hammerdeck.rules"] = nil
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
+    fake.windows = {}
+    fake.windowFrameSets = {}
+    ok(fake.liveHandles == 0, "no native handle leaked across the layout tests")
+end
+
+-- T37: displaysPresent signal (M2) -- "monitor connected/disconnected" as a named
+-- state trigger. The precise form of the coarse screenChanged event: a rule on
+-- `displaysPresent becomes "DELL"` fires when THAT monitor connects (membership
+-- enter), `leaves` when it disconnects -- so the seed "external monitor" case is
+-- expressible by name, with a symmetric disconnect for free.
+do
+    local rules   = require("platform.rules")
+    local signals = require("platform.signals")
+
+    -- docked to the laptop only
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
+    fake.settings["hammerdeck.rules"] = nil
+    rules.load({})
+
+    -- (a) displaysPresent is a known signal; its value is the connected-display set
+    ok(signals.exists("displaysPresent"), "displaysPresent is a registered signal")
+    local sig = signals.get("displaysPresent")
+    local cur = sig.read()
+    ok(type(cur) == "table" and cur[1] == "Built-in", "displaysPresent reads the connected display set")
+    ok(sig.match(cur, "Built-in") == true and sig.match(cur, "DELL") == false,
+        "membership match: Built-in is present, DELL is not")
+
+    -- (b) a 'becomes' rule fires when THAT monitor connects, not on unrelated changes
+    local nB = #fake.notifications
+    ok(rules.add({
+        on = { type = "state", signal = "displaysPresent", becomes = "DELL" },
+        effect = { kind = "notify", title = "Docked", text = "DELL connected" },
+    }) == true, "a displaysPresent-becomes rule loads (automated trigger, context-free effect)")
+    fake.systemEvent("screenChanged")   -- same set (e.g. a resolution tweak)
+    ok(#fake.notifications == nB, "screenChanged with no new display does not fire the connect rule")
+    fake.screenList = {
+        { x = 0,    y = 0, w = 1440, h = 900,  name = "Built-in", index = 1 },
+        { x = 1440, y = 0, w = 2560, h = 1440, name = "DELL",     index = 2 },
+    }
+    fake.systemEvent("screenChanged")
+    ok(#fake.notifications == nB + 1, "DELL connects -> the rule fires (membership enter)")
+    fake.systemEvent("screenChanged")
+    ok(#fake.notifications == nB + 1, "a further screenChanged with DELL still present does not re-fire")
+
+    -- (c) a 'leaves' rule fires on DISCONNECT; the 'becomes' rule does not
+    rules.add({
+        on = { type = "state", signal = "displaysPresent", leaves = "DELL" },
+        effect = { kind = "notify", title = "Undocked", text = "DELL gone" },
+    })
+    local nL = #fake.notifications
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
+    fake.systemEvent("screenChanged")
+    ok(#fake.notifications == nL + 1, "DELL disconnects -> only the 'leaves' rule fires")
+
+    -- (d) formOptions exposes displaysPresent + its candidate displays
+    local fo = rules.formOptions()
+    local sawDisplays = false
+    for _, s in ipairs(fo.signals) do if s == "displaysPresent" then sawDisplays = true end end
+    ok(sawDisplays, "formOptions lists displaysPresent as a signal")
+    ok(type(fo.signalCandidates.displaysPresent) == "table"
+        and fo.signalCandidates.displaysPresent[1] == "Built-in",
+        "formOptions offers the connected displays as candidates")
+
+    -- cleanup
+    rules.load({})
+    fake.settings["hammerdeck.rules"] = nil
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
+    ok(fake.liveHandles == 0, "no native handle leaked across the displaysPresent tests")
+end
+
+-- T38: the new state signals (M2) -- appearance (scalar), runningApps (membership),
+-- powerSource (scalar). Each re-reads on a coarse onSystemEvent and fires on the
+-- becomes/leaves transition; formOptions carries each signal's UI metadata so the
+-- Rules form needs no per-signal Swift code.
+do
+    local rules   = require("platform.rules")
+    local signals = require("platform.signals")
+
+    fake.settings["hammerdeck.rules"] = nil
+    rules.load({})
+
+    -- (a) appearance: a scalar "dark"/"light" signal, fires on the transition
+    fake.appearance = "light"
+    ok(signals.exists("appearance"), "appearance is a registered signal")
+    ok(signals.get("appearance").read() == "light", "appearance reads the current mode")
+    local nB = #fake.notifications
+    rules.add({ on = { type = "state", signal = "appearance", becomes = "dark" },
+                effect = { kind = "notify", title = "Dark" } })
+    fake.systemEvent("appearanceChanged")   -- still light
+    ok(#fake.notifications == nB, "appearanceChanged with no real change does not fire")
+    fake.appearance = "dark"
+    fake.systemEvent("appearanceChanged")
+    ok(#fake.notifications == nB + 1, "appearance becomes dark -> fires")
+
+    -- (b) runningApps: a membership set signal, "launches"/"quits"
+    rules.load({})
+    fake.runningAppList = { "Finder" }
+    ok(signals.get("runningApps").match({ "Finder", "Safari" }, "Safari") == true,
+        "runningApps uses membership match")
+    local nL = #fake.notifications
+    rules.add({ on = { type = "state", signal = "runningApps", becomes = "Slack" },
+                effect = { kind = "notify", title = "Slack up" } })
+    fake.runningAppList = { "Finder", "Slack" }
+    fake.systemEvent("appsChanged")
+    ok(#fake.notifications == nL + 1, "Slack launches -> the runningApps rule fires")
+    fake.runningAppList = { "Finder" }
+    fake.systemEvent("appsChanged")
+    ok(#fake.notifications == nL + 1, "Slack quitting does not fire a 'launches' rule")
+
+    -- (c) powerSource: scalar "ac"/"battery"
+    rules.load({})
+    fake.power = "ac"
+    local nP = #fake.notifications
+    rules.add({ on = { type = "state", signal = "powerSource", becomes = "battery" },
+                effect = { kind = "notify", title = "Unplugged" } })
+    fake.power = "battery"
+    fake.systemEvent("powerChanged")
+    ok(#fake.notifications == nP + 1, "unplugging (powerSource becomes battery) -> fires")
+
+    -- (d) formOptions carries signal metadata (label + transition verbs) for the form
+    local fo = rules.formOptions()
+    ok(type(fo.signalMeta) == "table", "formOptions includes signalMeta")
+    ok(fo.signalMeta.appearance and fo.signalMeta.appearance.label == "Appearance",
+        "signalMeta carries a label per signal")
+    ok(fo.signalMeta.runningApps and fo.signalMeta.runningApps.enterVerb == "launches",
+        "signalMeta carries the transition verbs (runningApps: launches/quits)")
+    ok(type(fo.signalCandidates.powerSource) == "table"
+        and fo.signalCandidates.powerSource[1] == "ac",
+        "powerSource offers ac/battery as candidates")
+
+    -- cleanup
+    rules.load({})
+    fake.settings["hammerdeck.rules"] = nil
+    fake.appearance = "light"; fake.runningAppList = {}; fake.power = "ac"
+    ok(fake.liveHandles == 0, "no native handle leaked across the new-signal tests")
+end
+
+-- T39: curated atomic effects (M3) -- runShortcut (the Shortcuts escape hatch),
+-- openURL, lockScreen. All context-free, so they validate + fire on automated
+-- triggers and the form's Do dropdown offers them.
+do
+    local effects = require("platform.effects")
+    local rules   = require("platform.rules")
+
+    fake.settings["hammerdeck.rules"] = nil
+    rules.load({})
+
+    -- context-free + validated
+    ok(effects.requiresContext({ kind = "runShortcut", name = "X" }) == false, "runShortcut is context-free")
+    ok(effects.requiresContext({ kind = "openURL", url = "x" }) == false, "openURL is context-free")
+    ok(effects.requiresContext({ kind = "lockScreen" }) == false, "lockScreen is context-free")
+    ok(pcall(effects.validate, { kind = "runShortcut" }) == false, "runShortcut requires a name")
+    ok(pcall(effects.validate, { kind = "openURL" }) == false, "openURL requires a url")
+    ok(pcall(effects.validate, { kind = "lockScreen" }) == true, "lockScreen needs no params")
+
+    -- dispatch routes to the adapter
+    local nS = #fake.shortcutsRun
+    effects.dispatch({ kind = "runShortcut", name = "Wind Down" })
+    ok(#fake.shortcutsRun == nS + 1 and fake.shortcutsRun[#fake.shortcutsRun] == "Wind Down",
+        "runShortcut dispatch runs the named Shortcut")
+    local nU = #fake.openedUrls
+    effects.dispatch({ kind = "openURL", url = "https://hammerdeck.app" })
+    ok(#fake.openedUrls == nU + 1, "openURL dispatch opens the url")
+    local nL = fake.actions.lock
+    effects.dispatch({ kind = "lockScreen" })
+    ok(fake.actions.lock == nL + 1, "lockScreen dispatch locks the screen")
+
+    -- end-to-end on an automated trigger: on wake -> run a Shortcut
+    rules.add({ on = { type = "event", event = "wake" },
+                effect = { kind = "runShortcut", name = "Morning" } })
+    ok(rules.describe()[1].effectDesc == 'Run Shortcut "Morning"', "describe labels a runShortcut effect")
+    local nS2 = #fake.shortcutsRun
+    fake.systemEvent("wake")
+    ok(#fake.shortcutsRun == nS2 + 1, "on wake -> the Shortcut runs")
+
+    -- the Do dropdown offers all three (context-free survive automatedOnly)
+    local seen = {}
+    for _, e in ipairs(effects.catalog(true)) do seen[e.kind] = true end
+    ok(seen.runShortcut and seen.openURL and seen.lockScreen,
+        "catalog offers runShortcut + openURL + lockScreen on automated triggers")
+
+    rules.load({}); fake.settings["hammerdeck.rules"] = nil
+    ok(fake.liveHandles == 0, "no native handle leaked across the effect tests")
 end
 
 print("OK -- " .. passed .. " assertions passed (" .. _VERSION .. ")")

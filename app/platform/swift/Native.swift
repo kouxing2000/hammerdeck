@@ -124,6 +124,10 @@ final class Native {
             "focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.focusedWindowFrame(L) } },
             "focused_window_title": { L in MainActor.assumeIsolated { Native.shared.focusedWindowTitle(L) } },
             "set_focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFrame(L) } },
+            "set_window_frame": { L in MainActor.assumeIsolated { Native.shared.setWindowFrame(L) } },
+            "appearance":    { L in MainActor.assumeIsolated { Native.shared.appearance(L) } },
+            "running_apps":  { L in MainActor.assumeIsolated { Native.shared.runningApps(L) } },
+            "power_source":  { L in MainActor.assumeIsolated { Native.shared.powerSource(L) } },
             "set_focused_window_fullscreen": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFullscreen(L) } },
             "screen_frames": { L in MainActor.assumeIsolated { Native.shared.screenFrames(L) } },
             "mouse_position": { L in MainActor.assumeIsolated { Native.shared.mousePosition(L) } },
@@ -164,6 +168,7 @@ final class Native {
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
             "system_sleep": { L in MainActor.assumeIsolated { Native.shared.systemSleep(L) } },
             "lock_screen":  { L in MainActor.assumeIsolated { Native.shared.lockScreen(L) } },
+            "run_shortcut": { L in MainActor.assumeIsolated { Native.shared.runShortcut(L) } },
             "display_sleep": { L in MainActor.assumeIsolated { Native.shared.displaySleep(L) } },
             "start_screensaver": { L in MainActor.assumeIsolated { Native.shared.startScreensaver(L) } },
         ])

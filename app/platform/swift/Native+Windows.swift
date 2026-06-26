@@ -44,6 +44,7 @@ extension Native {
         struct Row {
             let z: Int; let id: Int; let app: String; let title: String
             let bundleID: String; let screenName: String?; let iconToken: String
+            let frame: CGRect
         }
         var rows: [Row] = []
         // Screen names only matter (and only render) on multi-display setups.
@@ -98,14 +99,14 @@ extension Native {
                 rows.append(Row(z: z, id: id, app: appName,
                                 title: title.isEmpty ? appName : title,
                                 bundleID: bundleID, screenName: screenName,
-                                iconToken: iconToken))
+                                iconToken: iconToken, frame: frame))
             }
         }
         rows.sort { $0.z < $1.z }
 
         lua_createtable(L, Int32(rows.count), 0)
         for (i, r) in rows.enumerated() {
-            lua_createtable(L, 0, 5)
+            lua_createtable(L, 0, 10)
             lua_pushinteger(L, lua_Integer(r.id)); lua_setfield(L, -2, "id")
             lua_pushstring(L, r.title);            lua_setfield(L, -2, "title")
             lua_pushstring(L, r.app);              lua_setfield(L, -2, "appName")
@@ -114,6 +115,12 @@ extension Native {
             if let s = r.screenName {
                 lua_pushstring(L, s);              lua_setfield(L, -2, "screenName")
             }
+            // The window's frame (top-left-origin global points) -- lets the rules
+            // engine snapshot the current arrangement ("Capture current layout").
+            lua_pushnumber(L, r.frame.minX);   lua_setfield(L, -2, "x")
+            lua_pushnumber(L, r.frame.minY);   lua_setfield(L, -2, "y")
+            lua_pushnumber(L, r.frame.width);  lua_setfield(L, -2, "w")
+            lua_pushnumber(L, r.frame.height); lua_setfield(L, -2, "h")
             lua_rawseti(L, -2, lua_Integer(i + 1))
         }
         return 1
@@ -229,6 +236,23 @@ extension Native {
         return 1
     }
 
+    /// Set a window's frame with the size-position-size dance: apps clamp a frame
+    /// against their CURRENT screen, so a cross-screen move applied as position-
+    /// then-size (or size-then-position alone) can leave the size clamped to the
+    /// OLD screen. The hs.window dance. Shared by the focused-window setter and the
+    /// by-id setter (move-window-by-id, the window-layout engine).
+    private func applyFrame(_ win: AXUIElement, x: Double, y: Double, w: Double, h: Double) -> Bool {
+        var pos = CGPoint(x: x, y: y)
+        var size = CGSize(width: w, height: h)
+        guard let pv = AXValueCreate(.cgPoint, &pos), let sv = AXValueCreate(.cgSize, &size) else {
+            return false
+        }
+        AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+        let ok = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv) == .success
+        AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+        return ok
+    }
+
     // set_focused_window_frame(x, y, w, h) -> bool
     func setFocusedWindowFrame(_ L: OpaquePointer?) -> Int32 {
         guard let x = LuaState.double(L, 1), let y = LuaState.double(L, 2),
@@ -237,19 +261,22 @@ extension Native {
             lua_pushboolean(L, 0)
             return 1
         }
-        var pos = CGPoint(x: x, y: y)
-        var size = CGSize(width: w, height: h)
-        var ok = false
-        if let pv = AXValueCreate(.cgPoint, &pos), let sv = AXValueCreate(.cgSize, &size) {
-            // Size first, then position, then size again: apps clamp a frame
-            // against their current screen, so a cross-screen move applied as
-            // position-then-size (or size-then-position alone) can leave the
-            // size clamped to the OLD screen. The hs.window dance.
-            AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
-            ok = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv) == .success
-            AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+        lua_pushboolean(L, applyFrame(win, x: x, y: y, w: w, h: h) ? 1 : 0)
+        return 1
+    }
+
+    // set_window_frame(id, x, y, w, h) -> bool -- move ANY window by an id from
+    // the MOST RECENT list_windows() call (resolved via axWindowCache). The
+    // window-layout engine lists, matches by app/title, then places each match.
+    func setWindowFrame(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1),
+              let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+              let w = LuaState.double(L, 4), let h = LuaState.double(L, 5),
+              let win = axWindowCache[id] else {
+            lua_pushboolean(L, 0)
+            return 1
         }
-        lua_pushboolean(L, ok ? 1 : 0)
+        lua_pushboolean(L, applyFrame(win, x: x, y: y, w: w, h: h) ? 1 : 0)
         return 1
     }
 
@@ -266,13 +293,17 @@ extension Native {
         return 1
     }
 
-    // screen_frames() -> array of visible frames (top-left-origin), the order
-    // NSScreen.screens gives (primary first).
+    // screen_frames() -> array of { x,y,w,h, name, index } visible frames
+    // (top-left-origin), the order NSScreen.screens gives (primary first). The
+    // name (localizedName, e.g. "Built-in Retina Display", "DELL U2720Q") is the
+    // stable-ish key the window-layout engine targets a display by.
     func screenFrames(_ L: OpaquePointer?) -> Int32 {
         let screens = NSScreen.screens
         lua_createtable(L, Int32(screens.count), 0)
         for (i, s) in screens.enumerated() {
-            pushRect(L, axRect(s.visibleFrame))
+            pushRect(L, axRect(s.visibleFrame))   // leaves a {x,y,w,h} table on top
+            lua_pushstring(L, s.localizedName);       lua_setfield(L, -2, "name")
+            lua_pushinteger(L, lua_Integer(i + 1));   lua_setfield(L, -2, "index")
             lua_rawseti(L, -2, lua_Integer(i + 1))
         }
         return 1
