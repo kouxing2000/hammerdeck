@@ -20,6 +20,7 @@
 local adapter  = require("platform.adapter")
 local manifest = require("platform.manifest")
 local modal    = require("platform.modal")
+local i18n     = require("platform.i18n")
 
 local M = {}
 
@@ -98,6 +99,11 @@ function M.make(m, resolveTrigger, extra)
     local ctx = {}
     ctx.featureId = m.id
 
+    -- The user-visible app display name (single source of truth, from the seam).
+    -- A value, not a function: it never changes during a run. Features inject it
+    -- into messages ("<app> needs Accessibility"), never hardcode the brand.
+    ctx.appName = adapter.appName()
+
     -- The trigger spec currently bound to one of this feature's actions
     -- (user override or declared default; nil for none / unknown action).
     -- Lets behavior follow the binding -- e.g. window/tab switchers derive
@@ -127,6 +133,14 @@ function M.make(m, resolveTrigger, extra)
     function ctx.setState(key, value)
         adapter.setSetting(stateKey(m.id, key), value)
     end
+
+    -- localization ------------------------------------------------------------
+    -- ctx.t(key, default): localize a feature string. Resolves the feature's own
+    -- catalog first, then the shared global catalog, then the inline English
+    -- `default`. Interpolate with string.format over the result (placeholders
+    -- stay identical across locales). ctx.plural picks a one/other template.
+    function ctx.t(key, default)        return i18n.tFeature(m.id, key, default) end
+    function ctx.plural(key, count, forms) return i18n.plural(key, count, forms, m.id) end
 
     -- logging / notifications -------------------------------------------------
     function ctx.log(...) adapter.log("[" .. m.id .. "]", ...) end

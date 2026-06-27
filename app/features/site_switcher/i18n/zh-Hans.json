@@ -1,0 +1,11 @@
+{
+  "name": "快捷网站",
+  "description": "跳转到常用网站 -- 已打开则聚焦其标签页, 未打开则打开它. 可为每个网站选择浏览器, Chrome 配置文件, 以及是否以独立应用窗口打开. cmd+<数字> 可直接跳到某一行.",
+
+  "option.sites.label": "网站",
+  "option.sites.hint": "每个网站: 名称, 网址, 用于打开它的浏览器, Chrome 配置文件 (仅 Chrome), 以及是否以独立应用窗口打开.",
+
+  "alert.invalidURL": "无效的网站网址: %s",
+  "alert.noSites": "还没有网站 -- 请在设置中每行添加一个",
+  "chooser.placeholder": "跳转到网站"
+}

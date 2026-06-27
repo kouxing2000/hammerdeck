@@ -75,9 +75,9 @@ private func fmtHM(_ minutes: Int) -> String {
 }
 
 private func fmtEvery(_ min: Int) -> String {
-    if min % 60 == 0 { return "every \(min / 60)h" }
-    if min > 60 { return "every \(min / 60)h\(min % 60)m" }
-    return "every \(min)m"
+    if min % 60 == 0 { return String(format: Strings.t("timeline.everyH", default: "every %dh"), min / 60) }
+    if min > 60 { return String(format: Strings.t("timeline.everyHM", default: "every %dh%dm"), min / 60, min % 60) }
+    return String(format: Strings.t("timeline.everyM", default: "every %dm"), min)
 }
 
 // MARK: - The view
@@ -111,14 +111,14 @@ struct AutomationTimelineView: View {
 
     private var toolbar: some View {
         HStack {
-            Text("Automation Timeline").font(.headline)
+            Text(Strings.t("timeline.title", default: "Automation Timeline")).font(.headline)
             Spacer()
             Picker("", selection: $mode) {
-                Text("Day").tag(0)
-                Text("Agenda").tag(1)
+                Text(Strings.t("timeline.day", default: "Day")).tag(0)
+                Text(Strings.t("timeline.agenda", default: "Agenda")).tag(1)
             }
             .pickerStyle(.segmented).frame(width: 160).labelsHidden()
-            Toggle("Show disabled", isOn: $showDisabled)
+            Toggle(Strings.t("timeline.showDisabled", default: "Show disabled"), isOn: $showDisabled)
                 .toggleStyle(.checkbox).font(.callout)
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -134,10 +134,10 @@ struct AutomationTimelineView: View {
             }
             HStack(spacing: 4) {
                 Image(systemName: "wand.and.stars").font(.caption2).foregroundStyle(.purple)
-                Text("rule").font(.caption2).foregroundStyle(.secondary)
+                Text(Strings.t("timeline.rule", default: "rule")).font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("Click a feature marker to edit its time; click a rule to open it in the Rules page.")
+            Text(Strings.t("timeline.legendHint", default: "Click a feature marker to edit its time; click a rule to open it in the Rules page."))
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
@@ -191,7 +191,7 @@ struct AutomationTimelineView: View {
         for r in store.rules where r.enabled || showDisabled {
             guard let kind = Self.ruleKind(r.on) else { continue }   // hotkey/chord/malformed -> off-axis
             out.append(TLItem(id: "rule|\(r.id)", featureId: "__rules__",
-                              featureName: "Rule -- \(r.triggerDesc)",
+                              featureName: String(format: Strings.t("timeline.ruleName", default: "Rule -- %@"), r.triggerDesc),
                               label: r.effectDesc, kind: kind,
                               category: "platform", enabled: r.enabled,
                               actionId: nil, optionKey: nil, optionType: nil))
@@ -214,7 +214,7 @@ struct AutomationTimelineView: View {
             return .event(on["event"] as? String ?? "")
         case "state":
             let sig = on["signal"] as? String ?? "state"
-            let verb = on["becomes"] != nil ? "becomes" : "leaves"
+            let verb = on["becomes"] != nil ? Strings.t("timeline.becomes", default: "becomes") : Strings.t("timeline.leaves", default: "leaves")
             let val = (on["becomes"] as? String) ?? (on["leaves"] as? String) ?? ""
             return .note("\(sig) \(verb) \(val)")
         default:
@@ -311,9 +311,11 @@ private struct DayView: View {
     private var sidePanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                laneSection("RECURRING", recurring, empty: "No repeating intervals")
+                laneSection(Strings.t("timeline.recurring", default: "RECURRING"), recurring,
+                            empty: Strings.t("timeline.emptyRecurring", default: "No repeating intervals"))
                 Divider().padding(.vertical, 4)
-                laneSection("EVENTS & CONDITIONS", conditions, empty: "No event-driven actions")
+                laneSection(Strings.t("timeline.eventsConditions", default: "EVENTS & CONDITIONS"), conditions,
+                            empty: Strings.t("timeline.emptyConditions", default: "No event-driven actions"))
             }
             .padding(12)
         }
@@ -350,12 +352,12 @@ private struct DayMarker: View {
                 Text(item.label).font(.caption).lineLimit(1)
                 if item.isRule {
                     Image(systemName: "wand.and.stars").font(.system(size: 8))
-                        .foregroundStyle(.purple).help("Automation rule -- click to open in the Rules page")
+                        .foregroundStyle(.purple).help(Strings.t("timeline.ruleMarkerHelp", default: "Automation rule -- click to open in the Rules page"))
                 }
                 if stacked {
                     Image(systemName: "square.stack.3d.up.fill")
                         .font(.system(size: 9)).foregroundStyle(.orange)
-                        .help("Another automation fires this same minute")
+                        .help(Strings.t("timeline.stackedHelp", default: "Another automation fires this same minute"))
                 }
                 if item.editable {
                     Image(systemName: "pencil").font(.system(size: 8)).foregroundStyle(.secondary)
@@ -370,7 +372,7 @@ private struct DayMarker: View {
             .opacity(item.enabled ? 1 : 0.55)
         }
         .buttonStyle(.plain)
-        .help(item.enabled ? item.featureName : "\(item.featureName) (disabled)")
+        .help(item.enabled ? item.featureName : String(format: Strings.t("timeline.disabledSuffix", default: "%@ (disabled)"), item.featureName))
         .popover(isPresented: $editing) { EditPopover(item: item, store: store) }
     }
 
@@ -392,7 +394,7 @@ private struct LaneChip: View {
     private var detail: String {
         switch item.kind {
         case .everyMin(let m): return fmtEvery(m)
-        case .event(let e):    return "on \(e)"
+        case .event(let e):    return String(format: Strings.t("timeline.onEvent", default: "on %@"), e)
         case .note(let n):     return n
         case .at:              return ""
         }
@@ -419,7 +421,7 @@ private struct LaneChip: View {
                 if item.isRule {
                     Image(systemName: "wand.and.stars").font(.system(size: 9))
                         .foregroundStyle(.purple)
-                        .help("Automation rule -- click to open in the Rules page")
+                        .help(Strings.t("timeline.ruleMarkerHelp", default: "Automation rule -- click to open in the Rules page"))
                 }
                 if item.editable {
                     Image(systemName: "pencil").font(.system(size: 8)).foregroundStyle(.secondary)
@@ -434,7 +436,7 @@ private struct LaneChip: View {
             .opacity(item.enabled ? 1 : 0.5)
         }
         .buttonStyle(.plain)
-        .help(item.enabled ? item.featureName : "\(item.featureName) (disabled)")
+        .help(item.enabled ? item.featureName : String(format: Strings.t("timeline.disabledSuffix", default: "%@ (disabled)"), item.featureName))
         .popover(isPresented: $editing) { EditPopover(item: item, store: store) }
     }
 
@@ -469,9 +471,9 @@ private struct AgendaView: View {
     }
 
     private func relative(_ mins: Int) -> String {
-        if mins == 0 { return "now" }
-        if mins < 60 { return "in \(mins) min" }
-        return "in \(mins / 60)h \(mins % 60)m"
+        if mins == 0 { return Strings.t("timeline.now", default: "now") }
+        if mins < 60 { return String(format: Strings.t("timeline.inMin", default: "in %d min"), mins) }
+        return String(format: Strings.t("timeline.inHM", default: "in %dh %dm"), mins / 60, mins % 60)
     }
 
     var body: some View {
@@ -485,7 +487,7 @@ private struct AgendaView: View {
                 }
                 if !others.isEmpty {
                     HStack {
-                        Text("RECURRING & EVENT-DRIVEN")
+                        Text(Strings.t("timeline.recurringEventDriven", default: "RECURRING & EVENT-DRIVEN"))
                             .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -496,8 +498,7 @@ private struct AgendaView: View {
                     }
                 }
                 if timed.isEmpty && others.isEmpty {
-                    Text("Nothing scheduled. Bind an action to a schedule, or enable a "
-                         + "time-based feature.")
+                    Text(Strings.t("timeline.empty", default: "Nothing scheduled. Bind an action to a schedule, or enable a time-based feature."))
                         .font(.callout).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center).padding(40)
                 }
@@ -508,8 +509,8 @@ private struct AgendaView: View {
     private func leadFor(_ item: TLItem) -> String {
         switch item.kind {
         case .everyMin(let m): return fmtEvery(m)
-        case .event:           return "event"
-        case .note:            return "idle"
+        case .event:           return Strings.t("timeline.leadEvent", default: "event")
+        case .note:            return Strings.t("timeline.leadIdle", default: "idle")
         case .at:              return ""
         }
     }
@@ -524,7 +525,7 @@ private struct AgendaRow: View {
 
     private var detail: String {
         switch item.kind {
-        case .event(let e): return "on \(e)"
+        case .event(let e): return String(format: Strings.t("timeline.onEvent", default: "on %@"), e)
         case .note(let n):  return n
         default:            return ""
         }
@@ -548,13 +549,13 @@ private struct AgendaRow: View {
                     Image(systemName: "wand.and.stars").font(.caption2).foregroundStyle(.purple)
                 }
                 .buttonStyle(.plain)
-                .help("Open this rule in the Rules page")
+                .help(Strings.t("timeline.openRuleHelp", default: "Open this rule in the Rules page"))
             }
             if !trail.isEmpty {
                 Text(trail).font(.caption).foregroundStyle(.secondary)
             }
             if !item.enabled {
-                Text("disabled").font(.caption2).foregroundStyle(.tertiary)
+                Text(Strings.t("timeline.disabledLabel", default: "disabled")).font(.caption2).foregroundStyle(.tertiary)
             }
             if item.editable {
                 Button { editing = true } label: {
@@ -590,8 +591,9 @@ private struct EditPopover: View {
             Text(item.featureName).font(.caption).foregroundStyle(.secondary)
             Divider()
             HStack {
-                Text(isTime ? "Time (HH:MM)" : "Every (minutes)").font(.callout)
-                TextField(isTime ? "HH:MM" : "minutes", text: $text)
+                Text(isTime ? Strings.t("timeline.timeLabel", default: "Time (HH:MM)")
+                            : Strings.t("timeline.everyLabel", default: "Every (minutes)")).font(.callout)
+                TextField(isTime ? "HH:MM" : Strings.t("timeline.minutesPlaceholder", default: "minutes"), text: $text)
                     .textFieldStyle(.roundedBorder).frame(width: 90)
                     .onSubmit(save)
             }
@@ -600,8 +602,8 @@ private struct EditPopover: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Save", action: save).keyboardShortcut(.defaultAction)
+                Button(Strings.t("timeline.cancel", default: "Cancel")) { dismiss() }
+                Button(Strings.t("timeline.save", default: "Save"), action: save).keyboardShortcut(.defaultAction)
             }
         }
         .padding(14).frame(width: 240)
@@ -619,11 +621,11 @@ private struct EditPopover: View {
     private func save() {
         if isTime {
             guard let m = AutomationTimelineView.minutesOf(text.trimmingCharacters(in: .whitespaces)),
-                  m >= 0, m < 1440 else { error = "Enter a valid HH:MM"; return }
+                  m >= 0, m < 1440 else { error = Strings.t("timeline.errTime", default: "Enter a valid HH:MM"); return }
             applyTime(fmtHM(m))
         } else {
             guard let n = Int(text.trimmingCharacters(in: .whitespaces)), n > 0 else {
-                error = "Enter a positive number of minutes"; return
+                error = Strings.t("timeline.errMinutes", default: "Enter a positive number of minutes"); return
             }
             applyEvery(n)
         }

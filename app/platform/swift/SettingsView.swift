@@ -27,12 +27,12 @@ struct SettingsPane: View {
             List(selection: $store.selectedFeatureId) {
                 // Host-level app preferences, pinned above the feature catalog so
                 // they are discoverable (not buried in the menubar only).
-                Section("App") {
-                    Label("General", systemImage: "gearshape")
+                Section(Strings.t("settings.app", default: "App")) {
+                    Label(Strings.t("settings.general", default: "General"), systemImage: "gearshape")
                         .tag(Self.generalId)
                 }
                 ForEach(groupedCategories, id: \.self) { category in
-                    Section(category.capitalized) {
+                    Section(categoryLabel(category)) {
                         ForEach(store.features.filter { $0.category == category }) { feature in
                             FeatureRow(store: store, feature: feature)
                                 .tag(feature.id)
@@ -49,7 +49,7 @@ struct SettingsPane: View {
                    let feature = store.features.first(where: { $0.id == id }) {
                     FeatureDetail(store: store, feature: feature)
                 } else {
-                    Text("Select a feature")
+                    Text(Strings.t("settings.select_feature", default: "Select a feature"))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -86,7 +86,7 @@ private struct FeatureRow: View {
                     }
                     Text(feature.name)
                 }
-                Text(feature.failed ? "Failed to load" : feature.triggerDesc)
+                Text(feature.failed ? Strings.t("settings.failed_to_load", default: "Failed to load") : feature.triggerDesc)
                     .font(.caption)
                     .foregroundStyle(feature.failed ? .red : .secondary)
             }
@@ -111,33 +111,61 @@ private struct FeatureRow: View {
 private struct GeneralSettingsDetail: View {
     @State private var capsHyper = CapsHyperPreference.enabled
     @State private var showInDock = DockPreference.showInDock
+    @State private var language = LocalePreference.override
+    @State private var showRestartPrompt = false
 
     var body: some View {
         Form {
-            Section("Keyboard") {
-                Toggle("Caps Lock acts as Hyper (⌘⌥⌃)", isOn: $capsHyper)
+            Section(Strings.t("settings.keyboard", default: "Keyboard")) {
+                Toggle(Strings.t("settings.caps_hyper_toggle", default: "Caps Lock acts as Hyper (⌘⌥⌃)"), isOn: $capsHyper)
                     .onChange(of: capsHyper) { on in CapsHyperPreference.userToggle(to: on) }
-                Text("Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper shortcuts "
-                     + "are a one-key press. Double-tap Caps Lock for its normal lock. "
-                     + "Remaps Caps Lock and needs Accessibility.")
+                Text(Strings.t("settings.caps_hyper_caption", default: "Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper shortcuts are a one-key press. Double-tap Caps Lock for its normal lock. Remaps Caps Lock and needs Accessibility."))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Section("App") {
-                Toggle("Show in Dock", isOn: $showInDock)
+            Section(Strings.t("settings.app", default: "App")) {
+                Toggle(Strings.t("settings.show_in_dock", default: "Show in Dock"), isOn: $showInDock)
                     .onChange(of: showInDock) { on in DockPreference.set(on); DockPreference.apply() }
-                Text("Keep a Hammerdeck icon in the Dock (and a Cmd-Tab entry); "
-                     + "click it to open Home. Off = a pure menubar app.")
+                Text(String(format: Strings.t("settings.dock_caption", default: "Keep a %@ icon in the Dock (and a Cmd-Tab entry); click it to open Home. Off = a pure menubar app."), AppInfo.displayName))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Section(Strings.t("settings.language", default: "Language")) {
+                Picker(Strings.t("settings.language", default: "Language"), selection: $language) {
+                    ForEach(LocalePreference.options(), id: \.code) { opt in
+                        Text(opt.label).tag(opt.code)
+                    }
+                }
+                .onChange(of: language) { code in
+                    // Only prompt on a real change (onAppear re-seeds the same value).
+                    guard code != LocalePreference.override else { return }
+                    LocalePreference.set(code)
+                    showRestartPrompt = true
+                }
+                Text(String(format: Strings.t("settings.language_caption", default: "Pick the app language, or follow the macOS system language. Relaunch %@ to fully apply a change."), AppInfo.displayName))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("General")
+        .navigationTitle(Strings.t("settings.general", default: "General"))
+        // A language change only fully applies on a fresh boot, so offer to
+        // restart now (or later -- the preference is already saved).
+        .alert(Strings.t("settings.lang_restart_title", default: "Language changed"),
+               isPresented: $showRestartPrompt) {
+            Button(Strings.t("settings.lang_restart_now", default: "Restart Now")) {
+                AppRelaunch.restart()
+            }
+            Button(Strings.t("settings.lang_restart_later", default: "Later"), role: .cancel) {}
+        } message: {
+            Text(String(format: Strings.t("settings.lang_restart_msg",
+                default: "Restart %@ now to apply the new language?"), AppInfo.displayName))
+        }
         // Re-seed from the live prefs (e.g. if toggled from the menubar meanwhile).
         .onAppear {
             capsHyper = CapsHyperPreference.enabled
             showInDock = DockPreference.showInDock
+            language = LocalePreference.override
         }
     }
 }
@@ -151,7 +179,7 @@ private struct FeatureDetail: View {
             if feature.failed {
                 Section {
                     Label(
-                        feature.errorMessage.isEmpty ? "This feature failed to start." : feature.errorMessage,
+                        feature.errorMessage.isEmpty ? Strings.t("settings.feature_failed_to_start", default: "This feature failed to start.") : feature.errorMessage,
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .foregroundStyle(.red)
@@ -160,18 +188,18 @@ private struct FeatureDetail: View {
             Section {
                 Text(feature.description)
                     .foregroundStyle(.secondary)
-                LabeledContent("Trigger", value: feature.triggerDesc)
-                LabeledContent("Kind", value: feature.kind == "service" ? "Always-on service" : "Triggered action")
+                LabeledContent(Strings.t("settings.trigger", default: "Trigger"), value: feature.triggerDesc)
+                LabeledContent(Strings.t("settings.kind", default: "Kind"), value: feature.kind == "service" ? Strings.t("settings.always_on_service", default: "Always-on service") : Strings.t("settings.triggered_action", default: "Triggered action"))
                 if !feature.version.isEmpty {
-                    LabeledContent("Version", value: feature.version)
+                    LabeledContent(Strings.t("settings.version", default: "Version"), value: feature.version)
                 }
             }
             // One trigger editor per declared action (a plugin may have several
             // shortcuts). Pure services have none.
             ForEach(feature.actions) { action in
                 Section(feature.actions.count == 1
-                        ? "Bind trigger"
-                        : "Trigger -- \(action.label)") {
+                        ? Strings.t("settings.bind_trigger", default: "Bind trigger")
+                        : String(format: Strings.t("settings.trigger_named", default: "Trigger -- %@"), action.label)) {
                     TriggerEditor(store: store, feature: feature, action: action)
                         // Remount when the bound trigger changes so local edit
                         // state re-seeds from the new current spec.
@@ -198,7 +226,7 @@ private struct FeatureDetail: View {
         var order: [String] = []
         var groups: [String: [OptionInfo]] = [:]
         for opt in feature.options {
-            let s = opt.section.isEmpty ? "Options" : opt.section
+            let s = opt.section.isEmpty ? Strings.t("settings.options", default: "Options") : opt.section
             if groups[s] == nil { order.append(s) }
             groups[s, default: []].append(opt)
         }
@@ -268,7 +296,7 @@ private struct OptionEditor: View {
                     Button {
                         store.resetOption(featureId, opt)
                     } label: {
-                        Label("Reset to default", systemImage: "arrow.uturn.backward.circle")
+                        Label(Strings.t("settings.reset_to_default", default: "Reset to default"), systemImage: "arrow.uturn.backward.circle")
                     }
                     .buttonStyle(.plain)
                     .controlSize(.small)
@@ -282,7 +310,7 @@ private struct OptionEditor: View {
                 // A subtle "customized" tag flags an edited prompt without
                 // forcing the user to expand each one to check.
                 if store.isOptionOverridden(featureId, opt) {
-                    Text("customized")
+                    Text(Strings.t("settings.customized", default: "customized"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -298,7 +326,7 @@ private struct OptionEditor: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .help("Reset to default")
+        .help(Strings.t("settings.reset_to_default", default: "Reset to default"))
     }
 
     /// Optional one-line caption explaining the option / its requirement.
@@ -354,7 +382,7 @@ private struct OptionEditor: View {
                     .multilineTextAlignment(.trailing)
             }
             HStack(spacing: 8) {
-                Button("Validate") { store.validate(featureId, opt) }
+                Button(Strings.t("settings.validate", default: "Validate")) { store.validate(featureId, opt) }
                     .disabled(secretBinding.wrappedValue.isEmpty || isValidating)
                 validationStatus
                 Spacer()
@@ -437,7 +465,7 @@ private struct OptionEditor: View {
                 )
             }
         default:
-            LabeledContent(opt.label, value: "(\(opt.type) editor not built yet)")
+            LabeledContent(opt.label, value: String(format: Strings.t("settings.editor_not_built", default: "(%@ editor not built yet)"), opt.type))
                 .foregroundStyle(.secondary)
         }
     }
@@ -475,7 +503,7 @@ private struct OptionEditor: View {
         case .validating:
             HStack(spacing: 4) {
                 ProgressView().controlSize(.small)
-                Text("Validating...").font(.caption).foregroundStyle(.secondary)
+                Text(Strings.t("settings.validating", default: "Validating...")).font(.caption).foregroundStyle(.secondary)
             }
         case .ok(let msg):
             Label(msg, systemImage: "checkmark.circle.fill")
@@ -501,7 +529,7 @@ private struct OptionEditor: View {
     /// The menu entry for the empty/"use the default" choice -- named by the
     /// option (e.g. "macOS Dictionary (default)"), or a generic fallback.
     private var appListDefaultLabel: String {
-        opt.defaultLabel.isEmpty ? "Default app" : "\(opt.defaultLabel) (default)"
+        opt.defaultLabel.isEmpty ? Strings.t("settings.default_app", default: "Default app") : String(format: Strings.t("settings.default_with_label", default: "%@ (default)"), opt.defaultLabel)
     }
 
     /// What the appList menu shows as selected: the default-app label when empty,
@@ -563,11 +591,11 @@ private enum TriggerMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .hotkey:        return "Hotkey"
-        case .chord:         return "Chord"
-        case .scheduleEvery: return "Every N minutes"
-        case .scheduleAt:    return "Daily at"
-        case .event:         return "System event"
+        case .hotkey:        return Strings.t("settings.mode_hotkey", default: "Hotkey")
+        case .chord:         return Strings.t("settings.mode_chord", default: "Chord")
+        case .scheduleEvery: return Strings.t("settings.mode_every", default: "Every N minutes")
+        case .scheduleAt:    return Strings.t("settings.daily_at", default: "Daily at")
+        case .event:         return Strings.t("settings.mode_event", default: "System event")
         }
     }
 
@@ -684,21 +712,21 @@ private struct TriggerEditor: View {
 
         let modes = TriggerMode.available(automatable: action.automatable)
         if modes.count > 1 {
-            Picker("Type", selection: $mode) {
+            Picker(Strings.t("settings.type", default: "Type"), selection: $mode) {
                 ForEach(modes) { Text($0.label).tag($0) }
             }
         }
 
         switch mode {
         case .hotkey:
-            LabeledContent("Shortcut") {
+            LabeledContent(Strings.t("settings.shortcut", default: "Shortcut")) {
                 ShortcutRecorder(mods: $mods, key: $key)
             }
         case .chord:
             // Prefix + follow keys on ONE row: record the prefix, then the
             // "then" field for the ordered follow keys (mirrors the Shortcut Map
             // grid, where a chord also lives in a single row).
-            LabeledContent("Shortcut") {
+            LabeledContent(Strings.t("settings.shortcut", default: "Shortcut")) {
                 // Two visual units -- the recorded prefix and the typed follow
                 // keys -- with a wider gap around the "then" connector than the
                 // recorder's internal spacing, so they read as distinct groups.
@@ -706,34 +734,34 @@ private struct TriggerEditor: View {
                 // apart from the prefix's glyph display, mirroring the grid.
                 HStack(spacing: 12) {
                     ShortcutRecorder(mods: $mods, key: $key, placeholder: "Record prefix")
-                    Text("then")
+                    Text(Strings.t("settings.then", default: "then"))
                         .foregroundStyle(.secondary)
                         .padding(.leading, 4)
                     // labelsHidden + prompt: the title would otherwise render as
                     // a persistent label beside the box on macOS (the stray
                     // "keys" that wrapped); we want a placeholder-only field.
-                    TextField("Follow keys", text: $follows, prompt: Text("b c"))
+                    TextField(Strings.t("settings.follow_keys", default: "Follow keys"), text: $follows, prompt: Text("b c"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 64)
                         .multilineTextAlignment(.center)
                 }
             }
-            Text("Record the prefix, then type the follow keys in order (e.g. ⌘⇧A then B).")
+            Text(Strings.t("settings.chord_caption", default: "Record the prefix, then type the follow keys in order (e.g. ⌘⇧A then B)."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .scheduleEvery:
             Stepper(value: $everyMin, in: 1...1440) {
-                LabeledContent("Interval", value: "\(everyMin) min")
+                LabeledContent(Strings.t("settings.interval", default: "Interval"), value: String(format: Strings.t("settings.interval_value", default: "%d min"), everyMin))
             }
         case .scheduleAt:
-            LabeledContent("Daily at") {
+            LabeledContent(Strings.t("settings.daily_at", default: "Daily at")) {
                 TextField("HH:MM", text: $at)
                     .frame(width: 70)
                     .multilineTextAlignment(.trailing)
             }
         case .event:
-            Picker("Event", selection: $event) {
+            Picker(Strings.t("settings.event", default: "Event"), selection: $event) {
                 ForEach(allEvents, id: \.self) { Text($0).tag($0) }
             }
         }
@@ -754,16 +782,16 @@ private struct TriggerEditor: View {
         }
 
         HStack {
-            Button("Apply") { conflict = store.setTrigger(feature.id, action.id, buildSpec()) }
+            Button(Strings.t("settings.apply", default: "Apply")) { conflict = store.setTrigger(feature.id, action.id, buildSpec()) }
                 .disabled(applyDisabled || !dirty || conflict != nil)
             // Once the edit differs from what's applied, let the user back out
             // in place (discard the unapplied change) without navigating away.
             if dirty {
-                Button("Revert") { revertEdit() }
-                    .help("Discard the unapplied change and restore the current shortcut")
+                Button(Strings.t("settings.revert", default: "Revert")) { revertEdit() }
+                    .help(Strings.t("settings.revert_help", default: "Discard the unapplied change and restore the current shortcut"))
             }
             if action.triggerOverridden {
-                Button("Reset to default") {
+                Button(Strings.t("settings.reset_to_default", default: "Reset to default")) {
                     store.clearTrigger(feature.id, action.id)
                     conflict = nil
                 }

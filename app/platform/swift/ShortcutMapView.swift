@@ -61,7 +61,7 @@ struct ShortcutMapView: View {
     private var footerHint: some View {
         HStack(spacing: 6) {
             Image(systemName: "arrow.left.arrow.right")
-            Text("Tip: drag a shortcut pill onto another row to swap the two bindings.")
+            Text(Strings.t("shortcuts.tip", default: "Tip: drag a shortcut pill onto another row to swap the two bindings."))
             Spacer()
         }
         .font(.caption)
@@ -86,11 +86,11 @@ struct ShortcutMapView: View {
 
     private var toolbar: some View {
         HStack {
-            Text("Shortcut Map").font(.headline)
+            Text(Strings.t("shortcuts.title", default: "Shortcut Map")).font(.headline)
             Spacer()
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Filter", text: $search).textFieldStyle(.plain).frame(width: 160)
+                TextField(Strings.t("shortcuts.filter", default: "Filter"), text: $search).textFieldStyle(.plain).frame(width: 160)
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
@@ -100,14 +100,14 @@ struct ShortcutMapView: View {
 
     private var headerRow: some View {
         HStack(spacing: 0) {
-            Text("Feature / Action").frame(maxWidth: .infinity, alignment: .leading)
+            Text(Strings.t("shortcuts.colFeatureAction", default: "Feature / Action")).frame(maxWidth: .infinity, alignment: .leading)
             ForEach(kMods, id: \.id) { m in
                 Text(m.glyph).frame(width: kModW)
             }
-            Text("Key").frame(width: kKeyW)
-            Text("Then").frame(width: kThenW)
-            Text("Shortcut").frame(width: kPreviewW)
-            Text("Status").frame(width: kStatusW, alignment: .leading)
+            Text(Strings.t("shortcuts.colKey", default: "Key")).frame(width: kKeyW)
+            Text(Strings.t("shortcuts.colThen", default: "Then")).frame(width: kThenW)
+            Text(Strings.t("shortcuts.colShortcut", default: "Shortcut")).frame(width: kPreviewW)
+            Text(Strings.t("shortcuts.colStatus", default: "Status")).frame(width: kStatusW, alignment: .leading)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -156,7 +156,7 @@ struct ShortcutMapView: View {
                 .background(Capsule().fill(.quaternary))
             Spacer()
             if !feature.enabled {
-                Text("disabled").font(.caption2).foregroundStyle(.secondary)
+                Text(Strings.t("shortcuts.disabled", default: "disabled")).font(.caption2).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
@@ -170,7 +170,7 @@ struct ShortcutMapView: View {
     private var serviceSection: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("ALWAYS ON -- NO SHORTCUT")
+                Text(Strings.t("shortcuts.alwaysOnSection", default: "ALWAYS ON -- NO SHORTCUT"))
                     .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
             }
@@ -185,7 +185,7 @@ struct ShortcutMapView: View {
                     Text("--").foregroundStyle(.secondary).frame(width: kKeyW)
                     Text("--").foregroundStyle(.secondary).frame(width: kThenW)
                     Text("--").foregroundStyle(.secondary).frame(width: kPreviewW)
-                    Text("always-on service").foregroundStyle(.secondary)
+                    Text(Strings.t("shortcuts.alwaysOnService", default: "always-on service")).foregroundStyle(.secondary)
                         .frame(width: kStatusW, alignment: .leading)
                 }
                 .foregroundStyle(.secondary)
@@ -316,7 +316,7 @@ private struct BindingRow: View {
                     pillHover = h
                     if h { NSCursor.openHand.set() } else { NSCursor.arrow.set() }
                 }
-                .help("Drag onto another row to swap shortcuts")
+                .help(Strings.t("shortcuts.swapHelp", default: "Drag onto another row to swap shortcuts"))
             } else {
                 Text(label).font(.caption).foregroundStyle(.secondary)
             }
@@ -342,7 +342,7 @@ private struct BindingRow: View {
             Text(title)
             if action.triggerOverridden {
                 Image(systemName: "pencil").font(.caption2).foregroundStyle(.secondary)
-                    .help("Custom shortcut (overrides the default)")
+                    .help(Strings.t("shortcuts.customHelp", default: "Custom shortcut (overrides the default)"))
             } else if !action.mnemonic.isEmpty {
                 // "Why this key" hint for the default -- hover to read. Hidden
                 // once overridden (the mnemonic describes the default choice).
@@ -382,7 +382,7 @@ private struct BindingRow: View {
     @ViewBuilder private var keyCell: some View {
         if editable {
             HStack(spacing: 4) {
-                TextField(capturing ? "press keys..." : "key", text: $key)
+                TextField(capturing ? Strings.t("shortcuts.pressKeys", default: "press keys...") : Strings.t("shortcuts.keyPlaceholder", default: "key"), text: $key)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .key)
                     .frame(width: kKeyW - 32)
@@ -394,7 +394,7 @@ private struct BindingRow: View {
                         .foregroundStyle(capturing ? .red : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Capture: click, then press the shortcut")
+                .help(Strings.t("shortcuts.captureHelp", default: "Capture: click, then press the shortcut"))
             }
             .frame(width: kKeyW)
         } else {
@@ -408,12 +408,12 @@ private struct BindingRow: View {
     /// non-keyboard (schedule/event) rows.
     @ViewBuilder private var thenCell: some View {
         if editable {
-            TextField("then", text: $follows)
+            TextField(Strings.t("shortcuts.thenPlaceholder", default: "then"), text: $follows)
                 .textFieldStyle(.roundedBorder)
                 .focused($focusedField, equals: .then)
                 .frame(width: kThenW - 10)
                 .onSubmit { apply() }
-                .help("Type follow keys (e.g. b c) to make this a chord; leave empty for a plain hotkey")
+                .help(Strings.t("shortcuts.thenHelp", default: "Type follow keys (e.g. b c) to make this a chord; leave empty for a plain hotkey"))
                 .frame(width: kThenW)
         } else {
             Text(follows.isEmpty ? "--" : follows)
@@ -429,7 +429,7 @@ private struct BindingRow: View {
                 .help(statusText)
             Spacer()
             if action.triggerOverridden && editable {
-                Button("Reset") { reset() }.buttonStyle(.link).font(.caption)
+                Button(Strings.t("shortcuts.reset", default: "Reset")) { reset() }.buttonStyle(.link).font(.caption)
             }
         }
         .font(.caption)
@@ -449,10 +449,10 @@ private struct BindingRow: View {
     }
     private var statusText: String {
         switch status {
-        case .ok:              return "OK"
+        case .ok:              return Strings.t("shortcuts.statusOK", default: "OK")
         case .soft(let s):     return s
         case .hard(let s):     return s
-        case .unbound:         return "not bound"
+        case .unbound:         return Strings.t("shortcuts.notBound", default: "not bound")
         case .info(let s):     return s
         }
     }
@@ -551,9 +551,11 @@ private struct BindingRow: View {
 
     static func shortDesc(_ t: TriggerSpec) -> String {
         switch t.type {
-        case "chord":    return "chord (edit in Settings)"
-        case "schedule": return t.everyMin != nil ? "every \(t.everyMin!)m" : "at \(t.at ?? "")"
-        case "event":    return "on \(t.event ?? "")"
+        case "chord":    return Strings.t("shortcuts.shortDesc.chord", default: "chord (edit in Settings)")
+        case "schedule": return t.everyMin != nil
+                            ? String(format: Strings.t("shortcuts.shortDesc.everyMin", default: "every %dm"), t.everyMin!)
+                            : String(format: Strings.t("shortcuts.shortDesc.at", default: "at %@"), t.at ?? "")
+        case "event":    return String(format: Strings.t("shortcuts.shortDesc.onEvent", default: "on %@"), t.event ?? "")
         default:         return t.type
         }
     }

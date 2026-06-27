@@ -1,0 +1,8 @@
+{
+  "name": "空闲时关闭显示器",
+  "description": "在一段无操作后关闭显示器, 并先给出短暂警告.",
+
+  "alert.idle": "无活动 -- 显示器即将关闭...",
+
+  "option.idleThresholdMin.label": "显示器关闭前的空闲时间 (分钟)"
+}

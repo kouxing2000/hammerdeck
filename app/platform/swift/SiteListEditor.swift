@@ -96,7 +96,7 @@ struct SiteListEditor: View {
                     siteRow($row)
                 }
                 if rows.isEmpty {
-                    Text("No sites yet.")
+                    Text(Strings.t("sites.empty", default: "No sites yet."))
                         .font(.callout).foregroundStyle(.secondary)
                         .padding(.vertical, 6)
                 }
@@ -111,7 +111,7 @@ struct SiteListEditor: View {
                 rows.append(new)
                 expanded.insert(new.id)   // a fresh row opens ready to type
             } label: {
-                Label("Add site", systemImage: "plus.circle.fill")
+                Label(Strings.t("sites.add", default: "Add site"), systemImage: "plus.circle.fill")
             }
             .buttonStyle(.borderless)
             .controlSize(.small)
@@ -160,7 +160,8 @@ struct SiteListEditor: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(title(site)), \(summary(site))")
-            .accessibilityHint(isOpen ? "Collapse" : "Expand to edit")
+            .accessibilityHint(isOpen ? Strings.t("sites.collapse", default: "Collapse")
+                                      : Strings.t("sites.expand", default: "Expand to edit"))
 
             if isOpen { detail(row) }
         }
@@ -173,27 +174,28 @@ struct SiteListEditor: View {
         // Native grouped-Form rows (title = label): clean macOS settings look,
         // proper alignment, far less layout code than hand-rolled label columns.
         VStack(alignment: .leading, spacing: 7) {
-            TextField("Name", text: row.name, prompt: Text("optional"))
-            TextField("URL", text: row.url, prompt: Text("example.com"))
-            Picker("Browser", selection: row.browser) {
-                Text("System default").tag("")
+            TextField(Strings.t("sites.name", default: "Name"), text: row.name,
+                      prompt: Text(Strings.t("sites.name.ph", default: "optional")))
+            TextField(Strings.t("sites.url", default: "URL"), text: row.url, prompt: Text("example.com"))
+            Picker(Strings.t("sites.browser", default: "Browser"), selection: row.browser) {
+                Text(Strings.t("sites.systemDefault", default: "System default")).tag("")
                 ForEach(browsers) { Text($0.name).tag($0.bundleId) }
             }
             if isChrome && !profiles.isEmpty {
-                Picker("Profile", selection: row.profile) {
-                    Text("Default profile").tag("")
+                Picker(Strings.t("sites.profile", default: "Profile"), selection: row.profile) {
+                    Text(Strings.t("sites.defaultProfile", default: "Default profile")).tag("")
                     ForEach(profiles) { Text($0.name).tag($0.dir) }
                 }
             }
-            Toggle("Open as a standalone app window", isOn: row.app)
-                .help("Chrome / Chromium only -- a chromeless app-style window. Other browsers open a tab.")
+            Toggle(Strings.t("sites.standalone", default: "Open as a standalone app window"), isOn: row.app)
+                .help(Strings.t("sites.standalone.help", default: "Chrome / Chromium only -- a chromeless app-style window. Other browsers open a tab."))
             HStack {
                 Spacer()
                 Button(role: .destructive) {
                     let id = row.wrappedValue.id
                     rows.removeAll { $0.id == id }
                 } label: {
-                    Text("Remove site")
+                    Text(Strings.t("sites.remove", default: "Remove site"))
                 }
                 .controlSize(.small)
             }

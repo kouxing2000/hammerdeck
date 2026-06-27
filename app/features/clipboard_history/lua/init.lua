@@ -87,7 +87,7 @@ local function start(ctx)
 
     function st.show()
         if #st.history == 0 then
-            ctx.alert("Clipboard history is empty")
+            ctx.alert(ctx.t("alert.empty", "Clipboard history is empty"))
             return
         end
         if not st.chooser then
@@ -118,7 +118,7 @@ local function start(ctx)
             local text, sub = preview(e)
             choices[#choices + 1] = { text = text, subText = sub, index = i }
         end
-        st.chooser.setPlaceholder("Clipboard history")
+        st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Clipboard history"))
         st.chooser.setChoices(choices)
         st.chooser.setQuery(nil)
         st.chooser.show()

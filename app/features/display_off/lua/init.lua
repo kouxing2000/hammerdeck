@@ -50,7 +50,7 @@ return {
 
             -- First tick past the threshold: warn once.
             if not s.warnedAt then
-                ctx.alert("No activity -- display turns off soon...")
+                ctx.alert(ctx.t("alert.idle", "No activity -- display turns off soon..."))
                 ctx.log("idle warning at " .. math.floor(idle) .. "s")
                 s.warnedAt = ctx.now()
             end

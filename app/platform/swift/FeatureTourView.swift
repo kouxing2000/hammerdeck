@@ -46,7 +46,7 @@ struct FeatureTourView: View {
             if let f = current {
                 card(f)
             } else {
-                Text("No features to show.")
+                Text(Strings.t("tour.noFeatures", default: "No features to show."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -62,10 +62,10 @@ struct FeatureTourView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "hammer.fill").foregroundStyle(.tint)
-                Text("Discover Features").font(.headline)
+                Text(Strings.t("tour.title", default: "Discover Features")).font(.headline)
                 Spacer()
                 if !deck.isEmpty {
-                    Text("\(min(index + 1, deck.count)) of \(deck.count)")
+                    Text(String(format: Strings.t("tour.progress", default: "%d of %d"), min(index + 1, deck.count), deck.count))
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Button { onClose() } label: {
@@ -74,7 +74,7 @@ struct FeatureTourView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Close the tour -- you can reopen it from Home")
+                .help(Strings.t("tour.closeHelp", default: "Close the tour -- you can reopen it from Home"))
             }
             ProgressView(value: Double(index + 1), total: Double(max(deck.count, 1)))
                 .progressViewStyle(.linear)
@@ -124,22 +124,22 @@ struct FeatureTourView: View {
                                     .fill(Color.gray.opacity(0.14)))
                         }
                     } else {
-                        Label("always on", systemImage: "infinity")
+                        Label(Strings.t("tour.alwaysOn", default: "always on"), systemImage: "infinity")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     ForEach(unmetRequirements(f), id: \.self) { r in
                         Button { store.promptAccessibility() } label: {
-                            Label("\(requirementLabel(r)) — Grant", systemImage: "lock.shield")
+                            Label(String(format: Strings.t("tour.grant", default: "%@ — Grant"), requirementLabel(r)), systemImage: "lock.shield")
                                 .font(.caption2)
                                 .padding(.horizontal, 7).padding(.vertical, 2)
                                 .background(Capsule().fill(Color.orange.opacity(0.16)))
                                 .foregroundStyle(.orange)
                         }
                         .buttonStyle(.plain)
-                        .help("Open System Settings to grant Accessibility, then it works")
+                        .help(Strings.t("tour.grantHelp", default: "Open System Settings to grant Accessibility, then it works"))
                     }
                     if f.recommended {
-                        Label("Recommended", systemImage: "star.fill")
+                        Label(Strings.t("tour.recommended", default: "Recommended"), systemImage: "star.fill")
                             .font(.caption2)
                             .padding(.horizontal, 7).padding(.vertical, 2)
                             .background(Capsule().fill(Color.yellow.opacity(0.16)))
@@ -147,7 +147,7 @@ struct FeatureTourView: View {
                     }
                 }
                 Text(f.name).font(.title2.weight(.semibold))
-                Text(f.description.isEmpty ? "No description." : f.description)
+                Text(f.description.isEmpty ? Strings.t("tour.noDescription", default: "No description.") : f.description)
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 460)
@@ -175,7 +175,7 @@ struct FeatureTourView: View {
     private var footer: some View {
         HStack(spacing: 12) {
             Button { go(-1) } label: {
-                Label("Back", systemImage: "chevron.left")
+                Label(Strings.t("tour.back", default: "Back"), systemImage: "chevron.left")
             }
             .disabled(index == 0)
 
@@ -189,12 +189,12 @@ struct FeatureTourView: View {
 
             if index >= deck.count - 1 {
                 Button { onClose() } label: {
-                    Text("Done").frame(minWidth: 56)
+                    Text(Strings.t("tour.done", default: "Done")).frame(minWidth: 56)
                 }
                 .keyboardShortcut(.defaultAction)
             } else {
                 Button { go(1) } label: {
-                    Label("Next", systemImage: "chevron.right")
+                    Label(Strings.t("tour.next", default: "Next"), systemImage: "chevron.right")
                         .labelStyle(TrailingIconLabelStyle())
                 }
             }
@@ -208,21 +208,21 @@ struct FeatureTourView: View {
     @ViewBuilder private func addButton(_ f: FeatureInfo) -> some View {
         if f.enabled {
             Button { store.setEnabled(f.id, false) } label: {
-                Label("Added", systemImage: "checkmark.circle.fill")
+                Label(Strings.t("tour.added", default: "Added"), systemImage: "checkmark.circle.fill")
                     .frame(minWidth: 120)
             }
             .tint(.green)
-            .help("In your deck -- click to remove")
+            .help(Strings.t("tour.addedHelp", default: "In your deck -- click to remove"))
         } else {
             Button {
                 store.requestSetEnabled(f.id, true)
                 go(1)
             } label: {
-                Label("Add", systemImage: "plus")
+                Label(Strings.t("tour.add", default: "Add"), systemImage: "plus")
                     .frame(minWidth: 120)
             }
             .buttonStyle(.borderedProminent)
-            .help("Enable \(f.name)")
+            .help(String(format: Strings.t("tour.enable", default: "Enable %@"), f.name))
         }
     }
 

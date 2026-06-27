@@ -391,6 +391,20 @@ function adapter.frontmostApp()
     return native.frontmost_app()
 end
 
+-- The user-visible app display name (e.g. "Hammerdeck"). Single source of truth
+-- shared with Swift -- features compose "<app> needs Accessibility" off ctx.appName.
+function adapter.appName()
+    return native.app_name()
+end
+
+-- The resolved UI locale code (e.g. "en", "zh-Hans"). The Swift LocaleResolver
+-- is the single authority (in-app override -> macOS preferred languages matched
+-- against the shipped catalogs -> "en"); the bootstrap feeds this into the Lua
+-- i18n module so both languages localize against the same code.
+function adapter.locale()
+    return native.locale()
+end
+
 -- Subscribe to app activations: fn(appName) fires whenever an application
 -- becomes frontmost. No permission required (NSWorkspace notification).
 function adapter.onAppActivated(fn)

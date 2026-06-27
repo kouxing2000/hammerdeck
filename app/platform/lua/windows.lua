@@ -170,10 +170,12 @@ function M.focusedOrAlert(ctx, featureName)
     if f then return f end
     if not ctx.axTrusted() then
         ctx.axPrompt()
-        ctx.alert(featureName .. " needs the Accessibility permission -- "
-            .. "grant Hammerdeck in System Settings, then try again")
+        ctx.alert(string.format(
+            ctx.t("window.axRequired",
+                "%s needs the Accessibility permission -- grant %s in System Settings, then try again"),
+            featureName, ctx.appName))
     else
-        ctx.alert("No focused window")
+        ctx.alert(ctx.t("window.noFocused", "No focused window"))
     end
     return nil
 end

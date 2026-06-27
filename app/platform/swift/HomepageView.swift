@@ -52,12 +52,12 @@ enum HomeDestination: Hashable, Identifiable {
 
     var title: String {
         switch self {
-        case .home:             return "Home"
-        case .features:         return "Features"
-        case .shortcuts:        return "Shortcuts"
-        case .rules:            return "Rules"
-        case .timeline:         return "Timeline"
-        case .settings:         return "Settings"
+        case .home:             return Strings.t("home.nav_home", default: "Home")
+        case .features:         return Strings.t("home.nav_features", default: "Features")
+        case .shortcuts:        return Strings.t("home.nav_shortcuts", default: "Shortcuts")
+        case .rules:            return Strings.t("home.nav_rules", default: "Rules")
+        case .timeline:         return Strings.t("home.nav_timeline", default: "Timeline")
+        case .settings:         return Strings.t("home.nav_settings", default: "Settings")
         case .feature(let fid): return fid   // the sidebar shows the manifest title instead
         }
     }
@@ -106,7 +106,7 @@ struct HomepageView: View {
                 // view) -- the sidebar is data-driven, so a new page just appears.
                 let pages = store.featurePages()
                 if !pages.isEmpty {
-                    Section("Feature Pages") {
+                    Section(Strings.t("home.feature_pages", default: "Feature Pages")) {
                         ForEach(pages) { f in
                             Label(f.page?.title ?? f.name, systemImage: f.page?.icon ?? "doc")
                                 .tag(HomeDestination.feature(f.id))
@@ -120,7 +120,7 @@ struct HomepageView: View {
                     Button {
                         store.reload()
                     } label: {
-                        Label("Reload Features", systemImage: "arrow.clockwise")
+                        Label(Strings.t("home.reload_features", default: "Reload Features"), systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.plain)
                 }
@@ -129,7 +129,7 @@ struct HomepageView: View {
             .safeAreaInset(edge: .top) {
                 HStack(spacing: 7) {
                     Image(systemName: "hammer.fill").foregroundStyle(.tint)
-                    Text("Hammerdeck").font(.headline)
+                    Text(AppInfo.displayName).font(.headline)
                     Spacer()
                 }
                 .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
@@ -159,7 +159,7 @@ struct HomepageView: View {
                     // Stale selection (feature disabled or vanished on reload, page
                     // declared but no registered view) -- the sidebar no longer lists
                     // it; show a neutral placeholder.
-                    Text("This page is unavailable.").foregroundStyle(.secondary)
+                    Text(Strings.t("home.page_unavailable", default: "This page is unavailable.")).foregroundStyle(.secondary)
                 }
             }
         }
@@ -230,15 +230,15 @@ struct DashboardView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Home").font(.title2.weight(.semibold))
-                Text("What's on, what it's doing right now, and what it can do.")
+                Text(Strings.t("home.nav_home", default: "Home")).font(.title2.weight(.semibold))
+                Text(Strings.t("home.header_subtitle", default: "What's on, what it's doing right now, and what it can do."))
                     .font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
             Button { startTour() } label: {
-                Label("Take the tour", systemImage: "sparkles")
+                Label(Strings.t("home.take_tour", default: "Take the tour"), systemImage: "sparkles")
             }
-            .help("Browse every feature with a live preview and add the ones you want")
+            .help(Strings.t("home.take_tour_help", default: "Browse every feature with a live preview and add the ones you want"))
         }
     }
 
@@ -251,19 +251,18 @@ struct DashboardView: View {
         let enabledCount = store.features.filter { $0.enabled }.count
         if enabledCount == 0 {
             let essentials = store.features.filter { $0.recommended && !$0.failed }
-            DashCard(title: "Get started", icon: "sparkles", tint: .accentColor) {
-                Text("Your deck is empty. Turn on a few essentials to get going, "
-                     + "or browse the whole catalog with a live preview.")
+            DashCard(title: Strings.t("home.get_started", default: "Get started"), icon: "sparkles", tint: .accentColor) {
+                Text(Strings.t("home.deck_empty", default: "Your deck is empty. Turn on a few essentials to get going, or browse the whole catalog with a live preview."))
                     .font(.callout).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     if !essentials.isEmpty {
                         Button { store.enableEssentials() } label: {
-                            Label("Enable \(essentials.count) Essentials", systemImage: "star.fill")
+                            Label(String(format: Strings.t("home.enable_essentials", default: "Enable %d Essentials"), essentials.count), systemImage: "star.fill")
                         }
                         .buttonStyle(.borderedProminent)
                     }
                     Button { startTour() } label: {
-                        Label("Take the tour", systemImage: "play.fill")
+                        Label(Strings.t("home.take_tour", default: "Take the tour"), systemImage: "play.fill")
                     }
                     Spacer()
                 }
@@ -282,7 +281,7 @@ struct DashboardView: View {
 
     @ViewBuilder private var tipCard: some View {
         if let f = tipFeature {
-            DashCard(title: "Tip of the day", icon: "lightbulb.fill", tint: .yellow) {
+            DashCard(title: Strings.t("home.tip_of_day", default: "Tip of the day"), icon: "lightbulb.fill", tint: .yellow) {
                 HStack(alignment: .top, spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 9)
@@ -292,18 +291,18 @@ struct DashboardView: View {
                             .foregroundStyle(categoryColor(f.category))
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(f.enabled ? "Did you know?" : "You haven't turned this on yet")
+                        Text(f.enabled ? Strings.t("home.did_you_know", default: "Did you know?") : Strings.t("home.not_enabled_yet", default: "You haven't turned this on yet"))
                             .font(.caption).foregroundStyle(.secondary)
                         Text(f.name).font(.headline)
-                        Text(f.description.isEmpty ? "No description." : f.description)
+                        Text(f.description.isEmpty ? Strings.t("home.no_description", default: "No description.") : f.description)
                             .font(.callout).foregroundStyle(.secondary).lineLimit(2)
                         HStack(spacing: 8) {
                             tipShortcut(f)
                             Spacer()
                             if !f.enabled {
-                                Button("Enable") { store.requestSetEnabled(f.id, true) }
+                                Button(Strings.t("home.enable", default: "Enable")) { store.requestSetEnabled(f.id, true) }
                             }
-                            Button("Show in Gallery") { goTo(.features) }
+                            Button(Strings.t("home.show_in_gallery", default: "Show in Gallery")) { goTo(.features) }
                                 .buttonStyle(.link)
                         }
                         .padding(.top, 2)
@@ -315,12 +314,12 @@ struct DashboardView: View {
 
     @ViewBuilder private func tipShortcut(_ f: FeatureInfo) -> some View {
         if f.actions.isEmpty {
-            Label("always on", systemImage: "infinity")
+            Label(Strings.t("home.always_on", default: "always on"), systemImage: "infinity")
                 .font(.caption2).foregroundStyle(.secondary)
         } else {
             let glyph = shortcutGlyph(f.actions.first?.trigger)
             if glyph.isEmpty {
-                Text("no shortcut bound").font(.caption2).foregroundStyle(.tertiary)
+                Text(Strings.t("home.no_shortcut_bound", default: "no shortcut bound")).font(.caption2).foregroundStyle(.tertiary)
             } else {
                 Text(glyph)
                     .font(.system(.caption, design: .rounded).weight(.medium))
@@ -333,13 +332,12 @@ struct DashboardView: View {
     // MARK: Right now card
 
     private var rightNowCard: some View {
-        DashCard(title: "Right now", icon: "bolt.horizontal.fill", tint: .blue) {
+        DashCard(title: Strings.t("home.right_now", default: "Right now"), icon: "bolt.horizontal.fill", tint: .blue) {
             let items = Self.upcoming(store.features, now: nowMinutes, limit: 4)
             if items.isEmpty {
-                Text("Nothing scheduled soon. Enable a time-based feature, or bind an "
-                     + "action to a schedule.")
+                Text(Strings.t("home.nothing_scheduled", default: "Nothing scheduled soon. Enable a time-based feature, or bind an action to a schedule."))
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Browse features") { goTo(.features) }
+                Button(Strings.t("home.browse_features", default: "Browse features")) { goTo(.features) }
                     .buttonStyle(.link).font(.caption)
             } else {
                 ForEach(items) { item in
@@ -353,7 +351,7 @@ struct DashboardView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Button("Open Timeline") { goTo(.timeline) }
+                Button(Strings.t("home.open_timeline", default: "Open Timeline")) { goTo(.timeline) }
                     .buttonStyle(.link).font(.caption)
             }
         }
@@ -362,41 +360,41 @@ struct DashboardView: View {
     // MARK: Status card
 
     private var statusCard: some View {
-        DashCard(title: "Status", icon: "checklist", tint: .green) {
+        DashCard(title: Strings.t("home.status", default: "Status"), icon: "checklist", tint: .green) {
             let total = store.features.count
             let enabled = store.features.filter { $0.enabled }.count
             let failed = store.features.filter { $0.failed }
             statusRow("checkmark.circle.fill", .green,
-                      "\(enabled) of \(total) features enabled")
+                      String(format: Strings.t("home.features_enabled", default: "%d of %d features enabled"), enabled, total))
             if conflicts.isEmpty {
-                statusRow("checkmark.circle.fill", .green, "No shortcut conflicts")
+                statusRow("checkmark.circle.fill", .green, Strings.t("home.no_conflicts", default: "No shortcut conflicts"))
             } else {
                 Button { goTo(.shortcuts) } label: {
                     statusRow("exclamationmark.triangle.fill", .orange,
-                              "\(conflicts.count) shortcut "
-                              + (conflicts.count == 1 ? "conflict" : "conflicts"))
+                              String(format: Strings.plural("home.shortcut_conflicts", conflicts.count,
+                                                            one: "%d shortcut conflict",
+                                                            other: "%d shortcut conflicts"), conflicts.count))
                 }
                 .buttonStyle(.plain)
             }
             if failed.isEmpty {
-                statusRow("checkmark.circle.fill", .green, "No failed plugins")
+                statusRow("checkmark.circle.fill", .green, Strings.t("home.no_failed", default: "No failed plugins"))
             } else {
                 Button { openSettings() } label: {
                     statusRow("xmark.octagon.fill", .red,
-                              "\(failed.count) failed: "
-                              + failed.map { $0.name }.joined(separator: ", "))
+                              String(format: Strings.t("home.failed_list", default: "%d failed: %@"),
+                                     failed.count, failed.map { $0.name }.joined(separator: ", ")))
                 }
                 .buttonStyle(.plain)
             }
             if store.axTrusted {
-                statusRow("checkmark.circle.fill", .green, "Accessibility granted")
+                statusRow("checkmark.circle.fill", .green, Strings.t("home.ax_granted", default: "Accessibility granted"))
             } else {
                 // Tappable: the silently-no-op window/typing features stay dead
                 // until this is granted, so make the row the fix, not just a sign.
                 Button { store.promptAccessibility() } label: {
                     statusRow("lock.fill", .orange,
-                              "Accessibility not granted — tap to grant "
-                              + "(window & typing features need it)")
+                              Strings.t("home.ax_not_granted", default: "Accessibility not granted — tap to grant (window & typing features need it)"))
                 }
                 .buttonStyle(.plain)
             }
@@ -487,9 +485,9 @@ struct DashboardView: View {
     }
 
     static func relative(_ mins: Int) -> String {
-        if mins == 0 { return "now" }
-        if mins < 60 { return "in \(mins) min" }
-        return "in \(mins / 60)h \(mins % 60)m"
+        if mins == 0 { return Strings.t("home.relative_now", default: "now") }
+        if mins < 60 { return String(format: Strings.t("home.relative_in_min", default: "in %d min"), mins) }
+        return String(format: Strings.t("home.relative_in_hm", default: "in %dh %dm"), mins / 60, mins % 60)
     }
 
     private func fmtHM(_ minutes: Int) -> String {

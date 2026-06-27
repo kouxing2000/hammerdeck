@@ -60,7 +60,10 @@ final class Native {
     // MARK: - Table registration
 
     func installBindings() {
-        lua.registerTable("native", [
+        // SwiftC cannot type-check one ~90-entry [String: @convention(c) closure]
+        // literal in reasonable time -- split into smaller literals it can handle,
+        // then merge. Keys are unique, so the conflict resolver is never hit.
+        var fns: [String: LuaState.Function] = [
             // core
             "log":          { L in MainActor.assumeIsolated { Native.shared.log(L) } },
             "stop":         { L in MainActor.assumeIsolated { Native.shared.stop(L) } },
@@ -90,6 +93,8 @@ final class Native {
             "banner_show":  { L in MainActor.assumeIsolated { Native.shared.bannerShow(L) } },
             "banner_set_text": { L in MainActor.assumeIsolated { Native.shared.bannerSetText(L) } },
             "hud_show":     { L in MainActor.assumeIsolated { Native.shared.hudShow(L) } },
+        ]
+        let fns2: [String: LuaState.Function] = [
             // chooser / dialogs
             "chooser_new":  { L in MainActor.assumeIsolated { Native.shared.chooserNew(L) } },
             "chooser_set_choices": { L in MainActor.assumeIsolated { Native.shared.chooserSetChoices(L) } },
@@ -117,6 +122,8 @@ final class Native {
             "set_wallpaper": { L in MainActor.assumeIsolated { Native.shared.setWallpaper(L) } },
             "cache_dir":     { L in MainActor.assumeIsolated { Native.shared.cacheDir(L) } },
             "ask_choice_dismiss": { L in MainActor.assumeIsolated { Native.shared.askChoiceDismiss(L) } },
+        ]
+        let fns3: [String: LuaState.Function] = [
             // windows / apps (AXUIElement -- needs the Accessibility permission)
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
             "focus_window": { L in MainActor.assumeIsolated { Native.shared.focusWindow(L) } },
@@ -139,9 +146,15 @@ final class Native {
             "discover_features": { L in MainActor.assumeIsolated { Native.shared.discoverFeatures(L) } },
             // platform: the user's enabled macOS system shortcuts (read-only)
             "system_hotkeys": { L in MainActor.assumeIsolated { Native.shared.systemHotkeys(L) } },
+            // app metadata: the user-visible display name (single source of truth)
+            "app_name":     { L in MainActor.assumeIsolated { Native.shared.appName(L) } },
+            // resolved UI locale code (shared with Lua via adapter.locale())
+            "locale":       { L in MainActor.assumeIsolated { Native.shared.locale(L) } },
             // app focus tracking (NSWorkspace -- no permission required)
             "frontmost_app":    { L in MainActor.assumeIsolated { Native.shared.frontmostApp(L) } },
             "on_app_activated": { L in MainActor.assumeIsolated { Native.shared.onAppActivated(L) } },
+        ]
+        let fns4: [String: LuaState.Function] = [
             // data files (feature-owned storage under Application Support)
             "data_dir":         { L in MainActor.assumeIsolated { Native.shared.dataDir(L) } },
             "home_dir":         { L in MainActor.assumeIsolated { Native.shared.homeDir(L) } },
@@ -164,6 +177,8 @@ final class Native {
             "browser_focus_tab_at": { L in MainActor.assumeIsolated { Native.shared.browserFocusTabAt(L) } },
             "browser_active_url":   { L in MainActor.assumeIsolated { Native.shared.browserActiveUrl(L) } },
             "extract_favicons":     { L in MainActor.assumeIsolated { Native.shared.extractFavicons(L) } },
+        ]
+        let fns5: [String: LuaState.Function] = [
             // input / system
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
             "random_int": { L in MainActor.assumeIsolated { Native.shared.randomInt(L) } },
@@ -173,7 +188,9 @@ final class Native {
             "run_shortcut": { L in MainActor.assumeIsolated { Native.shared.runShortcut(L) } },
             "display_sleep": { L in MainActor.assumeIsolated { Native.shared.displaySleep(L) } },
             "start_screensaver": { L in MainActor.assumeIsolated { Native.shared.startScreensaver(L) } },
-        ])
+        ]
+        for chunk in [fns2, fns3, fns4, fns5] { fns.merge(chunk) { current, _ in current } }
+        lua.registerTable("native", fns)
     }
 
     // MARK: - Core

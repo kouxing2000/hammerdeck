@@ -17,10 +17,10 @@ private enum GalleryFilter: Hashable {
 
     var label: String {
         switch self {
-        case .all:                return "All"
-        case .enabled:            return "Enabled"
-        case .disabled:           return "Disabled"
-        case .conflict:           return "Conflicts"
+        case .all:                return Strings.t("gallery.filter.all", default: "All")
+        case .enabled:            return Strings.t("gallery.filter.enabled", default: "Enabled")
+        case .disabled:           return Strings.t("gallery.filter.disabled", default: "Disabled")
+        case .conflict:           return Strings.t("gallery.filter.conflicts", default: "Conflicts")
         case .context(let c):     return c.title
         }
     }
@@ -60,13 +60,13 @@ struct FeatureGalleryView: View {
 
     private var toolbar: some View {
         HStack {
-            Text("Feature Gallery").font(.headline)
-            Text("\(enabledCount)/\(store.features.count) enabled")
+            Text(Strings.t("gallery.title", default: "Feature Gallery")).font(.headline)
+            Text(String(format: Strings.t("gallery.enabledCount", default: "%d/%d enabled"), enabledCount, store.features.count))
                 .font(.caption).foregroundStyle(.secondary)
             Spacer()
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search", text: $search).textFieldStyle(.plain).frame(width: 150)
+                TextField(Strings.t("gallery.search", default: "Search"), text: $search).textFieldStyle(.plain).frame(width: 150)
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
@@ -77,7 +77,7 @@ struct FeatureGalleryView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
-            .help("Reload features from disk -- picks up newly added folders")
+            .help(Strings.t("gallery.reloadHelp", default: "Reload features from disk -- picks up newly added folders"))
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
@@ -123,7 +123,7 @@ struct FeatureGalleryView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if visibleFeatures.isEmpty {
-                    Text("No features match.")
+                    Text(Strings.t("gallery.noMatch", default: "No features match."))
                         .font(.callout).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(40)
                 }
@@ -233,9 +233,11 @@ private struct FeatureCard: View {
     }
 
     private var kindBadge: String {
-        if isService { return "service" }
-        if feature.actions.count > 1 { return "\(feature.actions.count) shortcuts" }
-        return "action"
+        if isService { return Strings.t("gallery.badge.service", default: "service") }
+        if feature.actions.count > 1 {
+            return String(format: Strings.t("gallery.badge.shortcuts", default: "%d shortcuts"), feature.actions.count)
+        }
+        return Strings.t("gallery.badge.action", default: "action")
     }
 
     private var archetype: FeatureArchetype { FeatureArchetype.of(feature) }
@@ -271,8 +273,8 @@ private struct FeatureCard: View {
             }
             Text(feature.name).font(.headline).lineLimit(1)
             Text(feature.failed
-                 ? (feature.errorMessage.isEmpty ? "Failed to load." : feature.errorMessage)
-                 : (feature.description.isEmpty ? "No description." : feature.description))
+                 ? (feature.errorMessage.isEmpty ? Strings.t("gallery.failedToLoad", default: "Failed to load.") : feature.errorMessage)
+                 : (feature.description.isEmpty ? Strings.t("gallery.noDescription", default: "No description.") : feature.description))
                 .font(.caption)
                 .foregroundStyle(feature.failed ? .red : .secondary)
                 .lineLimit(2)
@@ -294,8 +296,8 @@ private struct FeatureCard: View {
             hover = hovering
         }
         .help(feature.failed
-              ? "Broken plugin -- click for details"
-              : "Click to configure \(feature.name)")
+              ? Strings.t("gallery.brokenHelp", default: "Broken plugin -- click for details")
+              : String(format: Strings.t("gallery.configureHelp", default: "Click to configure %@"), feature.name))
     }
 
     /// Playback progress for the preview loop: a thin bar that sweeps left-to-right
@@ -345,12 +347,12 @@ private struct FeatureCard: View {
             if feature.recommended && !feature.failed {
                 Image(systemName: "star.fill")
                     .font(.caption2).foregroundStyle(.yellow)
-                    .help("Recommended -- part of the Essentials starter set")
+                    .help(Strings.t("gallery.recommendedHelp", default: "Recommended -- part of the Essentials starter set"))
             }
             if conflicted && !feature.failed {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
-                    .help("Shortcut conflict -- see the Shortcut Map")
+                    .help(Strings.t("gallery.conflictHelp", default: "Shortcut conflict -- see the Shortcut Map"))
             }
             Text(kindBadge)
                 .font(.caption2)
@@ -363,10 +365,10 @@ private struct FeatureCard: View {
     private var footer: some View {
         HStack(spacing: 8) {
             if isService {
-                Label("always on", systemImage: "infinity")
+                Label(Strings.t("gallery.alwaysOn", default: "always on"), systemImage: "infinity")
                     .font(.caption2).foregroundStyle(.secondary)
             } else if primaryGlyph.isEmpty {
-                Text("no shortcut").font(.caption2).foregroundStyle(.tertiary)
+                Text(Strings.t("gallery.noShortcut", default: "no shortcut")).font(.caption2).foregroundStyle(.tertiary)
             } else {
                 Text(primaryGlyph)
                     .font(.system(.caption, design: .rounded).weight(.medium))
@@ -404,14 +406,14 @@ private struct FeatureCard: View {
         HStack(spacing: 6) {
             ForEach(unmetRequirements, id: \.self) { r in
                 Button { store.promptAccessibility() } label: {
-                    Label("\(requirementLabel(r)) — Grant", systemImage: "lock.shield")
+                    Label(String(format: Strings.t("gallery.grant", default: "%@ — Grant"), requirementLabel(r)), systemImage: "lock.shield")
                         .font(.caption2)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.orange.opacity(0.16)))
                         .foregroundStyle(.orange)
                 }
                 .buttonStyle(.plain)
-                .help("Open System Settings to grant Accessibility, then it works")
+                .help(Strings.t("gallery.grantHelp", default: "Open System Settings to grant Accessibility, then it works"))
             }
             Spacer(minLength: 0)
         }

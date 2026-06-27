@@ -114,7 +114,7 @@ local function jumperFor(ctx)
                 for _, tab in ipairs(tabs or {}) do
                     if tab.visible ~= false and tab.url and tab.url ~= "" then
                         local title = tab.title ~= "" and tab.title or tab.url
-                        if b.name == "Safari" then title = "[Safari] " .. title end
+                        if b.name == "Safari" then title = string.format(ctx.t("row.safariPrefix", "[Safari] %s"), title) end
                         out[#out + 1] = {
                             text = title,
                             subText = tab.url,
@@ -155,7 +155,7 @@ local function jumperFor(ctx)
             function(url)
                 if not url then
                     -- The tab moved or closed since listing: relist and say so.
-                    ctx.alert("That tab moved -- try again")
+                    ctx.alert(ctx.t("alert.tabMoved", "That tab moved -- try again"))
                     refreshChoices()
                     return
                 end
@@ -195,7 +195,7 @@ local function jumperFor(ctx)
         for _, c in ipairs(st.choices) do
             c.image = iconFor(c.subText, BUNDLE_BY_NAME[c.browser])
         end
-        st.chooser.setPlaceholder("Search tabs")
+        st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Search tabs"))
         st.chooser.setChoices(st.choices)
         st.chooser.setQuery(nil)
         st.chooser.show()
@@ -219,8 +219,8 @@ local function jumperFor(ctx)
         if st.chooser.isVisible() then
             -- Repeat invocation: cycle (wrap against the visible rows).
             st.chooser.setPlaceholder(st.cycleMod
-                and ("Release " .. st.cycleMod .. " to jump")
-                or "Press Enter to jump")
+                and string.format(ctx.t("chooser.releaseToJump", "Release %s to jump"), st.cycleMod)
+                or ctx.t("chooser.pressEnter", "Press Enter to jump"))
             local row = st.chooser.getSelectedRow() + (backward and -1 or 1)
             st.chooser.setSelectedRow(row)
             if st.chooser.getSelectedRow() ~= row then
@@ -231,7 +231,7 @@ local function jumperFor(ctx)
         end
 
         if not st.choices then
-            ctx.alert("Loading tabs...")
+            ctx.alert(ctx.t("alert.loading", "Loading tabs..."))
             refreshChoices(showChooser)
         elseif st.dirty then
             -- Show the stale list instantly, refresh behind it (donor UX).

@@ -1,0 +1,12 @@
+{
+  "name": "剪贴板历史",
+  "description": "保留可搜索的复制文本历史; 选择一条即可粘贴. 密码管理器的内容永不记录.",
+  "alert.empty": "剪贴板历史为空",
+  "chooser.placeholder": "剪贴板历史",
+
+  "action.show.label": "显示剪贴板历史",
+  "action.show.mnemonic": "H 代表历史",
+
+  "option.historySize.label": "保留条目数",
+  "option.pasteOnSelect.label": "选择后粘贴"
+}

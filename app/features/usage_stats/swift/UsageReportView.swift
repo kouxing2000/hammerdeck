@@ -60,17 +60,17 @@ struct UsageReportView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Usage").font(.title2.weight(.semibold))
+                Text(Strings.t("usage.title", default: "Usage")).font(.title2.weight(.semibold))
                 Text(range.label(periodsBack: periodsBack))
                     .font(.callout).foregroundStyle(.secondary).monospacedDigit()
             }
             Spacer()
             HStack(spacing: 4) {
                 Button { periodsBack += 1 } label: { Image(systemName: "chevron.left") }
-                    .help("Earlier")
+                    .help(Strings.t("usage.earlier", default: "Earlier"))
                 Button { if periodsBack > 0 { periodsBack -= 1 } } label: { Image(systemName: "chevron.right") }
                     .disabled(periodsBack == 0)
-                    .help("Later")
+                    .help(Strings.t("usage.later", default: "Later"))
             }
             .buttonStyle(.borderless)
             Picker("", selection: $range) {
@@ -87,10 +87,12 @@ struct UsageReportView: View {
     private var heroStrip: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 320), spacing: 12)],
                   alignment: .leading, spacing: 12) {
-            statTile("Total active", usageTimeString(data.total), delta: totalDelta)
-            statTile("Daily avg", usageTimeString(data.dailyAvg),
-                     sub: "\(data.activeDays) active \(data.activeDays == 1 ? "day" : "days")")
-            statTile("Busiest app", data.busiestApp ?? "—",
+            statTile(Strings.t("usage.totalActive", default: "Total active"), usageTimeString(data.total), delta: totalDelta)
+            statTile(Strings.t("usage.dailyAvg", default: "Daily avg"), usageTimeString(data.dailyAvg),
+                     sub: String(format: Strings.plural("usage.activeDays", data.activeDays,
+                                                        one: "%d active day", other: "%d active days"),
+                                 data.activeDays))
+            statTile(Strings.t("usage.busiestApp", default: "Busiest app"), data.busiestApp ?? "—",
                      sub: data.busiestApp == nil ? nil : usageTimeString(data.apps.first?.secs ?? 0))
             let at = activeTile
             statTile(at.title, at.value, sub: at.sub)
@@ -115,16 +117,16 @@ struct UsageReportView: View {
     private var activeTile: (title: String, value: String, sub: String?) {
         if range == .today {
             guard let w = data.firstWakeMin, let s = data.lastSleepMin, s > w else {
-                return ("Active hours", "—", nil)
+                return (Strings.t("usage.activeHours", default: "Active hours"), "—", nil)
             }
-            return ("Active hours", usageTimeString(Double((s - w) * 60)),
+            return (Strings.t("usage.activeHours", default: "Active hours"), usageTimeString(Double((s - w) * 60)),
                     "\(clockLabel(w)) – \(clockLabel(s))")
         }
         let sessionDays = Set(data.sessions.map(\.date)).count
-        guard sessionDays > 0, data.activeMinutes > 0 else { return ("Avg active/day", "—", nil) }
-        return ("Avg active/day",
+        guard sessionDays > 0, data.activeMinutes > 0 else { return (Strings.t("usage.avgActivePerDay", default: "Avg active/day"), "—", nil) }
+        return (Strings.t("usage.avgActivePerDay", default: "Avg active/day"),
                 usageTimeString(Double(data.activeMinutes * 60 / sessionDays)),
-                "machine awake")
+                Strings.t("usage.machineAwake", default: "machine awake"))
     }
 
     private func statTile(_ label: String, _ value: String,
@@ -153,7 +155,7 @@ struct UsageReportView: View {
     // MARK: daily trend (Apple Charts)
 
     private var trendCard: some View {
-        DashCard(title: "Daily Trend", icon: "chart.bar.fill", tint: .blue) {
+        DashCard(title: Strings.t("usage.dailyTrend", default: "Daily Trend"), icon: "chart.bar.fill", tint: .blue) {
             Chart(data.days) { day in
                 if let d = day.parsedDate {
                     BarMark(
@@ -169,7 +171,7 @@ struct UsageReportView: View {
                 AxisMarks { value in
                     AxisGridLine()
                     AxisValueLabel {
-                        if let h = value.as(Double.self) { Text("\(Int(h))h") }
+                        if let h = value.as(Double.self) { Text(String(format: Strings.t("usage.hours", default: "%dh"), Int(h))) }
                     }
                 }
             }
@@ -188,7 +190,7 @@ struct UsageReportView: View {
     // MARK: top apps (proportional bars, click to drill in)
 
     private var topAppsCard: some View {
-        DashCard(title: "Top Apps", icon: "square.stack.3d.up.fill", tint: .indigo) {
+        DashCard(title: Strings.t("usage.topApps", default: "Top Apps"), icon: "square.stack.3d.up.fill", tint: .indigo) {
             let top = Array(data.apps.prefix(8))
             let maxSecs = data.apps.first?.secs ?? 1
             ForEach(top) { app in
@@ -199,7 +201,7 @@ struct UsageReportView: View {
                 .buttonStyle(.plain)
             }
             if data.apps.count > top.count {
-                Text("+ \(data.apps.count - top.count) more in the table below")
+                Text(String(format: Strings.t("usage.moreInTable", default: "+ %d more in the table below"), data.apps.count - top.count))
                     .font(.caption2).foregroundStyle(.tertiary).padding(.top, 2)
             }
         }
@@ -217,7 +219,7 @@ struct UsageReportView: View {
             .frame(height: 7)
             Text(usageTimeString(secs)).font(.caption.monospacedDigit().weight(.medium))
                 .frame(width: 56, alignment: .trailing)
-            Text("\(Int((share * 100).rounded()))%")
+            Text(String(format: Strings.t("usage.percent", default: "%d%%"), Int((share * 100).rounded())))
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                 .frame(width: 34, alignment: .trailing)
         }
@@ -230,10 +232,11 @@ struct UsageReportView: View {
     private func appDrillCard(_ row: UsageAppRow) -> some View {
         DashCard(title: row.app, icon: "chevron.left.circle.fill", tint: .indigo,
                  onTitleTap: { selectedApp = nil }) {
-            Text("\(usageTimeString(row.secs)) · \(Int((row.share * 100).rounded()))% of tracked time")
+            Text(String(format: Strings.t("usage.ofTrackedTime", default: "%@ · %d%% of tracked time"),
+                        usageTimeString(row.secs), Int((row.share * 100).rounded())))
                 .font(.caption).foregroundStyle(.secondary)
             if row.contexts.isEmpty {
-                Text("No per-site / per-project breakdown for this app.")
+                Text(Strings.t("usage.noBreakdown", default: "No per-site / per-project breakdown for this app."))
                     .font(.callout).foregroundStyle(.secondary).padding(.top, 4)
             } else {
                 let maxSecs = row.contexts.first?.secs ?? 1
@@ -243,7 +246,7 @@ struct UsageReportView: View {
                 }
             }
             Button { selectedApp = nil } label: {
-                Label("Back to all apps", systemImage: "chevron.left")
+                Label(Strings.t("usage.backToAllApps", default: "Back to all apps"), systemImage: "chevron.left")
             }
             .buttonStyle(.link).font(.caption).padding(.top, 4)
         }
@@ -252,13 +255,13 @@ struct UsageReportView: View {
     // MARK: full ranked table
 
     private var detailTableCard: some View {
-        DashCard(title: "All Apps", icon: "list.bullet", tint: .gray) {
+        DashCard(title: Strings.t("usage.allApps", default: "All Apps"), icon: "list.bullet", tint: .gray) {
             HStack {
-                Text("APP").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Strings.t("usage.app", default: "APP")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Text("TIME").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Strings.t("usage.time", default: "TIME")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 56, alignment: .trailing)
-                Text("SHARE").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Strings.t("usage.share", default: "SHARE")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .trailing)
             }
             Divider().opacity(0.4)
@@ -269,7 +272,7 @@ struct UsageReportView: View {
                         Spacer()
                         Text(usageTimeString(app.secs)).font(.caption.monospacedDigit())
                             .frame(width: 56, alignment: .trailing)
-                        Text("\(Int((app.share * 100).rounded()))%")
+                        Text(String(format: Strings.t("usage.percent", default: "%d%%"), Int((app.share * 100).rounded())))
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .trailing)
                     }
@@ -285,11 +288,17 @@ struct UsageReportView: View {
     @ViewBuilder private var rhythmCard: some View {
         if !data.sessions.isEmpty {
             let days = groupedByDay(data.sessions)
-            DashCard(title: "Daily Rhythm", icon: "clock.fill", tint: .teal) {
-                Text("When the machine was awake, by day. \(data.sessionCount) "
-                     + "\(data.sessionCount == 1 ? "session" : "sessions") across \(days.count) "
-                     + "\(days.count == 1 ? "day" : "days"); longest "
-                     + usageTimeString(Double(data.longestSessionMin * 60)) + ".")
+            DashCard(title: Strings.t("usage.dailyRhythm", default: "Daily Rhythm"), icon: "clock.fill", tint: .teal) {
+                let sessionsStr = String(format: Strings.plural("usage.sessions", data.sessionCount,
+                                                                one: "%d session", other: "%d sessions"),
+                                         data.sessionCount)
+                let daysStr = String(format: Strings.plural("usage.days", days.count,
+                                                            one: "%d day", other: "%d days"),
+                                     days.count)
+                let longestStr = usageTimeString(Double(data.longestSessionMin * 60))
+                Text(String(format: Strings.t("usage.rhythmCaption",
+                                              default: "When the machine was awake, by day. %@ across %@; longest %@."),
+                            sessionsStr, daysStr, longestStr))
                     .font(.caption).foregroundStyle(.secondary)
                 // 0–24h scale, shown once and aligned to the track column.
                 HStack(spacing: 10) {
@@ -379,13 +388,12 @@ struct UsageReportView: View {
 
     private var emptyCard: some View {
         let usage = store.features.first { $0.id == "usage_stats" }
-        return DashCard(title: "No usage yet", icon: "chart.bar.xaxis", tint: .blue) {
-            Text("Usage Stats records per-app focus time as you work. "
-                 + "Once there's a day on disk, this report fills in.")
+        return DashCard(title: Strings.t("usage.noUsageYet", default: "No usage yet"), icon: "chart.bar.xaxis", tint: .blue) {
+            Text(Strings.t("usage.emptyBody", default: "Usage Stats records per-app focus time as you work. Once there's a day on disk, this report fills in."))
                 .font(.callout).foregroundStyle(.secondary)
             if let usage, !usage.enabled {
                 Button { store.requestSetEnabled("usage_stats", true); load() } label: {
-                    Label("Enable Usage Stats", systemImage: "power")
+                    Label(Strings.t("usage.enableUsageStats", default: "Enable Usage Stats"), systemImage: "power")
                 }
                 .buttonStyle(.borderedProminent).padding(.top, 4)
             }

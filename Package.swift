@@ -50,6 +50,7 @@ let package = Package(
             exclude: [
                 "hammerdeck.lua",
                 "loader.lua",
+                "i18n",                  // localization catalogs (loaded at runtime by path)
                 "platform/lua",
                 "features/bing_daily",
                 "features/break_reminder",
@@ -68,6 +69,7 @@ let package = Package(
                 "features/text_actions",
                 "features/usage_stats/lua",
                 "features/usage_stats/feature.json",
+                "features/usage_stats/i18n",
                 "features/window_modal",
                 "features/window_snap",
                 "features/window_switcher",

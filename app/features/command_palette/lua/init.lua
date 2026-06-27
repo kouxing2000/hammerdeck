@@ -99,18 +99,20 @@ local function openPalette(ctx)
                 -- don't contend with the palette's panel for focus.
                 ctx.afterSeconds(0, function()
                     local ok, err = ctx.runCommand(choice.id, choice.actionId)
-                    if not ok then ctx.alert("Command failed: " .. tostring(err)) end
+                    if not ok then
+                        ctx.alert(string.format(ctx.t("alert.failed", "Command failed: %s"), tostring(err)))
+                    end
                 end)
             end,
         }
     end
     local choices = buildChoices(ctx)
-    st.chooser.setPlaceholder("Run a command")
+    st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Run a command"))
     if #choices == 0 then
         -- A non-selectable info row beats an empty, confusing panel.
         st.chooser.setChoices({
-            { text = "No enabled commands",
-              subText = "Enable features in Settings", valid = false },
+            { text = ctx.t("empty.title", "No enabled commands"),
+              subText = ctx.t("empty.subtitle", "Enable features in Settings"), valid = false },
         })
     else
         st.chooser.setChoices(choices)

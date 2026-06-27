@@ -21,7 +21,7 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         super.init()
 
         item.button?.image = NSImage(systemSymbolName: "hammer.fill",
-                                     accessibilityDescription: "Hammerdeck")
+                                     accessibilityDescription: AppInfo.displayName)
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
@@ -64,7 +64,7 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
             }
         }
         if !anyTrigger {
-            let hint = NSMenuItem(title: "No triggerable features enabled",
+            let hint = NSMenuItem(title: Strings.t("menu.noTriggers", default: "No triggerable features enabled"),
                                   action: nil, keyEquivalent: "")
             hint.isEnabled = false
             menu.addItem(hint)
@@ -76,68 +76,66 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         // window (whose tabs cover the rest: Gallery / Shortcut Map / Timeline /
         // Settings), so the menu only needs the front door plus a direct Settings
         // jump; the other tabs + low-frequency utilities live under "More".
-        let home = NSMenuItem(title: "Open Hammerdeck…", action: #selector(showHome), keyEquivalent: "h")
+        let home = NSMenuItem(title: String(format: Strings.t("menu.open", default: "Open %@…"), AppInfo.displayName), action: #selector(showHome), keyEquivalent: "h")
         home.target = self
-        home.toolTip = "Open Hammerdeck: dashboard, gallery, shortcut map, timeline, and settings (switch tabs inside)"
+        home.toolTip = String(format: Strings.t("menu.open.tip", default: "Open %@: dashboard, gallery, shortcut map, timeline, and settings (switch tabs inside)"), AppInfo.displayName)
         menu.addItem(home)
 
-        let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings),
+        let settings = NSMenuItem(title: Strings.t("menu.settings", default: "Settings…"), action: #selector(showSettings),
                                   keyEquivalent: ",")
         settings.target = self
-        settings.toolTip = "Enable/disable features, options, and trigger bindings"
+        settings.toolTip = Strings.t("menu.settings.tip", default: "Enable/disable features, options, and trigger bindings")
         menu.addItem(settings)
 
         // "More": the other Homepage tabs plus rarely-touched utilities, tucked
         // into one submenu so the top level stays short.
-        let more = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
+        let more = NSMenuItem(title: Strings.t("menu.more", default: "More"), action: nil, keyEquivalent: "")
         let moreMenu = NSMenu()
 
-        let gallery = NSMenuItem(title: "Feature Gallery…", action: #selector(showGallery),
+        let gallery = NSMenuItem(title: Strings.t("menu.gallery", default: "Feature Gallery…"), action: #selector(showGallery),
                                  keyEquivalent: "")
         gallery.target = self
-        gallery.toolTip = "Browse everything Hammerdeck can do; enable features in place"
+        gallery.toolTip = String(format: Strings.t("menu.gallery.tip", default: "Browse everything %@ can do; enable features in place"), AppInfo.displayName)
         moreMenu.addItem(gallery)
 
-        let shortcutMap = NSMenuItem(title: "Shortcut Map…", action: #selector(showShortcutMap),
+        let shortcutMap = NSMenuItem(title: Strings.t("menu.shortcutMap", default: "Shortcut Map…"), action: #selector(showShortcutMap),
                                      keyEquivalent: "")
         shortcutMap.target = self
-        shortcutMap.toolTip = "See every shortcut at once, spot conflicts, and rebind in a grid"
+        shortcutMap.toolTip = Strings.t("menu.shortcutMap.tip", default: "See every shortcut at once, spot conflicts, and rebind in a grid")
         moreMenu.addItem(shortcutMap)
 
-        let timeline = NSMenuItem(title: "Automation Timeline…", action: #selector(showTimeline),
+        let timeline = NSMenuItem(title: Strings.t("menu.timeline", default: "Automation Timeline…"), action: #selector(showTimeline),
                                   keyEquivalent: "")
         timeline.target = self
-        timeline.toolTip = "See what's scheduled across the day -- times, intervals, and events"
+        timeline.toolTip = Strings.t("menu.timeline.tip", default: "See what's scheduled across the day -- times, intervals, and events")
         moreMenu.addItem(timeline)
 
         moreMenu.addItem(.separator())
 
-        let reload = NSMenuItem(title: "Reload Features", action: #selector(reloadFeatures),
+        let reload = NSMenuItem(title: Strings.t("menu.reload", default: "Reload Features"), action: #selector(reloadFeatures),
                                 keyEquivalent: "r")
         reload.target = self
-        reload.toolTip = "Re-read feature scripts from disk without restarting"
+        reload.toolTip = Strings.t("menu.reload.tip", default: "Re-read feature scripts from disk without restarting")
         moreMenu.addItem(reload)
 
-        let logs = NSMenuItem(title: "Open Logs", action: #selector(openLogs), keyEquivalent: "")
+        let logs = NSMenuItem(title: Strings.t("menu.logs", default: "Open Logs"), action: #selector(openLogs), keyEquivalent: "")
         logs.target = self
-        logs.toolTip = "Daily log files (troubleshooting clues live here)"
+        logs.toolTip = Strings.t("menu.logs.tip", default: "Daily log files (troubleshooting clues live here)")
         moreMenu.addItem(logs)
 
         moreMenu.addItem(.separator())
 
-        let dock = NSMenuItem(title: "Show in Dock", action: #selector(toggleDock), keyEquivalent: "")
+        let dock = NSMenuItem(title: Strings.t("menu.showInDock", default: "Show in Dock"), action: #selector(toggleDock), keyEquivalent: "")
         dock.target = self
         dock.state = DockPreference.showInDock ? .on : .off
-        dock.toolTip = "Keep a Hammerdeck icon in the Dock; click it to open Home"
+        dock.toolTip = String(format: Strings.t("menu.showInDock.tip", default: "Keep a %@ icon in the Dock; click it to open Home"), AppInfo.displayName)
         moreMenu.addItem(dock)
 
-        let capsHyper = NSMenuItem(title: "Caps Lock acts as Hyper (⌘⌥⌃)",
+        let capsHyper = NSMenuItem(title: Strings.t("menu.capsHyper", default: "Caps Lock acts as Hyper (⌘⌥⌃)"),
                                    action: #selector(toggleCapsHyper), keyEquivalent: "")
         capsHyper.target = self
         capsHyper.state = CapsHyperPreference.enabled ? .on : .off
-        capsHyper.toolTip = "Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper "
-            + "shortcuts are one key; double-tap Caps for its normal lock "
-            + "(remaps Caps; needs Accessibility)"
+        capsHyper.toolTip = Strings.t("menu.capsHyper.tip", default: "Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper shortcuts are one key; double-tap Caps for its normal lock (remaps Caps; needs Accessibility)")
         moreMenu.addItem(capsHyper)
 
         more.submenu = moreMenu
@@ -145,7 +143,7 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Quit Hammerdeck", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: String(format: Strings.t("menu.quit", default: "Quit %@"), AppInfo.displayName), action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
     }
@@ -170,7 +168,7 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         } else if let t = action.trigger, case let glyph = shortcutGlyph(t), !glyph.isEmpty {
             mi.attributedTitle = Self.titleWithHint(title, hint: glyph)
         } else if action.trigger == nil {
-            mi.toolTip = "Runs on demand — bind a shortcut in Settings"
+            mi.toolTip = Strings.t("menu.runOnDemand.tip", default: "Runs on demand — bind a shortcut in Settings")
         }
         return mi
     }
@@ -303,7 +301,7 @@ final class HomepageWindow {
         if window == nil {
             let w = NSWindow(contentViewController: NSHostingController(
                 rootView: HomepageView(store: store, nav: nav)))
-            w.title = "Hammerdeck"
+            w.title = AppInfo.displayName
             w.styleMask = [.titled, .closable, .resizable, .miniaturizable]
             w.isReleasedWhenClosed = false
             w.setContentSize(NSSize(width: 980, height: 620))

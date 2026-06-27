@@ -1,0 +1,11 @@
+{
+  "name": "睡眠计划",
+  "description": "在设定时间强制系统睡眠, 带分级警告, 一次性小睡, 以及周末时移.",
+
+  "option.sleepAt.label": "睡眠时间 (HH:MM)",
+  "option.warn1Min.label": "首次警告 (提前分钟数)",
+  "option.warn2Min.label": "倒计时浮层 (提前分钟数)",
+  "option.snoozeMin.label": "小睡时长 (分钟)",
+  "option.hardCapAt.label": "小睡硬性上限 (HH:MM)",
+  "option.weekendShiftMin.label": "周末时移 (分钟)"
+}

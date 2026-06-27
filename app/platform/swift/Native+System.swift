@@ -195,6 +195,21 @@ extension Native {
         return 1
     }
 
+    // app_name() -> the user-visible app display name. Single source of truth
+    // shared with Lua (features build "<app> needs Accessibility" messages off
+    // it via ctx.appName). See AppInfo for where the value comes from.
+    func appName(_ L: OpaquePointer?) -> Int32 {
+        lua_pushstring(L, AppInfo.displayName)
+        return 1
+    }
+
+    // locale() -> the resolved UI locale code (e.g. "en", "zh-Hans"). Single
+    // authority for both layers; Lua reads it via adapter.locale().
+    func locale(_ L: OpaquePointer?) -> Int32 {
+        lua_pushstring(L, LocaleResolver.current)
+        return 1
+    }
+
     // MARK: - Data files (Application Support)
 
     // App-owned durable data directory (distinct from cache_dir: the OS may

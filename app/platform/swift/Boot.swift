@@ -159,7 +159,7 @@ func makeDockIcon() -> NSImage {
     // hammer glyph, forced white via a palette symbol configuration, centered
     let cfg = NSImage.SymbolConfiguration(pointSize: 260, weight: .semibold)
         .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
-    if let hammer = NSImage(systemSymbolName: "hammer.fill", accessibilityDescription: "Hammerdeck")?
+    if let hammer = NSImage(systemSymbolName: "hammer.fill", accessibilityDescription: AppInfo.displayName)?
         .withSymbolConfiguration(cfg) {
         let s = hammer.size
         hammer.draw(in: NSRect(x: (side - s.width) / 2, y: (side - s.height) / 2,
@@ -221,8 +221,9 @@ public func hammerdeckMain() {
     // Headless verification: dump the catalog the config UI renders, then exit.
     if ProcessInfo.processInfo.environment["HAMMERDECK_DUMP_CATALOG"] != nil {
         store.refresh()
+        print("[hammerdeck] locale=\(LocaleResolver.current)")
         for f in store.features {
-            print("\(f.id) [\(f.category)/\(f.kind)] enabled=\(f.enabled) trigger=\(f.triggerDesc)")
+            print("\(f.id) \"\(f.name)\" [\(f.category)/\(f.kind)] enabled=\(f.enabled) trigger=\(f.triggerDesc)")
             for o in f.options {
                 print("  - \(o.key): \(o.type) (default: \(o.defaultValue ?? "nil"))"
                       + (o.values.isEmpty ? "" : " values=\(o.values)"))

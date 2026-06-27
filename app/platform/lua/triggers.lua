@@ -21,6 +21,7 @@
 -- just forwards it.
 
 local adapter = require("platform.adapter")
+local i18n    = require("platform.i18n")
 
 local triggers = {}
 
@@ -331,23 +332,29 @@ end
 ---@param spec table|nil a trigger spec, or nil for an unbound action
 ---@return string
 function triggers.describe(spec)
-    if not spec then return "no trigger" end
+    if not spec then return i18n.t("trigger.none", "no trigger") end
     if spec.type == "hotkey" then
-        return "hotkey: " .. table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
+        return string.format(i18n.t("trigger.hotkey", "hotkey: %s"),
+            table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key))
     elseif spec.type == "chord" then
         local prefix = table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
-        return "chord: " .. prefix .. " then " .. table.concat(spec.follows or {}, " ")
+        return string.format(i18n.t("trigger.chord", "chord: %s then %s"),
+            prefix, table.concat(spec.follows or {}, " "))
     elseif spec.type == "schedule" then
-        if spec.everyMin then return "schedule: every " .. spec.everyMin .. " min" end
-        return "schedule: daily at " .. tostring(spec.at)
+        if spec.everyMin then
+            return string.format(i18n.t("trigger.scheduleEvery", "schedule: every %d min"), spec.everyMin)
+        end
+        return string.format(i18n.t("trigger.scheduleAt", "schedule: daily at %s"), tostring(spec.at))
     elseif spec.type == "event" then
-        return "event: " .. tostring(spec.event)
+        return string.format(i18n.t("trigger.event", "event: %s"), tostring(spec.event))
     elseif spec.type == "state" then
         local enter = spec.becomes ~= nil
         local val
         if enter then val = spec.becomes else val = spec.leaves end
-        return "state: " .. tostring(spec.signal) .. " "
-            .. (enter and "becomes" or "leaves") .. " " .. tostring(val)
+        return string.format(i18n.t("trigger.state", "state: %s %s %s"),
+            tostring(spec.signal),
+            enter and i18n.t("trigger.becomes", "becomes") or i18n.t("trigger.leaves", "leaves"),
+            tostring(val))
     end
     return tostring(spec.type)
 end
@@ -390,10 +397,18 @@ function triggers.glyph(spec)
         for _, f in ipairs(spec.follows or {}) do follows[#follows + 1] = keyGlyph(f) end
         return modGlyphs(spec.mods) .. keyGlyph(spec.key) .. " " .. table.concat(follows, " ")
     elseif spec.type == "schedule" then
-        if spec.everyMin then return "every " .. spec.everyMin .. "m" end
-        return "at " .. tostring(spec.at)
+        -- {n}/{v} tokens (not %s/%d) so the SAME catalog template serves both Lua
+        -- here and Swift shortcutGlyph (Lua string.format=%s, Swift String(format:)=%@
+        -- can't share one template). Function replacement guards a `%` in the value.
+        if spec.everyMin then
+            local n = tostring(spec.everyMin)
+            return (i18n.t("glyph.every", "every {n}m"):gsub("{n}", function() return n end))
+        end
+        local at = tostring(spec.at)
+        return (i18n.t("glyph.at", "at {v}"):gsub("{v}", function() return at end))
     elseif spec.type == "event" then
-        return "on " .. tostring(spec.event)
+        local ev = tostring(spec.event)
+        return (i18n.t("glyph.on", "on {v}"):gsub("{v}", function() return ev end))
     elseif spec.type == "state" then
         local val
         if spec.becomes ~= nil then val = spec.becomes else val = spec.leaves end

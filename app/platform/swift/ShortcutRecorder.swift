@@ -97,7 +97,7 @@ struct ShortcutRecorder: View {
                     .foregroundStyle(capturing ? .red : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Click, then press the shortcut (Esc cancels)")
+            .help(Strings.t("recorder.help", default: "Click, then press the shortcut (Esc cancels)"))
         }
         .onDisappear { stop() }
     }

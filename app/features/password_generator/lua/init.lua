@@ -55,7 +55,7 @@ end
 local function generate(ctx)
     local pools = poolsFor(ctx)
     if #pools == 0 then
-        ctx.notify("Password Generator", "Enable at least one character set in Settings")
+        ctx.notify(ctx.t("notify.title", "Password Generator"), ctx.t("notify.noCharset", "Enable at least one character set in Settings"))
         return
     end
 
@@ -67,7 +67,7 @@ local function generate(ctx)
 
     local pw = build(ctx, length, pools)
     ctx.pasteboardWrite(pw)
-    ctx.notify("Password copied", length .. "-character password is on the clipboard")
+    ctx.notify(ctx.t("notify.copied.title", "Password copied"), string.format(ctx.t("notify.copied.body", "%d-character password is on the clipboard"), length))
     ctx.log("generated a", length, "char password (", #pools, "char classes)")
     return pw   -- returned for tests; ignored by the trigger path
 end

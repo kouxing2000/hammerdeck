@@ -97,6 +97,15 @@ final class IntegrationTests: XCTestCase {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
     }
 
+    /// The locale seam: adapter.locale() (Lua) returns the SAME resolved code as
+    /// the Swift LocaleResolver -- the single authority both layers read -- and is
+    /// never empty, so i18n catalog lookups never key off "".
+    func testLocaleBridgeMatchesResolver() {
+        let viaBridge = eval("return require('platform.adapter').locale()") as? String
+        XCTAssertEqual(viaBridge, LocaleResolver.current)
+        XCTAssertFalse((viaBridge ?? "").isEmpty)
+    }
+
     /// The secure RNG seam: native.random_int(min,max) stays inclusive-in-range
     /// across positive, single-value, and zero-straddling (negative) ranges --
     /// the last is the case the modular-space hardening protects against.

@@ -144,7 +144,7 @@ end
 local function jump(ctx, site)
     local pattern = siteName(site.url)
     if pattern == "" then
-        ctx.alert("Not a valid site URL: " .. site.url)
+        ctx.alert(string.format(ctx.t("alert.invalidURL", "Not a valid site URL: %s"), site.url))
         return
     end
     local browser = (site.browser and site.browser ~= "") and site.browser
@@ -198,7 +198,7 @@ return {
     action = function(ctx)
         local sites = configuredSites(ctx)
         if #sites == 0 then
-            ctx.alert("No sites yet -- add one per line in Settings")
+            ctx.alert(ctx.t("alert.noSites", "No sites yet -- add one per line in Settings"))
             return
         end
         -- One site needs no list: jump straight there (no chooser, no favicons).
@@ -232,7 +232,7 @@ return {
                 image = st.fav.iconFor(site.url),
             }
         end
-        st.chooser.setPlaceholder("Jump to site")
+        st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Jump to site"))
         st.chooser.setChoices(choices)
         st.chooser.setQuery(nil)
         st.chooser.show()

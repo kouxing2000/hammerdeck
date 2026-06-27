@@ -26,6 +26,19 @@ func usageTimeString(_ secs: Double) -> String {
     return h > 0 ? "\(h)h \(m)m" : "\(m)m"
 }
 
+/// Localized display label for a manifest category (the Settings sidebar section
+/// header). Unknown categories fall back to their capitalized raw value.
+func categoryLabel(_ category: String) -> String {
+    switch category {
+    case "health":       return Strings.t("category.health", default: "Health")
+    case "appearance":   return Strings.t("category.appearance", default: "Appearance")
+    case "productivity": return Strings.t("category.productivity", default: "Productivity")
+    case "platform":     return Strings.t("category.platform", default: "Platform")
+    case "general":      return Strings.t("category.general", default: "General")
+    default:             return category.capitalized
+    }
+}
+
 /// An SF Symbol glyph for a manifest category. Features don't declare their own
 /// icons yet (Gallery spec, open question 1) -- v1 derives one from category.
 func categoryIcon(_ category: String) -> String {
@@ -50,22 +63,22 @@ enum FeatureContext: String, CaseIterable {
     /// Section header / filter-chip label.
     var title: String {
         switch self {
-        case .textField: return "Text editing"
-        case .window:    return "Windows"
-        case .web:       return "Web browser"
-        case .anywhere:  return "Anywhere"
-        case .automatic: return "Automatic"
+        case .textField: return Strings.t("context.textField.title", default: "Text editing")
+        case .window:    return Strings.t("context.window.title", default: "Windows")
+        case .web:       return Strings.t("context.web.title", default: "Web browser")
+        case .anywhere:  return Strings.t("context.anywhere.title", default: "Anywhere")
+        case .automatic: return Strings.t("context.automatic.title", default: "Automatic")
         }
     }
 
     /// The scenario line shown on a Tour slide -- "when does this kick in."
     var scenario: String {
         switch self {
-        case .textField: return "When typing in a text field"
-        case .window:    return "With a window focused"
-        case .web:       return "In your web browser"
-        case .anywhere:  return "Anytime, anywhere"
-        case .automatic: return "Runs on its own"
+        case .textField: return Strings.t("context.textField.scenario", default: "When typing in a text field")
+        case .window:    return Strings.t("context.window.scenario", default: "With a window focused")
+        case .web:       return Strings.t("context.web.scenario", default: "In your web browser")
+        case .anywhere:  return Strings.t("context.anywhere.scenario", default: "Anytime, anywhere")
+        case .automatic: return Strings.t("context.automatic.scenario", default: "Runs on its own")
         }
     }
 
@@ -96,8 +109,8 @@ enum FeatureContext: String, CaseIterable {
 /// Human label for a manifest `requires` token (the precondition badge).
 func requirementLabel(_ r: String) -> String {
     switch r {
-    case "accessibility": return "Needs Accessibility"
-    default:              return "Needs \(r.capitalized)"
+    case "accessibility": return Strings.t("req.accessibility", default: "Needs Accessibility")
+    default:              return String(format: Strings.t("req.generic", default: "Needs %@"), r.capitalized)
     }
 }
 
@@ -116,8 +129,14 @@ func shortcutGlyph(_ t: TriggerSpec?) -> String {
     case "hotkey":   return modGlyphs(t.mods) + keyGlyph(t.key)
     case "chord":    return modGlyphs(t.mods) + keyGlyph(t.key) + " "
                           + t.follows.map(keyGlyph).joined(separator: " ")
-    case "schedule": return t.everyMin != nil ? "every \(t.everyMin!)m" : "at \(t.at ?? "")"
-    case "event":    return "on \(t.event ?? "")"
+    // {n}/{v} tokens shared verbatim with Lua triggers.glyph (see the note there)
+    // -- same catalog keys, identical English defaults, so glyph parity holds.
+    case "schedule":
+        if let n = t.everyMin {
+            return Strings.t("glyph.every", default: "every {n}m").replacingOccurrences(of: "{n}", with: String(n))
+        }
+        return Strings.t("glyph.at", default: "at {v}").replacingOccurrences(of: "{v}", with: t.at ?? "")
+    case "event":    return Strings.t("glyph.on", default: "on {v}").replacingOccurrences(of: "{v}", with: t.event ?? "")
     default:         return ""
     }
 }

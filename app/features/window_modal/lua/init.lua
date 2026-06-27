@@ -93,7 +93,7 @@ local function arrangerFor(ctx)
         apply(function(f)
             local screens = ctx.screenFrames()
             if #screens < 2 then
-                ctx.alert("Only one screen")
+                ctx.alert(ctx.t("alert.oneScreen", "Only one screen"))
                 return nil
             end
             local s = f.screen
@@ -119,7 +119,7 @@ local function arrangerFor(ctx)
                     end
                 end
                 if not best then
-                    ctx.alert("No screen " .. dir)
+                    ctx.alert(string.format(ctx.t("alert.noScreen", "No screen %s"), dir))
                     return nil
                 end
                 target = best.t

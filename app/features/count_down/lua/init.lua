@@ -48,8 +48,8 @@ return {
                     local minutes = s.minutes
                     local ctx = s.ctx
                     cancel(s)
-                    ctx.notify("Time (" .. minutes .. " min) is up!",
-                        "Now is " .. os.date("%X", ctx.now()))
+                    ctx.notify(string.format(ctx.t("notify.up.title", "Time (%d min) is up!"), minutes),
+                        string.format(ctx.t("notify.up.body", "Now is %s"), os.date("%X", ctx.now())))
                 else
                     s.bar.setProgress(s.elapsed / s.total)
                 end
@@ -77,13 +77,13 @@ return {
                     local s = ensure(ctx)
                     if s.timer or s.paused then
                         cancel(s)
-                        ctx.alert("Countdown cancelled")
+                        ctx.alert(ctx.t("alert.cancelled", "Countdown cancelled"))
                         return
                     end
                     if s.prompt then return end   -- prompt already open
                     s.prompt = ctx.askText {
-                        title = "Count down for how many minutes?",
-                        placeholder = "minutes",
+                        title = ctx.t("prompt.minutes.title", "Count down for how many minutes?"),
+                        placeholder = ctx.t("prompt.minutes.ph", "minutes"),
                         default = tostring(ctx.opt("defaultMinutes")),
                         onSubmit = function(text)
                             s.prompt = nil
@@ -91,7 +91,7 @@ return {
                             if minutes and minutes > 0 then
                                 beginCountdown(s, minutes)
                             elseif text and text ~= "" then
-                                ctx.alert("Not a number of minutes: " .. text)
+                                ctx.alert(string.format(ctx.t("alert.nan", "Not a number of minutes: %s"), text))
                             end
                         end,
                     }

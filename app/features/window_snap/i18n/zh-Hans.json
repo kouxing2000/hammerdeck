@@ -1,0 +1,28 @@
+{
+  "name": "窗口贴靠",
+  "description": "常用排布的直接快捷键 -- 贴靠到一半, 切换最大化/75%, 抛到下一个屏幕 (指针跟随). 适合一键贴靠. 与窗口模式搭配使用.",
+
+  "action.left.label": "左半屏",
+  "action.left.description": "将聚焦窗口移到屏幕的左半部分.",
+  "action.left.mnemonic": "Hyper+← — 箭头指向那条边",
+  "action.right.label": "右半屏",
+  "action.right.description": "将聚焦窗口移到屏幕的右半部分.",
+  "action.right.mnemonic": "Hyper+→ — 箭头指向那条边",
+  "action.top.label": "上半屏",
+  "action.top.description": "将聚焦窗口移到屏幕的上半部分.",
+  "action.top.mnemonic": "Hyper+↑ — 箭头指向那条边",
+  "action.bottom.label": "下半屏",
+  "action.bottom.description": "将聚焦窗口移到屏幕的下半部分.",
+  "action.bottom.mnemonic": "Hyper+↓ — 箭头指向那条边",
+  "action.toggle_max.label": "最大化 / 75%",
+  "action.toggle_max.description": "在最大化与 75% 居中之间切换聚焦窗口.",
+  "action.toggle_max.mnemonic": "Hyper+Return — Return = 填满屏幕",
+  "action.screen_next.label": "移到下一个屏幕",
+  "action.screen_next.description": "将聚焦窗口抛到下一个屏幕, 按比例缩放并带动指针.",
+  "action.screen_next.mnemonic": "Hyper+] — ] 向前推到下一个屏幕",
+  "action.screen_prev.label": "移到上一个屏幕",
+  "action.screen_prev.description": "将聚焦窗口抛到上一个屏幕, 按比例缩放并带动指针.",
+  "action.screen_prev.mnemonic": "Hyper+[ — [ 向后退到上一个屏幕",
+
+  "alert.oneScreen": "只有一个屏幕"
+}

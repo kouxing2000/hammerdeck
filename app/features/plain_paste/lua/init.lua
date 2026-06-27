@@ -25,7 +25,7 @@ local PASTE_SETTLE_SECONDS = 0.5   -- donor's pause before the synthesized cmd+v
 local function cleaned(ctx)
     local text = ctx.pasteboardRead()
     if not text or text == "" then
-        ctx.alert("Clipboard is empty")
+        ctx.alert(ctx.t("alert.empty", "Clipboard is empty"))
         return nil
     end
     local out = text:match("^%s*(.-)%s*$")
@@ -62,8 +62,8 @@ return {
               -- instead of appearing dead (and fire the system prompt).
               if not ctx.axTrusted() then
                   ctx.axPrompt()
-                  ctx.alert("Clipboard cleaned -- paste with cmd+v "
-                      .. "(grant Accessibility to paste automatically)")
+                  ctx.alert(ctx.t("alert.cleaned",
+                      "Clipboard cleaned -- paste with cmd+v (grant Accessibility to paste automatically)"))
                   return
               end
               -- The settle wait is load-bearing: the user is still holding
@@ -83,8 +83,8 @@ return {
               if not text then return end
               if not ctx.axTrusted() then
                   ctx.axPrompt()
-                  ctx.alert("Typing needs the Accessibility permission -- "
-                      .. "grant Hammerdeck in System Settings, then try again")
+                  ctx.alert(string.format(ctx.t("alert.axRequired",
+                      "Typing needs the Accessibility permission -- grant %s in System Settings, then try again"), ctx.appName))
                   return
               end
               ctx.typeText(text)

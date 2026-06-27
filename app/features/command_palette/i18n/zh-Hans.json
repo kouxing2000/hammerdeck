@@ -1,0 +1,11 @@
+{
+  "name": "命令面板",
+  "description": "用一个快捷键模糊搜索并运行任意已启用功能的任意操作.",
+
+  "option.showShortcuts.label": "在副标题中显示每个命令的快捷键",
+
+  "chooser.placeholder": "运行命令",
+  "empty.title": "没有已启用的命令",
+  "empty.subtitle": "请在设置中启用功能",
+  "alert.failed": "命令执行失败: %s"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "窗口模式",
+  "description": "用于精细排布的模态键盘层 -- 在一个按键下移动/调整大小/角落/居中/撤销, 直到按 Escape. 适合想要精确控制又不想要太多全局快捷键时. 与窗口贴靠搭配使用.",
+
+  "action.enter.label": "进入 / 退出窗口模式",
+  "action.enter.description": "切换模态窗口排布层, 在其中用裸按键移动, 调整大小和贴靠当前聚焦的窗口, 直到按 Escape.",
+  "action.enter.mnemonic": "W 代表窗口模式",
+
+  "option.stepParts.label": "每屏步数 (移动/调整大小的粒度)",
+
+  "alert.oneScreen": "只有一个屏幕",
+  "alert.noScreen": "%s 方向没有屏幕"
+}

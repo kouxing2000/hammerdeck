@@ -18,6 +18,7 @@ local manifest = require("platform.manifest")
 local triggers = require("platform.triggers")
 local ctxlib   = require("platform.ctx")
 local json     = require("platform.json")
+local i18n     = require("platform.i18n")
 
 local registry = {}
 
@@ -35,6 +36,47 @@ local loadFailures  = {}   -- list of { source, id?, error } -- never registered
 local startFailures = {}   -- id -> error string -- registered but failed to start
 
 local function enabledKey(id) return "hammerdeck.enabled." .. id end
+
+-- ---------------------------------------------------------------------------
+-- Localized feature metadata. The English source lives INLINE (feature.json /
+-- init.lua); these resolve a per-feature catalog
+-- (app/features/<id>/i18n/<locale>.json) keyed by the field PATH, falling back to
+-- that inline English (so an untranslated feature/field just shows English).
+-- Applied at describe()/emit time, so a language switch needs only a re-describe,
+-- never a re-register. The key scheme is the convention feature authors follow:
+--   name | description | page.title
+--   action.<id>.label | .description | .mnemonic
+--   option.<key>.label | .hint | .section | .defaultLabel | .actionLabel
+--   option.<key>.values.<value>     (enum labels, parallel to values)
+-- ---------------------------------------------------------------------------
+local function locName(m) return i18n.tFeature(m.id, "name", m.name) end
+local function locDesc(m)
+    if not m.description or m.description == "" then return "" end
+    return i18n.tFeature(m.id, "description", m.description)
+end
+local function locActionLabel(m, a)
+    return i18n.tFeature(m.id, "action." .. a.id .. ".label", a.label or a.id)
+end
+local function locActionField(m, a, field, src)
+    if src == nil then return nil end
+    return i18n.tFeature(m.id, "action." .. a.id .. "." .. field, src)
+end
+local function locOptionField(m, o, field, src)
+    if src == nil then return nil end
+    return i18n.tFeature(m.id, "option." .. o.key .. "." .. field, src)
+end
+-- Enum labels are an array parallel to o.values; localize each by its VALUE so a
+-- reordering of values can't mis-key a translation.
+local function locOptionLabels(m, o)
+    if not o.labels then return nil end
+    local out = {}
+    for i, lbl in ipairs(o.labels) do
+        local v = o.values and o.values[i]
+        local key = "option." .. o.key .. ".values." .. (v ~= nil and tostring(v) or tostring(i))
+        out[i] = i18n.tFeature(m.id, key, lbl)
+    end
+    return out
+end
 
 -- A feature's DECLARATIVE identity/presentation lives in a co-located
 -- feature.json (language-agnostic, no code), beside its lua/. These keys are
@@ -319,6 +361,9 @@ end
 -- whatever was enabled. Enabled-state/options persist (they live in settings),
 -- so the user's selections survive. Returns { count, failures }.
 function registry.reload()
+    -- Re-read i18n catalogs too, so "Reload Features" also picks up edited
+    -- translations (same locale; a language CHANGE still needs a relaunch).
+    i18n.configure({ locale = i18n.locale() })
     for _, m in ipairs(registry.all()) do registry.unregister(m.id) end
     loadFailures = {}
     for name in pairs(package.loaded) do
@@ -550,11 +595,12 @@ function registry.enabledActions()
     for _, m in ipairs(registry.all()) do
         if registry.isEnabled(m.id) then
             for _, a in ipairs(m.actions) do
+                local fname = locName(m)
                 out[#out + 1] = {
                     featureId   = m.id,
-                    featureName = m.name,
+                    featureName = fname,
                     actionId    = a.id,
-                    label       = (#m.actions > 1) and (m.name .. " -- " .. (a.label or a.id)) or m.name,
+                    label       = (#m.actions > 1) and (fname .. " -- " .. locActionLabel(m, a)) or fname,
                     automatable = a.automatable == true,
                 }
             end
@@ -626,16 +672,17 @@ function buildCommandList(selfId)
             for _, a in ipairs(m.actions) do
                 out[#out + 1] = {
                     featureId   = m.id,
-                    featureName = m.name,
+                    featureName = locName(m),
                     actionId    = a.id,
                     -- single-action features read better as the feature name;
                     -- multi-action ones need the per-action label to disambiguate.
-                    label       = (#m.actions > 1) and a.label or m.name,
+                    label       = (#m.actions > 1) and locActionLabel(m, a) or locName(m),
                     triggerDesc = triggers.describe(triggerFor(m, a)),
                     triggerGlyph = triggers.glyph(triggerFor(m, a)),
                     -- "why this key" hint, only while the default still holds
                     -- (an override would make the mnemonic lie).
-                    mnemonic    = (storedTrigger(m, a) == nil) and a.mnemonic or nil,
+                    mnemonic    = (storedTrigger(m, a) == nil)
+                        and locActionField(m, a, "mnemonic", a.mnemonic) or nil,
                 }
             end
         end
@@ -664,7 +711,7 @@ function registry.hyperLegend()
                 if isHyper(t) then
                     items[#items + 1] = {
                         key = t.key,
-                        label = (#m.actions > 1) and a.label or m.name,
+                        label = (#m.actions > 1) and locActionLabel(m, a) or locName(m),
                         chord = (t.type == "chord"),
                     }
                 end
@@ -676,9 +723,9 @@ function registry.hyperLegend()
 end
 
 local function describeTrigger(m)
-    if m.start then return "always-on service" end
+    if m.start then return i18n.t("trigger.alwaysOn", "always-on service") end
     if #m.actions == 1 then return triggers.describe(triggerFor(m, m.actions[1])) end
-    return #m.actions .. " actions"
+    return string.format(i18n.t("trigger.actions", "%d actions"), #m.actions)
 end
 
 -- Normalize one entry returned by a feature's schedule(ctx) descriptor into a
@@ -746,17 +793,21 @@ function registry.describe()
         local opts = {}
         for _, o in ipairs(m.options or {}) do
             opts[#opts + 1] = {
-                key = o.key, type = o.type, label = o.label or o.key,
+                key = o.key, type = o.type,
+                label = locOptionField(m, o, "label", o.label or o.key),
                 default = o.default, min = o.min, max = o.max,
-                values = o.values, labels = o.labels, multiline = o.multiline,
-                defaultLabel = o.defaultLabel, hint = o.hint,
-                section = o.section, actionLabel = o.actionLabel, preview = o.preview,
+                values = o.values, labels = locOptionLabels(m, o), multiline = o.multiline,
+                defaultLabel = locOptionField(m, o, "defaultLabel", o.defaultLabel),
+                hint = locOptionField(m, o, "hint", o.hint),
+                section = locOptionField(m, o, "section", o.section),
+                actionLabel = locOptionField(m, o, "actionLabel", o.actionLabel),
+                preview = o.preview,
                 validate = o.validate, gatedBy = o.gatedBy, valuesFrom = o.valuesFrom,
                 collapsible = o.collapsible,
             }
         end
         local row = {
-            id = m.id, name = m.name, description = m.description or "",
+            id = m.id, name = locName(m), description = locDesc(m),
             category = m.category, version = m.version or "",
             context = m.context or "anywhere",
             requires = json.asArray(m.requires or {}),
@@ -769,7 +820,8 @@ function registry.describe()
             error = startFailures[m.id],
             -- A feature-contributed native page (Homepage sidebar), if declared.
             -- Pure metadata; the host renders the view registered for this id.
-            page = m.page and { title = m.page.title, icon = m.page.icon or "doc" } or nil,
+            page = m.page and { title = i18n.tFeature(m.id, "page.title", m.page.title),
+                                icon = m.page.icon or "doc" } or nil,
         }
         -- Each action carries its editable trigger (current + default) and
         -- whether a user override is in effect, so the config UI renders one
@@ -778,8 +830,9 @@ function registry.describe()
         for _, a in ipairs(m.actions) do
             local current = triggerFor(m, a)
             actions[#actions + 1] = {
-                id = a.id, label = a.label, description = a.description,
-                mnemonic = a.mnemonic,
+                id = a.id, label = locActionLabel(m, a),
+                description = locActionField(m, a, "description", a.description),
+                mnemonic = locActionField(m, a, "mnemonic", a.mnemonic),
                 automatable = a.automatable == true,
                 trigger = current,
                 defaultTrigger = a.defaultTrigger,

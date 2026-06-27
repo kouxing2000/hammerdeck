@@ -1,0 +1,16 @@
+{
+  "name": "密码生成器",
+  "description": "生成一个强随机密码并复制到剪贴板.",
+
+  "option.length.label": "长度",
+  "option.lowercase.label": "包含小写字母",
+  "option.uppercase.label": "包含大写字母",
+  "option.digits.label": "包含数字",
+  "option.symbols.label": "包含符号",
+  "option.avoidAmbiguous.label": "避免易混淆字符 (0 O 1 l I)",
+
+  "notify.title": "密码生成器",
+  "notify.noCharset": "请在设置中至少启用一种字符集",
+  "notify.copied.title": "密码已复制",
+  "notify.copied.body": "%d 位密码已复制到剪贴板"
+}

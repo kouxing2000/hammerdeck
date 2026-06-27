@@ -1,0 +1,22 @@
+{
+  "name": "插入日期/时间",
+  "description": "按你选择的格式 (或自定义 strftime 模式) 将当前日期和时间输入到聚焦的输入框中.",
+
+  "notify.title": "插入日期/时间",
+  "notify.pickPreset": "请选择一个预设, 或在设置中输入自定义格式",
+  "alert.needFormat": "请先输入自定义格式",
+  "alert.preview": "预览:  %s",
+
+  "option.format.label": "格式",
+  "option.format.values.%m/%d/%Y %I:%M:%S %p": "US 12 小时制  (06/23/2026 03:04:05 PM)",
+  "option.format.values.%Y-%m-%d %H:%M:%S": "ISO 24 小时制  (2026-06-23 15:04:05)",
+  "option.format.values.%Y-%m-%d": "ISO 日期  (2026-06-23)",
+  "option.format.values.%H:%M:%S": "24 小时制时间  (15:04:05)",
+  "option.format.values.%I:%M %p": "12 小时制时间  (03:04 PM)",
+  "option.format.values.%A, %B %d, %Y": "长日期  (Monday, June 23, 2026)",
+  "option.format.values.%d/%m/%Y": "欧洲日期  (23/06/2026)",
+  "option.format.values.custom": "自定义 (使用下方的字段)",
+  "option.customFormat.label": "自定义格式 (strftime)",
+  "option.customFormat.actionLabel": "预览",
+  "option.customFormat.hint": "当格式为自定义时使用. 例如 %Y/%m/%d %H:%M -- 参见 strftime."
+}

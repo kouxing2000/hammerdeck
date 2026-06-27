@@ -47,7 +47,7 @@ final class HyperHintPanel {
 
         stack.addArrangedSubview(titleLabel("⌃⌥⌘  Hyper"))
         stack.addArrangedSubview(gridView(rows))
-        stack.addArrangedSubview(captionLabel("press a shortcut  ·  release Caps to dismiss"))
+        stack.addArrangedSubview(captionLabel(Strings.t("hyper.caption", default: "press a shortcut  ·  release Caps to dismiss")))
 
         effect.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -96,7 +96,7 @@ final class HyperHintPanel {
     /// labels into tidy columns regardless of glyph/label width.
     private func gridView(_ rows: [Row]) -> NSView {
         guard !rows.isEmpty else {
-            return captionLabel("No Hyper shortcuts enabled")
+            return captionLabel(Strings.t("hyper.empty", default: "No Hyper shortcuts enabled"))
         }
         let half = (rows.count + 1) / 2
         var gridRows: [[NSView]] = []

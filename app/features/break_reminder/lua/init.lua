@@ -125,8 +125,8 @@ return {
             if not isPostpone then
                 if announce then
                     ctx.notify(
-                        "Rest eyes in " .. round(seconds / 60) .. " minutes",
-                        "Rest at " .. os.date("%X", now + seconds))
+                        string.format(ctx.t("notify.rest.title", "Rest eyes in %d minutes"), round(seconds / 60)),
+                        string.format(ctx.t("notify.rest.body", "Rest at %s"), os.date("%X", now + seconds)))
                 end
                 s.lastStartTime = now
             end
@@ -139,7 +139,7 @@ return {
         local function showRestDialog()
             local now = ctx.now()
             local workedMin = round((now - s.lastStartTime) / 60)
-            local headline = "You have worked " .. workedMin .. " minutes!"
+            local headline = string.format(ctx.t("alert.worked", "You have worked %d minutes!"), workedMin)
             ctx.alert(headline)
 
             -- Repair stats after system-time jumps.
@@ -149,10 +149,10 @@ return {
             end
 
             s.dialog = ctx.askChoice {
-                title = headline .. " Time to rest",
+                title = headline .. ctx.t("dialog.timeToRest", " Time to rest"),
                 infos = {
-                    "Worked today: " .. durationInfo(s.workSeconds),
-                    "Elapsed today: " .. durationInfo(now - s.lastStartWorkStamp),
+                    string.format(ctx.t("info.workedToday", "Worked today: %s"), durationInfo(s.workSeconds)),
+                    string.format(ctx.t("info.elapsedToday", "Elapsed today: %s"), durationInfo(now - s.lastStartWorkStamp)),
                 },
                 actions = {
                     { label = POSTPONE_1,   icon = "symbol:clock" },

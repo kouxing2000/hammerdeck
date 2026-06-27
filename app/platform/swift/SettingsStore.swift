@@ -694,7 +694,7 @@ final class SettingsStore: ObservableObject {
         let secs = Int(Self.axSettingsFallbackDelay)
         _ = try? lua.call("platform.adapter", "notify", [
             .string("Accessibility needed"),
-            .string("Opening System Settings in \(secs) seconds -- turn on Hammerdeck there, "
+            .string("Opening System Settings in \(secs) seconds -- turn on \(AppInfo.displayName) there, "
                   + "then enable the feature again."),
         ])
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.axSettingsFallbackDelay) { [weak self] in
@@ -841,7 +841,7 @@ final class SettingsStore: ObservableObject {
     /// after a relaunch without re-checking the network).
     func validationState(_ featureId: String, _ secretKey: String) -> ValidationState {
         if let s = validation[validationLookupKey(featureId, secretKey)] { return s }
-        return isValidated(featureId, secretKey) ? .ok("Validated") : .idle
+        return isValidated(featureId, secretKey) ? .ok(Strings.t("settings.validated", default: "Validated")) : .idle
     }
 
     /// Validate a secret against its provider (opt.validate), then on success

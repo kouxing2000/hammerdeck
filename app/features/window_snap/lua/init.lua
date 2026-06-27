@@ -66,7 +66,7 @@ local function arranger(ctx)
         end
         local screens = ctx.screenFrames()
         if #screens < 2 then
-            ctx.alert("Only one screen")
+            ctx.alert(ctx.t("alert.oneScreen", "Only one screen"))
             return
         end
         local i = f.screenIndex

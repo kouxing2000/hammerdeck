@@ -40,15 +40,15 @@ struct RulesPageView: View {
         // A timeline rule-click sets store.selectedRuleId and switches here; open
         // that rule for editing (works whether we just appeared or were already up).
         .onChange(of: store.selectedRuleId) { _ in consumeDeepLink() }
-        .confirmationDialog("Discard your JSON edits?",
+        .confirmationDialog(Strings.t("rules.discardJSONTitle", default: "Discard your JSON edits?"),
                             isPresented: $confirmSwitch, titleVisibility: .visible) {
-            Button("Discard edits", role: .destructive) {
+            Button(Strings.t("rules.discardEdits", default: "Discard edits"), role: .destructive) {
                 formDirty = false
                 applySelection(pendingSelection)
             }
-            Button("Keep editing", role: .cancel) {}
+            Button(Strings.t("rules.keepEditing", default: "Keep editing"), role: .cancel) {}
         } message: {
-            Text("Switching rules discards the changes you made in the JSON editor.")
+            Text(Strings.t("rules.switchDiscardMsg", default: "Switching rules discards the changes you made in the JSON editor."))
         }
     }
 
@@ -85,12 +85,12 @@ struct RulesPageView: View {
     private var ruleList: some View {
         List(selection: selection) {
             Section {
-                Label("New rule", systemImage: "plus.circle.fill")
+                Label(Strings.t("rules.newRule", default: "New rule"), systemImage: "plus.circle.fill")
                     .foregroundStyle(.tint).tag(newRowId)
             }
-            Section("Rules (\(store.rules.count))") {
+            Section(String(format: Strings.t("rules.sectionCount", default: "Rules (%d)"), store.rules.count)) {
                 if store.rules.isEmpty {
-                    Text("No rules yet -- pick \"New rule\" to add one.")
+                    Text(Strings.t("rules.noRulesYet", default: "No rules yet -- pick \"New rule\" to add one."))
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     ForEach(store.rules) { rule in
@@ -109,9 +109,7 @@ struct RulesPageView: View {
     private var detail: some View {
         Form {
             Section {
-                Text("Rules fire an effect when something happens -- an app comes to the "
-                     + "front, a display connects, on wake, or on a schedule. Pick a rule to "
-                     + "edit it, or \"New rule\" to add one.")
+                Text(Strings.t("rules.intro", default: "Rules fire an effect when something happens -- an app comes to the front, a display connects, on wake, or on a schedule. Pick a rule to edit it, or \"New rule\" to add one."))
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -123,7 +121,7 @@ struct RulesPageView: View {
         // outer frame centers that column and lets the rest be margin.
         .frame(maxWidth: 600)
         .frame(maxWidth: .infinity, alignment: .center)
-        .navigationTitle("Rules")
+        .navigationTitle(Strings.t("rules.navTitle", default: "Rules"))
     }
 }
 
@@ -170,20 +168,22 @@ private struct RulePageRow: View {
     private var fireStatus: (text: String, color: Color)? {
         if rule.unavailable { return nil }
         if let at = rule.lastFired {
-            let verb = rule.lastFiredTest ? "tested" : "fired"
+            let verb = rule.lastFiredTest ? Strings.t("rules.verbTested", default: "tested")
+                                          : Strings.t("rules.verbFired", default: "fired")
             let ago = Self.relativeAgo(at)
-            return rule.lastFiredOk ? ("\(verb) \(ago)", .secondary)
-                                    : ("\(verb) \(ago) -- failed", .orange)
+            return rule.lastFiredOk
+                ? (String(format: Strings.t("rules.fireStatus", default: "%@ %@"), verb, ago), .secondary)
+                : (String(format: Strings.t("rules.fireStatusFailed", default: "%@ %@ -- failed"), verb, ago), .orange)
         }
-        return rule.enabled ? ("not fired yet", .secondary) : nil
+        return rule.enabled ? (Strings.t("rules.notFiredYet", default: "not fired yet"), .secondary) : nil
     }
 
     private static func relativeAgo(_ date: Date) -> String {
         let s = max(0, Date().timeIntervalSince(date))
-        if s < 45 { return "just now" }
-        if s < 3600 { return "\(Int((s / 60).rounded()))m ago" }
-        if s < 86_400 { return "\(Int((s / 3600).rounded()))h ago" }
-        return "\(Int((s / 86_400).rounded()))d ago"
+        if s < 45 { return Strings.t("rules.justNow", default: "just now") }
+        if s < 3600 { return String(format: Strings.t("rules.minutesAgo", default: "%dm ago"), Int((s / 60).rounded())) }
+        if s < 86_400 { return String(format: Strings.t("rules.hoursAgo", default: "%dh ago"), Int((s / 3600).rounded())) }
+        return String(format: Strings.t("rules.daysAgo", default: "%dd ago"), Int((s / 86_400).rounded()))
     }
 
     var body: some View {
@@ -210,7 +210,7 @@ private struct RulePageRow: View {
                     Image(systemName: "play.circle").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .help("Test this rule now -- fire its effect without waiting for the trigger")
+                .help(Strings.t("rules.testHelp", default: "Test this rule now -- fire its effect without waiting for the trigger"))
                 .popover(item: $testResult) { r in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: r.icon).foregroundStyle(r.color)
@@ -219,20 +219,20 @@ private struct RulePageRow: View {
                     }
                     .padding(10).frame(maxWidth: 300)
                 }
-                .confirmationDialog("Test \"\(primary)\"? This will lock your screen now.",
+                .confirmationDialog(String(format: Strings.t("rules.testLockTitle", default: "Test \"%@\"? This will lock your screen now."), primary),
                                     isPresented: $confirmDisruptiveTest, titleVisibility: .visible) {
-                    Button("Lock screen", role: .destructive) { fireNow() }
-                    Button("Cancel", role: .cancel) {}
+                    Button(Strings.t("rules.lockScreen", default: "Lock screen"), role: .destructive) { fireNow() }
+                    Button(Strings.t("rules.cancel", default: "Cancel"), role: .cancel) {}
                 }
                 Toggle("", isOn: Binding(get: { rule.enabled },
                                          set: { store.setRuleEnabled(rule.id, $0) }))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                    .help(rule.enabled ? "Enabled" : "Disabled")
+                    .help(rule.enabled ? Strings.t("rules.enabled", default: "Enabled") : Strings.t("rules.disabled", default: "Disabled"))
             }
             Button(action: onDelete) {
                 Image(systemName: "trash").foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless).help("Delete this rule")
+            .buttonStyle(.borderless).help(Strings.t("rules.deleteHelp", default: "Delete this rule"))
         }
         .padding(.vertical, 2)
         .opacity(rule.unavailable ? 0.6 : (rule.enabled ? 1 : 0.55))
@@ -258,12 +258,12 @@ private struct RulePageRow: View {
         // Three outcomes: clean fire (green check), partial fire (orange triangle
         // + the note: "moved 1/2 -- no window for: Mail"), failure (red x + reason).
         if ok && message.isEmpty {
-            testResult = TestResult(icon: "checkmark.circle.fill", color: .green, message: "Fired")
+            testResult = TestResult(icon: "checkmark.circle.fill", color: .green, message: Strings.t("rules.firedMessage", default: "Fired"))
         } else if ok {
             testResult = TestResult(icon: "exclamationmark.triangle.fill", color: .orange, message: message)
         } else {
             testResult = TestResult(icon: "xmark.circle.fill", color: .red,
-                                    message: message.isEmpty ? "Effect failed" : message)
+                                    message: message.isEmpty ? Strings.t("rules.effectFailed", default: "Effect failed") : message)
         }
     }
 }
@@ -287,15 +287,17 @@ private let capturedPosId = "__captured__"
 private struct ChainStep: Identifiable {
     let id = UUID()
     var kind: String = "notify"
-    var notifyTitle: String = "Hammerdeck"
+    var notifyTitle: String = AppInfo.displayName
     var notifyText: String = ""
     var notifyChannel: String = "system"
     var shortcutName: String = ""
     var url: String = ""
 }
 private let chainStepKinds: [(id: String, label: String)] = [
-    ("notify", "Notify"), ("runShortcut", "Run a Shortcut"),
-    ("openURL", "Open a URL"), ("lockScreen", "Lock the screen"),
+    ("notify", Strings.t("rules.chainKindNotify", default: "Notify")),
+    ("runShortcut", Strings.t("rules.chainKindRunShortcut", default: "Run a Shortcut")),
+    ("openURL", Strings.t("rules.chainKindOpenURL", default: "Open a URL")),
+    ("lockScreen", Strings.t("rules.chainKindLockScreen", default: "Lock the screen")),
 ]
 private let chainStepSimpleKinds: Set<String> = ["notify", "runShortcut", "openURL", "lockScreen"]
 
@@ -322,7 +324,7 @@ private struct AddRuleForm: View {
     @State private var atTime = "09:00"
     // Effect
     @State private var effectId = "notify"
-    @State private var notifyTitle = "Hammerdeck"
+    @State private var notifyTitle = AppInfo.displayName
     @State private var notifyText = ""
     @State private var notifyChannel = "system"       // system (Notification Center) | app (banner)
     @State private var placements: [Placement] = []   // the layout effect's rows
@@ -339,7 +341,7 @@ private struct AddRuleForm: View {
     private var isEditing: Bool { editing != nil }
 
     var body: some View {
-        Section(isEditing ? "Edit rule" : "Add a rule") {
+        Section(isEditing ? Strings.t("rules.editRule", default: "Edit rule") : Strings.t("rules.addRuleSection", default: "Add a rule")) {
             // The form is THE editor; JSON is a discreet escape hatch shown only
             // where it pays off -- a `layout` effect, the one thing the form can't
             // fully express (a placement's titlePattern). For every other effect
@@ -350,34 +352,34 @@ private struct AddRuleForm: View {
                 HStack {
                     Spacer()
                     Button(action: toggleMode) {
-                        Label(advanced ? "Use the form" : "Edit as JSON",
+                        Label(advanced ? Strings.t("rules.useForm", default: "Use the form") : Strings.t("rules.editAsJSON", default: "Edit as JSON"),
                               systemImage: advanced ? "list.bullet" : "curlybraces")
                             .font(.caption)
                     }
                     .buttonStyle(.link)
-                    .help(advanced ? "Switch back to the guided form"
-                                   : "Edit this rule's raw JSON spec -- reaches a window's titlePattern")
+                    .help(advanced ? Strings.t("rules.useFormHelp", default: "Switch back to the guided form")
+                                   : Strings.t("rules.editJSONHelp", default: "Edit this rule's raw JSON spec -- reaches a window's titlePattern"))
                 }
             }
 
             if advanced {
                 jsonEditor
             } else {
-            TextField("Name (optional)", text: $name)
-            Picker("When", selection: $triggerType) {
+            TextField(Strings.t("rules.namePlaceholder", default: "Name (optional)"), text: $name)
+            Picker(Strings.t("rules.when", default: "When"), selection: $triggerType) {
                 // Each state signal is its own top-level choice (Frontmost app,
                 // Connected display, ...) -- no nested "Signal" picker.
                 ForEach(opts.signals, id: \.self) { sig in
                     Text(signalLabel(sig)).tag("state:" + sig)
                 }
-                Text("System event").tag("event")
-                Text("Schedule").tag("schedule")
+                Text(Strings.t("rules.systemEvent", default: "System event")).tag("event")
+                Text(Strings.t("rules.schedule", default: "Schedule")).tag("schedule")
             }
 
             if isStateTrigger {
-                Picker("Transition", selection: $transition) {
-                    Text(meta?.enterVerb ?? "becomes").tag("becomes")
-                    Text(meta?.leaveVerb ?? "leaves").tag("leaves")
+                Picker(Strings.t("rules.transition", default: "Transition"), selection: $transition) {
+                    Text(meta?.enterVerb ?? Strings.t("rules.becomes", default: "becomes")).tag("becomes")
+                    Text(meta?.leaveVerb ?? Strings.t("rules.leaves", default: "leaves")).tag("leaves")
                 }
                 HStack {
                     TextField(valuePlaceholder, text: $stateValue)
@@ -391,7 +393,7 @@ private struct AddRuleForm: View {
                         }
                         .menuStyle(.borderlessButton)
                         .frame(width: 32)
-                        .help("Pick a suggested value")
+                        .help(Strings.t("rules.pickSuggested", default: "Pick a suggested value"))
                     }
                 }
                 if let warning = stateValueWarning {
@@ -399,52 +401,49 @@ private struct AddRuleForm: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if triggerType == "event" {
-                Picker("Event", selection: $eventName) {
+                Picker(Strings.t("rules.event", default: "Event"), selection: $eventName) {
                     ForEach(opts.events, id: \.self) { Text($0).tag($0) }
                 }
             } else if triggerType == "schedule" {
-                Picker("Mode", selection: $scheduleMode) {
-                    Text("Every N minutes").tag("everyMin")
-                    Text("Daily at").tag("at")
+                Picker(Strings.t("rules.mode", default: "Mode"), selection: $scheduleMode) {
+                    Text(Strings.t("rules.everyNMinutes", default: "Every N minutes")).tag("everyMin")
+                    Text(Strings.t("rules.dailyAt", default: "Daily at")).tag("at")
                 }
                 if scheduleMode == "everyMin" {
-                    Stepper("Every \(everyMin) min", value: $everyMin, in: 1...1440)
+                    Stepper(String(format: Strings.t("rules.everyMinStepper", default: "Every %d min"), everyMin), value: $everyMin, in: 1...1440)
                 } else {
-                    TextField("HH:MM", text: $atTime)
+                    TextField(Strings.t("rules.hhmm", default: "HH:MM"), text: $atTime)
                     if !Self.isValidHHMM(atTime) {
-                        Text("Enter a 24-hour time like 09:00 or 23:30.")
+                        Text(Strings.t("rules.hhmmHint", default: "Enter a 24-hour time like 09:00 or 23:30."))
                             .font(.caption).foregroundStyle(.orange)
                     }
                 }
             }
 
-            Picker("Do", selection: $effectId) {
+            Picker(Strings.t("rules.do", default: "Do"), selection: $effectId) {
                 ForEach(opts.effects) { e in Text(e.label).tag(e.id) }
             }
             if selectedEffect?.kind == "notify" {
-                TextField("Notification title", text: $notifyTitle)
-                TextField("Notification text (optional)", text: $notifyText)
-                Picker("Show as", selection: $notifyChannel) {
-                    Text("System notification").tag("system")
-                    Text("In-app banner").tag("app")
+                TextField(Strings.t("rules.notifyTitleField", default: "Notification title"), text: $notifyTitle)
+                TextField(Strings.t("rules.notifyTextField", default: "Notification text (optional)"), text: $notifyText)
+                Picker(Strings.t("rules.showAs", default: "Show as"), selection: $notifyChannel) {
+                    Text(Strings.t("rules.systemNotification", default: "System notification")).tag("system")
+                    Text(Strings.t("rules.inAppBanner", default: "In-app banner")).tag("app")
                 }
                 if notifyChannel == "system" {
-                    Text("Appears in Notification Center -- persists in history, shows on "
-                         + "the lock screen, and respects Focus. Needs the packaged app; a "
-                         + "dev run falls back to the in-app banner.")
+                    Text(Strings.t("rules.notifyChannelHint", default: "Appears in Notification Center -- persists in history, shows on the lock screen, and respects Focus. Needs the packaged app; a dev run falls back to the in-app banner."))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if selectedEffect?.kind == "layout" {
                 layoutEditor
             } else if selectedEffect?.kind == "runShortcut" {
-                TextField("Shortcut name (exactly as in the Shortcuts app)", text: $shortcutName)
-                Text("Runs a macOS Shortcut -- the escape hatch to Focus/DND, volume, "
-                     + "HomeKit, and anything Shortcuts can do.")
+                TextField(Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"), text: $shortcutName)
+                Text(Strings.t("rules.runShortcutHint", default: "Runs a macOS Shortcut -- the escape hatch to Focus/DND, volume, HomeKit, and anything Shortcuts can do."))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if selectedEffect?.kind == "openURL" {
-                TextField("URL (https://… , or an app scheme like raycast://…)", text: $openURLValue)
+                TextField(Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)"), text: $openURLValue)
             } else if selectedEffect?.kind == "chain" {
                 chainEditor
             }
@@ -458,9 +457,9 @@ private struct AddRuleForm: View {
 
             HStack {
                 if isEditing {
-                    Button("Cancel") { editing = nil }   // onChange resets the form
+                    Button(Strings.t("rules.cancel", default: "Cancel")) { editing = nil }   // onChange resets the form
                 }
-                Button(isEditing ? "Save changes" : "Add rule") {
+                Button(isEditing ? Strings.t("rules.saveChanges", default: "Save changes") : Strings.t("rules.addRule", default: "Add rule")) {
                     advanced ? submitJSON() : submit()
                 }
                 .disabled(!canSubmit)
@@ -469,12 +468,12 @@ private struct AddRuleForm: View {
         .onAppear(perform: reloadOptions)
         // Hosted on the Section (always present), not the conditional link above,
         // so the dialog is never torn down mid-presentation when the link hides.
-        .confirmationDialog("Discard your JSON edits?",
+        .confirmationDialog(Strings.t("rules.discardJSONTitle", default: "Discard your JSON edits?"),
                             isPresented: $confirmLeaveJSON, titleVisibility: .visible) {
-            Button("Discard edits", role: .destructive) { advanced = false }
-            Button("Keep editing JSON", role: .cancel) {}
+            Button(Strings.t("rules.discardEdits", default: "Discard edits"), role: .destructive) { advanced = false }
+            Button(Strings.t("rules.keepEditingJSON", default: "Keep editing JSON"), role: .cancel) {}
         } message: {
-            Text("Switching to the form discards the changes you made in the JSON editor.")
+            Text(Strings.t("rules.switchToFormMsg", default: "Switching to the form discards the changes you made in the JSON editor."))
         }
         // Entering JSON mode seeds the editor with the rule's current spec and
         // records that seed (so the toggle binding can tell if it was edited).
@@ -499,10 +498,7 @@ private struct AddRuleForm: View {
     // through the same engine path as the form (addJSON / updateJSON), so a bad
     // spec comes back as an inline error, never a crash.
     @ViewBuilder private var jsonEditor: some View {
-        Text("Edit this rule's full spec as JSON -- this reaches what the form can't. "
-             + "Each layout window shows a \"titlePattern\": fill it with part of a "
-             + "window's title (case-insensitive) to target one of several same-app "
-             + "windows (leave \"\" to match any). Saving validates the spec.")
+        Text(Strings.t("rules.jsonEditorHint", default: "Edit this rule's full spec as JSON -- this reaches what the form can't. Each layout window shows a \"titlePattern\": fill it with part of a window's title (case-insensitive) to target one of several same-app windows (leave \"\" to match any). Saving validates the spec."))
             .font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         TextEditor(text: $jsonText)
@@ -517,13 +513,13 @@ private struct AddRuleForm: View {
     // The repeatable window-placement editor (shown when the effect is "layout").
     @ViewBuilder private var layoutEditor: some View {
         if placements.isEmpty {
-            Text("No windows yet -- add one, or capture your current arrangement.")
+            Text(Strings.t("rules.noWindowsYet", default: "No windows yet -- add one, or capture your current arrangement."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         ForEach(Array(placements.enumerated()), id: \.element.id) { i, p in
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    TextField("App (e.g. Safari)", text: $placements[i].app)
+                    TextField(Strings.t("rules.appField", default: "App (e.g. Safari)"), text: $placements[i].app)
                     if !appCandidates.isEmpty {
                         Menu {
                             ForEach(appCandidates, id: \.self) { a in
@@ -531,20 +527,20 @@ private struct AddRuleForm: View {
                             }
                         } label: { Image(systemName: "list.bullet") }
                         .menuStyle(.borderlessButton).frame(width: 30)
-                        .help("Pick from running apps")
+                        .help(Strings.t("rules.pickRunningApps", default: "Pick from running apps"))
                     }
                     Button(role: .destructive) {
                         placements.removeAll { $0.id == p.id }
                     } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless).help("Remove this window")
+                        .buttonStyle(.borderless).help(Strings.t("rules.removeWindow", default: "Remove this window"))
                 }
                 // Stacked (not side-by-side) so a long display name never forces a
                 // wider pane -- the row reflows to whatever width it's given.
-                Picker("Display", selection: $placements[i].screen) {
+                Picker(Strings.t("rules.display", default: "Display"), selection: $placements[i].screen) {
                     ForEach(displayOptions(p.screen), id: \.self) { Text($0).tag($0) }
                 }
-                Picker("Position", selection: $placements[i].pos) {
-                    if p.ratios != nil { Text("Captured").tag(capturedPosId) }
+                Picker(Strings.t("rules.position", default: "Position"), selection: $placements[i].pos) {
+                    if p.ratios != nil { Text(Strings.t("rules.captured", default: "Captured")).tag(capturedPosId) }
                     ForEach(opts.layoutPositions) { Text($0.label).tag($0.id) }
                 }
                 // canSubmit only needs ONE complete row, and buildSpec drops the
@@ -552,7 +548,7 @@ private struct AddRuleForm: View {
                 // dropping it on save.
                 if p.app.trimmingCharacters(in: .whitespaces).isEmpty
                     || p.screen.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Text("Incomplete -- set an app + display, or this window is skipped on save.")
+                    Text(Strings.t("rules.windowIncomplete", default: "Incomplete -- set an app + display, or this window is skipped on save."))
                         .font(.caption2).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -561,12 +557,12 @@ private struct AddRuleForm: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
         }
         HStack {
-            Button { addPlacement() } label: { Label("Add window", systemImage: "plus") }
+            Button { addPlacement() } label: { Label(Strings.t("rules.addWindow", default: "Add window"), systemImage: "plus") }
             Spacer()
             Button { capture() } label: {
-                Label("Capture current layout", systemImage: "camera.viewfinder")
+                Label(Strings.t("rules.captureLayout", default: "Capture current layout"), systemImage: "camera.viewfinder")
             }
-            .help("Snapshot where your windows are arranged right now")
+            .help(Strings.t("rules.captureLayoutHelp", default: "Snapshot where your windows are arranged right now"))
         }
     }
 
@@ -575,7 +571,7 @@ private struct AddRuleForm: View {
     // is authored in JSON (loadForEdit routes it there).
     @ViewBuilder private var chainEditor: some View {
         if chainSteps.isEmpty {
-            Text("No steps yet -- add one. Steps run top to bottom.")
+            Text(Strings.t("rules.noStepsYet", default: "No steps yet -- add one. Steps run top to bottom."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         ForEach(Array(chainSteps.enumerated()), id: \.element.id) { i, s in
@@ -590,33 +586,33 @@ private struct AddRuleForm: View {
                     Button(role: .destructive) {
                         chainSteps.removeAll { $0.id == s.id }
                     } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless).help("Remove this step")
+                        .buttonStyle(.borderless).help(Strings.t("rules.removeStep", default: "Remove this step"))
                 }
                 switch chainSteps[i].kind {
                 case "notify":
-                    TextField("Notification title", text: $chainSteps[i].notifyTitle)
-                    TextField("Notification text (optional)", text: $chainSteps[i].notifyText)
-                    Picker("Show as", selection: $chainSteps[i].notifyChannel) {
-                        Text("System").tag("system")
-                        Text("In-app").tag("app")
+                    TextField(Strings.t("rules.notifyTitleField", default: "Notification title"), text: $chainSteps[i].notifyTitle)
+                    TextField(Strings.t("rules.notifyTextField", default: "Notification text (optional)"), text: $chainSteps[i].notifyText)
+                    Picker(Strings.t("rules.showAs", default: "Show as"), selection: $chainSteps[i].notifyChannel) {
+                        Text(Strings.t("rules.chainSystem", default: "System")).tag("system")
+                        Text(Strings.t("rules.chainInApp", default: "In-app")).tag("app")
                     }
                 case "runShortcut":
-                    TextField("Shortcut name (exactly as in the Shortcuts app)",
+                    TextField(Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"),
                               text: $chainSteps[i].shortcutName)
                 case "openURL":
-                    TextField("URL (https://… or an app scheme)", text: $chainSteps[i].url)
+                    TextField(Strings.t("rules.openURLFieldShort", default: "URL (https://… or an app scheme)"), text: $chainSteps[i].url)
                 default:
                     EmptyView()   // lockScreen has no fields
                 }
                 if !chainStepComplete(chainSteps[i]) {
-                    Text("Incomplete -- fill the field, or this step is skipped on save.")
+                    Text(Strings.t("rules.stepIncomplete", default: "Incomplete -- fill the field, or this step is skipped on save."))
                         .font(.caption2).foregroundStyle(.orange)
                 }
             }
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
         }
-        Button { chainSteps.append(ChainStep()) } label: { Label("Add step", systemImage: "plus") }
+        Button { chainSteps.append(ChainStep()) } label: { Label(Strings.t("rules.addStep", default: "Add step"), systemImage: "plus") }
     }
 
     private func chainStepComplete(_ s: ChainStep) -> Bool {
@@ -635,7 +631,7 @@ private struct AddRuleForm: View {
         guard let k = d["kind"] as? String, chainStepSimpleKinds.contains(k) else { return nil }
         var s = ChainStep()
         s.kind = k
-        s.notifyTitle = d["title"] as? String ?? "Hammerdeck"
+        s.notifyTitle = d["title"] as? String ?? AppInfo.displayName
         s.notifyText = d["text"] as? String ?? ""
         s.notifyChannel = d["channel"] as? String ?? "app"
         s.shortcutName = d["name"] as? String ?? ""
@@ -668,9 +664,9 @@ private struct AddRuleForm: View {
     private var meta: SignalMeta? { opts.signalMeta[signal] }
     private func signalLabel(_ s: String) -> String { opts.signalMeta[s]?.label ?? s }
     private var valuePlaceholder: String {
-        let label = meta?.valueLabel ?? "Value"
+        let label = meta?.valueLabel ?? Strings.t("rules.value", default: "Value")
         let ex = meta?.example ?? ""
-        return ex.isEmpty ? label : "\(label) (e.g. \(ex))"
+        return ex.isEmpty ? label : String(format: Strings.t("rules.valueExample", default: "%@ (e.g. %@)"), label, ex)
     }
 
     // The layout editor's app picker draws from the running apps (same source as
@@ -701,11 +697,8 @@ private struct AddRuleForm: View {
         let snap = store.captureLayout(onlyDisplay: onlyDisplay)
         guard !snap.isEmpty else {
             formError = onlyDisplay.isEmpty
-                ? "Nothing to capture -- capture takes only EXTERNAL-display windows "
-                    + "(the built-in screen is skipped). Put a window on an external "
-                    + "monitor, and make sure Hammerdeck has Accessibility."
-                : "No windows on \"\(onlyDisplay)\" to capture -- move some there first "
-                    + "(or it isn't connected right now)."
+                ? String(format: Strings.t("rules.captureEmptyError", default: "Nothing to capture -- capture takes only EXTERNAL-display windows (the built-in screen is skipped). Put a window on an external monitor, and make sure %@ has Accessibility."), AppInfo.displayName)
+                : String(format: Strings.t("rules.captureNoWindowsError", default: "No windows on \"%@\" to capture -- move some there first (or it isn't connected right now)."), onlyDisplay)
             return
         }
         placements = snap.map(placement(from:))
@@ -736,8 +729,7 @@ private struct AddRuleForm: View {
         guard isStateTrigger else { return nil }
         let v = stateValue.trimmingCharacters(in: .whitespaces)
         guard !v.isEmpty, !candidates.isEmpty, !candidates.contains(v) else { return nil }
-        return "\"\(v)\" isn't present right now -- the name must match exactly when it is, "
-            + "or the rule won't fire."
+        return String(format: Strings.t("rules.notPresentWarning", default: "\"%@\" isn't present right now -- the name must match exactly when it is, or the rule won't fire."), v)
     }
 
     // A 24-hour HH:MM (1-2 digit hour 0-23, 2-digit minute 0-59) -- mirrors the
@@ -805,7 +797,7 @@ private struct AddRuleForm: View {
         everyMin = 25
         atTime = "09:00"
         effectId = opts.effects.first?.id ?? "notify"
-        notifyTitle = "Hammerdeck"
+        notifyTitle = AppInfo.displayName
         notifyText = ""
         notifyChannel = "system"
         placements = []
@@ -855,7 +847,7 @@ private struct AddRuleForm: View {
         // rule (e.g. layout placements) can't bleed into one of a different kind --
         // the onChange(of: effectId) seeder only fills an EMPTY placement list.
         placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""
-        notifyTitle = "Hammerdeck"; notifyText = ""
+        notifyTitle = AppInfo.displayName; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
         if kind == "command" {
@@ -885,7 +877,7 @@ private struct AddRuleForm: View {
             if steps.count != chainSteps.count { representable = false }
         } else {
             effectId = "notify"
-            notifyTitle = effect["title"] as? String ?? "Hammerdeck"
+            notifyTitle = effect["title"] as? String ?? AppInfo.displayName
             notifyText = effect["text"] as? String ?? ""
             // Absent channel = the in-app banner (back-compat: rules authored before
             // the system/app choice existed kept the old Toast behavior).
@@ -909,7 +901,7 @@ private struct AddRuleForm: View {
         guard let spec = buildSpec(),
               let data = try? JSONSerialization.data(withJSONObject: spec),
               let json = String(data: data, encoding: .utf8) else {
-            formError = "could not build the rule"
+            formError = Strings.t("rules.couldNotBuild", default: "could not build the rule")
             return
         }
         let reason = isEditing ? store.updateRule(editing!.id, json) : store.addRule(json)
@@ -925,7 +917,7 @@ private struct AddRuleForm: View {
     /// the raw spec instead of the built one.
     private func submitJSON() {
         let text = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { formError = "the JSON is empty"; return }
+        guard !text.isEmpty else { formError = Strings.t("rules.jsonEmpty", default: "the JSON is empty"); return }
         let reason = isEditing ? store.updateRule(editing!.id, text) : store.addRule(text)
         if let reason {
             formError = reason

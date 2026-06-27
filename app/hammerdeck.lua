@@ -27,6 +27,11 @@ require("loader").install()
 local adapter  = require("platform.adapter")
 local registry = require("platform.registry")
 
+-- Localization: resolve the UI locale ONCE (the Swift LocaleResolver is the
+-- authority, surfaced via adapter.locale()) and hand it to the i18n catalog, so
+-- registry.describe() metadata and every ctx.t localize against the same code.
+require("platform.i18n").configure({ locale = adapter.locale() })
+
 -- ---------------------------------------------------------------------------
 -- Feature catalog: autodiscovered by scanning lua/features/ (drop in a folder,
 -- Reload, and it appears -- no list to maintain). Loads are quarantined, so one

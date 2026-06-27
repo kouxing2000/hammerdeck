@@ -365,6 +365,12 @@ function adapter.discoverFeatures(dir) return fake.featureNames end
 fake.frontmost = nil     -- preset by the test for frontmostApp()
 function adapter.frontmostApp() return fake.frontmost end
 
+fake.appName = "Hammerdeck"   -- the simulated app display name
+function adapter.appName() return fake.appName end
+
+fake.locale = "en"            -- the simulated resolved UI locale code
+function adapter.locale() return fake.locale end
+
 -- State-signal reads (drive via the fake.* fields + fake.systemEvent("...Changed")).
 fake.appearance     = "light"   -- "dark" | "light"
 fake.runningAppList = {}         -- list of running app names

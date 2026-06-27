@@ -79,7 +79,7 @@ local function lookupInDict(ctx, word)
     local app = ctx.opt("dictApp")   -- a bundle id, or "" for macOS Dictionary
     if app and app ~= "" then
         if not ctx.launchOrFocusApp(app) then
-            ctx.alert("Could not open the dictionary app -- re-pick it in Settings")
+            ctx.alert(ctx.t("alert.noDictApp", "Could not open the dictionary app -- re-pick it in Settings"))
             return
         end
         ctx.afterSeconds(ctx.opt("dictDelayMs") / 1000, function()
@@ -182,11 +182,10 @@ return {
                     if content == "" then
                         if not ctx.axTrusted() then
                             ctx.axPrompt()
-                            ctx.alert("Selection Actions needs the Accessibility "
-                                .. "permission to read the selection -- grant it "
-                                .. "in System Settings, then try again")
+                            ctx.alert(ctx.t("alert.axRequired",
+                                "Selection Actions needs the Accessibility permission to read the selection -- grant it in System Settings, then try again"))
                         else
-                            ctx.alert("Nothing selected")
+                            ctx.alert(ctx.t("alert.nothingSelected", "Nothing selected"))
                         end
                         return
                     end
@@ -207,7 +206,7 @@ return {
                     local function askAI(systemPrompt)
                         local key = ctx.secret("openaiKey")
                         if not key or key == "" then
-                            ctx.alert("Set an OpenAI API key in Settings first")
+                            ctx.alert(ctx.t("alert.noKey", "Set an OpenAI API key in Settings first"))
                             return
                         end
                         local body = json.encode(json.asObject({
@@ -222,7 +221,7 @@ return {
                             ["Authorization"] = "Bearer " .. key,
                         }, body, function(status, respBody)
                             if status ~= 200 or not respBody then
-                                ctx.alert("AI request failed (" .. tostring(status) .. ")")
+                                ctx.alert(string.format(ctx.t("alert.aiFailed", "AI request failed (%s)"), tostring(status)))
                                 return
                             end
                             local doc = json.decode(respBody)
@@ -230,7 +229,7 @@ return {
                                 and doc.choices[1].message
                             local result = msg and msg.content
                             if not result then
-                                ctx.alert("AI returned no result")
+                                ctx.alert(ctx.t("alert.aiNoResult", "AI returned no result"))
                                 return
                             end
                             pasteBack((result:gsub("^%s*(.-)%s*$", "%1")))
@@ -253,12 +252,12 @@ return {
                         end
                     end
                     if #actions == 0 then
-                        ctx.alert("No Text Actions are enabled -- turn some on in Settings")
+                        ctx.alert(ctx.t("alert.noneEnabled", "No Text Actions are enabled -- turn some on in Settings"))
                         return
                     end
 
                     ctx.askChoice {
-                        title = "Action for [" .. snippet .. "]",
+                        title = string.format(ctx.t("dialog.title", "Action for [%s]"), snippet),
                         infos = { snippet },
                         actions = actions,
                         onChoose = function(choice)
@@ -275,12 +274,12 @@ return {
                                 local fn, loadErr = load("return " .. content,
                                     "calc", "t", { math = math })
                                 if not fn then
-                                    ctx.alert("Not an expression: " .. tostring(loadErr))
+                                    ctx.alert(string.format(ctx.t("alert.notExpr", "Not an expression: %s"), tostring(loadErr)))
                                     return
                                 end
                                 local okEval, result = pcall(fn)
                                 if not okEval then
-                                    ctx.alert("Calculation failed: " .. tostring(result))
+                                    ctx.alert(string.format(ctx.t("alert.calcFailed", "Calculation failed: %s"), tostring(result)))
                                     return
                                 end
                                 pasteBack(tostring(result))
@@ -295,8 +294,8 @@ return {
                                 if choice == ai.label then
                                     if ai.translate then
                                         ctx.askText {
-                                            title = "Translate to which language?",
-                                            placeholder = "e.g. French, 日本語",
+                                            title = ctx.t("prompt.translate.title", "Translate to which language?"),
+                                            placeholder = ctx.t("prompt.translate.ph", "e.g. French, 日本語"),
                                             onSubmit = function(lang)
                                                 if lang and lang ~= "" then
                                                     -- gsub with a function replacement so a
@@ -309,8 +308,8 @@ return {
                                         }
                                     elseif ai.freeAsk then
                                         ctx.askText {
-                                            title = "Instruction for the selected text",
-                                            placeholder = "e.g. make this more formal",
+                                            title = ctx.t("prompt.instruct.title", "Instruction for the selected text"),
+                                            placeholder = ctx.t("prompt.instruct.ph", "e.g. make this more formal"),
                                             onSubmit = function(prompt)
                                                 if prompt and prompt ~= "" then askAI(prompt) end
                                             end,

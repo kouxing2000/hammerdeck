@@ -69,6 +69,60 @@ do
     end
 end
 
+-- T0b: i18n catalog (lookup, fallback, interpolation, plural) -----------------
+-- The i18n module is locale-injected (not seam-coupled): configure() with a code
+-- + appdir, assert against the shipped app/i18n/zh-Hans.json, then RESET to "en"
+-- so the describe() tests below see the inline English source.
+do
+    local i18n    = require("platform.i18n")
+    local windows = require("platform.windows")
+    i18n.configure({ locale = "zh-Hans", appdir = "app" })
+
+    ok(i18n.t("window.noFocused", "No focused window") == "没有聚焦的窗口",
+        "i18n.t returns the zh-Hans translation for a global key")
+    ok(i18n.t("missing.key", "fallback") == "fallback",
+        "i18n.t falls back to the inline default for a missing key")
+    ok(i18n.t("missing.key") == "missing.key",
+        "i18n.t falls back to the key itself when no default is given")
+
+    -- the template is localized; the caller interpolates -- placeholders are
+    -- identical across locales, so string.format fills both %s the same way.
+    local msg = string.format(
+        i18n.t("window.axRequired", "%s needs Accessibility -- grant %s"),
+        "Window Mode", "Hammerdeck")
+    ok(msg:find("Window Mode", 1, true) and msg:find("Hammerdeck", 1, true)
+        and msg:find("辅助功能", 1, true),
+        "i18n template interpolates caller args into the zh-Hans string")
+
+    ok(i18n.category(1) == "other" and i18n.category(5) == "other",
+        "zh-Hans plural category collapses to other")
+    local forms = { one = "%d window", other = "%d windows" }
+    ok(i18n.plural("x.count", 5, forms) == "%d windows",
+        "i18n.plural picks the other form from inline forms (no catalog entry)")
+
+    -- platform.windows is a leaf: it localizes through the ctx handed to it, with
+    -- NO require of i18n. A shared key resolves via ctx.t's global fallback.
+    local alerted
+    local fakeCtx = {
+        focusedWindowFrame = function() return nil end,
+        axTrusted = function() return false end,
+        axPrompt  = function() end,
+        alert     = function(s) alerted = s end,
+        appName   = "Hammerdeck",
+        t         = function(k, d) return i18n.tFeature("window_modal", k, d) end,
+    }
+    windows.focusedOrAlert(fakeCtx, "Window Mode")
+    ok(alerted and alerted:find("辅助功能", 1, true) and alerted:find("Hammerdeck", 1, true),
+        "platform.windows localizes its Accessibility alert via ctx.t")
+
+    -- RESET to the source language for the rest of the suite.
+    i18n.configure({ locale = "en" })
+    ok(i18n.t("window.noFocused", "No focused window") == "No focused window",
+        "i18n.t returns the inline English source when locale is en")
+    ok(i18n.plural("x.count", 1, forms) == "%d window",
+        "en plural category splits one/other")
+end
+
 -- T1: all manifests register + validate --------------------------------------
 -- loadCatalog (not three register() calls) so the catalog is recorded for the
 -- hot-reload test (T11), exactly as the real bootstrap does.
@@ -799,6 +853,66 @@ ok(#fake.notifications == pwNotes + 1, "no character set enabled: guidance notif
 
 registry.setEnabled("password_generator", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after password_generator test")
+
+-- T13c2: describe() localizes feature metadata via per-feature catalogs --------
+-- describe() applies i18n at CALL time: switch the locale, re-describe, and the
+-- gallery/settings text returns translated -- the 8 SwiftUI views are unchanged
+-- (they render whatever describe() returns). Reset to "en" so the rest of the
+-- suite sees the English source. Runs here because the features it asserts on
+-- (window_switcher / plain_paste / password_generator) are all registered now.
+do
+    local i18n = require("platform.i18n")
+    i18n.configure({ locale = "zh-Hans", appdir = "app" })
+
+    local byId = {}
+    for _, d in ipairs(registry.describe()) do byId[d.id] = d end
+
+    ok(byId.window_switcher and byId.window_switcher.name == "窗口切换器",
+        "describe() localizes a feature name")
+    ok(byId.plain_paste and byId.plain_paste.description
+        and byId.plain_paste.description:find("无格式", 1, true) ~= nil,
+        "describe() localizes a feature description")
+
+    local mainAction
+    for _, a in ipairs(byId.plain_paste.actions) do
+        if a.id == "main" then mainAction = a end
+    end
+    ok(mainAction and mainAction.label == "粘贴为纯文本",
+        "describe() localizes a per-action label")
+
+    local modeOpt
+    for _, o in ipairs(byId.plain_paste.options) do
+        if o.key == "mode" then modeOpt = o end
+    end
+    ok(modeOpt and modeOpt.label == "转换", "describe() localizes an option label")
+    ok(modeOpt and modeOpt.labels[1] == "纯文本" and modeOpt.labels[2] == "换行转逗号",
+        "describe() localizes enum value labels (parallel to values)")
+
+    -- field-level fallback: password_generator's NAME is translated, but it ships
+    -- no action.<id>.label key, so the action label stays the English source.
+    ok(byId.password_generator and byId.password_generator.name == "密码生成器"
+        and byId.password_generator.actions[1].label == "Password Generator",
+        "describe() falls back per-field to inline English for untranslated keys")
+
+    -- Phase 3: runtime strings (the ctx.t call sites in features) resolve from
+    -- the SAME per-feature catalogs, including interpolation placeholders.
+    ok(i18n.tFeature("clipboard_history", "alert.empty", "x") == "剪贴板历史为空",
+        "runtime ctx.t key resolves (clipboard_history alert)")
+    ok(i18n.tFeature("text_actions", "alert.nothingSelected", "x") == "没有选中内容",
+        "runtime ctx.t key resolves (text_actions alert)")
+    ok(string.format(i18n.tFeature("count_down", "notify.up.title", "Time (%d min) is up!"), 5)
+        == "时间 (5 分钟) 到了!",
+        "runtime ctx.t key resolves with interpolation (count_down notify)")
+
+    -- reset to the source language for the remaining assertions.
+    i18n.configure({ locale = "en" })
+    local backToEn
+    for _, d in ipairs(registry.describe()) do
+        if d.id == "window_switcher" then backToEn = d.name end
+    end
+    ok(backToEn == "Window Switcher",
+        "describe() returns inline English when the locale resets to en")
+end
 
 -- T13d: insert_datetime (action: type the formatted current time) -------------
 registry.register(require("features.insert_datetime"))

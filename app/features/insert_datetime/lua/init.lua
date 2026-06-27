@@ -75,13 +75,13 @@ end
 local function insert(ctx)
     local fmt = resolveFormat(ctx)
     if not fmt then
-        ctx.notify("Insert Date/Time",
-            "Pick a preset, or enter a Custom format in Settings")
+        ctx.notify(ctx.t("notify.title", "Insert Date/Time"),
+            ctx.t("notify.pickPreset", "Pick a preset, or enter a Custom format in Settings"))
         return
     end
     local text, err = formatNow(fmt, ctx.now())
     if not text then
-        ctx.notify("Insert Date/Time", err)
+        ctx.notify(ctx.t("notify.title", "Insert Date/Time"), err)
         return
     end
     ctx.typeText(text)
@@ -109,11 +109,11 @@ return {
         customFormat = function(ctx)
             local fmt = ctx.opt("customFormat")
             if not fmt or fmt == "" then
-                ctx.alert("Enter a custom format first")
+                ctx.alert(ctx.t("alert.needFormat", "Enter a custom format first"))
                 return
             end
             local text, err = formatNow(fmt, ctx.now())
-            ctx.alert(text and ("Preview:  " .. text) or err)
+            ctx.alert(text and string.format(ctx.t("alert.preview", "Preview:  %s"), text) or err)
         end,
     },
 

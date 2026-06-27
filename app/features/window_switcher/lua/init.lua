@@ -43,8 +43,9 @@ local function jump(ctx, actionId, backward)
         -- the list): the chooser rejects an out-of-range row, which we
         -- detect to wrap around.
         local mod = cycleModifier(ctx.actionTrigger(actionId))
-        st.chooser.setPlaceholder(mod and ("Release " .. mod .. " to switch")
-            or "Press Enter to switch")
+        st.chooser.setPlaceholder(mod
+            and string.format(ctx.t("chooser.release", "Release %s to switch"), mod)
+            or ctx.t("chooser.pressEnter", "Press Enter to switch"))
         local row = st.chooser.getSelectedRow() + (backward and -1 or 1)
         st.chooser.setSelectedRow(row)
         if st.chooser.getSelectedRow() ~= row then
@@ -67,11 +68,11 @@ local function jump(ctx, actionId, backward)
                 -- Accessibility onboarding: fire the system prompt and
                 -- explain; the user re-triggers once granted.
                 ctx.axPrompt()
-                ctx.alert("Window Jump needs the Accessibility permission "
-                    .. "-- enable Hammerdeck under System Settings > "
-                    .. "Privacy & Security > Accessibility, then try again")
+                ctx.alert(string.format(ctx.t("alert.axRequired",
+                    "Window Jump needs the Accessibility permission -- enable %s under System Settings > Privacy & Security > Accessibility, then try again"),
+                    ctx.appName))
             else
-                ctx.alert("No windows to switch between")
+                ctx.alert(ctx.t("alert.noWindows", "No windows to switch between"))
             end
             return
         end
@@ -91,9 +92,10 @@ local function jump(ctx, actionId, backward)
         end
         st.lastChoices = choices
         local count = #choices
-        st.chooser.setTitle("Switch Window", "macwindow.on.rectangle",
-            count .. (count == 1 and " window" or " windows"))
-        st.chooser.setPlaceholder("Search windows")
+        st.chooser.setTitle(ctx.t("chooser.title", "Switch Window"), "macwindow.on.rectangle",
+            string.format(ctx.plural("chooser.count", count,
+                { one = "%d window", other = "%d windows" }), count))
+        st.chooser.setPlaceholder(ctx.t("chooser.search", "Search windows"))
         st.chooser.setChoices(choices)
         st.chooser.setQuery(nil)
         st.chooser.show()
