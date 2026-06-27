@@ -384,7 +384,7 @@ struct UsageReportView: View {
                  + "Once there's a day on disk, this report fills in.")
                 .font(.callout).foregroundStyle(.secondary)
             if let usage, !usage.enabled {
-                Button { store.setEnabled("usage_stats", true); load() } label: {
+                Button { store.requestSetEnabled("usage_stats", true); load() } label: {
                     Label("Enable Usage Stats", systemImage: "power")
                 }
                 .buttonStyle(.borderedProminent).padding(.top, 4)

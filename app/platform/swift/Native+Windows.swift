@@ -341,6 +341,20 @@ extension Native {
         lua_pushboolean(L, AXIsProcessTrustedWithOptions(opts) ? 1 : 0)
         return 1
     }
+
+    // Opens System Settings straight to Privacy & Security -> Accessibility. The
+    // system AXIsProcessTrustedWithOptions prompt appears only ONCE per app, so on
+    // every later "Grant" click axPrompt shows nothing -- this navigates the user
+    // to the exact pane regardless, the reliable "click -> land on the right
+    // settings page" the system prompt alone can't guarantee.
+    func openAccessibilitySettings(_ L: OpaquePointer?) -> Int32 {
+        if let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+        return 0
+    }
+
     func focusWindow(_ L: OpaquePointer?) -> Int32 {
         guard let id = LuaState.int(L, 1), let win = axWindowCache[id] else {
             lua_pushboolean(L, 0)

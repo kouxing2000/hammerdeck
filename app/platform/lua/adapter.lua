@@ -149,6 +149,13 @@ function adapter.notify(title, text)
     native.notify(title, text)
 end
 
+-- Post to the macOS Notification Center (vs adapter.notify's in-app banner).
+-- Returns whether it was delivered -- false when there is no app bundle (dev
+-- `swift run`), so the caller can fall back to the in-app banner.
+function adapter.systemNotify(title, text)
+    return native.system_notify(title, text)
+end
+
 function adapter.alert(text)
     native.alert(text)
 end
@@ -359,6 +366,13 @@ end
 -- Show the system Accessibility prompt if untrusted; returns trusted state.
 function adapter.axPrompt()
     return native.ax_prompt() == true
+end
+
+-- Open System Settings directly to Privacy & Security > Accessibility. The system
+-- prompt only appears once per app, so this guarantees the "Grant" click always
+-- lands the user on the right pane.
+function adapter.axOpenSettings()
+    native.ax_open_settings()
 end
 
 -- Opaque icon token usable as `image` in chooser choices.

@@ -377,7 +377,7 @@ private struct FeatureCard: View {
             // A never-registered (failed) module can't be toggled.
             Toggle("", isOn: Binding(
                 get: { feature.enabled },
-                set: { store.setEnabled(feature.id, $0) }
+                set: { store.requestSetEnabled(feature.id, $0) }
             ))
             .toggleStyle(.switch)
             .controlSize(.small)

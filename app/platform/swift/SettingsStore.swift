@@ -297,7 +297,7 @@ struct RuleInfo: Identifiable {
 
 /// One selectable effect for the Add-rule form's "Do" dropdown (effects.catalog).
 struct RuleEffectOption: Identifiable, Hashable {
-    let kind: String             // notify | layout | runShortcut | openURL | lockScreen | command
+    let kind: String             // notify | layout | runShortcut | openURL | lockScreen | chain | command
     let label: String
     let feature: String?
     let action: String?
@@ -455,6 +455,33 @@ final class SettingsStore: ObservableObject {
             print("[hammerdeck] settings: setEnabled failed: \(error)")
         }
         refresh()
+    }
+
+    /// The UI's enable/disable entry point (every toggle / "Enable" button). Trying
+    /// to ENABLE a feature that needs Accessibility we don't have yet FAILS (it
+    /// would otherwise sit "on" but silently no-op) and opens the grant flow
+    /// instead -- so the user grants, then enables. Disabling, or enabling a
+    /// feature that has the grant or doesn't need it, passes straight through.
+    /// (setEnabled stays the pure op the integration tests drive directly, so this
+    /// gate never fires -- or opens System Settings -- during `swift test`.)
+    /// Returns whether the change went through.
+    @discardableResult
+    func requestSetEnabled(_ id: String, _ on: Bool) -> Bool {
+        // Order matters: cheap checks first, then the LIVE seam read (not the cached
+        // axTrusted, which only refresh() updates -- a grant made on a non-home tab
+        // would otherwise lag and wrongly refuse the enable).
+        if on,
+           features.first(where: { $0.id == id })?.requires.contains("accessibility") == true,
+           !accessibilityTrusted() {
+            promptAccessibility()     // auto-onboard: system prompt + heads-up + open the pane
+            // The refusal mutates no @Published state, so a Toggle bound to
+            // feature.enabled would stay visually ON -- the exact lie this gate
+            // exists to prevent. Nudge observers so the switch snaps back to OFF.
+            objectWillChange.send()
+            return false              // enable refused until the grant lands
+        }
+        setEnabled(id, on)
+        return true
     }
 
     /// Hot-reload all features from disk: drops cached Lua modules, re-loads the
@@ -643,12 +670,41 @@ final class SettingsStore: ObservableObject {
         (try? lua.call("platform.adapter", "axTrusted").first ?? nil) as? Bool ?? false
     }
 
-    /// Fire the system Accessibility prompt THROUGH THE SEAM (never a direct OS
-    /// call from the UI -- the one inviolable rule). The dialog offers to open
-    /// System Settings; the grant lands out-of-process, so `axTrusted` updates on
-    /// the next refresh() (window refocus), not synchronously here.
+    /// Onboard the Accessibility grant THROUGH THE SEAM (never a direct OS call
+    /// from the UI -- the one inviolable rule). Apple's "...would like to control
+    /// this computer" dialog (axPrompt) registers Hammerdeck in the Accessibility
+    /// list AND carries its own "Open System Settings" button -- so firing it AND
+    /// yanking to Settings at the same instant is a redundant double. There's no
+    /// API to know whether that dialog actually showed (the return is just trust
+    /// status) and it appears only ONCE per app. So: show the dialog now, then a
+    /// few seconds later open the pane ourselves ONLY if still ungranted -- which
+    /// covers the case where the once-per-app dialog was already used and won't
+    /// reappear, without stacking Settings on top of a fresh dialog. The grant
+    /// lands out-of-process, so `axTrusted` updates on the next refresh().
+    private static let axSettingsFallbackDelay: TimeInterval = 3
+    private var axOnboardingInFlight = false
     func promptAccessibility() {
+        // Debounce: one onboarding cycle at a time, so toggling several AX features
+        // (or a re-click) doesn't stack toasts + Settings-opens. Cleared when the
+        // delayed open fires.
+        if axOnboardingInFlight { return }
+        axOnboardingInFlight = true
         _ = try? lua.call("platform.adapter", "axPrompt")
+        // Tell the user the pane is coming, so the auto-open isn't a surprise.
+        let secs = Int(Self.axSettingsFallbackDelay)
+        _ = try? lua.call("platform.adapter", "notify", [
+            .string("Accessibility needed"),
+            .string("Opening System Settings in \(secs) seconds -- turn on Hammerdeck there, "
+                  + "then enable the feature again."),
+        ])
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.axSettingsFallbackDelay) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.axOnboardingInFlight = false
+                guard !self.accessibilityTrusted() else { return }
+                _ = try? self.lua.call("platform.adapter", "axOpenSettings")
+            }
+        }
     }
 
     /// Swap two actions' triggers (the Shortcut Map drag-to-swap). Atomic and

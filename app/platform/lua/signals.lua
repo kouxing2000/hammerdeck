@@ -108,10 +108,15 @@ local REGISTRY = {
         meta    = { label = "Frontmost app", valueLabel = "App name",
                     enterVerb = "becomes", leaveVerb = "leaves", example = "Safari" },
         candidates = function()
+            -- All running regular apps (NSWorkspace) -- PERMISSION-FREE. The old
+            -- source was listWindows, which is Accessibility-gated: before that grant
+            -- it sees only Hammerdeck's own window, so the dropdown showed just
+            -- "Hammerdeck". The frontmost-app TRIGGER itself never needs the grant
+            -- (frontmostApp is NSWorkspace too), so its suggestions shouldn't either.
             local out = { adapter.frontmostApp() }
-            local ok, wins = pcall(adapter.listWindows)
-            if ok and type(wins) == "table" then
-                for _, w in ipairs(wins) do out[#out + 1] = w.appName end
+            local ok, apps = pcall(adapter.runningApps)
+            if ok and type(apps) == "table" then
+                for _, name in ipairs(apps) do out[#out + 1] = name end
             end
             return out
         end,

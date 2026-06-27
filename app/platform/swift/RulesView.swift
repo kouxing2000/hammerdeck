@@ -281,6 +281,24 @@ private struct Placement: Identifiable {
 }
 private let capturedPosId = "__captured__"
 
+/// One step of a `chain` effect in the form editor -- one of the simple
+/// context-free atoms. A chain step that's a layout or command is authored in
+/// JSON, not here (loadForEdit drops such a chain into the JSON editor).
+private struct ChainStep: Identifiable {
+    let id = UUID()
+    var kind: String = "notify"
+    var notifyTitle: String = "Hammerdeck"
+    var notifyText: String = ""
+    var notifyChannel: String = "system"
+    var shortcutName: String = ""
+    var url: String = ""
+}
+private let chainStepKinds: [(id: String, label: String)] = [
+    ("notify", "Notify"), ("runShortcut", "Run a Shortcut"),
+    ("openURL", "Open a URL"), ("lockScreen", "Lock the screen"),
+]
+private let chainStepSimpleKinds: Set<String> = ["notify", "runShortcut", "openURL", "lockScreen"]
+
 private struct AddRuleForm: View {
     @ObservedObject var store: SettingsStore
     @Binding var editing: RuleInfo?
@@ -306,7 +324,9 @@ private struct AddRuleForm: View {
     @State private var effectId = "notify"
     @State private var notifyTitle = "Hammerdeck"
     @State private var notifyText = ""
+    @State private var notifyChannel = "system"       // system (Notification Center) | app (banner)
     @State private var placements: [Placement] = []   // the layout effect's rows
+    @State private var chainSteps: [ChainStep] = []   // the chain effect's ordered steps
     @State private var shortcutName = ""              // runShortcut
     @State private var openURLValue = ""              // openURL
     @State private var formError: String?
@@ -404,6 +424,17 @@ private struct AddRuleForm: View {
             if selectedEffect?.kind == "notify" {
                 TextField("Notification title", text: $notifyTitle)
                 TextField("Notification text (optional)", text: $notifyText)
+                Picker("Show as", selection: $notifyChannel) {
+                    Text("System notification").tag("system")
+                    Text("In-app banner").tag("app")
+                }
+                if notifyChannel == "system" {
+                    Text("Appears in Notification Center -- persists in history, shows on "
+                         + "the lock screen, and respects Focus. Needs the packaged app; a "
+                         + "dev run falls back to the in-app banner.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else if selectedEffect?.kind == "layout" {
                 layoutEditor
             } else if selectedEffect?.kind == "runShortcut" {
@@ -414,6 +445,8 @@ private struct AddRuleForm: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else if selectedEffect?.kind == "openURL" {
                 TextField("URL (https://… , or an app scheme like raycast://…)", text: $openURLValue)
+            } else if selectedEffect?.kind == "chain" {
+                chainEditor
             }
             }   // end of the Form-mode (!advanced) fields
 
@@ -455,9 +488,10 @@ private struct AddRuleForm: View {
         .onChange(of: editing?.id) { _ in
             if let rule = editing { loadForEdit(rule) } else { resetForm() }
         }
-        // Seed a first placement row when the user switches the effect to "layout".
+        // Seed a first row when the user switches the effect to "layout"/"chain".
         .onChange(of: effectId) { _ in
             if selectedEffect?.kind == "layout" && placements.isEmpty { addPlacement() }
+            if selectedEffect?.kind == "chain" && chainSteps.isEmpty { chainSteps.append(ChainStep()) }
         }
     }
 
@@ -534,6 +568,79 @@ private struct AddRuleForm: View {
             }
             .help("Snapshot where your windows are arranged right now")
         }
+    }
+
+    // The repeatable, ordered chain-step editor (shown when the effect is "chain").
+    // Each step is one simple context-free atom; a chain with a layout/command step
+    // is authored in JSON (loadForEdit routes it there).
+    @ViewBuilder private var chainEditor: some View {
+        if chainSteps.isEmpty {
+            Text("No steps yet -- add one. Steps run top to bottom.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        ForEach(Array(chainSteps.enumerated()), id: \.element.id) { i, s in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("\(i + 1).").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Picker("", selection: $chainSteps[i].kind) {
+                        ForEach(chainStepKinds, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                    .labelsHidden()
+                    Spacer()
+                    Button(role: .destructive) {
+                        chainSteps.removeAll { $0.id == s.id }
+                    } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless).help("Remove this step")
+                }
+                switch chainSteps[i].kind {
+                case "notify":
+                    TextField("Notification title", text: $chainSteps[i].notifyTitle)
+                    TextField("Notification text (optional)", text: $chainSteps[i].notifyText)
+                    Picker("Show as", selection: $chainSteps[i].notifyChannel) {
+                        Text("System").tag("system")
+                        Text("In-app").tag("app")
+                    }
+                case "runShortcut":
+                    TextField("Shortcut name (exactly as in the Shortcuts app)",
+                              text: $chainSteps[i].shortcutName)
+                case "openURL":
+                    TextField("URL (https://… or an app scheme)", text: $chainSteps[i].url)
+                default:
+                    EmptyView()   // lockScreen has no fields
+                }
+                if !chainStepComplete(chainSteps[i]) {
+                    Text("Incomplete -- fill the field, or this step is skipped on save.")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        }
+        Button { chainSteps.append(ChainStep()) } label: { Label("Add step", systemImage: "plus") }
+    }
+
+    private func chainStepComplete(_ s: ChainStep) -> Bool {
+        switch s.kind {
+        case "notify":      return !s.notifyTitle.trimmingCharacters(in: .whitespaces).isEmpty
+        case "runShortcut": return !s.shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
+        case "openURL":     return !s.url.trimmingCharacters(in: .whitespaces).isEmpty
+        case "lockScreen":  return true
+        default:            return false
+        }
+    }
+
+    /// Map a stored chain-step dict to an editor row, or nil if it's a kind the
+    /// form doesn't edit (layout/command -- such a chain opens in JSON instead).
+    private func chainStep(from d: [String: Any]) -> ChainStep? {
+        guard let k = d["kind"] as? String, chainStepSimpleKinds.contains(k) else { return nil }
+        var s = ChainStep()
+        s.kind = k
+        s.notifyTitle = d["title"] as? String ?? "Hammerdeck"
+        s.notifyText = d["text"] as? String ?? ""
+        s.notifyChannel = d["channel"] as? String ?? "app"
+        s.shortcutName = d["name"] as? String ?? ""
+        s.url = d["url"] as? String ?? ""
+        return s
     }
 
     // Guards the Form/JSON toggle: leaving the JSON editor while it's dirty
@@ -666,6 +773,9 @@ private struct AddRuleForm: View {
         if selectedEffect?.kind == "openURL" {
             return !openURLValue.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        if selectedEffect?.kind == "chain" {
+            return chainSteps.contains { chainStepComplete($0) }
+        }
         return selectedEffect != nil
     }
 
@@ -697,7 +807,9 @@ private struct AddRuleForm: View {
         effectId = opts.effects.first?.id ?? "notify"
         notifyTitle = "Hammerdeck"
         notifyText = ""
+        notifyChannel = "system"
         placements = []
+        chainSteps = []
         shortcutName = ""
         openURLValue = ""
         formError = nil
@@ -742,7 +854,7 @@ private struct AddRuleForm: View {
         // Clear all effect-specific fields first, so values from a previously-edited
         // rule (e.g. layout placements) can't bleed into one of a different kind --
         // the onChange(of: effectId) seeder only fills an EMPTY placement list.
-        placements = []; shortcutName = ""; openURLValue = ""
+        placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""
         notifyTitle = "Hammerdeck"; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
@@ -765,10 +877,19 @@ private struct AddRuleForm: View {
             openURLValue = effect["url"] as? String ?? ""
         } else if kind == "lockScreen" {
             effectId = "lockScreen"
+        } else if kind == "chain" {
+            effectId = "chain"
+            let steps = (effect["effects"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+            chainSteps = steps.compactMap(chainStep(from:))
+            // a chain with a step the form can't edit (layout/command) -> JSON
+            if steps.count != chainSteps.count { representable = false }
         } else {
             effectId = "notify"
             notifyTitle = effect["title"] as? String ?? "Hammerdeck"
             notifyText = effect["text"] as? String ?? ""
+            // Absent channel = the in-app banner (back-compat: rules authored before
+            // the system/app choice existed kept the old Toast behavior).
+            notifyChannel = effect["channel"] as? String ?? "app"
         }
         // Not fully representable (a non-form trigger, a vanished command target,
         // or a parked/unavailable rule whose signal is gone) -> open the raw spec
@@ -867,7 +988,7 @@ private struct AddRuleForm: View {
         if eff.kind == "notify" {
             let t = notifyTitle.trimmingCharacters(in: .whitespaces)
             guard !t.isEmpty else { return nil }
-            effect = ["kind": "notify", "title": t]
+            effect = ["kind": "notify", "title": t, "channel": notifyChannel]
             let body = notifyText.trimmingCharacters(in: .whitespaces)
             if !body.isEmpty { effect["text"] = body }
         } else if eff.kind == "layout" {
@@ -893,6 +1014,33 @@ private struct AddRuleForm: View {
             let u = openURLValue.trimmingCharacters(in: .whitespaces)
             guard !u.isEmpty else { return nil }
             effect = ["kind": "openURL", "url": u]
+        } else if eff.kind == "chain" {
+            // Drop incomplete steps (mirrors layout); keep order.
+            let steps: [[String: Any]] = chainSteps.compactMap { s in
+                switch s.kind {
+                case "notify":
+                    let t = s.notifyTitle.trimmingCharacters(in: .whitespaces)
+                    guard !t.isEmpty else { return nil }
+                    var e: [String: Any] = ["kind": "notify", "title": t, "channel": s.notifyChannel]
+                    let body = s.notifyText.trimmingCharacters(in: .whitespaces)
+                    if !body.isEmpty { e["text"] = body }
+                    return e
+                case "runShortcut":
+                    let n = s.shortcutName.trimmingCharacters(in: .whitespaces)
+                    guard !n.isEmpty else { return nil }
+                    return ["kind": "runShortcut", "name": n]
+                case "openURL":
+                    let u = s.url.trimmingCharacters(in: .whitespaces)
+                    guard !u.isEmpty else { return nil }
+                    return ["kind": "openURL", "url": u]
+                case "lockScreen":
+                    return ["kind": "lockScreen"]
+                default:
+                    return nil
+                }
+            }
+            guard !steps.isEmpty else { return nil }
+            effect = ["kind": "chain", "effects": steps]
         } else if eff.kind == "lockScreen" {
             effect = ["kind": "lockScreen"]
         } else {

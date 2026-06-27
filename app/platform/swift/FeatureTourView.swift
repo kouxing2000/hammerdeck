@@ -215,7 +215,7 @@ struct FeatureTourView: View {
             .help("In your deck -- click to remove")
         } else {
             Button {
-                store.setEnabled(f.id, true)
+                store.requestSetEnabled(f.id, true)
                 go(1)
             } label: {
                 Label("Add", systemImage: "plus")

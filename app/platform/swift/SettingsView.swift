@@ -93,7 +93,7 @@ private struct FeatureRow: View {
             Spacer()
             Toggle("", isOn: Binding(
                 get: { feature.enabled },
-                set: { store.setEnabled(feature.id, $0) }
+                set: { store.requestSetEnabled(feature.id, $0) }
             ))
             .toggleStyle(.switch)
             .controlSize(.small)

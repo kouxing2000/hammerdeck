@@ -118,6 +118,13 @@ function adapter.notify(title, text)
     fake.notifications[#fake.notifications + 1] = { title = title, text = text }
 end
 
+fake.systemNotifications = {}      -- recorded systemNotify (Notification Center) calls
+fake.systemNotifyDelivers = true   -- tests flip to false to exercise the toast fallback
+function adapter.systemNotify(title, text)
+    fake.systemNotifications[#fake.systemNotifications + 1] = { title = title, text = text }
+    return fake.systemNotifyDelivers
+end
+
 function adapter.alert(text)
     fake.alerts[#fake.alerts + 1] = text
 end
@@ -282,6 +289,10 @@ function adapter.axTrusted() return fake.axTrusted end
 function adapter.axPrompt()
     fake.axPrompts = fake.axPrompts + 1
     return fake.axTrusted
+end
+fake.axSettingsOpens = 0   -- recorded "open Accessibility settings pane" calls
+function adapter.axOpenSettings()
+    fake.axSettingsOpens = fake.axSettingsOpens + 1
 end
 
 -- Focused-window frame surface (window_snap) -----------------------------------

@@ -102,6 +102,34 @@ local function applyLayout(node)
     return true
 end
 
+-- Run a `chain` effect: dispatch each sub-effect IN ORDER. Like applyLayout, the
+-- result never lies -- it reports how many steps ran and names the ones that
+-- failed, so a half-working chain is visible instead of a flat "fired".
+--   (false, reason) -- every step failed.
+--   (true, note)    -- some failed: note names them (ran K/N).
+--   (true)          -- every step succeeded.
+local function applyChain(node)
+    local ran, okCount = 0, 0
+    local failed = {}
+    for i, step in ipairs(node.effects) do
+        ran = ran + 1
+        local okStep, note = effects.dispatch(step)
+        if okStep then
+            okCount = okCount + 1
+        else
+            failed[#failed + 1] = "step " .. i .. " (" .. effects.describe(step)
+                .. "): " .. tostring(note)
+        end
+    end
+    if okCount == 0 then
+        return false, "every step failed: " .. table.concat(failed, "; ")
+    end
+    if #failed > 0 then
+        return true, "ran " .. okCount .. "/" .. ran .. " -- " .. table.concat(failed, "; ")
+    end
+    return true
+end
+
 --- Validate an effect node. Throws on a malformed node; returns it on success.
 ---@param node table an effect node
 ---@return table
@@ -118,6 +146,10 @@ function effects.validate(node)
             "notify effect needs a title")
         assert(node.text == nil or type(node.text) == "string",
             "notify effect text must be a string")
+        -- Optional delivery channel: "system" (Notification Center) or "app" (the
+        -- in-app banner). Absent = app (back-compat with rules authored before this).
+        assert(node.channel == nil or node.channel == "system" or node.channel == "app",
+            "notify channel must be 'system' or 'app'")
     elseif kind == "layout" then
         assert(type(node.placements) == "table" and #node.placements > 0,
             "layout effect needs at least one placement")
@@ -143,6 +175,16 @@ function effects.validate(node)
             "openURL effect needs a url")
     elseif kind == "lockScreen" then
         -- no parameters
+    elseif kind == "chain" then
+        assert(type(node.effects) == "table" and #node.effects > 0,
+            "chain effect needs at least one step")
+        for i, step in ipairs(node.effects) do
+            assert(type(step) == "table", "chain step #" .. i .. " must be a table")
+            -- No nesting: a chain of chains buys nothing and complicates the editor.
+            assert(step.kind ~= "chain", "a chain step cannot itself be a chain")
+            local okS, errS = pcall(effects.validate, step)
+            assert(okS, "chain step #" .. i .. ": " .. tostring(errS))
+        end
     else
         error("unknown effect kind '" .. tostring(kind) .. "'")
     end
@@ -166,6 +208,14 @@ function effects.requiresContext(node)
         return false   -- context-free: places windows by declared rules, no live selection
     elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen" then
         return false   -- context-free: fire-and-forget system actions, no live selection
+    elseif node.kind == "chain" then
+        -- A chain is context-free only if EVERY step is -- so a chain on an
+        -- automated trigger is allowed iff none of its steps needs live context.
+        if type(node.effects) ~= "table" then return true end
+        for _, step in ipairs(node.effects) do
+            if effects.requiresContext(step) then return true end
+        end
+        return false
     end
     return true
 end
@@ -181,6 +231,15 @@ function effects.dispatch(node)
     if node.kind == "command" then
         return registry.runAction(node.feature, node.action)
     elseif node.kind == "notify" then
+        if node.channel == "system" then
+            -- Deliver to Notification Center; fall back to the in-app banner when
+            -- the system path is unavailable (dev `swift run` -- no app bundle).
+            local okS, delivered = pcall(adapter.systemNotify, node.title, node.text or "")
+            if okS and delivered then return true end
+            local okB, errB = pcall(adapter.notify, node.title, node.text or "")
+            if not okB then return false, tostring(errB) end
+            return true, "shown in-app (system notification unavailable)"
+        end
         local ok, err = pcall(adapter.notify, node.title, node.text or "")
         if not ok then return false, tostring(err) end
         return true
@@ -200,6 +259,10 @@ function effects.dispatch(node)
         local ok, err = pcall(adapter.lockScreen)
         if not ok then return false, tostring(err) end
         return true
+    elseif node.kind == "chain" then
+        local ok, res, reason = pcall(applyChain, node)
+        if not ok then return false, tostring(res) end
+        return res, reason
     end
     return false, "unknown effect kind: " .. tostring(node and node.kind)
 end
@@ -223,6 +286,14 @@ function effects.describe(node)
         return "Open " .. tostring(node.url or "")
     elseif node.kind == "lockScreen" then
         return "Lock the screen"
+    elseif node.kind == "chain" then
+        local parts = {}
+        if type(node.effects) == "table" then
+            for _, step in ipairs(node.effects) do parts[#parts + 1] = effects.describe(step) end
+        end
+        local n = #parts
+        if n == 0 then return "Chain (empty)" end
+        return n .. (n == 1 and " step: " or " steps: ") .. table.concat(parts, " -> ")
     end
     return tostring(node.kind)
 end
@@ -235,12 +306,15 @@ end
 ---@return table[]
 function effects.catalog(automatedOnly)
     -- These curated effects are all context-free, so they survive `automatedOnly`.
+    -- (chain's context-freeness depends on its steps -- the form editor only offers
+    -- context-free atoms, and validate is the backstop, so it's safe to list here.)
     local out = {
         { kind = "notify",      label = "Notify (banner)" },
         { kind = "layout",      label = "Arrange windows (layout)" },
         { kind = "runShortcut", label = "Run a Shortcut" },
         { kind = "openURL",     label = "Open a URL" },
         { kind = "lockScreen",  label = "Lock the screen" },
+        { kind = "chain",       label = "Do several things (chain)" },
     }
     for _, a in ipairs(registry.enabledActions()) do
         if (not automatedOnly) or a.automatable then

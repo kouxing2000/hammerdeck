@@ -13,6 +13,11 @@ let package = Package(
                 .headerSearchPath("include"),     // public API headers (lua.h, ...)
             ]
         ),
+        // A tiny ObjC shim for macOS Notification Center delivery via the
+        // permission-free (but deprecated) NSUserNotification API. Isolated in
+        // ObjC so the deprecation `#pragma` keeps the Swift build warning-free.
+        // Only the native seam (Native+Notifications.swift) imports it.
+        .target(name: "HammerdeckNotify"),
         // Everything real lives here so the integration tests can import it:
         // the Swift<->Lua bridge, the native seam, panels, and the config UI.
         //
@@ -40,7 +45,7 @@ let package = Package(
         // (Skipping the exclude just brings the harmless warning back for that feature.)
         .target(
             name: "HammerdeckKit",
-            dependencies: ["CLua"],
+            dependencies: ["CLua", "HammerdeckNotify"],
             path: "app",
             exclude: [
                 "hammerdeck.lua",

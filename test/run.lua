@@ -3303,4 +3303,128 @@ do
     ok(fake.liveHandles == 0, "no native handle leaked across the effect tests")
 end
 
+-- T40: chain effect (M3) -- run several sub-effects IN ORDER; context-free iff every
+-- step is; partial-success aggregation names the failed steps --------------------
+do
+    local effects = require("platform.effects")
+    local rules   = require("platform.rules")
+    fake.settings["hammerdeck.rules"] = nil
+    rules.load({})
+
+    -- validate: needs >= 1 step, each a valid effect, no nesting
+    ok(pcall(effects.validate, { kind = "chain", effects = {} }) == false,
+        "a chain needs at least one step")
+    ok(pcall(effects.validate, { kind = "chain", effects = {
+        { kind = "chain", effects = { { kind = "lockScreen" } } } } }) == false,
+        "a chain step cannot itself be a chain (no nesting)")
+    ok(pcall(effects.validate, { kind = "chain", effects = { { kind = "notify" } } }) == false,
+        "a chain rejects an invalid step (notify needs a title)")
+    ok(pcall(effects.validate, { kind = "chain", effects = {
+        { kind = "notify", title = "hi" }, { kind = "runShortcut", name = "DND" } } }) == true,
+        "a chain of valid steps validates")
+
+    -- context policy: context-free iff EVERY step is
+    ok(effects.requiresContext({ kind = "chain", effects = {
+        { kind = "notify", title = "hi" }, { kind = "lockScreen" } } }) == false,
+        "a chain of context-free steps is context-free")
+    ok(effects.requiresContext({ kind = "chain", effects = {
+        { kind = "notify", title = "hi" }, { kind = "command", feature = "ghost", action = "x" } } }) == true,
+        "a chain with a context-requiring step requires context")
+
+    -- describe lists the steps
+    ok(effects.describe({ kind = "chain", effects = {
+        { kind = "notify", title = "hi" }, { kind = "runShortcut", name = "DND" } } })
+        == '2 steps: Notify "hi" -> Run Shortcut "DND"', "describe lists the chain steps")
+
+    -- dispatch runs every step IN ORDER
+    local nN, nS = #fake.notifications, #fake.shortcutsRun
+    ok(effects.dispatch({ kind = "chain", effects = {
+        { kind = "notify", title = "one" }, { kind = "runShortcut", name = "two" } } }) == true
+        and #fake.notifications == nN + 1 and #fake.shortcutsRun == nS + 1,
+        "a chain dispatches every step")
+
+    -- partial: one step fails (layout with no present display) -> ran K/N note
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
+    fake.windows = {}
+    local okP, noteP = effects.dispatch({ kind = "chain", effects = {
+        { kind = "notify", title = "ok" },
+        { kind = "layout", placements = { { app = "X", screen = "Ghost", pos = "full" } } } } })
+    ok(okP == true and type(noteP) == "string" and noteP:find("1/2", 1, true) ~= nil
+        and noteP:find("step 2", 1, true) ~= nil,
+        "a partial chain returns a note naming the failed step (ran 1/2)")
+
+    -- every step fails -> (false, reason)
+    local okF, reasonF = effects.dispatch({ kind = "chain", effects = {
+        { kind = "layout", placements = { { app = "X", screen = "Ghost", pos = "full" } } } } })
+    ok(okF == false and reasonF:find("every step failed", 1, true) ~= nil,
+        "an all-failed chain reports failure")
+
+    -- end-to-end: on wake -> notify + runShortcut (all context-free, so allowed)
+    local nS3 = #fake.shortcutsRun
+    ok(rules.add({ on = { type = "event", event = "wake" },
+        effect = { kind = "chain", effects = {
+            { kind = "notify", title = "morning" }, { kind = "runShortcut", name = "Coffee" } } } }) == true,
+        "a chain rule on an automated trigger loads (all steps context-free)")
+    fake.systemEvent("wake")
+    ok(#fake.shortcutsRun == nS3 + 1, "on wake -> the chain runs its Shortcut step")
+
+    -- context policy backstop: a chain with a context step is REFUSED on an automated trigger
+    ok(select(1, rules.add({ on = { type = "event", event = "wake" },
+        effect = { kind = "chain", effects = {
+            { kind = "command", feature = "ghost", action = "x" } } } })) == false,
+        "an automated trigger refuses a chain with a context-requiring step")
+
+    -- the Do dropdown offers chain
+    local seen = {}
+    for _, e in ipairs(effects.catalog(true)) do seen[e.kind] = true end
+    ok(seen.chain, "catalog offers the chain effect")
+
+    rules.load({}); fake.settings["hammerdeck.rules"] = nil
+    fake.windows = {}
+    ok(fake.liveHandles == 0, "no native handle leaked across the chain tests")
+end
+
+-- T41: notify delivery channel (M3) -- a notify can target the macOS Notification
+-- Center ("system") or the in-app banner ("app", default), with a toast fallback --
+do
+    local effects = require("platform.effects")
+
+    -- validate: channel is optional, "system" | "app"
+    ok(pcall(effects.validate, { kind = "notify", title = "hi", channel = "system" }) == true,
+        "notify accepts channel = system")
+    ok(pcall(effects.validate, { kind = "notify", title = "hi", channel = "app" }) == true,
+        "notify accepts channel = app")
+    ok(pcall(effects.validate, { kind = "notify", title = "hi" }) == true,
+        "notify channel is optional")
+    ok(pcall(effects.validate, { kind = "notify", title = "hi", channel = "pigeon" }) == false,
+        "notify rejects an unknown channel")
+
+    -- a system notify is still context-free (safe on automated triggers)
+    ok(effects.requiresContext({ kind = "notify", title = "hi", channel = "system" }) == false,
+        "a system notify is still context-free")
+
+    -- channel = system -> Notification Center, NOT the in-app banner
+    fake.systemNotifyDelivers = true
+    local nSys, nApp = #fake.systemNotifications, #fake.notifications
+    ok(effects.dispatch({ kind = "notify", title = "sys", channel = "system" }) == true
+        and #fake.systemNotifications == nSys + 1 and #fake.notifications == nApp,
+        "channel=system delivers to the Notification Center, not the in-app banner")
+
+    -- channel = app (and absent) -> the in-app banner, NOT the system center
+    nSys, nApp = #fake.systemNotifications, #fake.notifications
+    effects.dispatch({ kind = "notify", title = "app", channel = "app" })
+    effects.dispatch({ kind = "notify", title = "default" })
+    ok(#fake.notifications == nApp + 2 and #fake.systemNotifications == nSys,
+        "channel=app (and absent) shows the in-app banner")
+
+    -- system unavailable (no app bundle, e.g. dev `swift run`) -> falls back + a note
+    fake.systemNotifyDelivers = false
+    nApp = #fake.notifications
+    local okF, noteF = effects.dispatch({ kind = "notify", title = "fb", channel = "system" })
+    ok(okF == true and #fake.notifications == nApp + 1
+        and type(noteF) == "string" and noteF:find("in-app", 1, true) ~= nil,
+        "an undeliverable system notify falls back to the in-app banner with a note")
+    fake.systemNotifyDelivers = true
+end
+
 print("OK -- " .. passed .. " assertions passed (" .. _VERSION .. ")")

@@ -301,7 +301,7 @@ struct DashboardView: View {
                             tipShortcut(f)
                             Spacer()
                             if !f.enabled {
-                                Button("Enable") { store.setEnabled(f.id, true) }
+                                Button("Enable") { store.requestSetEnabled(f.id, true) }
                             }
                             Button("Show in Gallery") { goTo(.features) }
                                 .buttonStyle(.link)

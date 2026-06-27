@@ -83,8 +83,9 @@ final class Native {
             "pasteboard_write": { L in MainActor.assumeIsolated { Native.shared.pasteboardWrite(L) } },
             "pasteboard_info":  { L in MainActor.assumeIsolated { Native.shared.pasteboardInfo(L) } },
             // output
-            "notify":       { L in MainActor.assumeIsolated { Native.shared.notify(L) } },
-            "alert":        { L in MainActor.assumeIsolated { Native.shared.alert(L) } },
+            "notify":        { L in MainActor.assumeIsolated { Native.shared.notify(L) } },
+            "system_notify": { L in MainActor.assumeIsolated { Native.shared.systemNotify(L) } },
+            "alert":         { L in MainActor.assumeIsolated { Native.shared.alert(L) } },
             // banner
             "banner_show":  { L in MainActor.assumeIsolated { Native.shared.bannerShow(L) } },
             "banner_set_text": { L in MainActor.assumeIsolated { Native.shared.bannerSetText(L) } },
@@ -121,6 +122,7 @@ final class Native {
             "focus_window": { L in MainActor.assumeIsolated { Native.shared.focusWindow(L) } },
             "ax_trusted":   { L in MainActor.assumeIsolated { Native.shared.axTrusted(L) } },
             "ax_prompt":    { L in MainActor.assumeIsolated { Native.shared.axPrompt(L) } },
+            "ax_open_settings": { L in MainActor.assumeIsolated { Native.shared.openAccessibilitySettings(L) } },
             "focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.focusedWindowFrame(L) } },
             "focused_window_title": { L in MainActor.assumeIsolated { Native.shared.focusedWindowTitle(L) } },
             "set_focused_window_frame": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFrame(L) } },
