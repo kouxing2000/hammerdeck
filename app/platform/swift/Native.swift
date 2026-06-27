@@ -30,7 +30,11 @@ final class Native {
     var mouseLocator: MouseLocatorPanel?
 
     // Window listing cache (rebuilt each list_windows; used by Native+Windows).
-    var axWindowCache: [Int: AXUIElement] = [:]
+    // The CGWindowID rides along so focus_window can target the exact window via
+    // the SkyLight front-process API (0 when the window had no matching CG row,
+    // e.g. minimized -- the app is still front-ordered, just not window-targeted).
+    struct AXWindowRef { let element: AXUIElement; let wid: CGWindowID }
+    var axWindowCache: [Int: AXWindowRef] = [:]
     var nextWindowId = 1
 
     func attach(_ lua: LuaState) { self.lua = lua }

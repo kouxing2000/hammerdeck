@@ -9,10 +9,10 @@ extension Native {
     // MARK: - Windows / apps (AXUIElement)
 
     // list_windows() -> Lua window handles, MRU-first. The Lua side never sees
-    // an AXUIElement: each call rebuilds `axWindowCache` (id -> element, stored
-    // on the class -- see Native.swift) and focus_window(id) resolves from it --
-    // window_switcher always lists right before focusing, so a one-listing cache
-    // is exactly the right lifetime.
+    // an AXUIElement: each call rebuilds `axWindowCache` (id -> {element, wid},
+    // stored on the class -- see Native.swift) and focus_window(id) resolves from
+    // it -- window_switcher always lists right before focusing, so a one-listing
+    // cache is exactly the right lifetime.
 
     /// Real window enumeration: AXUIElement per app for titles + elements
     /// (Accessibility permission only -- no Screen Recording, which CGWindowList
@@ -30,15 +30,16 @@ extension Native {
         // Z-ordered (front to back) on-screen normal-layer windows.
         let cgList = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                  kCGNullWindowID) as? [[String: Any]]) ?? []
-        struct CGRow { let pid: pid_t; let bounds: CGRect; let z: Int }
+        struct CGRow { let pid: pid_t; let wid: CGWindowID; let bounds: CGRect; let z: Int }
         var cgRows: [CGRow] = []
         for w in cgList {
             guard (w[kCGWindowLayer as String] as? Int) == 0,
                   let pid = w[kCGWindowOwnerPID as String] as? Int,
+                  let wid = w[kCGWindowNumber as String] as? CGWindowID,
                   let bDict = w[kCGWindowBounds as String] as? [String: Any],
                   let bounds = CGRect(dictionaryRepresentation: bDict as CFDictionary)
             else { continue }
-            cgRows.append(CGRow(pid: pid_t(pid), bounds: bounds, z: cgRows.count))
+            cgRows.append(CGRow(pid: pid_t(pid), wid: wid, bounds: bounds, z: cgRows.count))
         }
 
         struct Row {
@@ -78,12 +79,14 @@ extension Native {
                 var pos = CGPoint.zero, size = CGSize.zero
                 if let v = axValue(win, kAXPositionAttribute as CFString) { AXValueGetValue(v, .cgPoint, &pos) }
                 if let v = axValue(win, kAXSizeAttribute as CFString) { AXValueGetValue(v, .cgSize, &size) }
-                let z = cgRows.first { r in
+                let cgMatch = cgRows.first { r in
                     r.pid == pid
                         && abs(r.bounds.minX - pos.x) < 2 && abs(r.bounds.minY - pos.y) < 2
                         && abs(r.bounds.width - size.width) < 2
                         && abs(r.bounds.height - size.height) < 2
-                }?.z ?? Int.max   // unmatched (e.g. minimized): list last
+                }
+                let z = cgMatch?.z ?? Int.max   // unmatched (e.g. minimized): list last
+                let wid = cgMatch?.wid ?? 0      // 0 -> focus targets the app, not this window
 
                 let frame = CGRect(origin: pos, size: size)
                 let screenName = namedScreens.first {
@@ -92,7 +95,7 @@ extension Native {
 
                 let id = nextWindowId
                 nextWindowId += 1
-                axWindowCache[id] = win
+                axWindowCache[id] = AXWindowRef(element: win, wid: wid)
                 // Use bundleID for installed apps; fall back to pid for processes
                 // without a .app bundle (e.g. the app itself under `swift run`).
                 let iconToken = bundleID.isEmpty ? "appiconpid:\(pid)" : "appicon:\(bundleID)"
@@ -272,11 +275,11 @@ extension Native {
         guard let id = LuaState.int(L, 1),
               let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
               let w = LuaState.double(L, 4), let h = LuaState.double(L, 5),
-              let win = axWindowCache[id] else {
+              let ref = axWindowCache[id] else {
             lua_pushboolean(L, 0)
             return 1
         }
-        lua_pushboolean(L, applyFrame(win, x: x, y: y, w: w, h: h) ? 1 : 0)
+        lua_pushboolean(L, applyFrame(ref.element, x: x, y: y, w: w, h: h) ? 1 : 0)
         return 1
     }
 
@@ -356,28 +359,127 @@ extension Native {
     }
 
     func focusWindow(_ L: OpaquePointer?) -> Int32 {
-        guard let id = LuaState.int(L, 1), let win = axWindowCache[id] else {
+        guard let id = LuaState.int(L, 1), let ref = axWindowCache[id] else {
             lua_pushboolean(L, 0)
             return 1
         }
-        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
-        AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+        let win = ref.element
         var pid: pid_t = 0
-        if AXUIElementGetPid(win, &pid) == .success {
-            // Bringing the OWNING app frontmost. For our own process,
-            // NSRunningApplication(self).activate() is a no-op from this
-            // background / nonactivating-panel context (macOS cooperative
-            // activation) -- self-activation must go through NSApp.activate,
-            // the same path StatusBar uses to surface Settings. Other apps
-            // are already raised by kAXRaiseAction; activate() finishes the
-            // app switch for them.
-            if pid == getpid() {
-                NSApp.activate(ignoringOtherApps: true)
-            } else {
-                NSRunningApplication(processIdentifier: pid)?.activate()
-            }
+        guard AXUIElementGetPid(win, &pid) == .success else {
+            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+            lua_pushboolean(L, 1)
+            return 1
+        }
+        if pid == getpid() {
+            // Our own (accessory) window: SLPS is for bringing OTHER apps
+            // forward; self-activation goes through NSApp.activate, the same
+            // path StatusBar uses to surface Settings.
+            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+            NSApp.activate(ignoringOtherApps: true)
+        } else if activateFrontProcess(pid: pid, wid: ref.wid) {
+            // SLPS made the app frontmost and the window key; the raise just
+            // orders it to the top of its app's own window stack (belt-and-
+            // suspenders for apps that key a window without front-ordering it).
+            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        } else {
+            // SLPS unavailable (private symbol moved): fall back to the AX +
+            // cooperative-activate path -- still works, just less reliably
+            // across apps from our non-active accessory context.
+            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+            NSRunningApplication(processIdentifier: pid)?.activate()
         }
         lua_pushboolean(L, 1)
         return 1
+    }
+
+    // MARK: - Reliable cross-app activation (SkyLight SLPS)
+    //
+    // NSRunningApplication.activate() is *cooperative* on macOS 14+: the system
+    // honors "bring app B forward" only from the currently-active app (or one it
+    // yields to). We are an .accessory app showing a .nonactivatingPanel, so we
+    // are NEVER the active app -- which made focus_window / activate_app raise a
+    // window inside its app yet intermittently fail to front the app itself
+    // (it worked only when the target app already happened to be frontmost).
+    // AltTab / yabai / the Hammerspoon #370 thread all converge on the SkyLight
+    // SLPS front-process API, which is not gated by cooperative activation.
+    // Resolved via dlsym (no private-framework link flag), and with a
+    // hand-rolled PSN struct + dlsym'd GetProcessForPID so we reference no
+    // deprecated Carbon symbols.
+
+    /// Bring `pid`'s app frontmost and -- when `wid != 0` -- make that exact
+    /// window key, bypassing cooperative activation. Returns false (so the caller
+    /// can fall back) only if the private SLPS symbols can't be resolved.
+    @discardableResult
+    func activateFrontProcess(pid: pid_t, wid: CGWindowID = 0) -> Bool {
+        guard let getPSN = SLPS.getProcessForPID, let setFront = SLPS.setFrontProcess else {
+            return false
+        }
+        var psn = SLPSProcessSerial()
+        guard getPSN(pid, &psn) == 0 else { return false }
+        withUnsafeMutableBytes(of: &psn) { p in
+            _ = setFront(p.baseAddress!, wid, SLPS.userGenerated)
+        }
+        if wid != 0, let post = SLPS.postEvent {
+            makeKeyWindow(&psn, wid: wid, post: post)
+        }
+        return true
+    }
+
+    // The two-event SLPS dance that makes window `wid` the key window of its
+    // process (ported faithfully from the Hammerspoon #370 / yabai recipe; the
+    // magic byte offsets are an undocumented SLPS event record).
+    private func makeKeyWindow(_ psn: inout SLPSProcessSerial, wid: CGWindowID,
+                               post: SLPS.PostEventFn) {
+        var bytes = [UInt8](repeating: 0, count: 0xf8)
+        bytes[0x04] = 0xf8
+        bytes[0x08] = 0x01
+        bytes[0x3a] = 0x10
+        withUnsafeBytes(of: wid) { src in
+            for i in 0..<4 { bytes[0x3c + i] = src[i] }
+        }
+        for i in 0..<0x10 { bytes[0x20 + i] = 0xff }
+        withUnsafeMutableBytes(of: &psn) { psnPtr in
+            bytes.withUnsafeMutableBytes { _ = post(psnPtr.baseAddress!, $0.baseAddress!) }
+            bytes[0x08] = 0x02
+            bytes.withUnsafeMutableBytes { _ = post(psnPtr.baseAddress!, $0.baseAddress!) }
+        }
+    }
+}
+
+// A private ProcessSerialNumber stand-in: reimplemented so the SLPS plumbing
+// touches no deprecated Carbon types (the real PSN struct is deprecated too).
+private struct SLPSProcessSerial { var hi: UInt32 = 0; var lo: UInt32 = 0 }
+
+// dlsym-resolved private SkyLight + Carbon entry points. Lazy statics -> resolved
+// once, thread-safely. nil if a symbol ever disappears (callers fall back).
+private enum SLPS {
+    typealias GetProcessForPIDFn = @convention(c) (pid_t, UnsafeMutableRawPointer) -> Int32
+    typealias SetFrontFn = @convention(c) (UnsafeMutableRawPointer, CGWindowID, UInt32) -> Int32
+    typealias PostEventFn = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
+
+    static let userGenerated: UInt32 = 0x200   // kCPSUserGenerated
+
+    static let getProcessForPID: GetProcessForPIDFn? = sym("GetProcessForPID")
+    static let setFrontProcess: SetFrontFn? = sym("_SLPSSetFrontProcessWithOptions")
+    static let postEvent: PostEventFn? = sym("SLPSPostEventRecordTo")
+
+    // The SLPS symbols live in SkyLight; GetProcessForPID lives in
+    // ApplicationServices (and is `unavailable` to Swift, hence dlsym). dlopen
+    // both so resolution never hinges on AppKit's framework load order, with
+    // RTLD_DEFAULT (-2) as a final catch-all for anything already mapped. Read
+    // once, never mutated -> the unchecked annotation is sound.
+    nonisolated(unsafe) private static let handles: [UnsafeMutableRawPointer?] = [
+        dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY),
+        dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY),
+        UnsafeMutableRawPointer(bitPattern: -2),
+    ]
+
+    private static func sym<T>(_ name: String) -> T? {
+        for h in handles {
+            if let h, let p = dlsym(h, name) { return unsafeBitCast(p, to: T.self) }
+        }
+        return nil
     }
 }

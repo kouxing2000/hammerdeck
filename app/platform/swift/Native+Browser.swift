@@ -26,7 +26,10 @@ extension Native {
         }
         if let app = NSWorkspace.shared.runningApplications.first(
             where: { $0.localizedName == name }) {
-            app.activate()
+            // SLPS front-process (reliable from our non-active accessory; see
+            // Native+Windows), falling back to cooperative activate() if the
+            // private API is unavailable.
+            if !activateFrontProcess(pid: app.processIdentifier) { app.activate() }
             lua_pushboolean(L, 1)
         } else {
             lua_pushboolean(L, 0)
@@ -186,8 +189,16 @@ extension Native {
             print("[hammerdeck] open_site: launch failed for \(bundleId): \(error)")
             return false
         }
+        // SLPS front-process (reliable from our non-active accessory; see
+        // Native+Windows), falling back to cooperative activate().
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
-        if #available(macOS 14.0, *) { running?.activate() } else { running?.activate(options: []) }
+        if let pid = running?.processIdentifier, activateFrontProcess(pid: pid) {
+            // fronted via SLPS
+        } else if #available(macOS 14.0, *) {
+            running?.activate()
+        } else {
+            running?.activate(options: [])
+        }
         return true
     }
 
