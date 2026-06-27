@@ -2747,6 +2747,26 @@ do
             on = { type = "event", event = "wake" },
             effect = { kind = "notify", title = "x" } })) == false,
             "add() rejects a non-string name")
+
+        -- a state trigger with an empty/non-string value is refused -- it would
+        -- otherwise bind happily and silently NEVER fire (sig.match never matches
+        -- "" or a number against a string-valued signal). The form blocks an empty
+        -- value, but the JSON authoring path needs this engine-side backstop.
+        ok(select(1, rules.add({ on = { type = "state", signal = "frontmostApp", becomes = "" },
+            effect = { kind = "notify", title = "x" } })) == false,
+            "add() rejects a state trigger with an empty value (silent-dead-rule guard)")
+        ok(select(1, rules.add({ on = { type = "state", signal = "frontmostApp", becomes = 5 },
+            effect = { kind = "notify", title = "x" } })) == false,
+            "add() rejects a non-string state trigger value")
+
+        -- a daily-at schedule must be a REAL clock time: "29:79" matched the old
+        -- HH:MM regex but could never fire correctly -- now range-checked.
+        ok(select(1, rules.add({ on = { type = "schedule", at = "29:79" },
+            effect = { kind = "notify", title = "x" } })) == false,
+            "add() rejects an out-of-range daily-at time (29:79)")
+        ok(rules.add({ on = { type = "schedule", at = "23:59" },
+            effect = { kind = "notify", title = "x" } }) == true,
+            "add() still accepts a valid edge time (23:59)")
     end
 
     -- cleanup
@@ -2755,6 +2775,132 @@ do
     registry.setEnabled("m1_manual", false); registry.unregister("m1_manual")
     registry.setEnabled("m1_auto", false); registry.unregister("m1_auto")
     ok(fake.liveHandles == 0, "no native handle leaked across the M1 rules tests")
+end
+
+-- T35p: PARKING -- a stored rule whose target is absent THIS boot (a renamed/gone
+-- signal or feature) is PRESERVED + surfaced as "unavailable", never silently
+-- deleted on the next mutation, and re-activates when its target returns ----------
+do
+    local rules = require("platform.rules")
+    fake.settings["hammerdeck.rules"] = nil
+
+    -- reason attribution: a rule with a gone signal AND a command effect blames the
+    -- SIGNAL (the verifiable cause), not the feature -- the parkReason ordering.
+    rules.load({ { id = "both", on = { type = "state", signal = "ghostSignal", becomes = "X" },
+        effect = { kind = "command", feature = "whatever", action = "go" } } })
+    local both
+    for _, r in ipairs(rules.describe()) do if r.id == "both" then both = r end end
+    ok(both ~= nil and both.reason:find("ghostSignal", 1, true) ~= nil,
+        "a gone-signal + command rule blames the signal, not the feature")
+
+    -- one valid rule + one referencing a signal that no longer exists (same failure
+    -- shape as a feature renamed/removed across an app update).
+    local kept = rules.load({
+        { id = "good",  on = { type = "event", event = "wake" },
+          effect = { kind = "notify", title = "ok" } },
+        { id = "ghost", on = { type = "state", signal = "ghostSignal", becomes = "X" },
+          effect = { kind = "notify", title = "z" } },
+    })
+    ok(kept == 1, "load keeps the valid rule and PARKS the unavailable one (count excludes it)")
+    rules.startAll()
+    ok(rules.liveCount() == 1, "a parked rule is not bound")
+
+    -- the parked rule is SURFACED (greyed/unavailable), not vanished
+    local ghost
+    for _, r in ipairs(rules.describe()) do if r.id == "ghost" then ghost = r end end
+    ok(ghost ~= nil and ghost.unavailable == true, "describe() surfaces the parked rule as unavailable")
+    ok(type(ghost.reason) == "string" and ghost.reason:find("ghostSignal", 1, true) ~= nil,
+        "the unavailable reason names the missing target")
+
+    -- THE BUG: a mutation must NOT erase the parked rule. setEnabled persists, then
+    -- a fresh load from settings must still find BOTH.
+    rules.setEnabled("good", false)
+    rules.loadFromSettings()
+    local stillGhost = false
+    for _, r in ipairs(rules.describe()) do if r.id == "ghost" then stillGhost = true end end
+    ok(stillGhost, "a mutation re-persists the parked rule -- it is NOT silently deleted")
+
+    -- a parked rule is deletable
+    ok(rules.remove("ghost") == true, "a parked rule can be removed")
+    local gone = true
+    for _, r in ipairs(rules.describe()) do if r.id == "ghost" then gone = false end end
+    ok(gone, "removing a parked rule drops it from the list")
+
+    -- editing a parked rule's JSON to a VALID spec un-parks it into the live set
+    rules.load({
+        { id = "fix", on = { type = "state", signal = "ghostSignal", becomes = "X" },
+          effect = { kind = "notify", title = "z" } },
+    })
+    ok(rules.count() == 0 and select(1, rules.specJSON("fix")) ~= nil,
+        "a parked rule is editable (specJSON returns it) though count excludes it")
+    ok(rules.update("fix", { on = { type = "event", event = "wake" },
+        effect = { kind = "notify", title = "z" } }) == true,
+        "updating a parked rule to a valid spec succeeds (un-parks)")
+    ok(rules.count() == 1, "the fixed rule un-parks into the live set")
+    local fixed
+    for _, r in ipairs(rules.describe()) do if r.id == "fix" then fixed = r end end
+    ok(fixed ~= nil and fixed.unavailable ~= true, "the un-parked rule is now a normal live rule")
+
+    -- cleanup
+    rules.stopAll()
+    rules.load({})
+    fake.settings["hammerdeck.rules"] = nil
+    ok(fake.liveHandles == 0, "no native handle leaked across the parking tests")
+end
+
+-- T35f: per-rule FIRE STATUS -- describe() reports when a rule last fired, whether
+-- it was a Test, and whether the effect succeeded, so a silently-dead rule shows --
+do
+    local rules = require("platform.rules")
+    fake.settings["hammerdeck.rules"] = nil
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
+    fake.windows = {}
+
+    local function row(rid)
+        for _, r in ipairs(rules.describe()) do if r.id == rid then return r end end
+    end
+
+    rules.load({})
+    local _, nid = rules.add({ on = { type = "event", event = "wake" },
+        effect = { kind = "notify", title = "hi" } })
+    rules.startAll()
+    ok(row(nid).lastFired == nil, "a fresh rule reports no last-fired time (not fired yet)")
+
+    -- a REAL trigger fire stamps lastFired -- not a test, effect succeeded
+    fake.systemEvent("wake")
+    local r1 = row(nid)
+    ok(type(r1.lastFired) == "number" and r1.lastFiredTest ~= true and r1.lastFiredOk == true,
+        "a real trigger fire records lastFired (via trigger, ok)")
+
+    -- a TEST fire is tagged so the UI can say 'tested' not 'fired'
+    rules.fire(nid)
+    ok(row(nid).lastFiredTest == true, "a Test fire is tagged lastFiredTest")
+
+    -- editing a rule clears its fire history (the old fire no longer describes it)
+    rules.update(nid, { on = { type = "event", event = "wake" },
+        effect = { kind = "notify", title = "changed" } })
+    ok(row(nid).lastFired == nil, "update() clears the fire history (behavior changed)")
+
+    -- a FAILED effect (layout with no present display) records lastFiredOk = false
+    local _, lid = rules.add({ on = { type = "event", event = "wake" },
+        effect = { kind = "layout", placements = { { app = "X", screen = "Ghost", pos = "full" } } } })
+    rules.startAll()
+    fake.systemEvent("wake")
+    ok(row(lid).lastFiredOk == false, "a failed effect records lastFiredOk = false")
+
+    -- removing a rule drops its fire history; a fresh load clears it all
+    rules.remove(nid)
+    ok(row(nid) == nil, "a removed rule leaves no row")
+    rules.load({ { id = nid, on = { type = "event", event = "wake" },
+        effect = { kind = "notify", title = "hi" } } })
+    ok(row(nid).lastFired == nil, "load() clears the fire history (a fresh session)")
+
+    -- cleanup
+    rules.stopAll()
+    rules.load({})
+    fake.settings["hammerdeck.rules"] = nil
+    fake.windows = {}
+    ok(fake.liveHandles == 0, "no native handle leaked across the fire-status tests")
 end
 
 -- T36: window-layout effect (M2) -- place windows on named displays, self-gating,
@@ -2882,7 +3028,13 @@ do
     fake.windowFrameSets = {}
     local okD, reason = effects.dispatch({ kind = "layout",
         placements = { { app = "Safari", screen = "Thunderbolt 5K", pos = "full" } } })
-    ok(okD == false and type(reason) == "string", "a layout hitting no present display reports a reason")
+    -- The reason must NAME the unplugged display + say it's not connected -- the
+    -- Test button surfaces this verbatim, so "no matching windows" (= a closed app)
+    -- would point the user at the wrong problem.
+    ok(okD == false and type(reason) == "string"
+        and reason:find("Thunderbolt 5K", 1, true) ~= nil
+        and reason:find("not connected", 1, true) ~= nil,
+        "an all-absent layout names the unplugged display (not a false 'no matching windows')")
     ok(#fake.windowFrameSets == 0, "no window moved when the target display is unplugged")
 
     -- (d) capture the CURRENT arrangement -> exact ratios on each window's display.

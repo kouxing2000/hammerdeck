@@ -53,8 +53,12 @@ private struct TLItem: Identifiable {
     var editable: Bool { actionId != nil || optionKey != nil }
 
     // A rule (Rules page) vs a feature automation -- drives the wand glyph. Rules
-    // use the `__rules__` featureId sentinel and are read-only on the timeline.
+    // use the `__rules__` featureId sentinel; clicking one deep-links to its editor.
     var isRule: Bool { featureId == "__rules__" }
+
+    // The rule's id when this item is a rule (parsed from the `id` sentinel
+    // "rule|<id>", 5-char prefix), else nil -- the deep-link target.
+    var ruleId: String? { isRule ? String(id.dropFirst(5)) : nil }
 
     var minutesOfDay: Int? {
         if case let .at(m) = kind { return m }
@@ -133,7 +137,7 @@ struct AutomationTimelineView: View {
                 Text("rule").font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("Click a feature marker to edit its time; rules are edited in the Rules page.")
+            Text("Click a feature marker to edit its time; click a rule to open it in the Rules page.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
@@ -337,7 +341,7 @@ private struct DayMarker: View {
     @State private var editing = false
 
     var body: some View {
-        Button { if item.editable { editing = true } } label: {
+        Button { open() } label: {
             HStack(spacing: 5) {
                 Circle().fill(categoryColor(item.category).opacity(item.enabled ? 1 : 0.4))
                     .frame(width: 8, height: 8)
@@ -346,7 +350,7 @@ private struct DayMarker: View {
                 Text(item.label).font(.caption).lineLimit(1)
                 if item.isRule {
                     Image(systemName: "wand.and.stars").font(.system(size: 8))
-                        .foregroundStyle(.purple).help("Automation rule (edit in the Rules page)")
+                        .foregroundStyle(.purple).help("Automation rule -- click to open in the Rules page")
                 }
                 if stacked {
                     Image(systemName: "square.stack.3d.up.fill")
@@ -368,6 +372,13 @@ private struct DayMarker: View {
         .buttonStyle(.plain)
         .help(item.enabled ? item.featureName : "\(item.featureName) (disabled)")
         .popover(isPresented: $editing) { EditPopover(item: item, store: store) }
+    }
+
+    // A feature marker opens its inline time editor; a rule deep-links to the
+    // Rules page (the shell switches tabs and selects it for editing).
+    private func open() {
+        if item.editable { editing = true }
+        else if let rid = item.ruleId { store.selectedRuleId = rid }
     }
 }
 
@@ -396,7 +407,7 @@ private struct LaneChip: View {
     }
 
     var body: some View {
-        Button { if item.editable { editing = true } } label: {
+        Button { open() } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.caption2)
                     .foregroundStyle(categoryColor(item.category))
@@ -407,10 +418,15 @@ private struct LaneChip: View {
                 Spacer()
                 if item.isRule {
                     Image(systemName: "wand.and.stars").font(.system(size: 9))
-                        .foregroundStyle(.purple).help("Automation rule (edit in the Rules page)")
+                        .foregroundStyle(.purple)
+                        .help("Automation rule -- click to open in the Rules page")
                 }
                 if item.editable {
                     Image(systemName: "pencil").font(.system(size: 8)).foregroundStyle(.secondary)
+                } else if item.isRule {
+                    // a clickable affordance for rules (which have no inline editor)
+                    Image(systemName: "chevron.right").font(.system(size: 8))
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
@@ -420,6 +436,12 @@ private struct LaneChip: View {
         .buttonStyle(.plain)
         .help(item.enabled ? item.featureName : "\(item.featureName) (disabled)")
         .popover(isPresented: $editing) { EditPopover(item: item, store: store) }
+    }
+
+    // A feature chip opens its inline editor; a rule deep-links to the Rules page.
+    private func open() {
+        if item.editable { editing = true }
+        else if let rid = item.ruleId { store.selectedRuleId = rid }
     }
 }
 
@@ -521,9 +543,12 @@ private struct AgendaRow: View {
                 }
             }
             Spacer()
-            if item.isRule {
-                Image(systemName: "wand.and.stars").font(.caption2)
-                    .foregroundStyle(.purple).help("Automation rule (edit in the Rules page)")
+            if let rid = item.ruleId {
+                Button { store.selectedRuleId = rid } label: {
+                    Image(systemName: "wand.and.stars").font(.caption2).foregroundStyle(.purple)
+                }
+                .buttonStyle(.plain)
+                .help("Open this rule in the Rules page")
             }
             if !trail.isEmpty {
                 Text(trail).font(.caption).foregroundStyle(.secondary)

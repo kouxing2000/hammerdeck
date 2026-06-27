@@ -56,6 +56,8 @@ local function applyLayout(node)
     local moved   = 0
     local misses  = {}
     local failed  = {}
+    local absent  = {}    -- distinct target displays that aren't connected (self-gated)
+    local seenAbsent = {}
     for _, p in ipairs(node.placements) do
         local screen = windows.resolveScreen(screens, p.screen)
         local ratios = windows.ratiosFor(p.pos)
@@ -73,11 +75,21 @@ local function applyLayout(node)
                 end
             end
             if not matched then misses[#misses + 1] = placementLabel(p) end
+        elseif ratios and type(p.screen) == "string" and not seenAbsent[p.screen] then
+            -- Target display isn't connected: the placement self-gates (silent by
+            -- design). Remember its NAME so an all-absent layout can say WHY nothing
+            -- moved -- the Test button must point at "the monitor is unplugged",
+            -- never the misleading "no matching windows" (which means a closed app).
+            seenAbsent[p.screen] = true
+            absent[#absent + 1] = p.screen
         end
     end
     if moved == 0 then
         if #failed > 0 then
             return false, "matched window(s) but every move failed: " .. table.concat(failed, ", ")
+        end
+        if present == 0 and #absent > 0 then
+            return false, "target display not connected: " .. table.concat(absent, ", ")
         end
         return false, "no matching windows on present displays"
     end

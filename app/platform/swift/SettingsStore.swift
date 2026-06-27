@@ -264,6 +264,17 @@ struct RuleInfo: Identifiable {
     let effectDesc: String       // 'Notify "Safari is front"', "Run bing_daily.refresh"
     let on: [String: Any]        // raw trigger spec -- pre-fills the edit form
     let effect: [String: Any]    // raw effect node -- pre-fills the edit form
+    // A rule whose target (feature/signal) is absent THIS boot: PRESERVED on disk
+    // (never silently deleted) and shown greyed with the reason. It re-activates
+    // when the target returns, or the user fixes its JSON / deletes it.
+    let unavailable: Bool
+    let unavailableReason: String
+    // Fire status (this session): when it last fired, whether that was a Test, and
+    // whether the effect succeeded. nil lastFired = not fired yet. Lets the list
+    // surface a silently-dead rule ("not fired yet") at a glance.
+    let lastFired: Date?
+    let lastFiredTest: Bool
+    let lastFiredOk: Bool
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
@@ -274,12 +285,19 @@ struct RuleInfo: Identifiable {
         self.effectDesc = dict["effectDesc"] as? String ?? ""
         self.on = dict["on"] as? [String: Any] ?? [:]
         self.effect = dict["effect"] as? [String: Any] ?? [:]
+        self.unavailable = dict["unavailable"] as? Bool ?? false
+        self.unavailableReason = dict["reason"] as? String ?? ""
+        if let t = dict["lastFired"] as? Double { self.lastFired = Date(timeIntervalSince1970: t) }
+        else if let t = dict["lastFired"] as? Int { self.lastFired = Date(timeIntervalSince1970: Double(t)) }
+        else { self.lastFired = nil }
+        self.lastFiredTest = dict["lastFiredTest"] as? Bool ?? false
+        self.lastFiredOk = dict["lastFiredOk"] as? Bool ?? true
     }
 }
 
 /// One selectable effect for the Add-rule form's "Do" dropdown (effects.catalog).
 struct RuleEffectOption: Identifiable, Hashable {
-    let kind: String             // notify | command
+    let kind: String             // notify | layout | runShortcut | openURL | lockScreen | command
     let label: String
     let feature: String?
     let action: String?
@@ -364,6 +382,12 @@ final class SettingsStore: ObservableObject {
     /// sets this before switching to the Settings tab so a card click deep-links
     /// straight to that feature's detail; SettingsPane binds its list selection to it.
     @Published var selectedFeatureId: String?
+
+    /// The rule the Rules page should open for editing. The Automation Timeline
+    /// sets this when a rule entry is clicked (a deep-link), then the shell
+    /// switches to the Rules tab; RulesPageView consumes + clears it. Mirrors
+    /// `selectedFeatureId` for the Settings tab.
+    @Published var selectedRuleId: String?
 
     /// The automation rules, as the Rules page renders them. Loaded by
     /// refreshRules() (the Rules detail calls it onAppear and after each edit).

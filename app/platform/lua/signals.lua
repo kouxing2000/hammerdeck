@@ -51,12 +51,18 @@ local function pushSignal(def)
     function sig.subscribe(cb)
         nextTok = nextTok + 1
         local tok = nextTok
-        subs[tok] = cb
+        -- Install the shared watcher BEFORE registering the callback, so if
+        -- def.observe throws the subscriber list isn't left holding an orphan cb
+        -- that no handle can stop (and that a later subscribe would double-fire).
+        -- CONTRACT: an observer must NOT emit() synchronously during install --
+        -- this first subscriber isn't registered yet and would miss it (seed the
+        -- current value via read() instead, the way bindOne does).
         if not watcher then
             watcher = def.observe(function(v)
                 for _, c in pairs(subs) do c(v) end
             end)
         end
+        subs[tok] = cb
         return { stop = function()
             if subs[tok] == nil then return end
             subs[tok] = nil

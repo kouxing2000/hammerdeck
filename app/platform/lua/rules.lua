@@ -34,10 +34,52 @@ local rules = {}
 
 local specs = {}   -- id -> spec
 local live  = {}   -- id -> handle (.stop()), only for ENABLED + bound rules
+-- Per-rule fire history (in-memory, this session): id -> { at, via, ok }. Surfaced
+-- as the list's "fired 3m ago" / "not fired yet" status so a rule that's silently
+-- never firing is visible at a glance. Reset on load (a fresh boot/reload).
+local lastFire = {}
 
 local RULES_SETTING = "hammerdeck.rules"
 
 local function isEnabled(spec) return spec.enabled ~= false end
+
+-- PARKED rules: a stored rule whose target isn't present THIS boot (a command
+-- effect pointing at a renamed/removed/failed-to-load feature, or a state trigger
+-- on a signal that no longer exists) fails validation. Rather than DROP it -- which
+-- the next save() would make permanent, silently deleting the user's automation --
+-- keep the raw spec here, re-persist it untouched, and surface it as "unavailable"
+-- in the list. It re-activates automatically once its target returns (the next
+-- load re-validates it), or the user can fix it (edit the JSON) or delete it.
+local parked = {}   -- list of { spec = <raw table>, reason = <string> }
+
+local function parkedIndex(id)
+    for i, p in ipairs(parked) do
+        if type(p.spec) == "table" and p.spec.id == id then return i end
+    end
+    return nil
+end
+
+-- A short, user-facing reason a rule is parked (shown greyed in the list).
+local function parkReason(spec)
+    if type(spec) ~= "table" then return "rule is malformed" end
+    -- Check the VERIFIABLE cause first -- a state trigger on a signal that no longer
+    -- exists -- BEFORE the command-effect heuristic, or a gone-signal rule that
+    -- also has a command effect would be misattributed to the feature.
+    local on = spec.on
+    if type(on) == "table" and on.type == "state"
+        and type(on.signal) == "string" and not signals.exists(on.signal) then
+        return "signal '" .. on.signal .. "' isn't available"
+    end
+    -- Otherwise a command effect almost always parks because its target feature was
+    -- renamed/removed/failed to load this boot (the dominant cause once the signal
+    -- is ruled out).
+    local e = spec.effect
+    if type(e) == "table" and e.kind == "command"
+        and type(e.feature) == "string" and #e.feature > 0 then
+        return "feature '" .. e.feature .. "' isn't available"
+    end
+    return "rule is currently unavailable"
+end
 
 --- Validate a rule spec. Throws on malformed; returns the spec on success.
 --- Enforces the CONTEXT POLICY: an automated trigger (schedule/event/state --
@@ -84,11 +126,19 @@ end
 function rules.load(list)
     rules.stopAll()
     specs = {}
+    parked = {}
+    lastFire = {}   -- a fresh boot/reload starts the fire history clean
     for _, spec in ipairs(list or {}) do
         local ok, err = pcall(loadOne, spec)
         if not ok then
             local who = (type(spec) == "table" and spec.id) or "?"
-            adapter.log("rule load FAILED [" .. tostring(who) .. "]: " .. tostring(err))
+            -- Don't drop it -- PARK it (preserved + surfaced as unavailable), so a
+            -- transient target absence never silently deletes a user's rule. Only a
+            -- table (a real rule) is worth keeping; raw corruption is let go.
+            adapter.log("rule load PARKED [" .. tostring(who) .. "]: " .. tostring(err))
+            if type(spec) == "table" then
+                parked[#parked + 1] = { spec = spec, reason = parkReason(spec) }
+            end
         end
     end
     return rules.count()
@@ -100,6 +150,9 @@ end
 -- to diagnose -- this trace ("Open Logs" in the menubar) is the only window in.
 local function fire(id, spec, via)
     local ok, note = effects.dispatch(spec.effect)
+    -- Stamp the fire history (the list's "fired/not-fired" status). A real trigger
+    -- fire has no `via`; the Test button passes "test" so the UI can distinguish.
+    lastFire[id] = { at = adapter.now(), via = via, ok = ok }
     -- A manual test ("Test" button) tags the trace as [test] so it never reads
     -- like the trigger itself fired -- this log is the only window into what ran.
     local tag = (type(via) == "string" and via ~= "") and (" [" .. via .. "]") or ""
@@ -171,7 +224,13 @@ end
 -- Persist the current set (id-sorted) to the settings store, and re-bind. A full
 -- rebuild on each mutation (the set is small) avoids partial-state bugs.
 local function save()
-    local encoded = json.encode(rules.all())
+    -- Persist the live rules AND the parked ones (verbatim), so a mutation never
+    -- drops a rule that's merely unavailable this boot.
+    local all = rules.all()
+    for _, p in ipairs(parked) do
+        if type(p.spec) == "table" then all[#all + 1] = p.spec end
+    end
+    local encoded = json.encode(all)
     if type(encoded) ~= "string" then
         -- Never write a nil (which would CLEAR the key and wipe every rule); a
         -- valid rule set always encodes, so this only guards a genuine bug.
@@ -203,7 +262,7 @@ end
 -- The lowest unused "ruleN" id (so generated ids stay stable + collision-free).
 local function freshId()
     local n = 1
-    while specs["rule" .. n] do n = n + 1 end
+    while specs["rule" .. n] or parkedIndex("rule" .. n) do n = n + 1 end
     return "rule" .. n
 end
 
@@ -217,7 +276,9 @@ function rules.add(spec)
     if spec.id == nil then spec.id = freshId() end
     local okV, err = pcall(rules.validate, spec)
     if not okV then return false, tostring(err) end
-    if specs[spec.id] then return false, "duplicate rule id: " .. spec.id end
+    if specs[spec.id] or parkedIndex(spec.id) then
+        return false, "duplicate rule id: " .. spec.id
+    end
     specs[spec.id] = spec
     save(); restart()
     return true, spec.id
@@ -235,10 +296,20 @@ end
 
 --- Remove a rule by id. Returns (true) or (false, reason).
 function rules.remove(id)
-    if not specs[id] then return false, "no such rule: " .. tostring(id) end
-    specs[id] = nil
-    save(); restart()
-    return true
+    lastFire[id] = nil   -- drop its fire history too
+    if specs[id] then
+        specs[id] = nil
+        save(); restart()
+        return true
+    end
+    -- a parked (unavailable) rule: drop it too -- no rebind needed (it was never bound)
+    local pi = parkedIndex(id)
+    if pi then
+        table.remove(parked, pi)
+        save()
+        return true
+    end
+    return false, "no such rule: " .. tostring(id)
 end
 
 --- Toggle a rule on/off (kept in the set either way). Returns (true) or (false, reason).
@@ -259,11 +330,14 @@ end
 ---@return boolean ok
 ---@return string|nil reason
 function rules.update(id, spec)
-    if not specs[id] then return false, "no such rule: " .. tostring(id) end
+    local pi = parkedIndex(id)
+    if not specs[id] and not pi then return false, "no such rule: " .. tostring(id) end
     if type(spec) ~= "table" then return false, "rule must be a table" end
     spec.id = id
     local okV, err = pcall(rules.validate, spec)
     if not okV then return false, tostring(err) end
+    if pi then table.remove(parked, pi) end   -- the edit fixed it: un-park into the live set
+    lastFire[id] = nil                         -- behavior changed: the old fire no longer applies
     specs[id] = spec
     save(); restart()
     return true
@@ -289,6 +363,10 @@ end
 ---@return string|nil reason
 function rules.specJSON(id)
     local spec = specs[id]
+    if not spec then
+        local pi = parkedIndex(id)   -- a parked rule is editable too (fix its JSON to un-park)
+        if pi then spec = parked[pi].spec end
+    end
     if not spec then return nil, "no such rule: " .. tostring(id) end
     local str, err = json.encode(spec)
     if not str then return nil, "encode failed: " .. tostring(err) end
@@ -342,7 +420,7 @@ end
 function rules.describe()
     local out = {}
     for _, spec in ipairs(rules.all()) do
-        out[#out + 1] = {
+        local row = {
             id          = spec.id,
             name        = spec.name or "",   -- the user's label (blank if unnamed)
             enabled     = isEnabled(spec),
@@ -353,6 +431,34 @@ function rules.describe()
             on          = spec.on,
             effect      = spec.effect,
         }
+        -- Fire status (this session): present only once the rule has fired.
+        local lf = lastFire[spec.id]
+        if lf then
+            row.lastFired     = lf.at
+            row.lastFiredTest = (lf.via == "test")
+            row.lastFiredOk   = (lf.ok ~= false)
+        end
+        out[#out + 1] = row
+    end
+    -- Parked (unavailable) rules, surfaced AFTER the live ones so the user sees a
+    -- rule preserved-but-not-firing (with the reason) instead of a silent gap. Only
+    -- id'd specs are listed (an id is needed to select/edit/delete the row); an
+    -- id-less corrupt spec is still preserved on disk by save(), just not shown.
+    for _, p in ipairs(parked) do
+        local spec = p.spec
+        if type(spec.id) == "string" and #spec.id > 0 then
+            out[#out + 1] = {
+                id          = spec.id,
+                name        = (type(spec.name) == "string") and spec.name or "",
+                enabled     = false,
+                triggerDesc = triggers.describe(type(spec.on) == "table" and spec.on or nil),
+                effectDesc  = effects.describe(spec.effect),
+                on          = (type(spec.on) == "table") and spec.on or {},
+                effect      = (type(spec.effect) == "table") and spec.effect or {},
+                unavailable = true,
+                reason      = p.reason,
+            }
+        end
     end
     return out
 end

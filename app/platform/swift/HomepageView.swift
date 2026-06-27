@@ -169,6 +169,11 @@ struct HomepageView: View {
         // (sidebar + ~780) without clipping.
         .frame(minWidth: 960, minHeight: 560)
         .onAppear { store.refresh() }
+        // A timeline rule-click deep-links here: switch to the Rules tab, where
+        // RulesPageView consumes selectedRuleId and opens that rule for editing.
+        .onChange(of: store.selectedRuleId) { id in
+            if id != nil { nav.destination = .rules }
+        }
         // A grant (e.g. Accessibility) lands out-of-process while this window is
         // already open; refreshing when the app reactivates is what makes
         // store.axTrusted -- and the "Needs Accessibility -- Grant" badges that

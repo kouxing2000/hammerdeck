@@ -67,7 +67,9 @@ function triggers.validate(spec)
                 "schedule everyMin must be a positive number")
         end
         if spec.at then
-            assert(tostring(spec.at):match("^%d%d?:%d%d$"), "schedule at must be HH:MM")
+            local hh, mm = tostring(spec.at):match("^(%d%d?):(%d%d)$")
+            assert(hh and tonumber(hh) < 24 and tonumber(mm) < 60,
+                "schedule at must be a valid HH:MM (00:00-23:59)")
         end
     elseif spec.type == "event" then
         assert(VALID_EVENTS[spec.event], "unknown event '" .. tostring(spec.event) .. "'")
@@ -80,6 +82,15 @@ function triggers.validate(spec)
         assert(type(spec.signal) == "string" and #spec.signal > 0, "state trigger needs a signal")
         local hasBecomes, hasLeaves = spec.becomes ~= nil, spec.leaves ~= nil
         assert(hasBecomes ~= hasLeaves, "state trigger needs exactly one of becomes/leaves")
+        -- The crossed VALUE must be a usable target, or the rule binds happily and
+        -- then never fires (sig.match never matches "" or a number against any
+        -- string-valued signal) -- a silent dead rule the UI gives no clue about.
+        -- Every signal today is string-valued; widen this if a boolean/number
+        -- signal is ever added (see bindOne's note on a future `becomes = false`).
+        local target
+        if hasBecomes then target = spec.becomes else target = spec.leaves end
+        assert(type(target) == "string" and #target > 0,
+            "state trigger value must be a non-empty string")
     else
         error("unknown trigger type '" .. tostring(spec.type) .. "'")
     end

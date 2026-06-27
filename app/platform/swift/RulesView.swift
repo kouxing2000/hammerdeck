@@ -18,6 +18,12 @@ struct RulesPageView: View {
     // row is selected); a RuleInfo = editing that rule. The list selection is a
     // pure function of this, so the two never drift.
     @State private var editing: RuleInfo?
+    // The detail form raises this while it holds unsaved JSON edits; switching the
+    // selected rule then confirms before discarding them. (Form-FIELD edits are
+    // cheap to retype and aren't guarded; hand-typed JSON isn't.)
+    @State private var formDirty = false
+    @State private var pendingSelection = ""   // a row awaiting the discard-confirm
+    @State private var confirmSwitch = false
 
     private let newRowId = "__new__"
 
@@ -30,18 +36,50 @@ struct RulesPageView: View {
         }
         // Uses HSplitView (not a nested NavigationSplitView) so it docks in the
         // home shell's detail column -- the same pattern as SettingsPane.
-        .onAppear { store.refreshRules() }
+        .onAppear { store.refreshRules(); consumeDeepLink() }
+        // A timeline rule-click sets store.selectedRuleId and switches here; open
+        // that rule for editing (works whether we just appeared or were already up).
+        .onChange(of: store.selectedRuleId) { _ in consumeDeepLink() }
+        .confirmationDialog("Discard your JSON edits?",
+                            isPresented: $confirmSwitch, titleVisibility: .visible) {
+            Button("Discard edits", role: .destructive) {
+                formDirty = false
+                applySelection(pendingSelection)
+            }
+            Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text("Switching rules discards the changes you made in the JSON editor.")
+        }
     }
 
     // List selection derived from `editing` (one source of truth): the rule's id,
-    // or the "New rule" sentinel when adding.
+    // or the "New rule" sentinel when adding. A switch away from a DIRTY JSON
+    // editor is held for confirmation rather than silently discarded.
     private var selection: Binding<String?> {
         Binding(
             get: { editing?.id ?? newRowId },
             set: { row in
-                editing = (row == nil || row == newRowId)
-                    ? nil : store.rules.first { $0.id == row }
+                let target = row ?? newRowId
+                if target == (editing?.id ?? newRowId) { return }   // no-op (same row)
+                if formDirty {
+                    pendingSelection = target
+                    confirmSwitch = true
+                } else {
+                    applySelection(target)
+                }
             })
+    }
+
+    private func applySelection(_ row: String) {
+        editing = (row == newRowId) ? nil : store.rules.first { $0.id == row }
+    }
+
+    /// Open the rule the timeline deep-linked to (store.selectedRuleId), then clear
+    /// the request. refreshRules() must run first so store.rules is current.
+    private func consumeDeepLink() {
+        guard let rid = store.selectedRuleId else { return }
+        if let r = store.rules.first(where: { $0.id == rid }) { editing = r }
+        store.selectedRuleId = nil
     }
 
     private var ruleList: some View {
@@ -77,7 +115,7 @@ struct RulesPageView: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            AddRuleForm(store: store, editing: $editing)
+            AddRuleForm(store: store, editing: $editing, formDirty: $formDirty)
         }
         .formStyle(.grouped)
         // Cap the form at a readable column width so it doesn't sprawl edge-to-edge
@@ -114,48 +152,90 @@ private struct RulePageRow: View {
     }
 
     // A named rule shows its name on top with trigger -> effect beneath; an
-    // unnamed one keeps the original trigger / effect two-liner.
-    private var primary: String { rule.name.isEmpty ? rule.triggerDesc : rule.name }
+    // unnamed one keeps the original trigger / effect two-liner. An unavailable
+    // rule shows what it WAS up top and gives the secondary line to the reason.
+    private var primary: String {
+        if !rule.name.isEmpty { return rule.name }
+        if rule.unavailable { return "\(rule.triggerDesc) -> \(rule.effectDesc)" }
+        return rule.triggerDesc
+    }
     private var secondary: String {
-        rule.name.isEmpty ? rule.effectDesc : "\(rule.triggerDesc) -> \(rule.effectDesc)"
+        if rule.unavailable { return rule.unavailableReason }
+        return rule.name.isEmpty ? rule.effectDesc : "\(rule.triggerDesc) -> \(rule.effectDesc)"
+    }
+
+    // The "fired 3m ago" / "not fired yet" status line. Hidden for unavailable
+    // rules (their reason already holds the secondary line) and for a disabled
+    // rule that never fired (a quiet off rule isn't a problem worth flagging).
+    private var fireStatus: (text: String, color: Color)? {
+        if rule.unavailable { return nil }
+        if let at = rule.lastFired {
+            let verb = rule.lastFiredTest ? "tested" : "fired"
+            let ago = Self.relativeAgo(at)
+            return rule.lastFiredOk ? ("\(verb) \(ago)", .secondary)
+                                    : ("\(verb) \(ago) -- failed", .orange)
+        }
+        return rule.enabled ? ("not fired yet", .secondary) : nil
+    }
+
+    private static func relativeAgo(_ date: Date) -> String {
+        let s = max(0, Date().timeIntervalSince(date))
+        if s < 45 { return "just now" }
+        if s < 3600 { return "\(Int((s / 60).rounded()))m ago" }
+        if s < 86_400 { return "\(Int((s / 3600).rounded()))h ago" }
+        return "\(Int((s / 86_400).rounded()))d ago"
     }
 
     var body: some View {
         HStack(spacing: 8) {
+            if rule.unavailable {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).help(rule.unavailableReason)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(primary).font(.callout).lineLimit(1)
-                Text(secondary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(secondary).font(.caption)
+                    .foregroundStyle(rule.unavailable ? .orange : .secondary).lineLimit(1)
+                if let status = fireStatus {
+                    Text(status.text).font(.caption2)
+                        .foregroundStyle(status.color).lineLimit(1)
+                }
             }
             Spacer()
-            Button(action: runTest) {
-                Image(systemName: "play.circle").foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .help("Test this rule now -- fire its effect without waiting for the trigger")
-            .popover(item: $testResult) { r in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: r.icon).foregroundStyle(r.color)
-                    Text(r.message).font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
+            // Test + enable are meaningless for an unavailable rule (its effect
+            // can't run, it isn't bound) -- it offers only Delete, plus
+            // select-to-edit (which opens its raw JSON so the user can fix it).
+            if !rule.unavailable {
+                Button(action: runTest) {
+                    Image(systemName: "play.circle").foregroundStyle(.secondary)
                 }
-                .padding(10).frame(maxWidth: 300)
+                .buttonStyle(.borderless)
+                .help("Test this rule now -- fire its effect without waiting for the trigger")
+                .popover(item: $testResult) { r in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: r.icon).foregroundStyle(r.color)
+                        Text(r.message).font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(10).frame(maxWidth: 300)
+                }
+                .confirmationDialog("Test \"\(primary)\"? This will lock your screen now.",
+                                    isPresented: $confirmDisruptiveTest, titleVisibility: .visible) {
+                    Button("Lock screen", role: .destructive) { fireNow() }
+                    Button("Cancel", role: .cancel) {}
+                }
+                Toggle("", isOn: Binding(get: { rule.enabled },
+                                         set: { store.setRuleEnabled(rule.id, $0) }))
+                    .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                    .help(rule.enabled ? "Enabled" : "Disabled")
             }
-            .confirmationDialog("Test \"\(primary)\"? This will lock your screen now.",
-                                isPresented: $confirmDisruptiveTest, titleVisibility: .visible) {
-                Button("Lock screen", role: .destructive) { fireNow() }
-                Button("Cancel", role: .cancel) {}
-            }
-            Toggle("", isOn: Binding(get: { rule.enabled },
-                                     set: { store.setRuleEnabled(rule.id, $0) }))
-                .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                .help(rule.enabled ? "Enabled" : "Disabled")
             Button(action: onDelete) {
                 Image(systemName: "trash").foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless).help("Delete this rule")
         }
         .padding(.vertical, 2)
-        .opacity(rule.enabled ? 1 : 0.55)
+        .opacity(rule.unavailable ? 0.6 : (rule.enabled ? 1 : 0.55))
     }
 
     // Disruptive built-in effects whose Test should confirm first (locking the
@@ -204,6 +284,9 @@ private let capturedPosId = "__captured__"
 private struct AddRuleForm: View {
     @ObservedObject var store: SettingsStore
     @Binding var editing: RuleInfo?
+    // Raised while the JSON editor holds unsaved edits, so the parent can confirm
+    // before a rule-switch discards them. Kept in sync by the onChange hooks below.
+    @Binding var formDirty: Bool
 
     @State private var opts = RuleFormOptions([:])
     // An optional human label for the rule -- the list shows it instead of the
@@ -308,6 +391,10 @@ private struct AddRuleForm: View {
                     Stepper("Every \(everyMin) min", value: $everyMin, in: 1...1440)
                 } else {
                     TextField("HH:MM", text: $atTime)
+                    if !Self.isValidHHMM(atTime) {
+                        Text("Enter a 24-hour time like 09:00 or 23:30.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
             }
 
@@ -360,7 +447,10 @@ private struct AddRuleForm: View {
         // records that seed (so the toggle binding can tell if it was edited).
         .onChange(of: advanced) { on in
             if on { jsonText = currentSpecJSON(); jsonSeed = jsonText }
+            formDirty = on && jsonText != jsonSeed
         }
+        // Keep the parent's dirty flag live as the user types in the JSON editor.
+        .onChange(of: jsonText) { _ in formDirty = advanced && jsonText != jsonSeed }
         // Drive the form from the selection: a rule -> pre-fill (edit), nil -> reset (add).
         .onChange(of: editing?.id) { _ in
             if let rule = editing { loadForEdit(rule) } else { resetForm() }
@@ -422,6 +512,15 @@ private struct AddRuleForm: View {
                 Picker("Position", selection: $placements[i].pos) {
                     if p.ratios != nil { Text("Captured").tag(capturedPosId) }
                     ForEach(opts.layoutPositions) { Text($0.label).tag($0.id) }
+                }
+                // canSubmit only needs ONE complete row, and buildSpec drops the
+                // incomplete ones -- so flag a half-filled row instead of silently
+                // dropping it on save.
+                if p.app.trimmingCharacters(in: .whitespaces).isEmpty
+                    || p.screen.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Text("Incomplete -- set an app + display, or this window is skipped on save.")
+                        .font(.caption2).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(8)
@@ -534,9 +633,22 @@ private struct AddRuleForm: View {
             + "or the rule won't fire."
     }
 
+    // A 24-hour HH:MM (1-2 digit hour 0-23, 2-digit minute 0-59) -- mirrors the
+    // engine's range check so the form grays "Add" instead of failing on save.
+    private static func isValidHHMM(_ s: String) -> Bool {
+        let parts = s.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, (1...2).contains(parts[0].count), parts[1].count == 2,
+              let h = Int(parts[0]), let m = Int(parts[1]),
+              (0...23).contains(h), (0...59).contains(m) else { return false }
+        return true
+    }
+
     private var canSubmit: Bool {
         if advanced {
             return !jsonText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if triggerType == "schedule", scheduleMode == "at", !Self.isValidHHMM(atTime) {
+            return false
         }
         if isStateTrigger,
            stateValue.trimmingCharacters(in: .whitespaces).isEmpty { return false }
@@ -592,6 +704,7 @@ private struct AddRuleForm: View {
         advanced = false
         jsonText = ""
         jsonSeed = ""
+        formDirty = false
     }
 
     /// Reverse of buildSpec: seed the form fields from an existing rule's spec.
@@ -601,6 +714,11 @@ private struct AddRuleForm: View {
         jsonText = ""
         jsonSeed = ""
         name = rule.name
+        // A rule whose trigger or effect the guided form can't fully model (a
+        // hotkey/chord trigger this form doesn't author, or a command targeting a
+        // feature that's no longer offered) opens in the lossless JSON editor below
+        // -- NOT silently rewritten into a state trigger that Save would then clobber.
+        var representable = true
         let on = rule.on
         let type = on["type"] as? String ?? "state"
         if type == "state" {
@@ -619,13 +737,22 @@ private struct AddRuleForm: View {
             else if let a = on["at"] as? String { scheduleMode = "at"; atTime = a }
         } else {
             triggerType = "state:" + (opts.signals.first ?? "frontmostApp")
+            representable = false   // hotkey/chord (or any non-form trigger)
         }
+        // Clear all effect-specific fields first, so values from a previously-edited
+        // rule (e.g. layout placements) can't bleed into one of a different kind --
+        // the onChange(of: effectId) seeder only fills an EMPTY placement list.
+        placements = []; shortcutName = ""; openURLValue = ""
+        notifyTitle = "Hammerdeck"; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
         if kind == "command" {
             let f = effect["feature"] as? String ?? ""
             if let a = effect["action"] as? String { effectId = "command:\(f).\(a)" }
             else { effectId = "command:\(f)." }
+            // The "Do" dropdown only offers automatable commands of ENABLED
+            // features; a command whose target vanished can't be shown in the form.
+            if !opts.effects.contains(where: { $0.id == effectId }) { representable = false }
         } else if kind == "layout" {
             effectId = "layout"
             placements = ((effect["placements"] as? [Any]) ?? [])
@@ -642,6 +769,18 @@ private struct AddRuleForm: View {
             effectId = "notify"
             notifyTitle = effect["title"] as? String ?? "Hammerdeck"
             notifyText = effect["text"] as? String ?? ""
+        }
+        // Not fully representable (a non-form trigger, a vanished command target,
+        // or a parked/unavailable rule whose signal is gone) -> open the raw spec
+        // in JSON, seeded directly (not via onChange(of: advanced), which wouldn't
+        // fire if we were already in JSON mode). The form's "Use the form" link is
+        // still available if the user WANTS to convert it -- but it's now an
+        // explicit choice, not a silent rewrite-on-Save. Editing + saving the JSON
+        // keeps the id and name, and fixing a parked rule un-parks it.
+        if !representable || rule.unavailable {
+            advanced = true
+            jsonText = currentSpecJSON()
+            jsonSeed = jsonText
         }
     }
 
