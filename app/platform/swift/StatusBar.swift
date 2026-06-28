@@ -81,6 +81,15 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         home.toolTip = String(format: Strings.t("menu.open.tip", default: "Open %@: dashboard, gallery, shortcut map, timeline, and settings (switch tabs inside)"), AppInfo.displayName)
         menu.addItem(home)
 
+        // Rules sits just above Settings: it's the other thing you open to
+        // CONFIGURE the app (automations that fire on schedules / system events /
+        // a display connecting), distinct from the per-feature Settings below it.
+        let rules = NSMenuItem(title: Strings.t("menu.rules", default: "Rules…"), action: #selector(showRules),
+                               keyEquivalent: "")
+        rules.target = self
+        rules.toolTip = Strings.t("menu.rules.tip", default: "Add and edit rules: run an automation when a schedule, system event, or display change fires")
+        menu.addItem(rules)
+
         let settings = NSMenuItem(title: Strings.t("menu.settings", default: "Settings…"), action: #selector(showSettings),
                                   keyEquivalent: ",")
         settings.target = self
@@ -233,6 +242,10 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
 
     @objc private func showSettings() {
         openHome(.settings)
+    }
+
+    @objc private func showRules() {
+        openHome(.rules)
     }
 
     @objc private func showHome() {

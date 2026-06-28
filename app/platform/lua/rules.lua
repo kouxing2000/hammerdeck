@@ -144,12 +144,37 @@ function rules.load(list)
     return rules.count()
 end
 
+-- The values a rule's TRIGGER makes available to its effect (for params bound to
+-- the trigger rather than a literal -- see effects.resolveParam / TRIGGER_*). The
+-- matched entity comes from whichever transition the rule uses (`becomes` OR
+-- `leaves`): a Connected-display rule yields {display=...} (meaningful on connect,
+-- not on disconnect -- a gone monitor); a Frontmost/Running-app rule yields
+-- {app=...}, meaningful on BOTH edges -- the app that gained OR lost focus is
+-- still alive to act on (e.g. minimize-on-focus-loss). Spec-derived, so it works
+-- on a real fire AND the Test button (both go through `fire`). The "any X -> the
+-- entered one" case is future work (it needs bindOne to diff the live set).
+local function triggerContext(spec)
+    local on = spec.on
+    if type(on) ~= "table" or on.type ~= "state" then return {} end
+    local value
+    if on.becomes ~= nil then value = on.becomes
+    elseif on.leaves ~= nil then value = on.leaves end
+    if value == nil then return {} end
+    -- The signal declares which context key it publishes (meta.provides) -- so this
+    -- never hardcodes "displaysPresent -> display". A signal with no `provides`
+    -- (an enum like appearance) contributes nothing bindable.
+    local m = signals.meta(on.signal)
+    local field = m and m.provides
+    if field then return { [field] = value } end
+    return {}
+end
+
 -- Dispatch a rule's effect, logging the outcome either way. The SUCCESS log
 -- matters: a rule that silently never runs (a typo'd app name that no app ever
 -- matches, an effect targeting a now-disabled feature) is otherwise impossible
 -- to diagnose -- this trace ("Open Logs" in the menubar) is the only window in.
 local function fire(id, spec, via)
-    local ok, note = effects.dispatch(spec.effect)
+    local ok, note = effects.dispatch(spec.effect, triggerContext(spec))
     -- Stamp the fire history (the list's "fired/not-fired" status). A real trigger
     -- fire has no `via`; the Test button passes "test" so the UI can distinguish.
     lastFire[id] = { at = adapter.now(), via = via, ok = ok }
@@ -430,6 +455,9 @@ function rules.describe()
             -- form (the reverse of the Add form's buildSpec).
             on          = spec.on,
             effect      = spec.effect,
+            -- a "from the trigger" effect reacts to its trigger, so it can't be
+            -- fired in isolation -- the host hides the Test button for it.
+            contextBound = effects.usesTriggerContext(spec.effect),
         }
         -- Fire status (this session): present only once the rule has fired.
         local lf = lastFire[spec.id]

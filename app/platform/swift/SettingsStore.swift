@@ -264,6 +264,9 @@ struct RuleInfo: Identifiable {
     let effectDesc: String       // 'Notify "Safari is front"', "Run bing_daily.refresh"
     let on: [String: Any]        // raw trigger spec -- pre-fills the edit form
     let effect: [String: Any]    // raw effect node -- pre-fills the edit form
+    // A "from the trigger" effect reacts to its trigger -- it can't be fired in
+    // isolation (no live context), so the Test button hides for it.
+    let contextBound: Bool
     // A rule whose target (feature/signal) is absent THIS boot: PRESERVED on disk
     // (never silently deleted) and shown greyed with the reason. It re-activates
     // when the target returns, or the user fixes its JSON / deletes it.
@@ -285,6 +288,7 @@ struct RuleInfo: Identifiable {
         self.effectDesc = dict["effectDesc"] as? String ?? ""
         self.on = dict["on"] as? [String: Any] ?? [:]
         self.effect = dict["effect"] as? [String: Any] ?? [:]
+        self.contextBound = dict["contextBound"] as? Bool ?? false
         self.unavailable = dict["unavailable"] as? Bool ?? false
         self.unavailableReason = dict["reason"] as? String ?? ""
         if let t = dict["lastFired"] as? Double { self.lastFired = Date(timeIntervalSince1970: t) }
@@ -328,6 +332,9 @@ struct SignalMeta {
     let enterVerb: String
     let leaveVerb: String
     let example: String
+    // The trigger-context key this signal publishes ("display" | "app"), or nil for
+    // an enum signal that publishes nothing bindable. Drives the from-trigger option.
+    let provides: String?
 
     init(_ d: [String: Any]) {
         label = d["label"] as? String ?? ""
@@ -335,6 +342,7 @@ struct SignalMeta {
         enterVerb = d["enterVerb"] as? String ?? "becomes"
         leaveVerb = d["leaveVerb"] as? String ?? "leaves"
         example = d["example"] as? String ?? ""
+        provides = d["provides"] as? String
     }
 }
 

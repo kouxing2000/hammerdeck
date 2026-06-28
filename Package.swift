@@ -57,6 +57,7 @@ let package = Package(
                 "features/clipboard_history",
                 "features/command_palette",
                 "features/count_down",
+                "features/dark_mode",
                 "features/display_off",
                 "features/insert_datetime",
                 "features/locate_pointer",

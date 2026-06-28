@@ -347,6 +347,26 @@ function adapter.setFocusedWindowFullscreen(on)
     return native.set_focused_window_fullscreen(on == true) == true
 end
 
+-- App-target window actions (by localizedName). The rules minimizeApp / hideApp /
+-- quitApp effects drive these. Each returns true on success.
+function adapter.minimizeApp(name)
+    return native.minimize_app(name) == true
+end
+
+function adapter.hideApp(name)
+    return native.hide_app(name) == true
+end
+
+function adapter.quitApp(name)
+    return native.quit_app(name) == true
+end
+
+-- Set the SYSTEM appearance. `mode` is "dark" | "light" | "toggle". Drives the
+-- dark_mode feature; uses System Events (first run prompts for Automation).
+function adapter.setAppearance(mode)
+    return native.set_appearance(mode) == true
+end
+
 -- Visible frame of every screen (primary first): { x,y,w,h, name, index, builtin }
 -- rows; screenIndex indexes this. `name` is the display's localizedName -- the
 -- layout engine targets a display by it; `builtin` is true for the laptop's own
@@ -519,6 +539,13 @@ end
 -- mode: "primary" sets only the main display; nil/"all" sets every screen.
 function adapter.setWallpaper(path, mode)
     return native.set_wallpaper(path, mode)
+end
+
+-- Paint a SOLID color across the chosen displays. `hex` is "#RRGGBB"; `target`
+-- is "external" (non-built-in monitors only -- what a display-connect rule
+-- wants), "primary" (main display), or "all"/nil (every screen).
+function adapter.setWallpaperColor(hex, target)
+    return native.set_wallpaper_color(hex, target)
 end
 
 -- App-owned writable cache directory (created on demand).

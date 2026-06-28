@@ -180,6 +180,32 @@ extension Native {
         return 1
     }
 
+    // set_appearance(mode) -> bool. mode: "dark" | "light" | "toggle" (default).
+    // Sets the SYSTEM appearance via System Events -- the only public path -- so the
+    // first use prompts for Automation permission; returns false on denial/error.
+    // Pairs with a schedule as an automatable action ("at sunset -> dark").
+    func setAppearance(_ L: OpaquePointer?) -> Int32 {
+        let mode = LuaState.string(L, 1) ?? "toggle"
+        let value: String
+        switch mode {
+        case "dark":  value = "true"
+        case "light": value = "false"
+        default:      value = "not dark mode"   // toggle
+        }
+        let script = "tell application \"System Events\" to tell appearance preferences "
+            + "to set dark mode to \(value)"
+        var errInfo: NSDictionary?
+        _ = NSAppleScript(source: script)?.executeAndReturnError(&errInfo)
+        if let errInfo {
+            print("[hammerdeck] set appearance failed: "
+                + ((errInfo[NSAppleScript.errorMessage] as? String) ?? "\(errInfo)"))
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
     // running_apps() -> [appName] -- localized names of the regular (user-facing)
     // running apps. Backs the `runningApps` set signal; the appsChanged event
     // (launch/quit) re-reads it. Filters out background daemons/agents.

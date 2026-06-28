@@ -12,6 +12,11 @@
 --   runShortcut  -- run a macOS Shortcut:  { kind="runShortcut", name=<str> }  (the escape hatch)
 --   openURL      -- open a url / app:       { kind="openURL", url=<str> }
 --   lockScreen   -- lock the screen:        { kind="lockScreen" }
+--   solidWallpaper -- paint a solid color:  { kind="solidWallpaper", color="#RRGGBB",
+--                   display=<name|"all"|"external"|"primary"|"@trigger:display"> }
+--   minimizeApp  -- minimize an app's window: { kind="minimizeApp", app=<name|"@trigger:app"> }
+--   hideApp      -- hide an app:             { kind="hideApp", app=<name|"@trigger:app"> }
+--   quitApp      -- quit an app:             { kind="quitApp", app=<name|"@trigger:app"> }
 --
 -- chain / scene arrive in later milestones. `dispatch` and the predicates are a
 -- switch on `kind`, so adding a kind is additive (open/closed) -- no caller changes.
@@ -21,6 +26,69 @@ local adapter  = require("platform.adapter")
 local windows  = require("platform.windows")
 
 local effects = {}
+
+-- Sentinels for an effect param drawn from the firing TRIGGER's context (see
+-- rules.lua triggerContext) instead of a literal. The value is "@trigger:<field>"
+-- where <field> is a key the trigger provides: `display` (Connected display) or
+-- `app` (Frontmost/Running app). resolveParam turns it into the live value at
+-- dispatch; a display's/app's name never collides with the "@trigger:" prefix.
+local TRIGGER_PREFIX = "@trigger:"
+effects.TRIGGER_DISPLAY = TRIGGER_PREFIX .. "display"
+effects.TRIGGER_APP     = TRIGGER_PREFIX .. "app"
+
+-- Resolve an effect param that may be a "@trigger:<field>" reference into the
+-- value the trigger supplied; a literal (a name, a category) passes through
+-- unchanged. Returns (value), or (nil, reason) when a trigger-ref has nothing in
+-- context (e.g. fired by a trigger that doesn't provide that field).
+---@param value any
+---@param context table|nil
+---@return any|nil value
+---@return string|nil reason
+function effects.resolveParam(value, context)
+    if type(value) == "string" and value:sub(1, #TRIGGER_PREFIX) == TRIGGER_PREFIX then
+        local field = value:sub(#TRIGGER_PREFIX + 1)
+        local v = context and context[field]
+        if v == nil or v == "" then
+            return nil, "no " .. field .. " in the trigger context"
+        end
+        return v
+    end
+    return value
+end
+
+-- Does this effect draw any param from the TRIGGER context (a "@trigger:<field>"
+-- reference)? Such a rule REACTS to its trigger and can't be meaningfully fired in
+-- isolation, so the host hides the "Test" button for it (a manual fire has no live
+-- trigger to supply the value). Recurses into nested nodes (e.g. chain steps).
+function effects.usesTriggerContext(node)
+    if type(node) ~= "table" then return false end
+    for _, v in pairs(node) do
+        if type(v) == "string" and v:sub(1, #TRIGGER_PREFIX) == TRIGGER_PREFIX then
+            return true
+        elseif type(v) == "table" and effects.usesTriggerContext(v) then
+            return true
+        end
+    end
+    return false
+end
+
+-- The context field a "@trigger:<field>" param references (e.g. "display"), or nil
+-- for a literal. Lets describe() render "the triggering <field>" generically.
+local function triggerField(value)
+    return type(value) == "string" and value:match("^@trigger:(.+)") or nil
+end
+
+-- Run an app-target effect (minimize / hide / quit): resolve its `app` (a literal
+-- or "@trigger:app") and apply `fn(app)`. One helper for all three -- they differ
+-- only in the adapter call. Returns (true) / (false, reason).
+local function appAction(node, context, fn, verb)
+    local app, reason = effects.resolveParam(node.app, context)
+    if not app then return false, reason end
+    local ok, res = pcall(fn, app)
+    if not ok then return false, tostring(res) end
+    if not res then return false, "no app to " .. verb .. ": " .. tostring(app) end
+    return true
+end
 
 -- A placement's human label for the diagnostic note: "Safari 'Docs' on DELL".
 local function placementLabel(p)
@@ -108,12 +176,12 @@ end
 --   (false, reason) -- every step failed.
 --   (true, note)    -- some failed: note names them (ran K/N).
 --   (true)          -- every step succeeded.
-local function applyChain(node)
+local function applyChain(node, context)
     local ran, okCount = 0, 0
     local failed = {}
     for i, step in ipairs(node.effects) do
         ran = ran + 1
-        local okStep, note = effects.dispatch(step)
+        local okStep, note = effects.dispatch(step, context)
         if okStep then
             okCount = okCount + 1
         else
@@ -173,6 +241,15 @@ function effects.validate(node)
     elseif kind == "openURL" then
         assert(type(node.url) == "string" and #node.url > 0,
             "openURL effect needs a url")
+    elseif kind == "solidWallpaper" then
+        assert(type(node.color) == "string" and node.color:match("^#%x%x%x%x%x%x$"),
+            "solidWallpaper effect needs a #RRGGBB color")
+        assert(type(node.display) == "string" and #node.display > 0,
+            "solidWallpaper effect needs a display (a name, 'all'/'external'/'primary', "
+            .. "or '" .. effects.TRIGGER_DISPLAY .. "')")
+    elseif kind == "minimizeApp" or kind == "hideApp" or kind == "quitApp" then
+        assert(type(node.app) == "string" and #node.app > 0,
+            kind .. " effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
     elseif kind == "lockScreen" then
         -- no parameters
     elseif kind == "chain" then
@@ -206,7 +283,9 @@ function effects.requiresContext(node)
         return false   -- context-free: just shows a notification
     elseif node.kind == "layout" then
         return false   -- context-free: places windows by declared rules, no live selection
-    elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen" then
+    elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen"
+        or node.kind == "solidWallpaper" or node.kind == "minimizeApp"
+        or node.kind == "hideApp" or node.kind == "quitApp" then
         return false   -- context-free: fire-and-forget system actions, no live selection
     elseif node.kind == "chain" then
         -- A chain is context-free only if EVERY step is -- so a chain on an
@@ -225,9 +304,11 @@ end
 --- moved some-but-not-all windows). Never throws for known kinds (registry.runAction
 --- is pcall-guarded; notify is contained), so an outcome always surfaces as a return.
 ---@param node table an effect node
+---@param context table|nil values the firing TRIGGER provides (e.g. {display=...}),
+---       consumed by params bound to the trigger (see effects.TRIGGER_DISPLAY)
 ---@return boolean ok
 ---@return string|nil reasonOrNote  failure reason, or a partial-success note
-function effects.dispatch(node)
+function effects.dispatch(node, context)
     if node.kind == "command" then
         return registry.runAction(node.feature, node.action)
     elseif node.kind == "notify" then
@@ -255,12 +336,28 @@ function effects.dispatch(node)
         local ok, err = pcall(adapter.openURL, node.url)
         if not ok then return false, tostring(err) end
         return true
+    elseif node.kind == "solidWallpaper" then
+        local target, reason = effects.resolveParam(node.display, context)
+        if not target then return false, reason end
+        -- Check the adapter's success boolean (parity with appAction): a typo'd or
+        -- now-disconnected display matches no screen -> paint nothing, which must
+        -- read as a FAILURE in the rule's fire log, not a silent green "fired".
+        local ok, res = pcall(adapter.setWallpaperColor, node.color, target)
+        if not ok then return false, tostring(res) end
+        if not res then return false, "no display to paint: " .. tostring(target) end
+        return true
+    elseif node.kind == "minimizeApp" then
+        return appAction(node, context, adapter.minimizeApp, "minimize")
+    elseif node.kind == "hideApp" then
+        return appAction(node, context, adapter.hideApp, "hide")
+    elseif node.kind == "quitApp" then
+        return appAction(node, context, adapter.quitApp, "quit")
     elseif node.kind == "lockScreen" then
         local ok, err = pcall(adapter.lockScreen)
         if not ok then return false, tostring(err) end
         return true
     elseif node.kind == "chain" then
-        local ok, res, reason = pcall(applyChain, node)
+        local ok, res, reason = pcall(applyChain, node, context)
         if not ok then return false, tostring(res) end
         return res, reason
     end
@@ -284,6 +381,16 @@ function effects.describe(node)
         return 'Run Shortcut "' .. tostring(node.name or "") .. '"'
     elseif node.kind == "openURL" then
         return "Open " .. tostring(node.url or "")
+    elseif node.kind == "solidWallpaper" then
+        local f = triggerField(node.display)
+        local where = f and ("the triggering " .. f) or tostring(node.display or "")
+        return "Set wallpaper " .. tostring(node.color or "") .. " on " .. where
+    elseif node.kind == "minimizeApp" or node.kind == "hideApp" or node.kind == "quitApp" then
+        local f = triggerField(node.app)
+        local who = f and ("the triggering " .. f) or tostring(node.app or "")
+        local verb = (node.kind == "hideApp" and "Hide")
+            or (node.kind == "quitApp" and "Quit") or "Minimize"
+        return verb .. " " .. who
     elseif node.kind == "lockScreen" then
         return "Lock the screen"
     elseif node.kind == "chain" then
@@ -314,6 +421,10 @@ function effects.catalog(automatedOnly)
         { kind = "runShortcut", label = "Run a Shortcut" },
         { kind = "openURL",     label = "Open a URL" },
         { kind = "lockScreen",  label = "Lock the screen" },
+        { kind = "solidWallpaper", label = "Set solid wallpaper" },
+        { kind = "minimizeApp", label = "Minimize an app's window" },
+        { kind = "hideApp",     label = "Hide an app" },
+        { kind = "quitApp",     label = "Quit an app" },
         { kind = "chain",       label = "Do several things (chain)" },
     }
     for _, a in ipairs(registry.enabledActions()) do

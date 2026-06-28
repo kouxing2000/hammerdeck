@@ -206,23 +206,29 @@ private struct RulePageRow: View {
             // can't run, it isn't bound) -- it offers only Delete, plus
             // select-to-edit (which opens its raw JSON so the user can fix it).
             if !rule.unavailable {
-                Button(action: runTest) {
-                    Image(systemName: "play.circle").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help(Strings.t("rules.testHelp", default: "Test this rule now -- fire its effect without waiting for the trigger"))
-                .popover(item: $testResult) { r in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: r.icon).foregroundStyle(r.color)
-                        Text(r.message).font(.callout)
-                            .fixedSize(horizontal: false, vertical: true)
+                // Test fires the effect WITHOUT its trigger -- meaningless for a "from
+                // the trigger" effect, which needs the live trigger to supply its value
+                // (firing it in isolation has no context). Such a rule is verified by
+                // staging its trigger (connect the display, switch apps), so hide Test.
+                if !rule.contextBound {
+                    Button(action: runTest) {
+                        Image(systemName: "play.circle").foregroundStyle(.secondary)
                     }
-                    .padding(10).frame(maxWidth: 300)
-                }
-                .confirmationDialog(String(format: Strings.t("rules.testLockTitle", default: "Test \"%@\"? This will lock your screen now."), primary),
-                                    isPresented: $confirmDisruptiveTest, titleVisibility: .visible) {
-                    Button(Strings.t("rules.lockScreen", default: "Lock screen"), role: .destructive) { fireNow() }
-                    Button(Strings.t("rules.cancel", default: "Cancel"), role: .cancel) {}
+                    .buttonStyle(.borderless)
+                    .help(Strings.t("rules.testHelp", default: "Test this rule now -- fire its effect without waiting for the trigger"))
+                    .popover(item: $testResult) { r in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: r.icon).foregroundStyle(r.color)
+                            Text(r.message).font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(10).frame(maxWidth: 300)
+                    }
+                    .confirmationDialog(String(format: Strings.t("rules.testLockTitle", default: "Test \"%@\"? This will lock your screen now."), primary),
+                                        isPresented: $confirmDisruptiveTest, titleVisibility: .visible) {
+                        Button(Strings.t("rules.lockScreen", default: "Lock screen"), role: .destructive) { fireNow() }
+                        Button(Strings.t("rules.cancel", default: "Cancel"), role: .cancel) {}
+                    }
                 }
                 Toggle("", isOn: Binding(get: { rule.enabled },
                                          set: { store.setRuleEnabled(rule.id, $0) }))
@@ -331,6 +337,9 @@ private struct AddRuleForm: View {
     @State private var chainSteps: [ChainStep] = []   // the chain effect's ordered steps
     @State private var shortcutName = ""              // runShortcut
     @State private var openURLValue = ""              // openURL
+    @State private var solidColor = "#FFFFFF"          // solidWallpaper: preset hex
+    @State private var solidDisplay = "external"       // solidWallpaper: name | all | external | primary | sentinel
+    @State private var minimizeAppName = ""            // minimizeApp: app name | @trigger:app
     @State private var formError: String?
     // Advanced "Edit as JSON" mode: one rule, one JSON spec.
     @State private var advanced = false
@@ -444,6 +453,10 @@ private struct AddRuleForm: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else if selectedEffect?.kind == "openURL" {
                 TextField(Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)"), text: $openURLValue)
+            } else if selectedEffect?.kind == "solidWallpaper" {
+                solidWallpaperEditor
+            } else if appTargetKinds.contains(selectedEffect?.kind ?? "") {
+                minimizeAppEditor
             } else if selectedEffect?.kind == "chain" {
                 chainEditor
             }
@@ -491,7 +504,25 @@ private struct AddRuleForm: View {
         .onChange(of: effectId) { _ in
             if selectedEffect?.kind == "layout" && placements.isEmpty { addPlacement() }
             if selectedEffect?.kind == "chain" && chainSteps.isEmpty { chainSteps.append(ChainStep()) }
+            // Switching TO solid wallpaper while ADDING a rule: default the display to
+            // "the connecting display" when the trigger provides one, else a category.
+            // (In edit mode loadForEdit owns the value, so leave it.)
+            if editing == nil && selectedEffect?.kind == "solidWallpaper" {
+                solidDisplay = (triggerProvides == "display") ? Self.triggerSentinel("display") : "external"
+            }
+            // Only seed an EMPTY field (mirrors the layout/chain seeders) -- so
+            // switching between the app-target verbs (minimize <-> hide <-> quit)
+            // keeps the app the user already chose.
+            if editing == nil && appTargetKinds.contains(selectedEffect?.kind ?? "")
+                && minimizeAppName.isEmpty {
+                minimizeAppName = (triggerProvides == "app") ? Self.triggerSentinel("app") : (appCandidates.first ?? "")
+            }
         }
+        // If the trigger stops providing the entity a "from the trigger" param
+        // needs, that param becomes unresolvable -- fall back to a valid literal so
+        // the saved spec stays sound (applies in edit mode too).
+        .onChange(of: triggerType) { _ in demoteOrphanedTriggerParams() }
+        .onChange(of: transition) { _ in demoteOrphanedTriggerParams() }
     }
 
     // The advanced raw-JSON editor for one rule's full spec. Saving validates
@@ -613,6 +644,107 @@ private struct AddRuleForm: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
         }
         Button { chainSteps.append(ChainStep()) } label: { Label(Strings.t("rules.addStep", default: "Add step"), systemImage: "plus") }
+    }
+
+    // The color + display editor (shown when the effect is "solidWallpaper").
+    // Color is a preset (there's no NSColorWell idiom in the app); the display can
+    // be a literal monitor, a category, or -- on a "<display> connects" rule --
+    // "the connecting display" (resolved from the trigger at fire time).
+    @ViewBuilder private var solidWallpaperEditor: some View {
+        Picker(Strings.t("rules.solidWallpaperColor", default: "Color"), selection: $solidColor) {
+            Text(Strings.t("rules.colorWhite", default: "White")).tag("#FFFFFF")
+            Text(Strings.t("rules.colorLightGray", default: "Light gray")).tag("#F2F2F2")
+            Text(Strings.t("rules.colorMidGray", default: "Mid gray")).tag("#808080")
+            Text(Strings.t("rules.colorBlack", default: "Black")).tag("#000000")
+        }
+        Picker(Strings.t("rules.solidWallpaperDisplay", default: "Apply to"), selection: $solidDisplay) {
+            if triggerProvides == "display" {
+                Text(triggerOptionLabel("display")).tag(Self.triggerSentinel("display"))
+            }
+            Text(Strings.t("rules.solidAllDisplays", default: "All displays")).tag("all")
+            Text(Strings.t("rules.solidExternalDisplays", default: "External displays only")).tag("external")
+            Text(Strings.t("rules.solidMainDisplay", default: "Main display only")).tag("primary")
+            ForEach(solidDisplayNames, id: \.self) { Text($0).tag($0) }
+        }
+    }
+
+    // Literal display names for the wallpaper picker: currently-connected displays,
+    // plus the rule's own saved display if it isn't connected now (so editing an
+    // undocked rule doesn't silently drop it). Categories + the sentinel render apart.
+    private var solidDisplayNames: [String] {
+        var out = opts.layoutDisplays
+        let cur = solidDisplay
+        let reserved: Set<String> = ["all", "external", "primary"]
+        if !cur.hasPrefix("@trigger:") && !reserved.contains(cur) && !cur.isEmpty && !out.contains(cur) {
+            out.insert(cur, at: 0)
+        }
+        return out
+    }
+
+    // The app picker (shown when the effect is "minimizeApp"). The app can be a
+    // running app by name, or -- when the trigger publishes one -- "the app from the
+    // trigger" (resolved at fire time; natural pairing: "Frontmost app loses focus"
+    // -> minimize the app you just clicked away from).
+    // Shared by the app-target effects (minimizeApp / hideApp / quitApp) -- they
+    // differ only in the verb; the editor (app picker + from-trigger) is identical.
+    @ViewBuilder private var minimizeAppEditor: some View {
+        Picker(Strings.t("rules.minimizeAppField", default: "App"), selection: $minimizeAppName) {
+            if triggerProvides == "app" {
+                Text(triggerOptionLabel("app")).tag(Self.triggerSentinel("app"))
+            }
+            ForEach(minimizeAppNames, id: \.self) { Text($0).tag($0) }
+        }
+        // The footgun the user hit: acting on "the app from the trigger" on the
+        // GAINS-focus edge runs the instant you open it. Flag it -- they want "loses focus".
+        if minimizeAppName.hasPrefix("@trigger:") && signal == "frontmostApp" && transition == "becomes" {
+            Text(Strings.t("rules.minimizeBecomesWarning", default: "This acts on the app the moment it gains focus -- you'd never keep it open. Switch the transition to \"loses focus\" to act when you click away."))
+                .font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text(Strings.t("rules.minimizeAppHint", default: "Targets the app's front window. Pair with \"Frontmost app loses focus\" to act the moment you click away."))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // The effect kinds that target an app by name (share the editor + the `app` param).
+    private let appTargetKinds: Set<String> = ["minimizeApp", "hideApp", "quitApp"]
+
+    // App names for the minimize picker: running apps, plus the rule's own saved app
+    // if it isn't running now (so editing doesn't drop it). The sentinel renders apart.
+    private var minimizeAppNames: [String] {
+        var out = appCandidates
+        let cur = minimizeAppName
+        if !cur.hasPrefix("@trigger:") && !cur.isEmpty && !out.contains(cur) { out.insert(cur, at: 0) }
+        return out
+    }
+
+    // --- Generic "from the trigger" plumbing (de-hardcoded) --------------------
+    // The context field the selected trigger publishes ("display" | "app"), read
+    // from the signal's OWN `provides` meta -- the editor never names a signal.
+    private var triggerProvides: String? { isStateTrigger ? meta?.provides : nil }
+    // The sentinel an effect param stores to bind to a trigger field (mirrors
+    // effects.lua's "@trigger:<field>" + effects.resolveParam).
+    private static func triggerSentinel(_ field: String) -> String { "@trigger:\(field)" }
+    // The from-trigger option label, e.g. "The display from the trigger". The EDGE
+    // (gains/loses) is conveyed by the Transition picker, so it isn't repeated here.
+    private func triggerOptionLabel(_ field: String) -> String {
+        // Localize the noun (display/app) rather than interpolating the raw `provides`
+        // key -- otherwise a zh-Hans build shows "来自触发器的 display". Unknown fields
+        // fall back to the raw key (still readable English) until a noun is added.
+        let noun = Strings.t("rules.triggerField." + field, default: field)
+        return String(format: Strings.t("rules.fromTrigger", default: "The %@ from the trigger"), noun)
+    }
+
+    private func demoteOrphanedTriggerParams() {
+        if selectedEffect?.kind == "solidWallpaper"
+            && solidDisplay.hasPrefix("@trigger:") && triggerProvides != "display" {
+            solidDisplay = "external"
+        }
+        if appTargetKinds.contains(selectedEffect?.kind ?? "")
+            && minimizeAppName.hasPrefix("@trigger:") && triggerProvides != "app" {
+            minimizeAppName = appCandidates.first ?? ""
+        }
     }
 
     private func chainStepComplete(_ s: ChainStep) -> Bool {
@@ -765,6 +897,12 @@ private struct AddRuleForm: View {
         if selectedEffect?.kind == "openURL" {
             return !openURLValue.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        if selectedEffect?.kind == "solidWallpaper" {
+            return !solidDisplay.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if appTargetKinds.contains(selectedEffect?.kind ?? "") {
+            return !minimizeAppName.trimmingCharacters(in: .whitespaces).isEmpty
+        }
         if selectedEffect?.kind == "chain" {
             return chainSteps.contains { chainStepComplete($0) }
         }
@@ -804,6 +942,9 @@ private struct AddRuleForm: View {
         chainSteps = []
         shortcutName = ""
         openURLValue = ""
+        solidColor = "#FFFFFF"
+        solidDisplay = "external"
+        minimizeAppName = ""
         formError = nil
         advanced = false
         jsonText = ""
@@ -847,6 +988,7 @@ private struct AddRuleForm: View {
         // rule (e.g. layout placements) can't bleed into one of a different kind --
         // the onChange(of: effectId) seeder only fills an EMPTY placement list.
         placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""
+        solidColor = "#FFFFFF"; solidDisplay = "external"; minimizeAppName = ""
         notifyTitle = AppInfo.displayName; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
@@ -867,6 +1009,13 @@ private struct AddRuleForm: View {
         } else if kind == "openURL" {
             effectId = "openURL"
             openURLValue = effect["url"] as? String ?? ""
+        } else if kind == "solidWallpaper" {
+            effectId = "solidWallpaper"
+            solidColor = effect["color"] as? String ?? "#FFFFFF"
+            solidDisplay = effect["display"] as? String ?? "external"
+        } else if let k = kind, appTargetKinds.contains(k) {
+            effectId = k
+            minimizeAppName = effect["app"] as? String ?? ""
         } else if kind == "lockScreen" {
             effectId = "lockScreen"
         } else if kind == "chain" {
@@ -895,6 +1044,10 @@ private struct AddRuleForm: View {
             jsonText = currentSpecJSON()
             jsonSeed = jsonText
         }
+        // A loaded sentinel orphaned by its trigger (e.g. a JSON-authored
+        // "@trigger:display" on a non-display rule) -> demote to a valid literal so
+        // Save can't re-persist an unresolvable binding.
+        demoteOrphanedTriggerParams()
     }
 
     private func submit() {
@@ -1006,6 +1159,14 @@ private struct AddRuleForm: View {
             let u = openURLValue.trimmingCharacters(in: .whitespaces)
             guard !u.isEmpty else { return nil }
             effect = ["kind": "openURL", "url": u]
+        } else if eff.kind == "solidWallpaper" {
+            let d = solidDisplay.trimmingCharacters(in: .whitespaces)
+            guard !d.isEmpty else { return nil }
+            effect = ["kind": "solidWallpaper", "color": solidColor, "display": d]
+        } else if appTargetKinds.contains(eff.kind) {
+            let a = minimizeAppName.trimmingCharacters(in: .whitespaces)
+            guard !a.isEmpty else { return nil }
+            effect = ["kind": eff.kind, "app": a]
         } else if eff.kind == "chain" {
             // Drop incomplete steps (mirrors layout); keep order.
             let steps: [[String: Any]] = chainSteps.compactMap { s in

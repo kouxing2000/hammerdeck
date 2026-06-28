@@ -244,6 +244,7 @@ function M.make(m, resolveTrigger, extra)
     function ctx.lockScreen()        adapter.lockScreen() end
     function ctx.displaySleep()      adapter.displaySleep() end
     function ctx.startScreensaver()  adapter.startScreensaver() end
+    function ctx.setAppearance(mode) return adapter.setAppearance(mode) end
 
     -- capability-gated extras (stateless; no scope handle to track) ------------
     if extra then

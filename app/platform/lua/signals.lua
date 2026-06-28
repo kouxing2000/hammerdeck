@@ -105,8 +105,8 @@ local REGISTRY = {
     frontmostApp = pushSignal {
         read    = function() return adapter.frontmostApp() end,
         observe = function(emit) return adapter.onAppActivated(emit) end,
-        meta    = { label = "Frontmost app", valueLabel = "App name",
-                    enterVerb = "becomes", leaveVerb = "leaves", example = "Safari" },
+        meta    = { label = "Frontmost app", valueLabel = "App name", provides = "app",
+                    enterVerb = "gains focus", leaveVerb = "loses focus", example = "Safari" },
         candidates = function()
             -- All running regular apps (NSWorkspace) -- PERMISSION-FREE. The old
             -- source was listWindows, which is Accessibility-gated: before that grant
@@ -131,7 +131,11 @@ local REGISTRY = {
             return adapter.onSystemEvent("screenChanged", function() emit(readDisplayNames()) end)
         end,
         match   = membership,
-        meta    = { label = "Connected display", valueLabel = "Display name",
+        -- `provides = "display"`: this signal publishes the matched entity (the
+        -- display name) into the trigger CONTEXT under that key, so an effect param
+        -- can bind to it ("@trigger:display"). The host derives the from-trigger
+        -- option + label from this one declaration -- no hardcoded signal names.
+        meta    = { label = "Connected display", valueLabel = "Display name", provides = "display",
                     enterVerb = "connects", leaveVerb = "disconnects", example = "DELL U2720Q" },
         candidates = readDisplayNames,
     },
@@ -154,7 +158,7 @@ local REGISTRY = {
             return adapter.onSystemEvent("appsChanged", function() emit(adapter.runningApps()) end)
         end,
         match   = membership,
-        meta    = { label = "Running app", valueLabel = "App name",
+        meta    = { label = "Running app", valueLabel = "App name", provides = "app",
                     enterVerb = "launches", leaveVerb = "quits", example = "Slack" },
         candidates = function() return adapter.runningApps() end,
     },

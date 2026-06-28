@@ -104,21 +104,112 @@ extension Native {
         guard let path = LuaState.string(L, 1) else {
             return luaError(L, "set_wallpaper: path required")
         }
-        // mode "primary" => only the main display; anything else (incl. nil)
-        // => every screen. Default is all -- a multi-display setup otherwise
-        // leaves the other monitors on their old wallpaper.
         let mode = LuaState.string(L, 2)
         let url = URL(fileURLWithPath: path)
         let ws = NSWorkspace.shared
-        let targets = (mode == "primary")
-            ? (NSScreen.main.map { [$0] } ?? [])
-            : NSScreen.screens
+        let targets = wallpaperTargets(mode)
         var ok = !targets.isEmpty
         for screen in targets {
             if (try? ws.setDesktopImageURL(url, for: screen)) == nil { ok = false }
         }
         lua_pushboolean(L, ok ? 1 : 0)
         return 1
+    }
+
+    // Paint a SOLID color across the chosen displays. Args: hex "#RRGGBB", mode
+    // (see wallpaperTargets). NSWorkspace can only point a screen at an image
+    // FILE, so we render a tiny solid-color PNG into the app cache and stretch it
+    // to fill (a flat color has no detail to distort). The companion to
+    // set_wallpaper: that paints a photo, this paints a flat color -- e.g. white
+    // on a paper-like / e-ink monitor to cut glare and ghosting.
+    func setWallpaperColor(_ L: OpaquePointer?) -> Int32 {
+        guard let hex = LuaState.string(L, 1), let color = Native.colorFromHex(hex) else {
+            return luaError(L, "set_wallpaper_color: a \"#RRGGBB\" color is required")
+        }
+        let mode = LuaState.string(L, 2)
+        guard let url = Native.solidColorImageURL(color, hex: hex) else {
+            return luaError(L, "set_wallpaper_color: could not render the solid color image")
+        }
+        let ws = NSWorkspace.shared
+        // scaleAxesIndependently stretches the swatch to cover the screen exactly;
+        // fillColor backs any pixel the image somehow doesn't reach. Both make a
+        // flat fill robust regardless of the screen's previously-chosen scaling.
+        let opts: [NSWorkspace.DesktopImageOptionKey: Any] = [
+            .imageScaling: NSNumber(value: NSImageScaling.scaleAxesIndependently.rawValue),
+            .allowClipping: true,
+            .fillColor: color,
+        ]
+        let targets = wallpaperTargets(mode)
+        var ok = !targets.isEmpty
+        for screen in targets {
+            if (try? ws.setDesktopImageURL(url, for: screen, options: opts)) == nil { ok = false }
+        }
+        lua_pushboolean(L, ok ? 1 : 0)
+        return 1
+    }
+
+    // Resolve a wallpaper target mode to the screens it names:
+    //   "all"/nil/""     -> every screen (the safe default: a multi-display setup
+    //                       otherwise leaves the other monitors on their old image)
+    //   "primary"/"main" -> the main display only
+    //   "external"       -> every NON-built-in display (the laptop panel keeps
+    //                       its own wallpaper -- what a "display connects" rule
+    //                       for an external monitor wants)
+    //   <anything else>  -> the display with that exact localizedName (e.g.
+    //                       "Paperlike H D") -- so a rule can paint just the
+    //                       monitor that connected. Empty if it isn't connected,
+    //                       so a now-absent display paints NOTHING, not every screen.
+    private func wallpaperTargets(_ mode: String?) -> [NSScreen] {
+        switch mode {
+        case nil, "", "all":
+            return NSScreen.screens
+        case "primary", "main":
+            return NSScreen.main.map { [$0] } ?? []
+        case "external":
+            return NSScreen.screens.filter { !Native.isBuiltinScreen($0) }
+        default:
+            return NSScreen.screens.filter { $0.localizedName == mode }
+        }
+    }
+
+    private static func isBuiltinScreen(_ s: NSScreen) -> Bool {
+        let num = (s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                   as? NSNumber)?.uint32Value ?? 0
+        return CGDisplayIsBuiltin(num) != 0
+    }
+
+    // Parse "#RRGGBB" (or "RRGGBB") into an sRGB color; nil on a malformed value.
+    private static func colorFromHex(_ hex: String) -> NSColor? {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        return NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255,
+                       green:   CGFloat((v >> 8) & 0xFF) / 255,
+                       blue:    CGFloat(v & 0xFF) / 255,
+                       alpha:   1)
+    }
+
+    // Render (and cache, keyed by hex) a small solid-color PNG in the app cache
+    // dir; returns its file URL. Reused across calls for the same color.
+    private static func solidColorImageURL(_ color: NSColor, hex: String) -> URL? {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let dir = base.appendingPathComponent("Hammerdeck", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let safe = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        let url = dir.appendingPathComponent("solid-\(safe).png")
+
+        let size = NSSize(width: 64, height: 64)
+        let img = NSImage(size: size)
+        img.lockFocus()
+        color.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        img.unlockFocus()
+        guard let tiff = img.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return nil }
+        do { try png.write(to: url) } catch { return nil }
+        return url
     }
 
     func cacheDir(_ L: OpaquePointer?) -> Int32 {

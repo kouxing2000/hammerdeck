@@ -342,6 +342,32 @@ function adapter.setWindowFrame(id, f)
     return true
 end
 
+-- Recorded app-target actions; fake.minimizeOk controls minimize's return.
+fake.minimized = {}
+fake.minimizeOk = true
+fake.hidden = {}
+fake.quit = {}
+fake.appearanceSet = {}   -- recorded setAppearance modes
+function adapter.minimizeApp(name)
+    fake.minimized[#fake.minimized + 1] = name
+    return fake.minimizeOk
+end
+
+function adapter.hideApp(name)
+    fake.hidden[#fake.hidden + 1] = name
+    return true
+end
+
+function adapter.quitApp(name)
+    fake.quit[#fake.quit + 1] = name
+    return true
+end
+
+function adapter.setAppearance(mode)
+    fake.appearanceSet[#fake.appearanceSet + 1] = mode
+    return true
+end
+
 function adapter.setFocusedWindowFullscreen(on)
     fake.fullscreenSets[#fake.fullscreenSets + 1] = on
     if fake.focusedWindow then fake.focusedWindow.fullscreen = on end
@@ -637,6 +663,7 @@ fake.downloads     = {}   -- recorded { url, path }
 fake.downloadOk    = true
 fake.wallpapers    = {}   -- recorded setWallpaper paths
 fake.wallpaperModes = {}  -- recorded setWallpaper modes (parallel to wallpapers)
+fake.wallpaperColors = {} -- recorded setWallpaperColor { hex=, target= }
 
 function adapter.httpGet(url, headers, cb)
     fake.httpRequests[#fake.httpRequests + 1] = { url = url, headers = headers }
@@ -664,6 +691,11 @@ end
 function adapter.setWallpaper(path, mode)
     fake.wallpapers[#fake.wallpapers + 1] = path
     fake.wallpaperModes[#fake.wallpaperModes + 1] = mode
+    return true
+end
+
+function adapter.setWallpaperColor(hex, target)
+    fake.wallpaperColors[#fake.wallpaperColors + 1] = { hex = hex, target = target }
     return true
 end
 

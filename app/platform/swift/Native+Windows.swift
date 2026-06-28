@@ -179,6 +179,16 @@ extension Native {
         return (ref as! AXValue)
     }
 
+    /// The AXUIElement value of an AX attribute (e.g. AXMainWindow), or nil if it's
+    /// absent / not an element. Sibling of axValue (which handles AXValue attrs);
+    /// the `as!` is the canonical CF cast, gated by the CFTypeID check above it.
+    private func axElementAttr(_ element: AXUIElement, _ attr: CFString) -> AXUIElement? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attr, &ref) == .success,
+              let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
+        return (ref as! AXUIElement)
+    }
+
     private func pushRect(_ L: OpaquePointer?, _ r: CGRect) {
         lua_createtable(L, 0, 4)
         lua_pushnumber(L, r.minX);   lua_setfield(L, -2, "x")
@@ -294,6 +304,70 @@ extension Native {
                                               (on ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef)
         lua_pushboolean(L, ok == .success ? 1 : 0)
         return 1
+    }
+
+    // minimize_app(name) -> bool. Minimize the named app's front window (sets
+    // AXMinimized). Pairs with a "Frontmost app leaves X" rule to hide a window
+    // the moment focus moves away. The app is found by localizedName and targets
+    // its main window (falling back to its focused / first standard window), so it
+    // works even though the app is no longer frontmost. Needs Accessibility.
+    func minimizeApp(_ L: OpaquePointer?) -> Int32 {
+        guard let name = LuaState.string(L, 1) else {
+            return luaError(L, "minimize_app: app name required")
+        }
+        guard AXIsProcessTrusted(),
+              let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == name })
+        else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let appEl = AXUIElementCreateApplication(app.processIdentifier)
+        let win = axElementAttr(appEl, kAXMainWindowAttribute as CFString)
+            ?? axElementAttr(appEl, kAXFocusedWindowAttribute as CFString)
+            ?? firstStandardWindow(appEl)
+        guard let target = win else { lua_pushboolean(L, 0); return 1 }
+        let ok = AXUIElementSetAttributeValue(target, kAXMinimizedAttribute as CFString,
+                                              kCFBooleanTrue as CFTypeRef)
+        lua_pushboolean(L, ok == .success ? 1 : 0)
+        return 1
+    }
+
+    // hide_app(name) -> bool. Hide the named app (the system Hide, like Cmd-H) --
+    // all its windows vanish until reactivated. Sibling of minimize_app; uses the
+    // public NSRunningApplication API, so (unlike minimize) it needs no Accessibility.
+    func hideApp(_ L: OpaquePointer?) -> Int32 {
+        guard let name = LuaState.string(L, 1) else {
+            return luaError(L, "hide_app: app name required")
+        }
+        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == name })
+        else { lua_pushboolean(L, 0); return 1 }
+        lua_pushboolean(L, app.hide() ? 1 : 0)
+        return 1
+    }
+
+    // quit_app(name) -> bool. Ask the named app to quit (a graceful terminate, like
+    // Cmd-Q -- the app may still prompt to save). Returns whether the request was sent.
+    func quitApp(_ L: OpaquePointer?) -> Int32 {
+        guard let name = LuaState.string(L, 1) else {
+            return luaError(L, "quit_app: app name required")
+        }
+        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == name })
+        else { lua_pushboolean(L, 0); return 1 }
+        lua_pushboolean(L, app.terminate() ? 1 : 0)
+        return 1
+    }
+
+    // The first standard (titled) window of an app element, or its first window.
+    private func firstStandardWindow(_ appEl: AXUIElement) -> AXUIElement? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &ref) == .success,
+              let wins = ref as? [AXUIElement] else { return nil }
+        for w in wins {
+            var sub: CFTypeRef?
+            AXUIElementCopyAttributeValue(w, kAXSubroleAttribute as CFString, &sub)
+            if (sub as? String) == kAXStandardWindowSubrole as String { return w }
+        }
+        return wins.first
     }
 
     // screen_frames() -> array of { x,y,w,h, name, index, builtin } visible frames
