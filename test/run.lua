@@ -3479,9 +3479,9 @@ do
 
     -- describe
     ok(effects.describe({ kind = "solidWallpaper", color = "#FFFFFF", display = "external" })
-        == "Set wallpaper #FFFFFF on external", "describe labels a literal-display solidWallpaper")
+        == "Set wallpaper white on external displays", "describe labels a literal-display solidWallpaper")
     ok(effects.describe({ kind = "solidWallpaper", color = "#FFFFFF", display = effects.TRIGGER_DISPLAY })
-        == "Set wallpaper #FFFFFF on the triggering display", "describe labels a from-trigger solidWallpaper")
+        == "Set wallpaper white on the triggering display", "describe labels a from-trigger solidWallpaper")
 
     -- end-to-end: "Paperlike H D connects" -> paint THE connecting display white.
     -- triggerContext derives {display = becomes}, so the sentinel resolves to it.
@@ -3674,6 +3674,58 @@ do
     rules.load({}); fake.settings["hammerdeck.rules"] = nil
     fake.windows = {}
     ok(fake.liveHandles == 0, "no native handle leaked across the chain tests")
+end
+
+-- T40b: rules.sentence -- the plain-language read-back shown live above the rule
+-- form (the redesign's comprehension win: a rule reads as one English line, and a
+-- from-trigger param reads as "it"). Pure formatting over signals.meta + describe.
+do
+    local effects = require("platform.effects")
+    local rules   = require("platform.rules")
+
+    -- ENTITY signal, leaves edge, app drawn from the trigger -> "it"
+    ok(rules.sentence({
+        on = { type = "state", signal = "frontmostApp", leaves = "Slack" },
+        effect = { kind = "minimizeApp", app = effects.TRIGGER_APP } })
+        == "When Slack loses focus, minimize it.",
+        "sentence: app loses focus -> minimize it")
+    -- ENTITY signal, becomes edge, display from the trigger
+    ok(rules.sentence({
+        on = { type = "state", signal = "displaysPresent", becomes = "DELL U2720Q" },
+        effect = { kind = "solidWallpaper", color = "#FFFFFF", display = effects.TRIGGER_DISPLAY } })
+        == "When DELL U2720Q connects, set wallpaper white on it.",
+        "sentence: display connects -> wallpaper on it")
+    -- PROPERTY signal (no `provides`) reads "the <name> <verb> <value>"
+    ok(rules.sentence({
+        on = { type = "state", signal = "powerSource", becomes = "battery" },
+        effect = { kind = "solidWallpaper", color = "#000000", display = "all" } })
+        == "When the power source becomes battery, set wallpaper black on all displays.",
+        "sentence: property signal reads 'the X becomes Y'")
+    -- event
+    ok(rules.sentence({
+        on = { type = "event", event = "wake" }, effect = { kind = "notify", title = "Hi" } })
+        == 'When the Mac wakes, notify "Hi".', "sentence: event clause")
+    -- schedule LEADS the line (no "When") -- both the daily-at and every-N forms
+    ok(rules.sentence({
+        on = { type = "schedule", at = "18:00" }, effect = { kind = "lockScreen" } })
+        == "Every day at 18:00, lock the screen.", "sentence: schedule (at) leads the line")
+    ok(rules.sentence({
+        on = { type = "schedule", everyMin = 25 }, effect = { kind = "lockScreen" } })
+        == "Every 25 minutes, lock the screen.", "sentence: schedule (everyMin) -- the %d branch")
+    -- incomplete (no value) -> empty, so the host shows its placeholder
+    ok(rules.sentence({
+        on = { type = "state", signal = "frontmostApp" }, effect = { kind = "lockScreen" } }) == "",
+        "sentence: a missing trigger value -> empty")
+    -- the JSON wrapper the host calls
+    ok(rules.sentenceJSON('{"on":{"type":"event","event":"sleep"},"effect":{"kind":"lockScreen"}}')
+        == "When the Mac sleeps, lock the screen.", "sentenceJSON decodes + composes")
+    ok(rules.sentenceJSON("not json") == "", "sentenceJSON: bad input -> empty")
+
+    -- pronoun mode is OPT-IN: the default describe (list row / log) is unchanged.
+    ok(effects.describe({ kind = "minimizeApp", app = effects.TRIGGER_APP }) == "Minimize the triggering app",
+        "describe default keeps 'the triggering app'")
+    ok(effects.describe({ kind = "minimizeApp", app = effects.TRIGGER_APP }, { pronoun = true }) == "Minimize it",
+        "describe pronoun mode renders the from-trigger app as 'it'")
 end
 
 -- T41: notify delivery channel (M3) -- a notify can target the macOS Notification

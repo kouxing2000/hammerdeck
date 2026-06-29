@@ -338,8 +338,13 @@ private struct AddRuleForm: View {
     @State private var shortcutName = ""              // runShortcut
     @State private var openURLValue = ""              // openURL
     @State private var solidColor = "#FFFFFF"          // solidWallpaper: preset hex
-    @State private var solidDisplay = "external"       // solidWallpaper: name | all | external | primary | sentinel
+    // Empty until the effect is chosen, then seeded-if-empty (uniform with
+    // minimizeAppName) -- so a recipe's explicit display survives the effect seeder.
+    @State private var solidDisplay = ""               // solidWallpaper: name | all | external | primary | sentinel
     @State private var minimizeAppName = ""            // minimizeApp: app name | @trigger:app
+    // The "New rule" landing: a recipe gallery (kills the blank canvas), shown only
+    // in add mode. Picking a recipe pre-fills the form below; "Build your own" clears it.
+    @State private var showGallery = true
     @State private var formError: String?
     // Advanced "Edit as JSON" mode: one rule, one JSON spec.
     @State private var advanced = false
@@ -373,7 +378,24 @@ private struct AddRuleForm: View {
 
             if advanced {
                 jsonEditor
+            } else if showGallery && !isEditing {
+                recipeGallery
             } else {
+            // Add mode reached the form from a recipe (or "Build your own") -- offer a
+            // way back to the gallery. (Edit mode has Cancel instead, so gate on !isEditing.)
+            // Just re-shows the gallery; the next recipe / "Build your own" resets the form.
+            if !isEditing {
+                HStack {
+                    Button { showGallery = true } label: {
+                        Label(Strings.t("rules.backToRecipes", default: "Recipes"), systemImage: "chevron.left")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.link)
+                    .help(Strings.t("rules.backToRecipesHelp", default: "Back to the recipe gallery"))
+                    Spacer()
+                }
+            }
+            readBackLine
             TextField(Strings.t("rules.namePlaceholder", default: "Name (optional)"), text: $name)
             Picker(Strings.t("rules.when", default: "When"), selection: $triggerType) {
                 // Each state signal is its own top-level choice (Frontmost app,
@@ -462,20 +484,24 @@ private struct AddRuleForm: View {
             }
             }   // end of the Form-mode (!advanced) fields
 
-            if let formError {
-                Label(formError, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // The error + Save/Cancel belong to the editor, not the gallery (whose
+            // recipe cards are their own affordance) -- hide them while the gallery shows.
+            if !(showGallery && !isEditing) {
+                if let formError {
+                    Label(formError, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            HStack {
-                if isEditing {
-                    Button(Strings.t("rules.cancel", default: "Cancel")) { editing = nil }   // onChange resets the form
+                HStack {
+                    if isEditing {
+                        Button(Strings.t("rules.cancel", default: "Cancel")) { editing = nil }   // onChange resets the form
+                    }
+                    Button(isEditing ? Strings.t("rules.saveChanges", default: "Save changes") : Strings.t("rules.addRule", default: "Add rule")) {
+                        advanced ? submitJSON() : submit()
+                    }
+                    .disabled(!canSubmit)
                 }
-                Button(isEditing ? Strings.t("rules.saveChanges", default: "Save changes") : Strings.t("rules.addRule", default: "Add rule")) {
-                    advanced ? submitJSON() : submit()
-                }
-                .disabled(!canSubmit)
             }
         }
         .onAppear(perform: reloadOptions)
@@ -506,8 +532,9 @@ private struct AddRuleForm: View {
             if selectedEffect?.kind == "chain" && chainSteps.isEmpty { chainSteps.append(ChainStep()) }
             // Switching TO solid wallpaper while ADDING a rule: default the display to
             // "the connecting display" when the trigger provides one, else a category.
-            // (In edit mode loadForEdit owns the value, so leave it.)
-            if editing == nil && selectedEffect?.kind == "solidWallpaper" {
+            // Only seed an EMPTY field (mirrors minimizeAppName) -- so a recipe that
+            // set an explicit display isn't clobbered. (Edit mode: loadForEdit owns it.)
+            if editing == nil && selectedEffect?.kind == "solidWallpaper" && solidDisplay.isEmpty {
                 solidDisplay = (triggerProvides == "display") ? Self.triggerSentinel("display") : "external"
             }
             // Only seed an EMPTY field (mirrors the layout/chain seeders) -- so
@@ -644,6 +671,160 @@ private struct AddRuleForm: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
         }
         Button { chainSteps.append(ChainStep()) } label: { Label(Strings.t("rules.addStep", default: "Add step"), systemImage: "plus") }
+    }
+
+    // --- Read-back sentence ----------------------------------------------------
+    // A live, plain-language echo of the rule being built ("When Slack loses focus,
+    // minimize it."), shown at the top of the editor. The engine composes it (one
+    // source of truth with the list rows); the form just displays the string. While
+    // the rule is too incomplete to read, a muted placeholder stands in.
+    @ViewBuilder private var readBackLine: some View {
+        let s = liveSentence
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "text.quote").foregroundStyle(.secondary)
+            if s.isEmpty {
+                Text(Strings.t("rules.readBackPlaceholder",
+                               default: "Fill in the trigger and effect below -- your rule reads here in plain words."))
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                Text(s).font(.callout).fontWeight(.medium)
+            }
+            Spacer(minLength: 0)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, 2)
+    }
+
+    // Build the in-progress spec and ask the engine to phrase it. buildSpec() is
+    // pure (no side effects) and returns nil until the rule is complete enough, so
+    // an incomplete form yields "" (the placeholder). Cheap in-process eval.
+    private var liveSentence: String {
+        guard let spec = buildSpec(),
+              let data = try? JSONSerialization.data(withJSONObject: spec),
+              let json = String(data: data, encoding: .utf8) else { return "" }
+        return store.ruleSentence(json)
+    }
+
+    // --- Recipe gallery (the "New rule" landing) -------------------------------
+    // One starter rule. Picking it pre-fills the form (it is NOT a separate object
+    // type -- applyRecipe just seeds the same @State the form already edits), then
+    // drops the user into the editor to finish the user-specific parts (which app,
+    // which display). Gated by `signalNeeded`: a recipe whose trigger signal the
+    // engine doesn't offer this build is hidden rather than shown as a dead end.
+    private struct RuleRecipe: Identifiable {
+        let id: String
+        let icon: String
+        let tint: Color
+        let title: String
+        let subtitle: String
+        let signalNeeded: String?   // a state signal that must exist (nil = always available)
+    }
+
+    private var recipes: [RuleRecipe] {
+        [
+            RuleRecipe(id: "whiten_eink", icon: "display", tint: .blue,
+                       title: Strings.t("rules.recipe.whitenEink.title", default: "Whiten an e-ink monitor"),
+                       subtitle: Strings.t("rules.recipe.whitenEink.sub", default: "White wallpaper the moment a display connects."),
+                       signalNeeded: "displaysPresent"),
+            RuleRecipe(id: "minimize_away", icon: "macwindow", tint: .indigo,
+                       title: Strings.t("rules.recipe.minimizeAway.title", default: "Minimize on switch-away"),
+                       subtitle: Strings.t("rules.recipe.minimizeAway.sub", default: "Minimize an app the moment you click away from it."),
+                       signalNeeded: "frontmostApp"),
+            RuleRecipe(id: "notify_wake", icon: "bell.badge", tint: .orange,
+                       title: Strings.t("rules.recipe.notifyWake.title", default: "Notify on wake"),
+                       subtitle: Strings.t("rules.recipe.notifyWake.sub", default: "Show a notification when the Mac wakes."),
+                       signalNeeded: nil),
+            RuleRecipe(id: "arrange_dock", icon: "square.grid.2x2", tint: .teal,
+                       title: Strings.t("rules.recipe.arrangeDock.title", default: "Arrange windows on dock"),
+                       subtitle: Strings.t("rules.recipe.arrangeDock.sub", default: "Snap your windows into place when a display connects."),
+                       signalNeeded: "displaysPresent"),
+            RuleRecipe(id: "dark_battery", icon: "battery.25", tint: .green,
+                       title: Strings.t("rules.recipe.darkBattery.title", default: "Dark wallpaper on battery"),
+                       subtitle: Strings.t("rules.recipe.darkBattery.sub", default: "Switch to a black wallpaper when you unplug."),
+                       signalNeeded: "powerSource"),
+            RuleRecipe(id: "lock_schedule", icon: "lock", tint: .gray,
+                       title: Strings.t("rules.recipe.lockSchedule.title", default: "Lock on a schedule"),
+                       subtitle: Strings.t("rules.recipe.lockSchedule.sub", default: "Lock the screen every day at a set time."),
+                       signalNeeded: nil),
+        ].filter { $0.signalNeeded == nil || opts.signals.contains($0.signalNeeded!) }
+    }
+
+    @ViewBuilder private var recipeGallery: some View {
+        Text(Strings.t("rules.startFromRecipe", default: "Start from a recipe")).font(.headline)
+        Text(Strings.t("rules.startFromRecipeHint", default: "Pick a starter, then fill in the details -- or build your own."))
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 10)], alignment: .leading, spacing: 10) {
+            ForEach(recipes) { recipeCard($0) }
+        }
+        Button { resetForm(); showGallery = false } label: {
+            HStack(spacing: 6) {
+                Spacer(minLength: 0)
+                Image(systemName: "plus")
+                Text(Strings.t("rules.buildYourOwn", default: "Build your own -- start from a blank rule"))
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private func recipeCard(_ r: RuleRecipe) -> some View {
+        Button { applyRecipe(r.id); showGallery = false } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: r.icon)
+                    .font(.title3).foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(r.tint))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(r.title).font(.callout).fontWeight(.semibold).foregroundStyle(.primary)
+                    Text(r.subtitle).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.gray.opacity(0.15)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // Seed the form @State from a recipe, then the card flips showGallery off so the
+    // (now pre-filled) editor appears. resetForm() first for a clean slate; the
+    // onChange(effectId) seeders are guarded on isEmpty, so the explicit values set
+    // here survive. Value-bearing recipes that need a user choice (which app) leave
+    // stateValue blank for them to fill; the rest are complete and read immediately.
+    private func applyRecipe(_ id: String) {
+        resetForm()
+        switch id {
+        case "whiten_eink":
+            triggerType = "state:displaysPresent"; transition = "becomes"
+            stateValue = opts.signalCandidates["displaysPresent"]?.first ?? ""
+            effectId = "solidWallpaper"; solidColor = "#FFFFFF"; solidDisplay = Self.triggerSentinel("display")
+        case "minimize_away":
+            triggerType = "state:frontmostApp"; transition = "leaves"
+            stateValue = ""   // the user picks the app they care about
+            effectId = "minimizeApp"; minimizeAppName = Self.triggerSentinel("app")
+        case "notify_wake":
+            triggerType = "event"; eventName = "wake"
+            effectId = "notify"; notifyTitle = AppInfo.displayName; notifyText = ""; notifyChannel = "system"
+        case "arrange_dock":
+            triggerType = "state:displaysPresent"; transition = "becomes"
+            stateValue = opts.signalCandidates["displaysPresent"]?.first ?? ""
+            effectId = "layout"   // onChange(effectId) seeds a first placement
+        case "dark_battery":
+            triggerType = "state:powerSource"; transition = "becomes"; stateValue = "battery"
+            effectId = "solidWallpaper"; solidColor = "#000000"; solidDisplay = "all"
+        case "lock_schedule":
+            triggerType = "schedule"; scheduleMode = "at"; atTime = "18:00"
+            effectId = "lockScreen"
+        default:
+            break
+        }
     }
 
     // The color + display editor (shown when the effect is "solidWallpaper").
@@ -943,13 +1124,14 @@ private struct AddRuleForm: View {
         shortcutName = ""
         openURLValue = ""
         solidColor = "#FFFFFF"
-        solidDisplay = "external"
+        solidDisplay = ""
         minimizeAppName = ""
         formError = nil
         advanced = false
         jsonText = ""
         jsonSeed = ""
         formDirty = false
+        showGallery = true   // a fresh "New rule" lands on the recipe gallery
     }
 
     /// Reverse of buildSpec: seed the form fields from an existing rule's spec.
@@ -988,7 +1170,7 @@ private struct AddRuleForm: View {
         // rule (e.g. layout placements) can't bleed into one of a different kind --
         // the onChange(of: effectId) seeder only fills an EMPTY placement list.
         placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""
-        solidColor = "#FFFFFF"; solidDisplay = "external"; minimizeAppName = ""
+        solidColor = "#FFFFFF"; solidDisplay = ""; minimizeAppName = ""
         notifyTitle = AppInfo.displayName; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String

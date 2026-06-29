@@ -508,6 +508,16 @@ final class SettingsStore: ObservableObject {
         rules = list.compactMap { $0 as? [String: Any] }.compactMap(RuleInfo.init)
     }
 
+    /// The plain-language read-back of an in-progress rule spec (JSON), shown live
+    /// above the rule form -- e.g. "When Slack loses focus, minimize it." Composed by
+    /// the engine (one source of truth with the list rows). "" when the spec is too
+    /// incomplete to read, so the form shows its placeholder instead.
+    func ruleSentence(_ json: String) -> String {
+        guard let raw = try? lua.call("platform.rules", "sentenceJSON", [.string(json)]).first ?? nil,
+              let s = raw as? String else { return "" }
+        return s
+    }
+
     /// The dropdown source for the Add-rule form (signals, candidates, events, effects).
     func ruleFormOptions() -> RuleFormOptions {
         guard let raw = try? lua.call("platform.rules", "formOptions").first ?? nil,

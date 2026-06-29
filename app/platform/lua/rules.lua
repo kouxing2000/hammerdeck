@@ -491,6 +491,89 @@ function rules.describe()
     return out
 end
 
+-- Lowercase only the first character (so an effect fragment reads mid-sentence:
+-- "Minimize it" -> "minimize it"). ASCII-first; non-English is left as-is (the
+-- whole read-back is English, like the rest of the describe layer).
+local function lowerFirst(s)
+    if type(s) ~= "string" or #s == 0 then return s end
+    return s:sub(1, 1):lower() .. s:sub(2)
+end
+
+-- A friendly clause for a system event in the read-back ("the Mac wakes").
+local EVENT_PHRASES = {
+    wake = "the Mac wakes", sleep = "the Mac sleeps",
+    screenLock = "the screen locks", screenUnlock = "the screen unlocks",
+    screenChanged = "the displays change",
+}
+local function eventPhrase(ev) return EVENT_PHRASES[ev] or tostring(ev) end
+
+--- A plain-language read-back of a rule spec, e.g. "When Slack loses focus,
+--- minimize it." Composed HERE (not in triggers.describe) because natural phrasing
+--- needs BOTH the signal's verbs (signals.meta) and the effect (effects.describe) --
+--- only this layer sees both. The effect half uses pronoun mode so a from-trigger
+--- param reads as "it" (its antecedent is the trigger value earlier in the line).
+--- An ENTITY signal (provides app/display) reads "<value> <verb>" ("Slack loses
+--- focus"); a PROPERTY signal reads "the <name> <verb> <value>" ("the power source
+--- becomes battery"); a schedule LEADS the line without "When". Returns "" when the
+--- spec is too incomplete to read (the host then shows a placeholder).
+---
+--- DELIBERATELY ENGLISH (bare string literals, no i18n) -- the signal verbs
+--- (signals.meta) and the effect words (effects.describe) are English literals too,
+--- so the whole read-back stays one language. Routing only the GLUE through i18n
+--- would yield a half-translated "当 the power source becomes battery 时" the moment
+--- a key landed. If the rules describe layer is ever localized, do it holistically
+--- (verbs + effects + this), not piecemeal here.
+---@param spec table
+---@return string
+function rules.sentence(spec)
+    if type(spec) ~= "table" or type(spec.on) ~= "table" or type(spec.effect) ~= "table" then
+        return ""
+    end
+    local effectClause = lowerFirst(effects.describe(spec.effect, { pronoun = true }))
+    if effectClause == "" then return "" end
+    local on = spec.on
+    if on.type == "state" then
+        local m = signals.meta(on.signal) or {}
+        local enter = on.becomes ~= nil
+        local value = enter and on.becomes or on.leaves
+        if value == nil or value == "" then return "" end
+        local verb = enter and (m.enterVerb or "becomes")
+                            or (m.leaveVerb or "leaves")
+        local clause
+        if m.provides then
+            clause = tostring(value) .. " " .. verb               -- "Slack loses focus"
+        else
+            clause = "the " .. lowerFirst(m.label or on.signal)   -- "the power source becomes battery"
+                .. " " .. verb .. " " .. tostring(value)
+        end
+        return string.format("When %s, %s.",clause, effectClause)
+    elseif on.type == "event" then
+        return string.format("When %s, %s.",eventPhrase(on.event), effectClause)
+    elseif on.type == "schedule" then
+        local clause
+        if on.everyMin then
+            clause = string.format("Every %d minutes", on.everyMin)
+        elseif on.at then
+            clause = string.format("Every day at %s", tostring(on.at))
+        else
+            return ""
+        end
+        return string.format("%s, %s.", clause, effectClause)
+    end
+    return ""
+end
+
+--- The read-back sentence for a JSON-encoded spec -- the host builds the in-progress
+--- rule, passes JSON, and shows the result live above the form. "" on bad input.
+---@param str string
+---@return string
+function rules.sentenceJSON(str)
+    local data = json.decode(tostring(str))
+    if type(data) ~= "table" then return "" end
+    local ok, s = pcall(rules.sentence, data)
+    return ok and s or ""
+end
+
 --- Everything the Add-rule form needs to populate its dropdowns, in one call:
 --- the supported trigger types, the state signals + their candidate values, the
 --- system events, and the selectable effects. Effects are the CONTEXT-FREE set

@@ -78,6 +78,24 @@ local function triggerField(value)
     return type(value) == "string" and value:match("^@trigger:(.+)") or nil
 end
 
+-- Friendly names for the wallpaper presets the rule editor offers, so describe()
+-- (the list row + the fire log + the read-back sentence) reads "white" instead of
+-- "#FFFFFF". A custom hex falls back to itself.
+local COLOR_NAMES = {
+    ["#FFFFFF"] = "white", ["#F2F2F2"] = "light gray",
+    ["#808080"] = "mid gray", ["#000000"] = "black",
+}
+local function colorName(hex)
+    if type(hex) ~= "string" then return "?" end
+    return COLOR_NAMES[hex:upper()] or hex
+end
+
+-- Friendly names for the wallpaper display CATEGORIES (a literal monitor name
+-- passes through unchanged). "external" -> "external displays" reads in a sentence.
+local DISPLAY_TARGETS = {
+    all = "all displays", external = "external displays", primary = "the main display",
+}
+
 -- Run an app-target effect (minimize / hide / quit): resolve its `app` (a literal
 -- or "@trigger:app") and apply `fn(app)`. One helper for all three -- they differ
 -- only in the adapter call. Returns (true) / (false, reason).
@@ -365,10 +383,16 @@ function effects.dispatch(node, context)
 end
 
 --- A short human label for an effect node (the rules-list "→ ..." column).
+--- `opts.pronoun` renders a from-trigger param as "it" instead of "the triggering
+--- <field>" -- used by the read-back SENTENCE, where the trigger value earlier in
+--- the line is the antecedent ("When Slack loses focus, minimize it"). The default
+--- (no opts) keeps "the triggering app", which the list/log show without an antecedent.
 ---@param node table an effect node
+---@param opts { pronoun: boolean }|nil
 ---@return string
-function effects.describe(node)
+function effects.describe(node, opts)
     if type(node) ~= "table" then return "?" end
+    local pronoun = opts and opts.pronoun
     if node.kind == "command" then
         return "Run " .. tostring(node.feature)
             .. (node.action and ("." .. node.action) or "")
@@ -383,11 +407,12 @@ function effects.describe(node)
         return "Open " .. tostring(node.url or "")
     elseif node.kind == "solidWallpaper" then
         local f = triggerField(node.display)
-        local where = f and ("the triggering " .. f) or tostring(node.display or "")
-        return "Set wallpaper " .. tostring(node.color or "") .. " on " .. where
+        local where = f and (pronoun and "it" or ("the triggering " .. f))
+            or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
+        return "Set wallpaper " .. colorName(node.color) .. " on " .. where
     elseif node.kind == "minimizeApp" or node.kind == "hideApp" or node.kind == "quitApp" then
         local f = triggerField(node.app)
-        local who = f and ("the triggering " .. f) or tostring(node.app or "")
+        local who = f and (pronoun and "it" or ("the triggering " .. f)) or tostring(node.app or "")
         local verb = (node.kind == "hideApp" and "Hide")
             or (node.kind == "quitApp" and "Quit") or "Minimize"
         return verb .. " " .. who
@@ -396,7 +421,7 @@ function effects.describe(node)
     elseif node.kind == "chain" then
         local parts = {}
         if type(node.effects) == "table" then
-            for _, step in ipairs(node.effects) do parts[#parts + 1] = effects.describe(step) end
+            for _, step in ipairs(node.effects) do parts[#parts + 1] = effects.describe(step, opts) end
         end
         local n = #parts
         if n == 0 then return "Chain (empty)" end
