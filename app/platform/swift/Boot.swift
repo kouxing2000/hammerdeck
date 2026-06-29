@@ -274,6 +274,16 @@ public func hammerdeckMain() {
         if let id { store.selectedFeatureId = id }
     }
     DebugControl.openHome = { dest in
+        // "rules:<ruleId>" opens the Rules page AND selects that rule, so its
+        // EDITOR (which renders the read-back sentence) is on screen for a shot --
+        // reusable screenshot infra (the bare deep links only reach a tab). Set
+        // the selection BEFORE showing so it lands whether RulesView mounts fresh
+        // (onAppear consumes it) or is already up (onChange consumes it).
+        if let dest, dest.hasPrefix("rules:") {
+            store.selectedRuleId = String(dest.dropFirst("rules:".count))
+            homepageWindow.show(.rules)
+            return
+        }
         homepageWindow.show(dest.flatMap(HomeDestination.init(rawValue:)) ?? .home)
     }
     DebugControl.presentTour = { homepageWindow.presentTour() }
