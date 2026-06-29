@@ -18,6 +18,14 @@ enum DebugShot {
         }
         let view = detailScrollDocument(in: content) ?? content
         let bounds = view.bounds
+        // NOTE: in DARK mode this capture is white-text-on-a-light-bitmap (unreadable):
+        // cacheDisplay re-rasterizes SwiftUI's already-resolved (dark) layer colors, and
+        // forcing the NSView's .appearance does NOT re-resolve them (SwiftUI bakes colors
+        // at its own update cycle, not on a synchronous AppKit appearance change). The
+        // reliable workaround for a dark system is to toggle the app to light for the
+        // shot (adapter.setAppearance("light")) and restore after. A true in-process fix
+        // would need a runloop-spin to re-render SwiftUI light -- a visible flicker, not
+        // worth it for a debug tool.
         guard bounds.width > 1, bounds.height > 1,
               let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else {
             return "ERROR: could not make bitmap for \(bounds)"

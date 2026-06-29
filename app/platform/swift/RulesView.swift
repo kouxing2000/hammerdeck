@@ -287,6 +287,44 @@ private struct Placement: Identifiable {
 }
 private let capturedPosId = "__captured__"
 
+/// One tappable token in the rule sentence: a rounded accent pill whose label is
+/// the current value, opening `popover` to change it. Mirrors the timeline marker
+/// pill (AutomationTimelineView). `muted` (an empty value) greys it to read as a
+/// placeholder; `anaphor` ("it") tints it to read as a pronoun referring back to
+/// the trigger value. A pill always has a popover -- plain connective words use a
+/// bare Text instead (AddRuleForm.sentenceWord).
+private struct TokenPill<Popover: View>: View {
+    let text: String
+    var muted: Bool = false
+    var anaphor: Bool = false
+    var help: String = ""
+    @ViewBuilder let popover: () -> Popover
+    @State private var showing = false
+
+    private var tint: Color { anaphor ? .purple : .accentColor }
+
+    var body: some View {
+        Button { showing = true } label: {
+            HStack(spacing: 3) {
+                Text(text)
+                    .foregroundStyle(muted ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint))
+                    .lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: 200, alignment: .leading)   // cap: a long name truncates, never blows the row
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 7).fill(tint.opacity(muted ? 0.06 : 0.12)))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(tint.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            popover().padding(14)
+        }
+    }
+}
+
 /// One step of a `chain` effect in the form editor -- one of the simple
 /// context-free atoms. A chain step that's a layout or command is authored in
 /// JSON, not here (loadForEdit drops such a chain into the JSON editor).
@@ -351,6 +389,9 @@ private struct AddRuleForm: View {
     @State private var jsonText = ""
     @State private var jsonSeed = ""            // what jsonText was seeded with (dirty check)
     @State private var confirmLeaveJSON = false
+    // The loaded rule's spec as the FORM would build it -- the baseline for the
+    // form's dirty check (Save is disabled in edit mode until something changes).
+    @State private var loadedFormJSON = ""
 
     private var isEditing: Bool { editing != nil }
 
@@ -395,92 +436,35 @@ private struct AddRuleForm: View {
                     Spacer()
                 }
             }
-            readBackLine
             TextField(Strings.t("rules.namePlaceholder", default: "Name (optional)"), text: $name)
-            Picker(Strings.t("rules.when", default: "When"), selection: $triggerType) {
-                // Each state signal is its own top-level choice (Frontmost app,
-                // Connected display, ...) -- no nested "Signal" picker.
-                ForEach(opts.signals, id: \.self) { sig in
-                    Text(signalLabel(sig)).tag("state:" + sig)
-                }
-                Text(Strings.t("rules.systemEvent", default: "System event")).tag("event")
-                Text(Strings.t("rules.schedule", default: "Schedule")).tag("schedule")
-            }
-
-            if isStateTrigger {
-                Picker(Strings.t("rules.transition", default: "Transition"), selection: $transition) {
-                    Text(meta?.enterVerb ?? Strings.t("rules.becomes", default: "becomes")).tag("becomes")
-                    Text(meta?.leaveVerb ?? Strings.t("rules.leaves", default: "leaves")).tag("leaves")
-                }
-                HStack {
-                    TextField(valuePlaceholder, text: $stateValue)
-                    if !candidates.isEmpty {
-                        Menu {
-                            ForEach(candidates, id: \.self) { c in
-                                Button(c) { stateValue = c }
-                            }
-                        } label: {
-                            Image(systemName: "list.bullet")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .frame(width: 32)
-                        .help(Strings.t("rules.pickSuggested", default: "Pick a suggested value"))
-                    }
-                }
-                if let warning = stateValueWarning {
-                    Text(warning).font(.caption).foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if triggerType == "event" {
-                Picker(Strings.t("rules.event", default: "Event"), selection: $eventName) {
-                    ForEach(opts.events, id: \.self) { Text($0).tag($0) }
-                }
-            } else if triggerType == "schedule" {
-                Picker(Strings.t("rules.mode", default: "Mode"), selection: $scheduleMode) {
-                    Text(Strings.t("rules.everyNMinutes", default: "Every N minutes")).tag("everyMin")
-                    Text(Strings.t("rules.dailyAt", default: "Daily at")).tag("at")
-                }
-                if scheduleMode == "everyMin" {
-                    Stepper(String(format: Strings.t("rules.everyMinStepper", default: "Every %d min"), everyMin), value: $everyMin, in: 1...1440)
-                } else {
-                    TextField(Strings.t("rules.hhmm", default: "HH:MM"), text: $atTime)
-                    if !Self.isValidHHMM(atTime) {
-                        Text(Strings.t("rules.hhmmHint", default: "Enter a 24-hour time like 09:00 or 23:30."))
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                }
-            }
-
-            Picker(Strings.t("rules.do", default: "Do"), selection: $effectId) {
-                ForEach(opts.effects) { e in Text(e.label).tag(e.id) }
-            }
-            if selectedEffect?.kind == "notify" {
-                TextField(Strings.t("rules.notifyTitleField", default: "Notification title"), text: $notifyTitle)
-                TextField(Strings.t("rules.notifyTextField", default: "Notification text (optional)"), text: $notifyText)
-                Picker(Strings.t("rules.showAs", default: "Show as"), selection: $notifyChannel) {
-                    Text(Strings.t("rules.systemNotification", default: "System notification")).tag("system")
-                    Text(Strings.t("rules.inAppBanner", default: "In-app banner")).tag("app")
-                }
-                if notifyChannel == "system" {
-                    Text(Strings.t("rules.notifyChannelHint", default: "Appears in Notification Center -- persists in history, shows on the lock screen, and respects Focus. Needs the packaged app; a dev run falls back to the in-app banner."))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if selectedEffect?.kind == "layout" {
+            // The rule AS AN EDITABLE SENTENCE -- a row of token pills, each a
+            // tappable popover over the SAME @State the Pickers bound. The engine,
+            // buildSpec, loadForEdit, canSubmit and the seeders are all unchanged.
+            sentenceRow
+            // chain/layout don't fit inline tokens: the effect-verb pill ("arrange
+            // windows" / "do several things") is the stem, and the existing block
+            // editor renders here beneath the row ("stem + block").
+            if selectedEffect?.kind == "layout" {
                 layoutEditor
-            } else if selectedEffect?.kind == "runShortcut" {
-                TextField(Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"), text: $shortcutName)
-                Text(Strings.t("rules.runShortcutHint", default: "Runs a macOS Shortcut -- the escape hatch to Focus/DND, volume, HomeKit, and anything Shortcuts can do."))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if selectedEffect?.kind == "openURL" {
-                TextField(Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)"), text: $openURLValue)
-            } else if selectedEffect?.kind == "solidWallpaper" {
-                solidWallpaperEditor
-            } else if appTargetKinds.contains(selectedEffect?.kind ?? "") {
-                minimizeAppEditor
             } else if selectedEffect?.kind == "chain" {
                 chainEditor
+            }
+            // The engine's grammatical read-back, beneath the tokens -- it confirms
+            // the sentence reads right and is a live drift-check on the token order.
+            readBackLine
+            // The footgun warning stays INLINE (not only in the app pill's popover):
+            // minimizing "it" on the GAINS-focus edge fires the instant you open the
+            // app. Else, a from-trigger ("it") effect just gets the can't-Test note.
+            if minimizeBecomesFootgun {
+                Label(Strings.t("rules.minimizeBecomesWarning", default: "This acts on the app the moment it gains focus -- you'd never keep it open. Switch the transition to \"loses focus\" to act when you click away."),
+                      systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if effectUsesTriggerContext {
+                Label(Strings.t("rules.reactsToTrigger", default: "Reacts to its trigger -- no \"Test\" for it (the real event supplies \"it\")."),
+                      systemImage: "info.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             }   // end of the Form-mode (!advanced) fields
 
@@ -500,7 +484,9 @@ private struct AddRuleForm: View {
                     Button(isEditing ? Strings.t("rules.saveChanges", default: "Save changes") : Strings.t("rules.addRule", default: "Add rule")) {
                         advanced ? submitJSON() : submit()
                     }
-                    .disabled(!canSubmit)
+                    // Editing: also require an actual change, so "Save changes" isn't
+                    // offered for a no-op. Adding: canSubmit alone governs.
+                    .disabled(!canSubmit || (isEditing && !hasPendingChanges))
                 }
             }
         }
@@ -550,6 +536,11 @@ private struct AddRuleForm: View {
         // the saved spec stays sound (applies in edit mode too).
         .onChange(of: triggerType) { _ in demoteOrphanedTriggerParams() }
         .onChange(of: transition) { _ in demoteOrphanedTriggerParams() }
+        // Off for the whole form (inline fields AND popover content inherit it) so
+        // a macOS autocorrect/autofill can't silently land in an identifier field
+        // (an app name, URL, or a notify title -- the "android studio"-in-description
+        // class of stray save). Propagates into .popover content via the environment.
+        .autocorrectionDisabled()
     }
 
     // The advanced raw-JSON editor for one rule's full spec. Saving validates
@@ -703,6 +694,306 @@ private struct AddRuleForm: View {
               let data = try? JSONSerialization.data(withJSONObject: spec),
               let json = String(data: data, encoding: .utf8) else { return "" }
         return store.ruleSentence(json)
+    }
+
+    // --- Token sentence (the editable read-back) -------------------------------
+    // The rule rendered as a wrapping row of pill tokens. Each pill opens a popover
+    // bound to the SAME @State the old Pickers used, so buildSpec/loadForEdit/the
+    // engine are untouched -- this is a pure presentation swap (see the plan). The
+    // word ORDER mirrors rules.sentence (entity "value verb" / property "the label
+    // verb value" / event-schedule lead); the engine read-back beneath is the
+    // grammatical authority and a drift check.
+    @ViewBuilder private var sentenceRow: some View {
+        FlowLayout(hSpacing: 6, vSpacing: 8) {
+            triggerTokens
+            sentenceWord(",")
+            effectTokens
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+    }
+
+    // A plain (non-tappable) word in the sentence: "When"/"Every" lead, or an
+    // inline connective ("the appearance", ",", "on", "do:").
+    private func sentenceWord(_ s: String, lead: Bool = false) -> some View {
+        Text(s).font(lead ? .title3 : .body).foregroundStyle(.primary)
+    }
+
+    @ViewBuilder private var triggerTokens: some View {
+        sentenceWord(triggerType == "schedule"
+            ? Strings.t("rules.lead.every", default: "Every")
+            : Strings.t("rules.lead.when", default: "When"), lead: true)
+        if isStateTrigger {
+            if meta?.provides != nil {
+                triggerValuePill          // entity: "<value> <verb>"
+                verbPill
+            } else {
+                sentenceWord("the " + (meta?.label ?? signal).lowercased())   // property
+                verbPill
+                triggerValuePill          // "the <label> <verb> <value>"
+            }
+        } else if triggerType == "event" {
+            sentenceWord(Strings.t("rules.lead.on", default: "on"))
+            TokenPill(text: eventName, help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches")) { triggerPopover }
+        } else {                          // schedule
+            schedulePill
+        }
+    }
+
+    // The trigger's main value pill -- ALSO carries the trigger-type switcher in its
+    // popover (the old "When" picker), so the reader edits the value and can repoint
+    // the whole trigger from one place. Muted while empty.
+    private var triggerValuePill: some View {
+        TokenPill(text: stateValue.isEmpty ? valueTokenPlaceholder : stateValue,
+                  muted: stateValue.isEmpty,
+                  help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches")) { triggerPopover }
+    }
+
+    private var verbPill: some View {
+        let verb = (transition == "becomes")
+            ? (meta?.enterVerb ?? Strings.t("rules.becomes", default: "becomes"))
+            : (meta?.leaveVerb ?? Strings.t("rules.leaves", default: "leaves"))
+        return TokenPill(text: verb, help: Strings.t("rules.tokenVerbHelp", default: "When it fires")) { verbPopover }
+    }
+
+    private var schedulePill: some View {
+        let label = scheduleMode == "everyMin"
+            ? String(format: Strings.t("rules.token.everyMin", default: "%d minutes"), everyMin)
+            : String(format: Strings.t("rules.token.dailyAt", default: "day at %@"), atTime)
+        return TokenPill(text: label, help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches")) { triggerPopover }
+    }
+
+    @ViewBuilder private var effectTokens: some View {
+        effectVerbPill
+        let kind = selectedEffect?.kind ?? ""
+        switch kind {
+        case "notify":
+            TokenPill(text: notifyTitle.isEmpty ? Strings.t("rules.token.aTitle", default: "a title")
+                                                : "\u{201C}\(notifyTitle)\u{201D}",
+                      muted: notifyTitle.isEmpty) { notifyPopover }
+        case "runShortcut":
+            TokenPill(text: shortcutName.isEmpty ? Strings.t("rules.token.aShortcut", default: "a Shortcut")
+                                                 : "\u{201C}\(shortcutName)\u{201D}",
+                      muted: shortcutName.isEmpty) { fieldPopover($shortcutName, Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"), hint: Strings.t("rules.runShortcutHint", default: "Runs a macOS Shortcut -- the escape hatch to Focus/DND, volume, HomeKit, and anything Shortcuts can do.")) }
+        case "openURL":
+            TokenPill(text: openURLValue.isEmpty ? Strings.t("rules.token.aURL", default: "a URL") : openURLValue,
+                      muted: openURLValue.isEmpty) { fieldPopover($openURLValue, Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)")) }
+        case "solidWallpaper":
+            TokenPill(text: wallpaperSummary, anaphor: solidDisplay.hasPrefix("@trigger:")) { solidWallpaperEditor.frame(minWidth: 280) }
+        case "minimizeApp", "hideApp", "quitApp":
+            if minimizeAppName.hasPrefix("@trigger:") {
+                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp) { minimizeAppEditor.frame(minWidth: 300) }
+            } else {
+                TokenPill(text: minimizeAppName.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : minimizeAppName,
+                          muted: minimizeAppName.isEmpty) { minimizeAppEditor.frame(minWidth: 300) }
+            }
+        case "layout", "chain":
+            // "stem + block": the effect-verb pill ("arrange windows" / "do several
+            // things") is the stem; the existing layoutEditor/chainEditor block
+            // renders beneath the row (in the body), so no inline param pill here.
+            EmptyView()
+        default:
+            EmptyView()   // lockScreen / command -- the verb pill says it all
+        }
+    }
+
+    private var effectVerbPill: some View {
+        TokenPill(text: effectVerbLabel(selectedEffect?.kind),
+                  help: Strings.t("rules.tokenEffectHelp", default: "What to do when it fires")) { effectVerbPopover }
+    }
+
+    // --- token popovers (reuse the old field clusters) -------------------------
+    @ViewBuilder private var triggerPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker(Strings.t("rules.when", default: "When"), selection: $triggerType) {
+                ForEach(opts.signals, id: \.self) { Text(signalLabel($0)).tag("state:" + $0) }
+                Text(Strings.t("rules.systemEvent", default: "System event")).tag("event")
+                Text(Strings.t("rules.schedule", default: "Schedule")).tag("schedule")
+            }
+            Divider()
+            if isStateTrigger {
+                HStack {
+                    TextField(valuePlaceholder, text: $stateValue)
+                    if !candidates.isEmpty {
+                        Menu {
+                            ForEach(candidates, id: \.self) { c in Button(c) { stateValue = c } }
+                        } label: { Image(systemName: "list.bullet") }
+                        .menuStyle(.borderlessButton).frame(width: 32)
+                        .help(Strings.t("rules.pickSuggested", default: "Pick a suggested value"))
+                    }
+                }
+                if let warning = stateValueWarning {
+                    Text(warning).font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if triggerType == "event" {
+                Picker(Strings.t("rules.event", default: "Event"), selection: $eventName) {
+                    ForEach(opts.events, id: \.self) { Text($0).tag($0) }
+                }
+            } else {
+                Picker(Strings.t("rules.mode", default: "Mode"), selection: $scheduleMode) {
+                    Text(Strings.t("rules.everyNMinutes", default: "Every N minutes")).tag("everyMin")
+                    Text(Strings.t("rules.dailyAt", default: "Daily at")).tag("at")
+                }
+                if scheduleMode == "everyMin" {
+                    Stepper(String(format: Strings.t("rules.everyMinStepper", default: "Every %d min"), everyMin), value: $everyMin, in: 1...1440)
+                } else {
+                    TextField(Strings.t("rules.hhmm", default: "HH:MM"), text: $atTime)
+                    if !Self.isValidHHMM(atTime) {
+                        Text(Strings.t("rules.hhmmHint", default: "Enter a 24-hour time like 09:00 or 23:30."))
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 300)
+    }
+
+    // The verb popover -- each edge with its TIMING subtitle underneath (the
+    // footgun-killer: "gains focus -- the moment you switch to it" vs "loses focus
+    // -- the moment you click away"). Timing comes from signals.meta (enterWhen/
+    // leaveWhen); a signal without it shows just the verb.
+    @ViewBuilder private var verbPopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            transitionRow("becomes",
+                          meta?.enterVerb ?? Strings.t("rules.becomes", default: "becomes"),
+                          meta?.enterWhen)
+            Divider().padding(.vertical, 3)
+            transitionRow("leaves",
+                          meta?.leaveVerb ?? Strings.t("rules.leaves", default: "leaves"),
+                          meta?.leaveWhen)
+        }
+        .frame(minWidth: 240)
+    }
+
+    private func transitionRow(_ edge: String, _ verb: String, _ when: String?) -> some View {
+        Button { transition = edge } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.tint)
+                    .opacity(transition == edge ? 1 : 0)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verb).font(.body)
+                        .foregroundStyle(transition == edge ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                    if let when, !when.isEmpty {
+                        Text(when).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder private var effectVerbPopover: some View {
+        Picker(Strings.t("rules.do", default: "Do"), selection: $effectId) {
+            ForEach(opts.effects) { Text($0.label).tag($0.id) }
+        }
+        .pickerStyle(.inline).labelsHidden().frame(minWidth: 240)
+    }
+
+    @ViewBuilder private var notifyPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(Strings.t("rules.notifyTitleField", default: "Notification title"), text: $notifyTitle)
+            TextField(Strings.t("rules.notifyTextField", default: "Notification text (optional)"), text: $notifyText)
+            Picker(Strings.t("rules.showAs", default: "Show as"), selection: $notifyChannel) {
+                Text(Strings.t("rules.systemNotification", default: "System notification")).tag("system")
+                Text(Strings.t("rules.inAppBanner", default: "In-app banner")).tag("app")
+            }
+            // The one non-obvious behavior: "System" silently falls back to the
+            // in-app banner on an unpackaged/dev run. Keep this surfaced.
+            if notifyChannel == "system" {
+                Text(Strings.t("rules.notifyChannelHint", default: "Appears in Notification Center -- persists in history, shows on the lock screen, and respects Focus. Needs the packaged app; a dev run falls back to the in-app banner."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(minWidth: 300)
+    }
+
+    // A one-field text popover (runShortcut name / openURL url), with an optional
+    // discoverability hint beneath (e.g. "what is a Shortcut effect for").
+    @ViewBuilder private func fieldPopover(_ text: Binding<String>, _ placeholder: String, hint: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(placeholder, text: text)
+            if let hint {
+                Text(hint).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(minWidth: 300)
+    }
+
+    // --- token labels ----------------------------------------------------------
+    private func effectVerbLabel(_ kind: String?) -> String {
+        switch kind {
+        case "notify":         return Strings.t("rules.verb.notify", default: "notify")
+        case "lockScreen":     return Strings.t("rules.verb.lock", default: "lock the screen")
+        case "solidWallpaper": return Strings.t("rules.verb.wallpaper", default: "set wallpaper")
+        case "minimizeApp":    return Strings.t("rules.verb.minimize", default: "minimize")
+        case "hideApp":        return Strings.t("rules.verb.hide", default: "hide")
+        case "quitApp":        return Strings.t("rules.verb.quit", default: "quit")
+        case "openURL":        return Strings.t("rules.verb.open", default: "open")
+        case "runShortcut":    return Strings.t("rules.verb.runShortcut", default: "run Shortcut")
+        case "layout":         return Strings.t("rules.verb.layout", default: "arrange windows")
+        case "chain":          return Strings.t("rules.verb.chain", default: "do several things")
+        default:               return selectedEffect?.label ?? (kind ?? "")   // command -> "Run: <label>"
+        }
+    }
+
+    private func colorLabel(_ hex: String) -> String {
+        switch hex.uppercased() {
+        case "#FFFFFF": return Strings.t("rules.colorWhite", default: "White").lowercased()
+        case "#F2F2F2": return Strings.t("rules.colorLightGray", default: "Light gray").lowercased()
+        case "#808080": return Strings.t("rules.colorMidGray", default: "Mid gray").lowercased()
+        case "#000000": return Strings.t("rules.colorBlack", default: "Black").lowercased()
+        default:        return hex
+        }
+    }
+
+    private var wallpaperSummary: String {
+        let where_: String
+        if solidDisplay.hasPrefix("@trigger:") {
+            where_ = Strings.t("rules.token.it", default: "it")
+        } else {
+            switch solidDisplay {
+            case "all":      where_ = Strings.t("rules.solidAllDisplaysShort", default: "all displays")
+            case "external": where_ = Strings.t("rules.solidExternalShort", default: "external displays")
+            case "primary":  where_ = Strings.t("rules.solidMainShort", default: "the main display")
+            default:         where_ = solidDisplay.isEmpty ? Strings.t("rules.token.aDisplay", default: "a display") : solidDisplay
+            }
+        }
+        return String(format: Strings.t("rules.token.wallpaperSummary", default: "%@ on %@"), colorLabel(solidColor), where_)
+    }
+
+    private var valueTokenPlaceholder: String {
+        switch meta?.provides {
+        case "app":     return Strings.t("rules.token.anApp", default: "an app")
+        case "display": return Strings.t("rules.token.aDisplay", default: "a display")
+        default:        return (meta?.valueLabel ?? Strings.t("rules.token.value", default: "a value")).lowercased()
+        }
+    }
+
+    private var itHelp: String {
+        Strings.t("rules.token.itHelp", default: "The app/display from the trigger -- resolved when the rule fires")
+    }
+
+    // True when an effect param is bound to the trigger (an "it" pill is showing) --
+    // such a rule reacts to its trigger and can't be Test-fired in isolation.
+    private var effectUsesTriggerContext: Bool {
+        (appTargetKinds.contains(selectedEffect?.kind ?? "") && minimizeAppName.hasPrefix("@trigger:"))
+            || (selectedEffect?.kind == "solidWallpaper" && solidDisplay.hasPrefix("@trigger:"))
+    }
+
+    // The exact dangerous combo the redesign exists to prevent: minimize/hide/quit
+    // the app FROM THE TRIGGER on the GAINS-focus edge -- it fires the instant you
+    // open the app, so you'd never keep it open. Warrants an inline warning (not
+    // just the one inside the app pill's popover).
+    private var minimizeBecomesFootgun: Bool {
+        appTargetKinds.contains(selectedEffect?.kind ?? "")
+            && minimizeAppName.hasPrefix("@trigger:")
+            && signal == "frontmostApp" && transition == "becomes"
     }
 
     // --- Recipe gallery (the "New rule" landing) -------------------------------
@@ -1090,6 +1381,24 @@ private struct AddRuleForm: View {
         return selectedEffect != nil
     }
 
+    // The form's CURRENT spec as canonical JSON (sorted keys -> stable string),
+    // for the dirty check. Built from @State via buildSpec, so it compares like
+    // with like against loadedFormJSON (the same builder ran it at load time);
+    // "" when the form is too incomplete to build (which canSubmit also blocks).
+    private func formSpecJSON() -> String {
+        guard let spec = buildSpec(),
+              let data = try? JSONSerialization.data(withJSONObject: spec, options: [.sortedKeys]),
+              let s = String(data: data, encoding: .utf8) else { return "" }
+        return s
+    }
+
+    // In EDIT mode, has anything actually changed from the loaded rule? Drives the
+    // Save button's disabled state so "Save changes" isn't offered for a no-op.
+    // JSON mode uses its own seed comparison; the form uses the spec baseline.
+    private var hasPendingChanges: Bool {
+        advanced ? (jsonText != jsonSeed) : (formSpecJSON() != loadedFormJSON)
+    }
+
     private func reloadOptions() {
         opts = store.ruleFormOptions()
         // If the selected state signal vanished, fall back to the first available.
@@ -1130,6 +1439,7 @@ private struct AddRuleForm: View {
         advanced = false
         jsonText = ""
         jsonSeed = ""
+        loadedFormJSON = ""   // add mode uses canSubmit, not the dirty baseline
         formDirty = false
         showGallery = true   // a fresh "New rule" lands on the recipe gallery
     }
@@ -1230,6 +1540,10 @@ private struct AddRuleForm: View {
         // "@trigger:display" on a non-display rule) -> demote to a valid literal so
         // Save can't re-persist an unresolvable binding.
         demoteOrphanedTriggerParams()
+        // Snapshot the loaded form as the dirty-check baseline (after demotion, so a
+        // pure load reads as "no changes"). Captured from the SAME builder the check
+        // uses, so an untouched form compares equal.
+        loadedFormJSON = formSpecJSON()
     }
 
     private func submit() {
