@@ -2030,6 +2030,29 @@ lf = lastFrame()
 ok(lf.x == 0 and lf.y == 0 and lf.w == 1000 and lf.h == 800,
     "oversized throw clamps to the target screen")
 
+-- thirds (the ported grid cell-placement: a 3-wide grid). Dormant actions with
+-- no trigger -> fire them via registry.runAction. Clean 1200-wide screen so the
+-- columns are integers. Scoped in a `do` block to keep its locals off the main
+-- chunk (Lua caps a function at 200 locals; this file is one flat chunk).
+do
+    fake.screenList = { { x = 0, y = 0, w = 1200, h = 900 } }
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+    local function third(actionId)
+        assert(registry.runAction("window_snap", actionId))
+        return lastFrame()
+    end
+    lf = third("left_third")
+    ok(lf.x == 0 and lf.y == 0 and lf.w == 400 and lf.h == 900, "left third = first column of a 3-grid")
+    lf = third("center_third")
+    ok(lf.x == 400 and lf.w == 400 and lf.h == 900, "center third = middle column")
+    lf = third("right_third")
+    ok(lf.x == 800 and lf.w == 400, "right third = last column")
+    lf = third("left_two_thirds")
+    ok(lf.x == 0 and lf.w == 800, "left two-thirds spans the first two columns")
+    lf = third("right_two_thirds")
+    ok(lf.x == 400 and lf.w == 800, "right two-thirds spans the last two columns")
+end
+
 -- no focused window -> plain alert (trusted)
 fake.focusedWindow = nil
 fake.pressHotkey("left", AC)
@@ -2169,6 +2192,76 @@ frameEq(W.moveToScreen({ x = 0, y = 0, w = 1000, h = 800 }, s1, { x = 1000, y = 
 frameEq(W.moveToScreen({ x = 100, y = 100, w = 1500, h = 1000 }, s1, { x = 1000, y = 0, w = 800, h = 600 },
     { keepSize = true }),
     1000, 0, 800, 600, "moveToScreen keepSize: shrinks to fit and clamps inside")
+
+-- T25d: windows.gridCellToFrame -- the ported grid cell-placement algorithm ------
+-- A 3x1 grid on a 1200x900 screen -> 400-wide full-height columns. `do`-scoped
+-- to keep its locals off the flat main chunk (Lua's 200-locals-per-function cap).
+do
+    local g3 = { w = 3, h = 1 }
+    local gs = { x = 0, y = 0, w = 1200, h = 900 }
+    frameEq(W.gridCellToFrame(gs, g3, { x = 0, y = 0, w = 1, h = 1 }),
+        0, 0, 400, 900, "gridCellToFrame: left column of a 3x1 grid")
+    frameEq(W.gridCellToFrame(gs, g3, { x = 1, y = 0, w = 2, h = 1 }),
+        400, 0, 800, 900, "gridCellToFrame: a 2-column span from offset 1")
+    -- A 2x2 grid with a 10pt gutter insets each placed cell on every side.
+    frameEq(W.gridCellToFrame({ x = 0, y = 0, w = 1000, h = 800 }, { w = 2, h = 2 },
+        { x = 0, y = 0, w = 1, h = 1 }, { x = 10, y = 10 }),
+        10, 10, 480, 380, "gridCellToFrame: a margin insets each window by the gutter")
+    -- The screen origin is honored (placed relative to a secondary screen's frame).
+    frameEq(W.gridCellToFrame({ x = 1000, y = 0, w = 1200, h = 900 }, g3, { x = 2, y = 0, w = 1, h = 1 }),
+        1800, 0, 400, 900, "gridCellToFrame: cell placed relative to the screen origin")
+end
+
+-- T25e: window_grid (two-keystroke grid placement -- Hyper+N then a cell digit) --
+do
+    registry.register(require("features.window_grid"))
+    registry.setEnabled("window_grid", true)
+    fake.screenList = { { x = 0, y = 0, w = 1200, h = 900 } }
+    fake.focusedWindow = { x = 0, y = 0, w = 100, h = 100, screenIndex = 1 }
+    local HYP = { "cmd", "alt", "ctrl" }
+
+    -- 3x3: Hyper+9 shows the numbered HUD; digit 2 lands the window top-middle
+    -- (cell 2 = row0,col1 -> x=400,y=0,400x300) and the mode exits (single-shot).
+    fake.pressHotkey("9", HYP)
+    ok(fake.liveHud() ~= nil and fake.liveHud().title == "3×3 Grid",
+        "Hyper+9 shows the 3x3 grid HUD")
+    fake.pressHotkey("2", {})
+    local gf = fake.windowFrames[#fake.windowFrames]
+    ok(gf.x == 400 and gf.y == 0 and gf.w == 400 and gf.h == 300,
+        "3x3 cell 2 -> top-middle (col1,row0)")
+    ok(fake.liveHud() == nil, "placing exits the grid (single-shot)")
+
+    -- 2x2: Hyper+4 -> digit 3 lands bottom-left (cell 3 = row1,col0 -> 0,450,600x450).
+    fake.pressHotkey("4", HYP)
+    ok(fake.liveHud() ~= nil and fake.liveHud().title == "2×2 Grid",
+        "Hyper+4 shows the 2x2 grid HUD")
+    fake.pressHotkey("3", {})
+    gf = fake.windowFrames[#fake.windowFrames]
+    ok(gf.x == 0 and gf.y == 450 and gf.w == 600 and gf.h == 450,
+        "2x2 cell 3 -> bottom-left (col0,row1)")
+
+    -- esc cancels with no placement.
+    local nBefore = #fake.windowFrames
+    fake.pressHotkey("9", HYP)
+    ok(fake.liveHud() ~= nil, "re-enter shows the HUD again")
+    fake.pressHotkey("escape", {})
+    ok(fake.liveHud() == nil and #fake.windowFrames == nBefore,
+        "esc cancels the grid without placing")
+
+    -- no focused window -> alert, never an empty grid.
+    fake.focusedWindow = nil
+    fake.pressHotkey("9", HYP)
+    ok(fake.liveHud() == nil, "no focused window -> no grid shown")
+
+    -- disabling mid-grid (HUD live) tears the HUD + digit bindings down, no leak.
+    fake.focusedWindow = { x = 0, y = 0, w = 100, h = 100, screenIndex = 1 }
+    fake.pressHotkey("9", HYP)
+    ok(fake.liveHud() ~= nil, "grid HUD is up before the disable")
+    registry.setEnabled("window_grid", false)
+    ok(fake.liveHud() == nil, "disable mid-grid drops the HUD")
+    ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
+        "clean after window_grid test")
+end
 
 -- T26: tab_switcher (cross-browser tab switcher, MRU-first) ----------------------
 local jsonlib = require("platform.json")

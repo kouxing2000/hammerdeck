@@ -3,6 +3,13 @@
 -- own, every native call goes through the ctx passed in. Only the genuinely
 -- identical code lives here; the divergent throw / fullscreen-guard math stays
 -- in each feature.
+--
+-- Also the home for the ported Hammerspoon pure-Lua window algorithms (the
+-- tiling/grid math -- just arithmetic over screen/window rects). They land here
+-- because they are exactly this module's kind of code: pure rect math, zero
+-- require, native only via a frame the caller already fetched. See
+-- docs/HAMMERSPOON_EMBEDDING.md ("lift the MIT algorithms, keep the engine
+-- ours") and docs/specs/CTX_DOMAIN_NAMESPACES_SPEC.md (Phase 2).
 
 local M = {}
 
@@ -55,6 +62,46 @@ function M.moveToScreen(f, s, t, opts)
         if not keepSize and nf.y < t.y then nf.y, nf.h = t.y, t.h end
     end
     return nf
+end
+
+-- ---------------------------------------------------------------------------
+-- Ported grid algorithm (Hammerspoon hs.grid, MIT). Pure rect arithmetic.
+-- ---------------------------------------------------------------------------
+
+--- Convert a GRID CELL to a pixel frame (hs.grid's "place window in cell").
+--- The screen's visible frame is divided into `dims.w` columns x `dims.h` rows
+--- of equal cells; `cell` names a region of that grid in CELL UNITS -- {x,y} is
+--- the 0-based top-left cell it starts at, {w,h} how many cells it spans. So on
+--- a 3x1 grid, {x=0,w=1} is the left third and {x=1,w=2} the right two-thirds.
+--- This generalizes rectFromRatios from continuous fractions to an integer grid:
+--- the whole fraction-tiling family (halves, thirds, quarters, sixths) is one
+--- call with the matching dims/cell, no per-ratio arithmetic at the call site.
+---
+--- Optional `margin` {x,y} is a GUTTER: each placed window is inset by that many
+--- points on every side, so adjacent cells leave a visible gap (hs.grid's
+--- margins). Default 0 = flush tiling, matching the rest of this module.
+---
+--- Pure: no native calls. The caller passes the screen frame it already has
+--- (e.g. focusedOrAlert's `f.screen`) and hands the result to ctx.window.setFrame.
+---@param s {x:number,y:number,w:number,h:number} screen visible frame
+---@param dims {w:integer,h:integer} grid size: columns x rows
+---@param cell {x:number,y:number,w:number,h:number} cell offset + span, in grid units
+---@param margin {x:number,y:number}|nil per-window inset (gutter); default 0
+---@return {x:number,y:number,w:number,h:number}
+function M.gridCellToFrame(s, dims, cell, margin)
+    assert(dims.w > 0 and dims.h > 0,
+        "gridCellToFrame: grid dims must be positive (got " ..
+        tostring(dims.w) .. "x" .. tostring(dims.h) .. ")")
+    local mx = (margin and margin.x) or 0
+    local my = (margin and margin.y) or 0
+    local cw = s.w / dims.w
+    local ch = s.h / dims.h
+    return {
+        x = s.x + cell.x * cw + mx,
+        y = s.y + cell.y * ch + my,
+        w = cell.w * cw - 2 * mx,
+        h = cell.h * ch - 2 * my,
+    }
 end
 
 -- ---------------------------------------------------------------------------

@@ -5,11 +5,12 @@ import AppKit
 
 // MARK: - Window Mode HUD (spatial cheat-sheet for a modal arranging layer)
 
-/// A dark vibrancy HUD card that replaces the old red banner for Window Mode.
-/// Its hero is a 3x3 spatial map -- each cell holds the key(s) that snap the
-/// focused window to that region (H = left half, Y = NW corner, F/C = center,
-/// ...) so the layout teaches itself -- with grouped key-cap rows beneath for
-/// the non-spatial keys (nudge / resize / screen / undo).
+/// A dark vibrancy HUD card (originally Window Mode's red-banner replacement,
+/// now a generic cols x rows renderer also driving window_grid). Its hero is a
+/// spatial grid map -- each cell holds the key(s) that drop the focused window
+/// into that region (Window Mode: H = left half, Y = NW corner, F/C = center;
+/// window_grid: a cell digit) so the layout teaches itself -- with grouped
+/// key-cap rows beneath for the non-spatial keys (nudge / resize / screen / undo).
 ///
 /// Content is fully data-driven from the feature (`window_modal` builds the
 /// spec, it crosses the seam as a plain table) so this stays a generic renderer
@@ -26,6 +27,8 @@ final class WindowModeHUDPanel {
 
     struct Spec {
         let title: String
+        let cols: Int
+        let rows: Int
         let cells: [Cell]
         let caption: String?
         let groups: [Group]
@@ -34,6 +37,12 @@ final class WindowModeHUDPanel {
         /// Parse the loosely-typed table that crosses the Lua seam.
         init(_ dict: [String: Any]) {
             title = dict["title"] as? String ?? "Window Mode"
+            // Grid size is data-driven so the spatial map fits any N x M (e.g.
+            // window_grid's 2x2 / 3x3); defaults to 3x3 for Window Mode, which
+            // omits them. cols/rows are first-party integer literals; max(1,...)
+            // floors them at 1 so diagramView's divisor can never reach zero.
+            cols = max(1, (dict["cols"] as? Double).map { Int($0) } ?? 3)
+            rows = max(1, (dict["rows"] as? Double).map { Int($0) } ?? 3)
             caption = dict["caption"] as? String
             footer = dict["footer"] as? String
             cells = (dict["cells"] as? [Any] ?? []).compactMap { Self.cell($0) }
@@ -56,10 +65,12 @@ final class WindowModeHUDPanel {
     }
 
     private let panel: NSPanel
-    private let cols = 3
-    private let rows = 3
+    private let cols: Int
+    private let rows: Int
 
     init(spec: Spec) {
+        cols = spec.cols
+        rows = spec.rows
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
@@ -138,8 +149,8 @@ final class WindowModeHUDPanel {
         return f
     }
 
-    /// The 3x3 spatial map: a bordered "screen" with each cell's key-cap(s)
-    /// centered where they snap.
+    /// The spatial grid map (cols x rows): a bordered "screen" with each cell's
+    /// key-cap(s) centered where they snap.
     private func diagramView(_ cells: [Cell]) -> NSView {
         let cellW: CGFloat = 72, cellH: CGFloat = 42
         let pad: CGFloat = 6

@@ -40,6 +40,16 @@ local function arranger(ctx)
         ctx.window.setFrame(W.rectFromRatios(f.screen, xR, yR, wR, hR))
     end
 
+    -- Snap to a cell of a `cols` x `rows` grid: cell {cx,cy} 0-based offset,
+    -- {cw,ch} span (the ported grid algorithm -- windows.gridCellToFrame). Thirds
+    -- ride a 3x1 grid; flush (no gutter), matching the halves.
+    function a.snapGrid(cols, rows, cx, cy, cw, ch)
+        local f = focused()
+        if not f then return end
+        ctx.window.setFrame(W.gridCellToFrame(f.screen,
+            { w = cols, h = rows }, { x = cx, y = cy, w = cw, h = ch }))
+    end
+
     -- Maximized (full width or height) -> centered 75%; else maximize.
     function a.toggleMax()
         local f = focused()
@@ -125,6 +135,28 @@ return {
           defaultTrigger = { type = "hotkey", mods = MODS, key = "down" },
           mnemonic = "Hyper+↓ — the arrow points to the edge",
           run = function(ctx) with(ctx).snap(0, 0.5, 1, 0.5) end },
+
+        -- Thirds (a 3-wide grid). No default trigger -- there is no natural
+        -- arrow for a third, and grabbing five more global hotkeys uninvited is
+        -- worse than leaving them dormant: each is fireable from the menubar and
+        -- bindable to any key/chord in Settings. The columns-of-three idiom
+        -- (Rectangle/Magnet) is the most-requested snap the halves don't cover.
+        { id = "left_third", label = "Left third",
+          description = "Move the focused window to the left third of the screen.",
+          run = function(ctx) with(ctx).snapGrid(3, 1, 0, 0, 1, 1) end },
+        { id = "center_third", label = "Center third",
+          description = "Move the focused window to the center third of the screen.",
+          run = function(ctx) with(ctx).snapGrid(3, 1, 1, 0, 1, 1) end },
+        { id = "right_third", label = "Right third",
+          description = "Move the focused window to the right third of the screen.",
+          run = function(ctx) with(ctx).snapGrid(3, 1, 2, 0, 1, 1) end },
+        { id = "left_two_thirds", label = "Left two-thirds",
+          description = "Move the focused window to the left two-thirds of the screen.",
+          run = function(ctx) with(ctx).snapGrid(3, 1, 0, 0, 2, 1) end },
+        { id = "right_two_thirds", label = "Right two-thirds",
+          description = "Move the focused window to the right two-thirds of the screen.",
+          run = function(ctx) with(ctx).snapGrid(3, 1, 1, 0, 2, 1) end },
+
         { id = "toggle_max", label = "Maximize / 75%",
           description = "Toggle the focused window between maximized and 75% centered.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "return" },
