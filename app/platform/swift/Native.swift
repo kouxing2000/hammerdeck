@@ -197,6 +197,7 @@ final class Native {
             "run_shortcut": { L in MainActor.assumeIsolated { Native.shared.runShortcut(L) } },
             "display_sleep": { L in MainActor.assumeIsolated { Native.shared.displaySleep(L) } },
             "start_screensaver": { L in MainActor.assumeIsolated { Native.shared.startScreensaver(L) } },
+            "say": { L in MainActor.assumeIsolated { Native.shared.speak(L) } },
         ]
         for chunk in [fns2, fns3, fns4, fns5] { fns.merge(chunk) { current, _ in current } }
         lua.registerTable("native", fns)

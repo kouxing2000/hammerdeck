@@ -525,6 +525,11 @@ function adapter.runShortcut(name)
     fake.shortcutsRun[#fake.shortcutsRun + 1] = name
 end
 
+fake.spokenTexts = {}    -- recorded say() lines
+function adapter.say(text)
+    fake.spokenTexts[#fake.spokenTexts + 1] = text
+end
+
 function adapter.activateApp(name)
     if fake.runningApps[name] then
         fake.activatedApps[#fake.activatedApps + 1] = name

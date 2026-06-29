@@ -715,4 +715,9 @@ function adapter.runShortcut(name)
     native.run_shortcut(name)
 end
 
+-- Speak a line aloud through the system speech synthesizer (fire-and-forget).
+function adapter.say(text)
+    native.say(text)
+end
+
 return adapter

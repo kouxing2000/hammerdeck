@@ -3441,6 +3441,17 @@ do
     effects.dispatch({ kind = "startScreensaver" })
     ok(fake.actions.screensaver == nSS + 1, "startScreensaver dispatch starts the screensaver")
 
+    -- speak: a context-free parameterized effect (a spoken sibling of notify)
+    ok(effects.requiresContext({ kind = "speak", text = "hi" }) == false, "speak is context-free")
+    ok(pcall(effects.validate, { kind = "speak", text = "hello" }) == true, "speak validates with text")
+    ok(pcall(effects.validate, { kind = "speak" }) == false, "speak requires text")
+    ok(pcall(effects.validate, { kind = "speak", text = "" }) == false, "speak rejects empty text")
+    ok(effects.describe({ kind = "speak", text = "Standup" }) == 'Say "Standup"', "describe labels a speak effect")
+    local nSp = #fake.spokenTexts
+    effects.dispatch({ kind = "speak", text = "Battery low" })
+    ok(#fake.spokenTexts == nSp + 1 and fake.spokenTexts[#fake.spokenTexts] == "Battery low",
+        "speak dispatch says the text")
+
     -- end-to-end on an automated trigger: on wake -> run a Shortcut
     rules.add({ on = { type = "event", event = "wake" },
                 effect = { kind = "runShortcut", name = "Morning" } })

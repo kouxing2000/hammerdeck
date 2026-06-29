@@ -338,15 +338,17 @@ private struct ChainStep: Identifiable {
     var notifyChannel: String = "system"
     var shortcutName: String = ""
     var url: String = ""
+    var speakText: String = ""
 }
 private let chainStepKinds: [(id: String, label: String)] = [
     ("notify", Strings.t("rules.chainKindNotify", default: "Notify")),
+    ("speak", Strings.t("rules.chainKindSpeak", default: "Speak text aloud")),
     ("runShortcut", Strings.t("rules.chainKindRunShortcut", default: "Run a Shortcut")),
     ("openURL", Strings.t("rules.chainKindOpenURL", default: "Open a URL")),
     ("lockScreen", Strings.t("rules.chainKindLockScreen", default: "Lock the screen")),
     ("startScreensaver", Strings.t("rules.chainKindScreensaver", default: "Start the screensaver")),
 ]
-private let chainStepSimpleKinds: Set<String> = ["notify", "runShortcut", "openURL", "lockScreen", "startScreensaver"]
+private let chainStepSimpleKinds: Set<String> = ["notify", "speak", "runShortcut", "openURL", "lockScreen", "startScreensaver"]
 
 private struct AddRuleForm: View {
     @ObservedObject var store: SettingsStore
@@ -378,6 +380,7 @@ private struct AddRuleForm: View {
     @State private var chainSteps: [ChainStep] = []   // the chain effect's ordered steps
     @State private var shortcutName = ""              // runShortcut
     @State private var openURLValue = ""              // openURL
+    @State private var speakText = ""                 // speak
     @State private var wallpaperImage = ""             // setWallpaperImage: image file path
     @State private var solidColor = "#FFFFFF"          // solidWallpaper: preset hex
     // Empty until the effect is chosen, then seeded-if-empty (uniform with
@@ -659,6 +662,8 @@ private struct AddRuleForm: View {
                         Text(Strings.t("rules.chainSystem", default: "System")).tag("system")
                         Text(Strings.t("rules.chainInApp", default: "In-app")).tag("app")
                     }
+                case "speak":
+                    TextField(Strings.t("rules.speakField", default: "Text to speak aloud"), text: $chainSteps[i].speakText)
                 case "runShortcut":
                     TextField(Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"),
                               text: $chainSteps[i].shortcutName)
@@ -792,6 +797,10 @@ private struct AddRuleForm: View {
         case "openURL":
             TokenPill(text: openURLValue.isEmpty ? Strings.t("rules.token.aURL", default: "a URL") : openURLValue,
                       muted: openURLValue.isEmpty) { fieldPopover($openURLValue, Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)")) }
+        case "speak":
+            TokenPill(text: speakText.isEmpty ? Strings.t("rules.token.aLine", default: "a line")
+                                              : "\u{201C}\(speakText)\u{201D}",
+                      muted: speakText.isEmpty) { fieldPopover($speakText, Strings.t("rules.speakField", default: "Text to speak aloud")) }
         case "solidWallpaper":
             TokenPill(text: wallpaperSummary, anaphor: solidDisplay.hasPrefix("@trigger:")) { solidWallpaperEditor.frame(minWidth: 280) }
         case "setWallpaperImage":
@@ -968,6 +977,7 @@ private struct AddRuleForm: View {
         case "hideApp":        return Strings.t("rules.verb.hide", default: "hide")
         case "quitApp":        return Strings.t("rules.verb.quit", default: "quit")
         case "openURL":        return Strings.t("rules.verb.open", default: "open")
+        case "speak":          return Strings.t("rules.verb.speak", default: "say")
         case "runShortcut":    return Strings.t("rules.verb.runShortcut", default: "run Shortcut")
         case "layout":         return Strings.t("rules.verb.layout", default: "arrange windows")
         case "chain":          return Strings.t("rules.verb.chain", default: "do several things")
@@ -1340,6 +1350,7 @@ private struct AddRuleForm: View {
     private func chainStepComplete(_ s: ChainStep) -> Bool {
         switch s.kind {
         case "notify":      return !s.notifyTitle.trimmingCharacters(in: .whitespaces).isEmpty
+        case "speak":       return !s.speakText.trimmingCharacters(in: .whitespaces).isEmpty
         case "runShortcut": return !s.shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
         case "openURL":     return !s.url.trimmingCharacters(in: .whitespaces).isEmpty
         case "lockScreen", "startScreensaver":  return true
@@ -1358,6 +1369,7 @@ private struct AddRuleForm: View {
         s.notifyChannel = d["channel"] as? String ?? "app"
         s.shortcutName = d["name"] as? String ?? ""
         s.url = d["url"] as? String ?? ""
+        s.speakText = d["text"] as? String ?? ""
         return s
     }
 
@@ -1487,6 +1499,9 @@ private struct AddRuleForm: View {
         if selectedEffect?.kind == "openURL" {
             return !openURLValue.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        if selectedEffect?.kind == "speak" {
+            return !speakText.trimmingCharacters(in: .whitespaces).isEmpty
+        }
         if selectedEffect?.kind == "solidWallpaper" {
             return !solidDisplay.trimmingCharacters(in: .whitespaces).isEmpty
         }
@@ -1558,6 +1573,7 @@ private struct AddRuleForm: View {
         chainSteps = []
         shortcutName = ""
         openURLValue = ""
+        speakText = ""
         wallpaperImage = ""
         solidColor = "#FFFFFF"
         solidDisplay = ""
@@ -1607,7 +1623,7 @@ private struct AddRuleForm: View {
         // Clear all effect-specific fields first, so values from a previously-edited
         // rule (e.g. layout placements) can't bleed into one of a different kind --
         // the onChange(of: effectId) seeder only fills an EMPTY placement list.
-        placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""
+        placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""; speakText = ""
         wallpaperImage = ""; solidColor = "#FFFFFF"; solidDisplay = ""; minimizeAppName = ""
         moveApp = ""; moveDisplay = ""
         notifyTitle = AppInfo.displayName; notifyText = ""
@@ -1630,6 +1646,9 @@ private struct AddRuleForm: View {
         } else if kind == "openURL" {
             effectId = "openURL"
             openURLValue = effect["url"] as? String ?? ""
+        } else if kind == "speak" {
+            effectId = "speak"
+            speakText = effect["text"] as? String ?? ""
         } else if kind == "solidWallpaper" {
             effectId = "solidWallpaper"
             solidColor = effect["color"] as? String ?? "#FFFFFF"
@@ -1794,6 +1813,10 @@ private struct AddRuleForm: View {
             let u = openURLValue.trimmingCharacters(in: .whitespaces)
             guard !u.isEmpty else { return nil }
             effect = ["kind": "openURL", "url": u]
+        } else if eff.kind == "speak" {
+            let t = speakText.trimmingCharacters(in: .whitespaces)
+            guard !t.isEmpty else { return nil }
+            effect = ["kind": "speak", "text": t]
         } else if eff.kind == "solidWallpaper" {
             let d = solidDisplay.trimmingCharacters(in: .whitespaces)
             guard !d.isEmpty else { return nil }
@@ -1823,6 +1846,10 @@ private struct AddRuleForm: View {
                     let body = s.notifyText.trimmingCharacters(in: .whitespaces)
                     if !body.isEmpty { e["text"] = body }
                     return e
+                case "speak":
+                    let t = s.speakText.trimmingCharacters(in: .whitespaces)
+                    guard !t.isEmpty else { return nil }
+                    return ["kind": "speak", "text": t]
                 case "runShortcut":
                     let n = s.shortcutName.trimmingCharacters(in: .whitespaces)
                     guard !n.isEmpty else { return nil }

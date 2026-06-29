@@ -152,6 +152,20 @@ extension Native {
         return 0
     }
 
+    // say(text): speak a line aloud through the system speech synthesizer
+    // (fire-and-forget). Lets a rule announce an event by voice -- "Battery low",
+    // "Standup in five" -- when a banner the user has to look at won't do.
+    func speak(_ L: OpaquePointer?) -> Int32 {
+        guard let text = LuaState.string(L, 1) else {
+            return luaError(L, "say: text required")
+        }
+        // `--` ends option parsing so text that starts with a dash ("-5C outside")
+        // is spoken, not silently swallowed as a `say` flag (which would log a lying
+        // green "fired" while saying nothing).
+        runCommand("/usr/bin/say", ["--", text])
+        return 0
+    }
+
     // run_shortcut(name): fire a macOS Shortcut by name (fire-and-forget). The
     // generic automation escape hatch -- a user Shortcut can toggle Focus/DND, set
     // volume, run HomeKit scenes, and anything else Shortcuts can do, so a rule

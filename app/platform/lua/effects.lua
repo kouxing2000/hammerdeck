@@ -13,6 +13,7 @@
 --   openURL      -- open a url / app:       { kind="openURL", url=<str> }
 --   lockScreen   -- lock the screen:        { kind="lockScreen" }
 --   startScreensaver -- start the screensaver: { kind="startScreensaver" }
+--   speak        -- speak a line aloud:      { kind="speak", text=<str> }
 --   solidWallpaper -- paint a solid color:  { kind="solidWallpaper", color="#RRGGBB",
 --                   display=<name|"all"|"external"|"primary"|"@trigger:display"> }
 --   setWallpaperImage -- set a wallpaper photo: { kind="setWallpaperImage", image=<path>,
@@ -338,6 +339,9 @@ function effects.validate(node)
             "moveAppToDisplay effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
         assert(type(node.display) == "string" and #node.display > 0,
             "moveAppToDisplay effect needs a display (a name or '" .. effects.TRIGGER_DISPLAY .. "')")
+    elseif kind == "speak" then
+        assert(type(node.text) == "string" and #node.text > 0,
+            "speak effect needs text to say")
     elseif kind == "lockScreen" then
         -- no parameters
     elseif kind == "startScreensaver" then
@@ -376,7 +380,7 @@ function effects.requiresContext(node)
     elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen"
         or node.kind == "solidWallpaper" or node.kind == "setWallpaperImage" or node.kind == "minimizeApp"
         or node.kind == "hideApp" or node.kind == "quitApp" or node.kind == "startScreensaver"
-        or node.kind == "moveAppToDisplay" then
+        or node.kind == "moveAppToDisplay" or node.kind == "speak" then
         return false   -- context-free: fire-and-forget system actions, no live selection
     elseif node.kind == "chain" then
         -- A chain is context-free only if EVERY step is -- so a chain on an
@@ -464,6 +468,10 @@ function effects.dispatch(node, context)
         local ok, err = pcall(adapter.startScreensaver)
         if not ok then return false, tostring(err) end
         return true
+    elseif node.kind == "speak" then
+        local ok, err = pcall(adapter.say, node.text)
+        if not ok then return false, tostring(err) end
+        return true
     elseif node.kind == "chain" then
         local ok, res, reason = pcall(applyChain, node, context)
         if not ok then return false, tostring(res) end
@@ -528,6 +536,8 @@ function effects.describe(node, opts)
         local where = df and (pronoun and "it" or ("the triggering " .. df))
             or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
         return "Move " .. who .. " to " .. where
+    elseif node.kind == "speak" then
+        return 'Say "' .. tostring(node.text or "") .. '"'
     elseif node.kind == "lockScreen" then
         return "Lock the screen"
     elseif node.kind == "startScreensaver" then
@@ -569,6 +579,7 @@ function effects.catalog(automatedOnly)
         { kind = "openURL",     label = "Open a URL" },
         { kind = "lockScreen",  label = "Lock the screen" },
         { kind = "startScreensaver", label = "Start the screensaver" },
+        { kind = "speak",       label = "Speak text aloud" },
         { kind = "solidWallpaper", label = "Set solid wallpaper" },
         { kind = "setWallpaperImage", label = "Set wallpaper image" },
         { kind = "moveAppToDisplay", label = "Move an app to a display" },
