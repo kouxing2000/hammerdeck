@@ -71,6 +71,7 @@ let package = Package(
                 "features/usage_stats/lua",
                 "features/usage_stats/feature.json",
                 "features/usage_stats/i18n",
+                "features/volume",
                 "features/window_modal",
                 "features/window_snap",
                 "features/window_switcher",

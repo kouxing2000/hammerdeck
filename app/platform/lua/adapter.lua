@@ -720,4 +720,16 @@ function adapter.say(text)
     native.say(text)
 end
 
+-- Add `delta` (may be negative) to the system output volume, clamped to 0-100;
+-- returns the new level (-1 on error). The seam reads-modifies-writes in one
+-- script -- serialized against other Lua callers.
+function adapter.adjustVolume(delta)
+    return native.adjust_volume(delta)
+end
+
+-- Flip the system output mute; returns the new muted state.
+function adapter.toggleMute()
+    return native.toggle_mute()
+end
+
 return adapter

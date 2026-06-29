@@ -854,6 +854,30 @@ ok(#fake.notifications == pwNotes + 1, "no character set enabled: guidance notif
 registry.setEnabled("password_generator", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after password_generator test")
 
+-- volume feature: up/down nudge the system volume by the step option (clamped to
+-- 0-100); mute toggles. No defaultTrigger -- fired directly via registry.runAction.
+registry.register(require("features.volume"))
+registry.setEnabled("volume", true)
+fake.settings["hammerdeck.opt.volume.step"] = 10
+fake.volume = 50; fake.muted = false
+registry.runAction("volume", "up")
+ok(fake.volume == 60, "volume up adds the step")
+registry.runAction("volume", "down")
+registry.runAction("volume", "down")
+ok(fake.volume == 40, "volume down subtracts the step")
+fake.volume = 95
+registry.runAction("volume", "up")
+ok(fake.volume == 100, "volume up clamps at 100")
+fake.volume = 5
+registry.runAction("volume", "down")
+ok(fake.volume == 0, "volume down clamps at 0")
+registry.runAction("volume", "mute")
+ok(fake.muted == true, "mute toggles on")
+registry.runAction("volume", "mute")
+ok(fake.muted == false, "mute toggles off")
+registry.setEnabled("volume", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after volume test")
+
 -- T13c2: describe() localizes feature metadata via per-feature catalogs --------
 -- describe() applies i18n at CALL time: switch the locale, re-describe, and the
 -- gallery/settings text returns translated -- the 8 SwiftUI views are unchanged

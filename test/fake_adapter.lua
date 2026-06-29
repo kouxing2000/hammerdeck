@@ -530,6 +530,17 @@ function adapter.say(text)
     fake.spokenTexts[#fake.spokenTexts + 1] = text
 end
 
+fake.volume = 50         -- system output volume 0-100
+fake.muted = false       -- system output mute state
+function adapter.adjustVolume(delta)
+    fake.volume = math.max(0, math.min(100, fake.volume + (delta or 0)))
+    return fake.volume
+end
+function adapter.toggleMute()
+    fake.muted = not fake.muted
+    return fake.muted
+end
+
 function adapter.activateApp(name)
     if fake.runningApps[name] then
         fake.activatedApps[#fake.activatedApps + 1] = name

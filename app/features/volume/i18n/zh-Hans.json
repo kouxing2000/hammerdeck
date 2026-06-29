@@ -1,0 +1,11 @@
+{
+  "name": "音量",
+  "description": "上调或下调系统输出音量, 或切换静音 -- 把每个动作绑定到快捷键, 弦, 或日程.",
+
+  "action.up.label": "调高音量",
+  "action.down.label": "调低音量",
+  "action.mute.label": "切换静音",
+
+  "option.step.label": "步长",
+  "option.step.hint": "每次按上调 / 下调改变多少音量 (基于 0-100 刻度)."
+}
