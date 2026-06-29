@@ -57,6 +57,16 @@ end
 local function locActionLabel(m, a)
     return i18n.tFeature(m.id, "action." .. a.id .. ".label", a.label or a.id)
 end
+-- The user-facing label for one action, the single command-surface convention:
+-- a multi-action feature disambiguates as "Feature -- Action"; a single-action
+-- feature IS its feature, so it collapses to the feature name. Shared by the "Do"
+-- dropdown (enabledActions), the command palette, and the command effect's
+-- read-back (registry.actionLabel) so all three name an action identically.
+local function commandLabel(m, a)
+    local fname = locName(m)
+    if #m.actions > 1 then return fname .. " -- " .. locActionLabel(m, a) end
+    return fname
+end
 local function locActionField(m, a, field, src)
     if src == nil then return nil end
     return i18n.tFeature(m.id, "action." .. a.id .. "." .. field, src)
@@ -585,6 +595,20 @@ function registry.isActionAutomatable(id, actionId)
     return a.automatable == true
 end
 
+-- The user-facing label of one of a feature's actions (the sole action when
+-- actionId is nil) -- the human name the command effect's read-back shows
+-- ("M1 Auto" instead of the raw "m1_auto.go"), echoing the "Do" dropdown via the
+-- shared commandLabel convention. Returns nil for an unknown/parked feature or a
+-- bad action id so the caller falls back to the raw ids. Read-only,
+-- enabled-state-independent (mirrors isActionAutomatable).
+function registry.actionLabel(id, actionId)
+    local m = features[id]
+    if not m then return nil end
+    local okA, a = pcall(resolveAction, m, actionId)
+    if not okA then return nil end
+    return commandLabel(m, a)
+end
+
 -- Every action of every ENABLED feature, flattened -- the data source for the
 -- rules UI's "Do: Run ..." effect picker. Each row: { featureId, featureName,
 -- actionId, label, automatable }. `label` disambiguates multi-action features
@@ -595,12 +619,11 @@ function registry.enabledActions()
     for _, m in ipairs(registry.all()) do
         if registry.isEnabled(m.id) then
             for _, a in ipairs(m.actions) do
-                local fname = locName(m)
                 out[#out + 1] = {
                     featureId   = m.id,
-                    featureName = fname,
+                    featureName = locName(m),
                     actionId    = a.id,
-                    label       = (#m.actions > 1) and (fname .. " -- " .. locActionLabel(m, a)) or fname,
+                    label       = commandLabel(m, a),
                     automatable = a.automatable == true,
                 }
             end

@@ -96,6 +96,14 @@ local DISPLAY_TARGETS = {
     all = "all displays", external = "external displays", primary = "the main display",
 }
 
+-- Lowercase only the first character (so a step reads mid-sentence: "Notify ..."
+-- -> "notify ..."). Used by the chain read-back, where every step after the
+-- first joins as a lowercase clause. ASCII-first; mirrors rules.lua's helper.
+local function lowerFirst(s)
+    if type(s) ~= "string" or #s == 0 then return s end
+    return s:sub(1, 1):lower() .. s:sub(2)
+end
+
 -- Run an app-target effect (minimize / hide / quit): resolve its `app` (a literal
 -- or "@trigger:app") and apply `fn(app)`. One helper for all three -- they differ
 -- only in the adapter call. Returns (true) / (false, reason).
@@ -394,6 +402,16 @@ function effects.describe(node, opts)
     if type(node) ~= "table" then return "?" end
     local pronoun = opts and opts.pronoun
     if node.kind == "command" then
+        -- Prefer the action's friendly "Do"-dropdown label (the feature name for a
+        -- sole action, e.g. "Run Bing Daily Wallpaper") over the raw "feature.action"
+        -- id; fall back to the ids when the target feature isn't loaded this boot (a
+        -- parked rule). The label is feature-localized DATA -- the same class as a
+        -- notify title / app name / display name already shown verbatim in the
+        -- sentence -- NOT English glue, so it intentionally echoes the localized
+        -- label the user picked in the dropdown (Chinese in a zh-Hans build); the
+        -- glue around it ("run", "when") stays English like the rest of describe.
+        local label = registry.actionLabel(node.feature, node.action)
+        if label then return "Run " .. label end
         return "Run " .. tostring(node.feature)
             .. (node.action and ("." .. node.action) or "")
     elseif node.kind == "notify" then
@@ -425,6 +443,14 @@ function effects.describe(node, opts)
         end
         local n = #parts
         if n == 0 then return "Chain (empty)" end
+        if pronoun then
+            -- Read-back SENTENCE form: "minimize it, then notify ...". The outer
+            -- rules.sentence lowercases the first char; lowercase each SUBSEQUENT
+            -- step so the joined steps stay one flowing sentence (vs the compact
+            -- "N steps: A -> B" the list row / fire log keep below).
+            for i = 2, n do parts[i] = lowerFirst(parts[i]) end
+            return table.concat(parts, ", then ")
+        end
         return n .. (n == 1 and " step: " or " steps: ") .. table.concat(parts, " -> ")
     end
     return tostring(node.kind)

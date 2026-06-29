@@ -2700,8 +2700,9 @@ end
 -- crossing a value (frontmostApp becomes/leaves), the observable `notify` effect,
 -- and the add/setEnabled/remove + describe surface the Settings Rules tab calls.
 do
-    local rules = require("platform.rules")
-    local json  = require("platform.json")
+    local rules   = require("platform.rules")
+    local effects = require("platform.effects")
+    local json    = require("platform.json")
 
     -- (a) a `state` trigger fires on the enter transition, not on stay/leave
     fake.frontmost = "Finder"
@@ -2771,8 +2772,19 @@ do
 
     local d = rules.describe()
     ok(#d == 1 and d[1].id == rid and d[1].enabled == true
-        and d[1].triggerDesc:find("wake") and d[1].effectDesc:find("Run m1_auto"),
+        and d[1].triggerDesc:find("wake") and d[1].effectDesc:find("Run M1 Auto"),
         "describe() yields {id, enabled, triggerDesc, effectDesc} for the UI")
+    -- the command effect names the action by its friendly "Do"-dropdown label
+    -- (the feature name for a sole action), not the raw "m1_auto.go" id.
+    ok(effects.describe({ kind = "command", feature = "m1_auto", action = "go" }) == "Run M1 Auto",
+        "describe command uses the friendly action label")
+    -- fallback: an unloaded/parked feature's command shows the raw ids (no blank)
+    ok(effects.describe({ kind = "command", feature = "ghost", action = "x" }) == "Run ghost.x",
+        "describe command falls back to raw ids when the feature isn't loaded")
+    -- fallback: a LOADED feature but an unknown action (a stale rule whose action
+    -- was renamed/removed) -- resolveAction fails -> raw ids, not a blank
+    ok(effects.describe({ kind = "command", feature = "m1_auto", action = "bogus" }) == "Run m1_auto.bogus",
+        "describe command falls back to raw ids for an unknown action on a loaded feature")
 
     local logsBefore = #fake.logs
     fake.systemEvent("wake")
@@ -3623,10 +3635,16 @@ do
         { kind = "notify", title = "hi" }, { kind = "command", feature = "ghost", action = "x" } } }) == true,
         "a chain with a context-requiring step requires context")
 
-    -- describe lists the steps
+    -- describe lists the steps (the compact list-row / fire-log form)
     ok(effects.describe({ kind = "chain", effects = {
         { kind = "notify", title = "hi" }, { kind = "runShortcut", name = "DND" } } })
         == '2 steps: Notify "hi" -> Run Shortcut "DND"', "describe lists the chain steps")
+    -- pronoun mode renders the chain as one flowing sentence (the read-back),
+    -- lowercasing each step after the first and joining with ", then ".
+    ok(effects.describe({ kind = "chain", effects = {
+        { kind = "minimizeApp", app = effects.TRIGGER_APP }, { kind = "notify", title = "Done" } } },
+        { pronoun = true })
+        == 'Minimize it, then notify "Done"', "describe chain pronoun mode joins with 'then'")
 
     -- dispatch runs every step IN ORDER
     local nN, nS = #fake.notifications, #fake.shortcutsRun
@@ -3701,6 +3719,20 @@ do
         effect = { kind = "solidWallpaper", color = "#000000", display = "all" } })
         == "When the power source becomes battery, set wallpaper black on all displays.",
         "sentence: property signal reads 'the X becomes Y'")
+    -- PROPERTY signal, LEAVE edge -> "is no longer X" (a bare "leaves battery" is
+    -- ungrammatical for a subject-less property; see signals.lua leaveVerb).
+    ok(rules.sentence({
+        on = { type = "state", signal = "powerSource", leaves = "battery" },
+        effect = { kind = "lockScreen" } })
+        == "When the power source is no longer battery, lock the screen.",
+        "sentence: property leave edge reads 'is no longer'")
+    -- a CHAIN effect reads as one flowing line ("..., then ..."), not "N steps: ..."
+    ok(rules.sentence({
+        on = { type = "state", signal = "frontmostApp", leaves = "Slack" },
+        effect = { kind = "chain", effects = {
+            { kind = "minimizeApp", app = effects.TRIGGER_APP }, { kind = "notify", title = "Done" } } } })
+        == 'When Slack loses focus, minimize it, then notify "Done".',
+        "sentence: a chain reads as one flowing line")
     -- event
     ok(rules.sentence({
         on = { type = "event", event = "wake" }, effect = { kind = "notify", title = "Hi" } })

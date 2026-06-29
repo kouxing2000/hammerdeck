@@ -146,8 +146,11 @@ local REGISTRY = {
         observe = function(emit)
             return adapter.onSystemEvent("appearanceChanged", function() emit(adapter.appearance()) end)
         end,
+        -- leaveVerb reads "the appearance is no longer dark" (a PROPERTY signal has
+        -- no entity subject, so a bare "leaves dark" is ungrammatical). "is no longer"
+        -- flows in both the read-back sentence and the Transition picker (RulesView).
         meta    = { label = "Appearance", valueLabel = "Mode",
-                    enterVerb = "becomes", leaveVerb = "leaves", example = "dark" },
+                    enterVerb = "becomes", leaveVerb = "is no longer", example = "dark" },
         candidates = function() return { "dark", "light" } end,
     },
     -- The set of running apps (by name). "launches <name>" = it started,
@@ -168,8 +171,9 @@ local REGISTRY = {
         observe = function(emit)
             return adapter.onSystemEvent("powerChanged", function() emit(adapter.powerSource()) end)
         end,
+        -- "the power source is no longer battery" (see appearance's note above).
         meta    = { label = "Power source", valueLabel = "Source",
-                    enterVerb = "becomes", leaveVerb = "leaves", example = "battery" },
+                    enterVerb = "becomes", leaveVerb = "is no longer", example = "battery" },
         candidates = function() return { "ac", "battery" } end,
     },
     -- NOTE: `ssid` (Wi-Fi network) is deferred -- reading the SSID needs the
