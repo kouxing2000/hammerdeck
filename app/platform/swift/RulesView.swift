@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit                    // NSOpenPanel (the wallpaper-image file picker)
+import UniformTypeIdentifiers    // UTType.image
 
 // The Rules page (Automation framework). A first-class automation manager in the
 // home shell -- a peer of the Shortcut Map / Timeline, NOT a Settings row, since
@@ -248,7 +250,7 @@ private struct RulePageRow: View {
     // screen on a "preview" click is a nasty surprise). Other effects -- including
     // user-authored runShortcut/command, whose whole point is to run -- fire
     // immediately. Widen this if a sleep/shutdown-style effect is ever added.
-    private static let disruptiveTestKinds: Set<String> = ["lockScreen"]
+    private static let disruptiveTestKinds: Set<String> = ["lockScreen", "startScreensaver"]
 
     private func runTest() {
         if let kind = rule.effect["kind"] as? String,
@@ -342,8 +344,9 @@ private let chainStepKinds: [(id: String, label: String)] = [
     ("runShortcut", Strings.t("rules.chainKindRunShortcut", default: "Run a Shortcut")),
     ("openURL", Strings.t("rules.chainKindOpenURL", default: "Open a URL")),
     ("lockScreen", Strings.t("rules.chainKindLockScreen", default: "Lock the screen")),
+    ("startScreensaver", Strings.t("rules.chainKindScreensaver", default: "Start the screensaver")),
 ]
-private let chainStepSimpleKinds: Set<String> = ["notify", "runShortcut", "openURL", "lockScreen"]
+private let chainStepSimpleKinds: Set<String> = ["notify", "runShortcut", "openURL", "lockScreen", "startScreensaver"]
 
 private struct AddRuleForm: View {
     @ObservedObject var store: SettingsStore
@@ -375,11 +378,14 @@ private struct AddRuleForm: View {
     @State private var chainSteps: [ChainStep] = []   // the chain effect's ordered steps
     @State private var shortcutName = ""              // runShortcut
     @State private var openURLValue = ""              // openURL
+    @State private var wallpaperImage = ""             // setWallpaperImage: image file path
     @State private var solidColor = "#FFFFFF"          // solidWallpaper: preset hex
     // Empty until the effect is chosen, then seeded-if-empty (uniform with
     // minimizeAppName) -- so a recipe's explicit display survives the effect seeder.
     @State private var solidDisplay = ""               // solidWallpaper: name | all | external | primary | sentinel
     @State private var minimizeAppName = ""            // minimizeApp: app name | @trigger:app
+    @State private var moveApp = ""                    // moveAppToDisplay: app name | @trigger:app
+    @State private var moveDisplay = ""                // moveAppToDisplay: display name | @trigger:display
     // The "New rule" landing: a recipe gallery (kills the blank canvas), shown only
     // in add mode. Picking a recipe pre-fills the form below; "Build your own" clears it.
     @State private var showGallery = true
@@ -520,7 +526,7 @@ private struct AddRuleForm: View {
             // "the connecting display" when the trigger provides one, else a category.
             // Only seed an EMPTY field (mirrors minimizeAppName) -- so a recipe that
             // set an explicit display isn't clobbered. (Edit mode: loadForEdit owns it.)
-            if editing == nil && selectedEffect?.kind == "solidWallpaper" && solidDisplay.isEmpty {
+            if editing == nil && wallpaperKinds.contains(selectedEffect?.kind ?? "") && solidDisplay.isEmpty {
                 solidDisplay = (triggerProvides == "display") ? Self.triggerSentinel("display") : "external"
             }
             // Only seed an EMPTY field (mirrors the layout/chain seeders) -- so
@@ -529,6 +535,14 @@ private struct AddRuleForm: View {
             if editing == nil && appTargetKinds.contains(selectedEffect?.kind ?? "")
                 && minimizeAppName.isEmpty {
                 minimizeAppName = (triggerProvides == "app") ? Self.triggerSentinel("app") : (appCandidates.first ?? "")
+            }
+            if editing == nil && selectedEffect?.kind == "moveAppToDisplay" {
+                if moveApp.isEmpty {
+                    moveApp = (triggerProvides == "app") ? Self.triggerSentinel("app") : (appCandidates.first ?? "")
+                }
+                if moveDisplay.isEmpty {
+                    moveDisplay = (triggerProvides == "display") ? Self.triggerSentinel("display") : (opts.layoutDisplays.first ?? "")
+                }
             }
         }
         // If the trigger stops providing the entity a "from the trigger" param
@@ -780,6 +794,23 @@ private struct AddRuleForm: View {
                       muted: openURLValue.isEmpty) { fieldPopover($openURLValue, Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)")) }
         case "solidWallpaper":
             TokenPill(text: wallpaperSummary, anaphor: solidDisplay.hasPrefix("@trigger:")) { solidWallpaperEditor.frame(minWidth: 280) }
+        case "setWallpaperImage":
+            TokenPill(text: imageWallpaperSummary, muted: wallpaperImage.isEmpty,
+                      anaphor: solidDisplay.hasPrefix("@trigger:")) { imageWallpaperEditor.frame(minWidth: 320) }
+        case "moveAppToDisplay":
+            if moveApp.hasPrefix("@trigger:") {
+                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp) { moveAppEditor.frame(minWidth: 280) }
+            } else {
+                TokenPill(text: moveApp.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : moveApp,
+                          muted: moveApp.isEmpty) { moveAppEditor.frame(minWidth: 280) }
+            }
+            sentenceWord(Strings.t("rules.lead.to", default: "to"))
+            if moveDisplay.hasPrefix("@trigger:") {
+                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp) { moveDisplayEditor.frame(minWidth: 280) }
+            } else {
+                TokenPill(text: moveDisplay.isEmpty ? Strings.t("rules.token.aDisplay", default: "a display") : moveDisplay,
+                          muted: moveDisplay.isEmpty) { moveDisplayEditor.frame(minWidth: 280) }
+            }
         case "minimizeApp", "hideApp", "quitApp":
             if minimizeAppName.hasPrefix("@trigger:") {
                 TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp) { minimizeAppEditor.frame(minWidth: 300) }
@@ -930,7 +961,9 @@ private struct AddRuleForm: View {
         switch kind {
         case "notify":         return Strings.t("rules.verb.notify", default: "notify")
         case "lockScreen":     return Strings.t("rules.verb.lock", default: "lock the screen")
-        case "solidWallpaper": return Strings.t("rules.verb.wallpaper", default: "set wallpaper")
+        case "startScreensaver": return Strings.t("rules.verb.screensaver", default: "start the screensaver")
+        case "solidWallpaper", "setWallpaperImage": return Strings.t("rules.verb.wallpaper", default: "set wallpaper")
+        case "moveAppToDisplay": return Strings.t("rules.verb.move", default: "move")
         case "minimizeApp":    return Strings.t("rules.verb.minimize", default: "minimize")
         case "hideApp":        return Strings.t("rules.verb.hide", default: "hide")
         case "quitApp":        return Strings.t("rules.verb.quit", default: "quit")
@@ -952,19 +985,27 @@ private struct AddRuleForm: View {
         }
     }
 
-    private var wallpaperSummary: String {
-        let where_: String
-        if solidDisplay.hasPrefix("@trigger:") {
-            where_ = Strings.t("rules.token.it", default: "it")
-        } else {
-            switch solidDisplay {
-            case "all":      where_ = Strings.t("rules.solidAllDisplaysShort", default: "all displays")
-            case "external": where_ = Strings.t("rules.solidExternalShort", default: "external displays")
-            case "primary":  where_ = Strings.t("rules.solidMainShort", default: "the main display")
-            default:         where_ = solidDisplay.isEmpty ? Strings.t("rules.token.aDisplay", default: "a display") : solidDisplay
-            }
+    // The display half of a wallpaper summary ("it" / "external displays" / a name),
+    // shared by both the solid-color and image wallpaper pills.
+    private var wallpaperWhere: String {
+        if solidDisplay.hasPrefix("@trigger:") { return Strings.t("rules.token.it", default: "it") }
+        switch solidDisplay {
+        case "all":      return Strings.t("rules.solidAllDisplaysShort", default: "all displays")
+        case "external": return Strings.t("rules.solidExternalShort", default: "external displays")
+        case "primary":  return Strings.t("rules.solidMainShort", default: "the main display")
+        default:         return solidDisplay.isEmpty ? Strings.t("rules.token.aDisplay", default: "a display") : solidDisplay
         }
-        return String(format: Strings.t("rules.token.wallpaperSummary", default: "%@ on %@"), colorLabel(solidColor), where_)
+    }
+
+    private var wallpaperSummary: String {
+        String(format: Strings.t("rules.token.wallpaperSummary", default: "%@ on %@"), colorLabel(solidColor), wallpaperWhere)
+    }
+
+    private var imageWallpaperSummary: String {
+        let name = wallpaperImage.isEmpty
+            ? Strings.t("rules.token.anImage", default: "an image")
+            : URL(fileURLWithPath: wallpaperImage).lastPathComponent
+        return String(format: Strings.t("rules.token.wallpaperSummary", default: "%@ on %@"), name, wallpaperWhere)
     }
 
     private var valueTokenPlaceholder: String {
@@ -983,7 +1024,8 @@ private struct AddRuleForm: View {
     // such a rule reacts to its trigger and can't be Test-fired in isolation.
     private var effectUsesTriggerContext: Bool {
         (appTargetKinds.contains(selectedEffect?.kind ?? "") && minimizeAppName.hasPrefix("@trigger:"))
-            || (selectedEffect?.kind == "solidWallpaper" && solidDisplay.hasPrefix("@trigger:"))
+            || (wallpaperKinds.contains(selectedEffect?.kind ?? "") && solidDisplay.hasPrefix("@trigger:"))
+            || (selectedEffect?.kind == "moveAppToDisplay" && (moveApp.hasPrefix("@trigger:") || moveDisplay.hasPrefix("@trigger:")))
     }
 
     // The exact dangerous combo the redesign exists to prevent: minimize/hide/quit
@@ -1129,6 +1171,27 @@ private struct AddRuleForm: View {
             Text(Strings.t("rules.colorMidGray", default: "Mid gray")).tag("#808080")
             Text(Strings.t("rules.colorBlack", default: "Black")).tag("#000000")
         }
+        wallpaperDisplayPicker
+    }
+
+    // The image + display editor (shown when the effect is "setWallpaperImage"):
+    // pick a photo file (path field + Choose...) plus the display(s) to set it on --
+    // the SAME display model as solidWallpaper (literal / category / the connecting
+    // display), so it reuses wallpaperDisplayPicker and the solidDisplay @State.
+    @ViewBuilder private var imageWallpaperEditor: some View {
+        HStack {
+            TextField(Strings.t("rules.wallpaperImageField", default: "Image file path"), text: $wallpaperImage)
+            Button(Strings.t("rules.choose", default: "Choose...")) { chooseWallpaperImage() }
+        }
+        if let w = wallpaperImageWarning {
+            Text(w).font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        wallpaperDisplayPicker
+    }
+
+    // The "Apply to" display picker -- shared by both wallpaper effects.
+    @ViewBuilder private var wallpaperDisplayPicker: some View {
         Picker(Strings.t("rules.solidWallpaperDisplay", default: "Apply to"), selection: $solidDisplay) {
             if triggerProvides == "display" {
                 Text(triggerOptionLabel("display")).tag(Self.triggerSentinel("display"))
@@ -1138,6 +1201,24 @@ private struct AddRuleForm: View {
             Text(Strings.t("rules.solidMainDisplay", default: "Main display only")).tag("primary")
             ForEach(solidDisplayNames, id: \.self) { Text($0).tag($0) }
         }
+    }
+
+    // Advisory: the chosen image path doesn't exist right now (renamed/moved). The
+    // rule still saves -- the file may exist when it fires -- but warn on exact path.
+    private var wallpaperImageWarning: String? {
+        let p = wallpaperImage.trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty, !FileManager.default.fileExists(atPath: p) else { return nil }
+        return Strings.t("rules.wallpaperImageMissing", default: "That file isn't there right now -- the path must exist when the rule fires.")
+    }
+
+    // NSOpenPanel to pick the wallpaper image file (a path the native setWallpaper reads).
+    private func chooseWallpaperImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = Strings.t("rules.choose", default: "Choose...")
+        if panel.runModal() == .OK, let url = panel.url { wallpaperImage = url.path }
     }
 
     // Literal display names for the wallpaper picker: currently-connected displays,
@@ -1179,8 +1260,41 @@ private struct AddRuleForm: View {
         }
     }
 
+    // moveAppToDisplay's app picker (running apps + the from-trigger option) and its
+    // display picker (a single display name + the from-trigger option -- no all/
+    // external/primary, which don't fit a single move). No minimize footgun warning.
+    @ViewBuilder private var moveAppEditor: some View {
+        Picker(Strings.t("rules.minimizeAppField", default: "App"), selection: $moveApp) {
+            if triggerProvides == "app" {
+                Text(triggerOptionLabel("app")).tag(Self.triggerSentinel("app"))
+            }
+            ForEach(moveAppNames, id: \.self) { Text($0).tag($0) }
+        }
+    }
+    private var moveAppNames: [String] {
+        var out = appCandidates
+        if !moveApp.hasPrefix("@trigger:") && !moveApp.isEmpty && !out.contains(moveApp) { out.insert(moveApp, at: 0) }
+        return out
+    }
+
+    @ViewBuilder private var moveDisplayEditor: some View {
+        Picker(Strings.t("rules.moveToDisplay", default: "To display"), selection: $moveDisplay) {
+            if triggerProvides == "display" {
+                Text(triggerOptionLabel("display")).tag(Self.triggerSentinel("display"))
+            }
+            ForEach(moveDisplayNames, id: \.self) { Text($0).tag($0) }
+        }
+    }
+    private var moveDisplayNames: [String] {
+        var out = opts.layoutDisplays
+        if !moveDisplay.hasPrefix("@trigger:") && !moveDisplay.isEmpty && !out.contains(moveDisplay) { out.insert(moveDisplay, at: 0) }
+        return out
+    }
+
     // The effect kinds that target an app by name (share the editor + the `app` param).
     private let appTargetKinds: Set<String> = ["minimizeApp", "hideApp", "quitApp"]
+    // The two wallpaper effects share the solidDisplay @State + the display picker.
+    private let wallpaperKinds: Set<String> = ["solidWallpaper", "setWallpaperImage"]
 
     // App names for the minimize picker: running apps, plus the rule's own saved app
     // if it isn't running now (so editing doesn't drop it). The sentinel renders apart.
@@ -1209,13 +1323,17 @@ private struct AddRuleForm: View {
     }
 
     private func demoteOrphanedTriggerParams() {
-        if selectedEffect?.kind == "solidWallpaper"
+        if wallpaperKinds.contains(selectedEffect?.kind ?? "")
             && solidDisplay.hasPrefix("@trigger:") && triggerProvides != "display" {
             solidDisplay = "external"
         }
         if appTargetKinds.contains(selectedEffect?.kind ?? "")
             && minimizeAppName.hasPrefix("@trigger:") && triggerProvides != "app" {
             minimizeAppName = appCandidates.first ?? ""
+        }
+        if selectedEffect?.kind == "moveAppToDisplay" {
+            if moveApp.hasPrefix("@trigger:") && triggerProvides != "app" { moveApp = appCandidates.first ?? "" }
+            if moveDisplay.hasPrefix("@trigger:") && triggerProvides != "display" { moveDisplay = opts.layoutDisplays.first ?? "" }
         }
     }
 
@@ -1224,7 +1342,7 @@ private struct AddRuleForm: View {
         case "notify":      return !s.notifyTitle.trimmingCharacters(in: .whitespaces).isEmpty
         case "runShortcut": return !s.shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
         case "openURL":     return !s.url.trimmingCharacters(in: .whitespaces).isEmpty
-        case "lockScreen":  return true
+        case "lockScreen", "startScreensaver":  return true
         default:            return false
         }
     }
@@ -1372,8 +1490,16 @@ private struct AddRuleForm: View {
         if selectedEffect?.kind == "solidWallpaper" {
             return !solidDisplay.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        if selectedEffect?.kind == "setWallpaperImage" {
+            return !wallpaperImage.trimmingCharacters(in: .whitespaces).isEmpty
+                && !solidDisplay.trimmingCharacters(in: .whitespaces).isEmpty
+        }
         if appTargetKinds.contains(selectedEffect?.kind ?? "") {
             return !minimizeAppName.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if selectedEffect?.kind == "moveAppToDisplay" {
+            return !moveApp.trimmingCharacters(in: .whitespaces).isEmpty
+                && !moveDisplay.trimmingCharacters(in: .whitespaces).isEmpty
         }
         if selectedEffect?.kind == "chain" {
             return chainSteps.contains { chainStepComplete($0) }
@@ -1432,8 +1558,10 @@ private struct AddRuleForm: View {
         chainSteps = []
         shortcutName = ""
         openURLValue = ""
+        wallpaperImage = ""
         solidColor = "#FFFFFF"
         solidDisplay = ""
+        moveApp = ""; moveDisplay = ""
         minimizeAppName = ""
         formError = nil
         advanced = false
@@ -1480,7 +1608,8 @@ private struct AddRuleForm: View {
         // rule (e.g. layout placements) can't bleed into one of a different kind --
         // the onChange(of: effectId) seeder only fills an EMPTY placement list.
         placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""
-        solidColor = "#FFFFFF"; solidDisplay = ""; minimizeAppName = ""
+        wallpaperImage = ""; solidColor = "#FFFFFF"; solidDisplay = ""; minimizeAppName = ""
+        moveApp = ""; moveDisplay = ""
         notifyTitle = AppInfo.displayName; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
@@ -1505,11 +1634,21 @@ private struct AddRuleForm: View {
             effectId = "solidWallpaper"
             solidColor = effect["color"] as? String ?? "#FFFFFF"
             solidDisplay = effect["display"] as? String ?? "external"
+        } else if kind == "setWallpaperImage" {
+            effectId = "setWallpaperImage"
+            wallpaperImage = effect["image"] as? String ?? ""
+            solidDisplay = effect["display"] as? String ?? "external"
+        } else if kind == "moveAppToDisplay" {
+            effectId = "moveAppToDisplay"
+            moveApp = effect["app"] as? String ?? ""
+            moveDisplay = effect["display"] as? String ?? ""
         } else if let k = kind, appTargetKinds.contains(k) {
             effectId = k
             minimizeAppName = effect["app"] as? String ?? ""
         } else if kind == "lockScreen" {
             effectId = "lockScreen"
+        } else if kind == "startScreensaver" {
+            effectId = "startScreensaver"
         } else if kind == "chain" {
             effectId = "chain"
             let steps = (effect["effects"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
@@ -1659,6 +1798,16 @@ private struct AddRuleForm: View {
             let d = solidDisplay.trimmingCharacters(in: .whitespaces)
             guard !d.isEmpty else { return nil }
             effect = ["kind": "solidWallpaper", "color": solidColor, "display": d]
+        } else if eff.kind == "setWallpaperImage" {
+            let img = wallpaperImage.trimmingCharacters(in: .whitespaces)
+            let d = solidDisplay.trimmingCharacters(in: .whitespaces)
+            guard !img.isEmpty, !d.isEmpty else { return nil }
+            effect = ["kind": "setWallpaperImage", "image": img, "display": d]
+        } else if eff.kind == "moveAppToDisplay" {
+            let a = moveApp.trimmingCharacters(in: .whitespaces)
+            let d = moveDisplay.trimmingCharacters(in: .whitespaces)
+            guard !a.isEmpty, !d.isEmpty else { return nil }
+            effect = ["kind": "moveAppToDisplay", "app": a, "display": d]
         } else if appTargetKinds.contains(eff.kind) {
             let a = minimizeAppName.trimmingCharacters(in: .whitespaces)
             guard !a.isEmpty else { return nil }
@@ -1684,6 +1833,8 @@ private struct AddRuleForm: View {
                     return ["kind": "openURL", "url": u]
                 case "lockScreen":
                     return ["kind": "lockScreen"]
+                case "startScreensaver":
+                    return ["kind": "startScreensaver"]
                 default:
                     return nil
                 }
@@ -1692,6 +1843,8 @@ private struct AddRuleForm: View {
             effect = ["kind": "chain", "effects": steps]
         } else if eff.kind == "lockScreen" {
             effect = ["kind": "lockScreen"]
+        } else if eff.kind == "startScreensaver" {
+            effect = ["kind": "startScreensaver"]
         } else {
             effect = ["kind": "command", "feature": eff.feature ?? ""]
             if let a = eff.action { effect["action"] = a }

@@ -3433,6 +3433,14 @@ do
     effects.dispatch({ kind = "lockScreen" })
     ok(fake.actions.lock == nL + 1, "lockScreen dispatch locks the screen")
 
+    -- startScreensaver: a param-free context-free effect (sibling of lockScreen)
+    ok(effects.requiresContext({ kind = "startScreensaver" }) == false, "startScreensaver is context-free")
+    ok(pcall(effects.validate, { kind = "startScreensaver" }) == true, "startScreensaver needs no params")
+    ok(effects.describe({ kind = "startScreensaver" }) == "Start the screensaver", "describe labels startScreensaver")
+    local nSS = fake.actions.screensaver
+    effects.dispatch({ kind = "startScreensaver" })
+    ok(fake.actions.screensaver == nSS + 1, "startScreensaver dispatch starts the screensaver")
+
     -- end-to-end on an automated trigger: on wake -> run a Shortcut
     rules.add({ on = { type = "event", event = "wake" },
                 effect = { kind = "runShortcut", name = "Morning" } })
@@ -3516,6 +3524,106 @@ do
 
     rules.load({}); fake.settings["hammerdeck.rules"] = nil
     ok(fake.liveHandles == 0, "no native handle leaked across the solidWallpaper tests")
+end
+
+-- T39b2: setWallpaperImage effect -- the sibling of solidWallpaper that paints a
+-- photo (adapter.setWallpaper) instead of a flat color; same display param model
+-- (literal / category / from-trigger), context-free.
+do
+    local effects = require("platform.effects")
+    fake.settings["hammerdeck.rules"] = nil
+
+    ok(effects.requiresContext({ kind = "setWallpaperImage", image = "/x.jpg", display = "all" }) == false,
+        "setWallpaperImage is context-free")
+    ok(pcall(effects.validate, { kind = "setWallpaperImage", display = "all" }) == false,
+        "setWallpaperImage requires an image path")
+    ok(pcall(effects.validate, { kind = "setWallpaperImage", image = "/x.jpg" }) == false,
+        "setWallpaperImage requires a display")
+    ok(pcall(effects.validate, { kind = "setWallpaperImage", image = "/x.jpg", display = "all" }) == true,
+        "setWallpaperImage with an image + display validates")
+
+    -- dispatch routes to adapter.setWallpaper(path, target)
+    local nW = #fake.wallpapers
+    effects.dispatch({ kind = "setWallpaperImage", image = "/Users/me/Pictures/sunset.jpg", display = "DELL U2720Q" })
+    ok(#fake.wallpapers == nW + 1
+        and fake.wallpapers[#fake.wallpapers] == "/Users/me/Pictures/sunset.jpg"
+        and fake.wallpaperModes[#fake.wallpaperModes] == "DELL U2720Q",
+        "setWallpaperImage dispatch sets the photo on the named display")
+
+    -- from-trigger sentinel resolves from context.display; missing context -> fail
+    effects.dispatch({ kind = "setWallpaperImage", image = "/p.jpg", display = effects.TRIGGER_DISPLAY },
+        { display = "Paperlike H D" })
+    ok(fake.wallpaperModes[#fake.wallpaperModes] == "Paperlike H D",
+        "setWallpaperImage resolves the from-trigger display")
+    local nW2 = #fake.wallpapers
+    ok(effects.dispatch({ kind = "setWallpaperImage", image = "/p.jpg", display = effects.TRIGGER_DISPLAY }) == false
+        and #fake.wallpapers == nW2,
+        "setWallpaperImage from-trigger with no connecting display does nothing")
+
+    -- describe shows the file NAME, not the full path
+    ok(effects.describe({ kind = "setWallpaperImage", image = "/Users/me/Pictures/sunset.jpg", display = "external" })
+        == "Set wallpaper sunset.jpg on external displays", "describe labels setWallpaperImage by basename")
+    ok(effects.describe({ kind = "setWallpaperImage", image = "/a/b.png", display = effects.TRIGGER_DISPLAY })
+        == "Set wallpaper b.png on the triggering display", "describe: from-trigger setWallpaperImage")
+
+    local seen = {}
+    for _, e in ipairs(effects.catalog(true)) do seen[e.kind] = true end
+    ok(seen.setWallpaperImage, "catalog offers setWallpaperImage on automated triggers")
+end
+
+-- T39b3: moveAppToDisplay effect -- relocate an app's window to another display
+-- KEEPING its size (vs layout, which resizes). Reuses listWindows/screenFrames/
+-- setWindowFrame; context-free; app/display may be from-trigger.
+do
+    local effects = require("platform.effects")
+    fake.settings["hammerdeck.rules"] = nil
+    fake.screenList = {
+        { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1, builtin = true },
+        { x = 1440, y = 0, w = 2560, h = 1440, name = "DELL U2720Q", index = 2 },
+    }
+    fake.windows = { { id = 7, appName = "Slack", x = 100, y = 120, w = 400, h = 300, title = "Slack" } }
+    fake.windowFrameSets = {}
+
+    ok(effects.requiresContext({ kind = "moveAppToDisplay", app = "Slack", display = "DELL U2720Q" }) == false,
+        "moveAppToDisplay is context-free")
+    ok(pcall(effects.validate, { kind = "moveAppToDisplay", app = "Slack" }) == false,
+        "moveAppToDisplay requires a display")
+    ok(pcall(effects.validate, { kind = "moveAppToDisplay", display = "DELL U2720Q" }) == false,
+        "moveAppToDisplay requires an app")
+    ok(pcall(effects.validate, { kind = "moveAppToDisplay", app = "Slack", display = "DELL U2720Q" }) == true,
+        "moveAppToDisplay with app + display validates")
+
+    -- dispatch keeps the SIZE (400x300) and preserves the within-screen offset:
+    -- from Built-in (0,0) offset (100,120) -> DELL (1440,0) => (1540,120).
+    ok(effects.dispatch({ kind = "moveAppToDisplay", app = "Slack", display = "DELL U2720Q" }) == true,
+        "moveAppToDisplay moves a matching window")
+    local s = fake.windowFrameSets[#fake.windowFrameSets]
+    ok(s and s.id == 7 and s.x == 1540 and s.y == 120 and s.w == 400 and s.h == 300,
+        "moveAppToDisplay relocates to the display keeping the window's size + offset")
+
+    -- a disconnected/typo'd display -> failure, no move
+    fake.windowFrameSets = {}
+    ok(effects.dispatch({ kind = "moveAppToDisplay", app = "Slack", display = "Ghost" }) == false
+        and #fake.windowFrameSets == 0, "moveAppToDisplay fails when the display isn't connected")
+
+    -- no matching window -> failure
+    ok(effects.dispatch({ kind = "moveAppToDisplay", app = "Nope", display = "DELL U2720Q" }) == false,
+        "moveAppToDisplay fails when no window matches the app")
+
+    -- from-trigger: app + display resolve from context
+    fake.windowFrameSets = {}
+    effects.dispatch({ kind = "moveAppToDisplay", app = effects.TRIGGER_APP, display = effects.TRIGGER_DISPLAY },
+        { app = "Slack", display = "DELL U2720Q" })
+    ok(fake.windowFrameSets[#fake.windowFrameSets] and fake.windowFrameSets[#fake.windowFrameSets].x == 1540,
+        "moveAppToDisplay resolves from-trigger app + display")
+
+    ok(effects.describe({ kind = "moveAppToDisplay", app = "Slack", display = "DELL U2720Q" })
+        == "Move Slack to DELL U2720Q", "describe labels moveAppToDisplay")
+
+    -- restore the single-screen default so a later screen-reading test isn't
+    -- polluted by this block's 2-screen config (matches the layout block's teardown)
+    fake.windows = {}; fake.windowFrameSets = {}
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1, builtin = true } }
 end
 
 -- T39c: minimizeApp effect -- minimize a named app's window; context-free, and its

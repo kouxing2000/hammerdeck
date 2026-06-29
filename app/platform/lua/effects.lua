@@ -12,11 +12,17 @@
 --   runShortcut  -- run a macOS Shortcut:  { kind="runShortcut", name=<str> }  (the escape hatch)
 --   openURL      -- open a url / app:       { kind="openURL", url=<str> }
 --   lockScreen   -- lock the screen:        { kind="lockScreen" }
+--   startScreensaver -- start the screensaver: { kind="startScreensaver" }
 --   solidWallpaper -- paint a solid color:  { kind="solidWallpaper", color="#RRGGBB",
+--                   display=<name|"all"|"external"|"primary"|"@trigger:display"> }
+--   setWallpaperImage -- set a wallpaper photo: { kind="setWallpaperImage", image=<path>,
 --                   display=<name|"all"|"external"|"primary"|"@trigger:display"> }
 --   minimizeApp  -- minimize an app's window: { kind="minimizeApp", app=<name|"@trigger:app"> }
 --   hideApp      -- hide an app:             { kind="hideApp", app=<name|"@trigger:app"> }
 --   quitApp      -- quit an app:             { kind="quitApp", app=<name|"@trigger:app"> }
+--   moveAppToDisplay -- move an app's window to another display, keeping its size:
+--                   { kind="moveAppToDisplay", app=<name|"@trigger:app">,
+--                     display=<name|"@trigger:display"> }
 --
 -- chain / scene arrive in later milestones. `dispatch` and the predicates are a
 -- switch on `kind`, so adding a kind is additive (open/closed) -- no caller changes.
@@ -88,6 +94,13 @@ local COLOR_NAMES = {
 local function colorName(hex)
     if type(hex) ~= "string" then return "?" end
     return COLOR_NAMES[hex:upper()] or hex
+end
+
+-- The file NAME of a path, so describe() reads "Set wallpaper sunset.jpg" rather
+-- than the full "/Users/.../Pictures/sunset.jpg". A pathless value passes through.
+local function baseName(path)
+    if type(path) ~= "string" then return "?" end
+    return path:match("[^/]+$") or path
 end
 
 -- Friendly names for the wallpaper display CATEGORIES (a literal monitor name
@@ -224,6 +237,44 @@ local function applyChain(node, context)
     return true
 end
 
+-- Move an app's window(s) to another display, KEEPING their size -- the distinct
+-- value over `layout`, which always resizes to a snap position. Preserves each
+-- window's offset within its current screen, re-applied to the destination, then
+-- clamps so the window stays fully on it. The destination is a display NAME (or
+-- "@trigger:display"); an absent display fails (nothing to move onto). app may be
+-- a literal name or "@trigger:app". Returns (true) / (false, reason).
+local function applyMoveToDisplay(node, context)
+    local app, areason = effects.resolveParam(node.app, context)
+    if not app then return false, areason end
+    local target, dreason = effects.resolveParam(node.display, context)
+    if not target then return false, dreason end
+    local screens = adapter.screenFrames() or {}
+    local dest = windows.resolveScreen(screens, target)
+    if not dest then return false, "display not connected: " .. tostring(target) end
+    local wins = adapter.listWindows() or {}
+    local moved, failed = 0, 0
+    for _, w in ipairs(wins) do
+        if w.appName == app then
+            local cur = windows.screenOfFrame(screens, w)
+            local nx = cur and (dest.x + (w.x - cur.x)) or dest.x
+            local ny = cur and (dest.y + (w.y - cur.y)) or dest.y
+            -- keep the window fully on the destination (it may be smaller).
+            nx = math.max(dest.x, math.min(nx, dest.x + dest.w - w.w))
+            ny = math.max(dest.y, math.min(ny, dest.y + dest.h - w.h))
+            if adapter.setWindowFrame(w.id, { x = nx, y = ny, w = w.w, h = w.h }) then
+                moved = moved + 1
+            else
+                failed = failed + 1
+            end
+        end
+    end
+    if moved == 0 then
+        if failed > 0 then return false, "matched " .. app .. " window(s) but the move failed" end
+        return false, "no window of " .. tostring(app) .. " to move"
+    end
+    return true
+end
+
 --- Validate an effect node. Throws on a malformed node; returns it on success.
 ---@param node table an effect node
 ---@return table
@@ -273,10 +324,23 @@ function effects.validate(node)
         assert(type(node.display) == "string" and #node.display > 0,
             "solidWallpaper effect needs a display (a name, 'all'/'external'/'primary', "
             .. "or '" .. effects.TRIGGER_DISPLAY .. "')")
+    elseif kind == "setWallpaperImage" then
+        assert(type(node.image) == "string" and #node.image > 0,
+            "setWallpaperImage effect needs an image file path")
+        assert(type(node.display) == "string" and #node.display > 0,
+            "setWallpaperImage effect needs a display (a name, 'all'/'external'/'primary', "
+            .. "or '" .. effects.TRIGGER_DISPLAY .. "')")
     elseif kind == "minimizeApp" or kind == "hideApp" or kind == "quitApp" then
         assert(type(node.app) == "string" and #node.app > 0,
             kind .. " effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
+    elseif kind == "moveAppToDisplay" then
+        assert(type(node.app) == "string" and #node.app > 0,
+            "moveAppToDisplay effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
+        assert(type(node.display) == "string" and #node.display > 0,
+            "moveAppToDisplay effect needs a display (a name or '" .. effects.TRIGGER_DISPLAY .. "')")
     elseif kind == "lockScreen" then
+        -- no parameters
+    elseif kind == "startScreensaver" then
         -- no parameters
     elseif kind == "chain" then
         assert(type(node.effects) == "table" and #node.effects > 0,
@@ -310,8 +374,9 @@ function effects.requiresContext(node)
     elseif node.kind == "layout" then
         return false   -- context-free: places windows by declared rules, no live selection
     elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen"
-        or node.kind == "solidWallpaper" or node.kind == "minimizeApp"
-        or node.kind == "hideApp" or node.kind == "quitApp" then
+        or node.kind == "solidWallpaper" or node.kind == "setWallpaperImage" or node.kind == "minimizeApp"
+        or node.kind == "hideApp" or node.kind == "quitApp" or node.kind == "startScreensaver"
+        or node.kind == "moveAppToDisplay" then
         return false   -- context-free: fire-and-forget system actions, no live selection
     elseif node.kind == "chain" then
         -- A chain is context-free only if EVERY step is -- so a chain on an
@@ -372,14 +437,31 @@ function effects.dispatch(node, context)
         if not ok then return false, tostring(res) end
         if not res then return false, "no display to paint: " .. tostring(target) end
         return true
+    elseif node.kind == "setWallpaperImage" then
+        local target, reason = effects.resolveParam(node.display, context)
+        if not target then return false, reason end
+        -- Same success-boolean contract as solidWallpaper: a typo'd/disconnected
+        -- display matches no screen -> nothing set -> a FAILURE in the fire log.
+        local ok, res = pcall(adapter.setWallpaper, node.image, target)
+        if not ok then return false, tostring(res) end
+        if not res then return false, "no display for the wallpaper: " .. tostring(target) end
+        return true
     elseif node.kind == "minimizeApp" then
         return appAction(node, context, adapter.minimizeApp, "minimize")
     elseif node.kind == "hideApp" then
         return appAction(node, context, adapter.hideApp, "hide")
     elseif node.kind == "quitApp" then
         return appAction(node, context, adapter.quitApp, "quit")
+    elseif node.kind == "moveAppToDisplay" then
+        local ok, res, reason = pcall(applyMoveToDisplay, node, context)
+        if not ok then return false, tostring(res) end
+        return res, reason
     elseif node.kind == "lockScreen" then
         local ok, err = pcall(adapter.lockScreen)
+        if not ok then return false, tostring(err) end
+        return true
+    elseif node.kind == "startScreensaver" then
+        local ok, err = pcall(adapter.startScreensaver)
         if not ok then return false, tostring(err) end
         return true
     elseif node.kind == "chain" then
@@ -428,14 +510,28 @@ function effects.describe(node, opts)
         local where = f and (pronoun and "it" or ("the triggering " .. f))
             or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
         return "Set wallpaper " .. colorName(node.color) .. " on " .. where
+    elseif node.kind == "setWallpaperImage" then
+        local f = triggerField(node.display)
+        local where = f and (pronoun and "it" or ("the triggering " .. f))
+            or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
+        return "Set wallpaper " .. baseName(node.image) .. " on " .. where
     elseif node.kind == "minimizeApp" or node.kind == "hideApp" or node.kind == "quitApp" then
         local f = triggerField(node.app)
         local who = f and (pronoun and "it" or ("the triggering " .. f)) or tostring(node.app or "")
         local verb = (node.kind == "hideApp" and "Hide")
             or (node.kind == "quitApp" and "Quit") or "Minimize"
         return verb .. " " .. who
+    elseif node.kind == "moveAppToDisplay" then
+        local af = triggerField(node.app)
+        local who = af and (pronoun and "it" or ("the triggering " .. af)) or tostring(node.app or "")
+        local df = triggerField(node.display)
+        local where = df and (pronoun and "it" or ("the triggering " .. df))
+            or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
+        return "Move " .. who .. " to " .. where
     elseif node.kind == "lockScreen" then
         return "Lock the screen"
+    elseif node.kind == "startScreensaver" then
+        return "Start the screensaver"
     elseif node.kind == "chain" then
         local parts = {}
         if type(node.effects) == "table" then
@@ -472,7 +568,10 @@ function effects.catalog(automatedOnly)
         { kind = "runShortcut", label = "Run a Shortcut" },
         { kind = "openURL",     label = "Open a URL" },
         { kind = "lockScreen",  label = "Lock the screen" },
+        { kind = "startScreensaver", label = "Start the screensaver" },
         { kind = "solidWallpaper", label = "Set solid wallpaper" },
+        { kind = "setWallpaperImage", label = "Set wallpaper image" },
+        { kind = "moveAppToDisplay", label = "Move an app to a display" },
         { kind = "minimizeApp", label = "Minimize an app's window" },
         { kind = "hideApp",     label = "Hide an app" },
         { kind = "quitApp",     label = "Quit an app" },
