@@ -1,0 +1,7 @@
+{
+  "name": "Media Keys",
+  "version": "1.0.0",
+  "description": "Play/pause, next, or previous track for whatever app is playing -- bind each to a hotkey, chord, or schedule.",
+  "category": "productivity",
+  "context": "anywhere"
+}

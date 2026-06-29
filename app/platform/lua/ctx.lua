@@ -247,6 +247,7 @@ function M.make(m, resolveTrigger, extra)
     function ctx.setAppearance(mode) return adapter.setAppearance(mode) end
     function ctx.adjustVolume(delta) return adapter.adjustVolume(delta) end
     function ctx.toggleMute()        return adapter.toggleMute() end
+    function ctx.mediaKey(name)      adapter.mediaKey(name) end
 
     -- capability-gated extras (stateless; no scope handle to track) ------------
     if extra then

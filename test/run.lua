@@ -878,6 +878,21 @@ ok(fake.muted == false, "mute toggles off")
 registry.setEnabled("volume", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after volume test")
 
+-- media_keys feature: each action posts its transport key (no defaultTrigger).
+registry.register(require("features.media_keys"))
+registry.setEnabled("media_keys", true)
+fake.mediaKeys = {}
+registry.runAction("media_keys", "playpause")
+registry.runAction("media_keys", "next")
+registry.runAction("media_keys", "previous")
+ok(#fake.mediaKeys == 3
+    and fake.mediaKeys[1] == "playpause"
+    and fake.mediaKeys[2] == "next"
+    and fake.mediaKeys[3] == "previous",
+    "media_keys actions post play/next/previous")
+registry.setEnabled("media_keys", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after media_keys test")
+
 -- T13c2: describe() localizes feature metadata via per-feature catalogs --------
 -- describe() applies i18n at CALL time: switch the locale, re-describe, and the
 -- gallery/settings text returns translated -- the 8 SwiftUI views are unchanged

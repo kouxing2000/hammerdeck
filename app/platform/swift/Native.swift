@@ -202,6 +202,7 @@ final class Native {
             "toggle_mute": { L in MainActor.assumeIsolated { Native.shared.toggleMute(L) } },
             "empty_trash": { L in MainActor.assumeIsolated { Native.shared.emptyTrash(L) } },
             "eject": { L in MainActor.assumeIsolated { Native.shared.eject(L) } },
+            "media_key": { L in MainActor.assumeIsolated { Native.shared.mediaKey(L) } },
         ]
         for chunk in [fns2, fns3, fns4, fns5] { fns.merge(chunk) { current, _ in current } }
         lua.registerTable("native", fns)

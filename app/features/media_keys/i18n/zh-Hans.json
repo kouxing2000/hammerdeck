@@ -1,0 +1,8 @@
+{
+  "name": "媒体键",
+  "description": "为正在播放的应用控制播放/暂停, 下一首, 上一首 -- 把每个动作绑定到快捷键, 弦, 或日程.",
+
+  "action.playpause.label": "播放 / 暂停",
+  "action.next.label": "下一首",
+  "action.previous.label": "上一首"
+}

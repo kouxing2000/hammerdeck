@@ -64,6 +64,30 @@ extension Native {
         return 0
     }
 
+    // media_key(name): post a media/transport key as a system-defined NSEvent --
+    // whatever app is playing (Music, Spotify, a browser) picks it up, no app
+    // targeting. `name`: "playpause" | "next" | "previous" (NX_KEYTYPE_PLAY 16 /
+    // _NEXT 17 / _PREVIOUS 18). Like key_stroke this posts to the HID tap, so it
+    // needs the Accessibility grant. The down/up state is carried in BOTH the
+    // modifier flags and data1's low half (0xA00 down / 0xB00 up) -- the encoding
+    // the aux-control handler expects (subtype 8 = NX_SUBTYPE_AUX_CONTROL_BUTTONS).
+    func mediaKey(_ L: OpaquePointer?) -> Int32 {
+        let codes: [String: Int] = ["playpause": 16, "next": 17, "previous": 18]
+        guard let name = LuaState.string(L, 1), let key = codes[name] else {
+            return luaError(L, "media_key: unknown key '\(LuaState.string(L, 1) ?? "?")'")
+        }
+        for down in [true, false] {
+            let state = down ? 0xA00 : 0xB00
+            let ev = NSEvent.otherEvent(
+                with: .systemDefined, location: .zero,
+                modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(state)),
+                timestamp: 0, windowNumber: 0, context: nil,
+                subtype: 8, data1: (key << 16) | state, data2: -1)
+            ev?.cgEvent?.post(tap: .cghidEventTap)
+        }
+        return 0
+    }
+
     // MARK: - Input / system
 
     func idleSeconds(_ L: OpaquePointer?) -> Int32 {

@@ -554,6 +554,11 @@ function adapter.eject()
     return fake.ejectReturn
 end
 
+fake.mediaKeys = {}      -- recorded media_key names ("playpause"/"next"/"previous")
+function adapter.mediaKey(name)
+    fake.mediaKeys[#fake.mediaKeys + 1] = name
+end
+
 function adapter.activateApp(name)
     if fake.runningApps[name] then
         fake.activatedApps[#fake.activatedApps + 1] = name

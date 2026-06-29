@@ -742,4 +742,10 @@ function adapter.eject()
     return native.eject()
 end
 
+-- Post a media/transport key ("playpause" | "next" | "previous") -- whatever app
+-- is playing picks it up (fire-and-forget).
+function adapter.mediaKey(name)
+    native.media_key(name)
+end
+
 return adapter

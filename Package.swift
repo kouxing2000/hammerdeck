@@ -61,6 +61,7 @@ let package = Package(
                 "features/display_off",
                 "features/insert_datetime",
                 "features/locate_pointer",
+                "features/media_keys",
                 "features/password_generator",
                 "features/plain_paste",
                 "features/pointer_follows_window",
