@@ -260,6 +260,9 @@ struct RuleInfo: Identifiable {
     let id: String
     let name: String             // the user's label (blank if unnamed -> fall back to triggerDesc)
     let enabled: Bool
+    let sentence: String         // engine read-back ("When Safari loses focus, minimize it."),
+                                 // "" if the grammar can't phrase it -- an unnamed rule lists as
+                                 // this (matching the editor's Name placeholder)
     let triggerDesc: String      // "state: frontmostApp becomes Safari", "event: wake", ...
     let effectDesc: String       // 'Notify "Safari is front"', "Run bing_daily.refresh"
     let on: [String: Any]        // raw trigger spec -- pre-fills the edit form
@@ -284,6 +287,7 @@ struct RuleInfo: Identifiable {
         self.id = id
         self.name = dict["name"] as? String ?? ""
         self.enabled = dict["enabled"] as? Bool ?? true
+        self.sentence = dict["sentence"] as? String ?? ""
         self.triggerDesc = dict["triggerDesc"] as? String ?? ""
         self.effectDesc = dict["effectDesc"] as? String ?? ""
         self.on = dict["on"] as? [String: Any] ?? [:]

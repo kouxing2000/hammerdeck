@@ -151,17 +151,22 @@ private struct RulePageRow: View {
         let message: String
     }
 
-    // A named rule shows its name on top with trigger -> effect beneath; an
-    // unnamed one keeps the original trigger / effect two-liner. An unavailable
-    // rule shows what it WAS up top and gives the secondary line to the reason.
+    // The rule's plain-English description -- the engine sentence ("When Claude loses
+    // focus, minimize it."), or a trigger -> effect fallback when the grammar can't
+    // phrase it. This is the SAME sentence the editor's Name placeholder previews.
+    private var ruleDescription: String {
+        rule.sentence.isEmpty ? "\(rule.triggerDesc) -> \(rule.effectDesc)" : rule.sentence
+    }
+    // A named rule shows its name on top with the sentence beneath; an UNNAMED one
+    // lists AS the sentence (one line, so the placeholder is a true preview of the
+    // row -- no redundant subtitle). An unavailable rule shows what it WAS up top and
+    // gives the secondary line to the reason.
     private var primary: String {
-        if !rule.name.isEmpty { return rule.name }
-        if rule.unavailable { return "\(rule.triggerDesc) -> \(rule.effectDesc)" }
-        return rule.triggerDesc
+        rule.name.isEmpty ? ruleDescription : rule.name
     }
     private var secondary: String {
         if rule.unavailable { return rule.unavailableReason }
-        return rule.name.isEmpty ? rule.effectDesc : "\(rule.triggerDesc) -> \(rule.effectDesc)"
+        return rule.name.isEmpty ? "" : ruleDescription
     }
 
     // The "fired 3m ago" / "not fired yet" status line. Hidden for unavailable
@@ -196,8 +201,10 @@ private struct RulePageRow: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(primary).font(.callout).lineLimit(1)
-                Text(secondary).font(.caption)
-                    .foregroundStyle(rule.unavailable ? .orange : .secondary).lineLimit(1)
+                if !secondary.isEmpty {
+                    Text(secondary).font(.caption)
+                        .foregroundStyle(rule.unavailable ? .orange : .secondary).lineLimit(1)
+                }
                 if let status = fireStatus {
                     Text(status.text).font(.caption2)
                         .foregroundStyle(status.color).lineLimit(1)
@@ -488,7 +495,13 @@ private struct AddRuleForm: View {
                     Spacer()
                 }
             }
-            TextField(Strings.t("rules.namePlaceholder", default: "Name (optional)"), text: $name)
+            // Name: the field's LABEL stays "Name (optional)"; its PROMPT (the in-field
+            // placeholder) previews the auto-name -- the live sentence, which is what a
+            // blank name falls back to. Type to override. Using `prompt:` (NOT the title
+            // string) is load-bearing: in a Form the title renders as a WRAPPING row
+            // LABEL that hides the editable field; a prompt stays an in-field placeholder.
+            TextField(Strings.t("rules.namePlaceholder", default: "Name (optional)"),
+                      text: $name, prompt: Text(namePlaceholder))
             // The rule AS AN EDITABLE SENTENCE -- a row of token pills, each a
             // tappable popover over the SAME @State the Pickers bound. The engine,
             // buildSpec, loadForEdit, canSubmit and the seeders are all unchanged.
@@ -501,9 +514,8 @@ private struct AddRuleForm: View {
             } else if selectedEffect?.kind == "chain" {
                 chainEditor
             }
-            // The engine's grammatical read-back, beneath the tokens -- it confirms
-            // the sentence reads right and is a live drift-check on the token order.
-            readBackLine
+            // The engine's grammatical read-back now lives in the Name field's
+            // placeholder (namePlaceholder) -- self-documenting and one row tighter.
             // The footgun warning stays INLINE (not only in the app pill's popover):
             // minimizing "it" on the GAINS-focus edge fires the instant you open the
             // app. Else, a from-trigger ("it") effect just gets the can't-Test note.
@@ -727,26 +739,13 @@ private struct AddRuleForm: View {
     }
 
     // --- Read-back sentence ----------------------------------------------------
-    // A live, plain-language echo of the rule being built ("When Slack loses focus,
-    // minimize it."), shown at the top of the editor. The engine composes it (one
-    // source of truth with the list rows); the form just displays the string. While
-    // the rule is too incomplete to read, a muted placeholder stands in.
-    @ViewBuilder private var readBackLine: some View {
-        let s = liveSentence
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "text.quote").foregroundStyle(.secondary)
-            if s.isEmpty {
-                Text(Strings.t("rules.readBackPlaceholder",
-                               default: "Fill in the trigger and effect below -- your rule reads here in plain words."))
-                    .font(.callout).foregroundStyle(.secondary)
-            } else {
-                Text(s).font(.callout).fontWeight(.medium)
-            }
-            Spacer(minLength: 0)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.vertical, 2)
-    }
+    // The Name field's PLACEHOLDER previews the rule's auto-name: the live sentence
+    // ("When Slack loses focus, minimize it."), which is exactly what a blank name
+    // falls back to -- self-documenting, shown grayed inside the labelled field. The
+    // engine composes it (one source of truth with the list rows). Too incomplete to
+    // read -> "" (an empty field under the "Name (optional)" label; the token pills,
+    // each with its own placeholder, carry the guidance then).
+    private var namePlaceholder: String { liveSentence }
 
     // Build the in-progress spec and ask the engine to phrase it. buildSpec() is
     // pure (no side effects) and returns nil until the rule is complete enough, so

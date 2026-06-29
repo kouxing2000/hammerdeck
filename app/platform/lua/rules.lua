@@ -445,10 +445,16 @@ end
 function rules.describe()
     local out = {}
     for _, spec in ipairs(rules.all()) do
+        -- The plain-English sentence (same one the editor's Name placeholder shows),
+        -- so an UNNAMED rule lists as that sentence -- the placeholder is then a true
+        -- preview of the row. pcall-guarded: a spec the grammar can't phrase falls back
+        -- to "" and the host shows trigger -> effect instead.
+        local okSent, sent = pcall(rules.sentence, spec)
         local row = {
             id          = spec.id,
             name        = spec.name or "",   -- the user's label (blank if unnamed)
             enabled     = isEnabled(spec),
+            sentence    = okSent and sent or "",
             triggerDesc = triggers.describe(spec.on),
             effectDesc  = effects.describe(spec.effect),
             -- the raw spec halves, so the Settings Rules tab can PRE-FILL the edit
@@ -475,10 +481,12 @@ function rules.describe()
     for _, p in ipairs(parked) do
         local spec = p.spec
         if type(spec.id) == "string" and #spec.id > 0 then
+            local okSent, sent = pcall(rules.sentence, spec)
             out[#out + 1] = {
                 id          = spec.id,
                 name        = (type(spec.name) == "string") and spec.name or "",
                 enabled     = false,
+                sentence    = okSent and sent or "",
                 triggerDesc = triggers.describe(type(spec.on) == "table" and spec.on or nil),
                 effectDesc  = effects.describe(spec.effect),
                 on          = (type(spec.on) == "table") and spec.on or {},

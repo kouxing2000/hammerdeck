@@ -2897,6 +2897,13 @@ do
         ok(okN, "add() accepts an optional rule name")
         ok(rules.describe()[1].name == "Dock at desk", "describe() surfaces the rule name")
 
+        -- describe() also carries the plain-English sentence -- the same read-back the
+        -- editor's Name placeholder shows, so an unnamed rule lists AS that sentence.
+        local specs = rules.all()
+        local d1 = rules.describe()[1]
+        ok(#specs >= 1 and #d1.sentence > 0 and d1.sentence == rules.sentence(specs[1]),
+            "describe() carries the read-back sentence (the list shows it for unnamed rules)")
+
         -- an UNNAMED rule reports name == "" -- the fallback the list row leans on
         -- (it shows the trigger text when the name is blank, never a nil/"rule2").
         local _, nid2 = rules.add({ on = { type = "event", event = "wake" },
