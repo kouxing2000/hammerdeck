@@ -335,6 +335,10 @@ struct SignalMeta {
     // The trigger-context key this signal publishes ("display" | "app"), or nil for
     // an enum signal that publishes nothing bindable. Drives the from-trigger option.
     let provides: String?
+    // The TIMING subtitle for each edge ("the moment you click away"), shown under
+    // the verb in the token verb-popover. Optional -- nil = no subtitle.
+    let enterWhen: String?
+    let leaveWhen: String?
 
     init(_ d: [String: Any]) {
         label = d["label"] as? String ?? ""
@@ -343,6 +347,8 @@ struct SignalMeta {
         leaveVerb = d["leaveVerb"] as? String ?? "leaves"
         example = d["example"] as? String ?? ""
         provides = d["provides"] as? String
+        enterWhen = d["enterWhen"] as? String
+        leaveWhen = d["leaveWhen"] as? String
     }
 }
 

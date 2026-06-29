@@ -3389,6 +3389,9 @@ do
         "signalMeta carries a label per signal")
     ok(fo.signalMeta.runningApps and fo.signalMeta.runningApps.enterVerb == "launches",
         "signalMeta carries the transition verbs (runningApps: launches/quits)")
+    -- timing subtitle (the verb-popover footgun-killer) rides signalMeta too
+    ok(fo.signalMeta.frontmostApp and fo.signalMeta.frontmostApp.leaveWhen == "the moment you click away",
+        "signalMeta carries the per-edge timing copy (frontmostApp leaveWhen)")
     ok(type(fo.signalCandidates.powerSource) == "table"
         and fo.signalCandidates.powerSource[1] == "ac",
         "powerSource offers ac/battery as candidates")

@@ -105,8 +105,14 @@ local REGISTRY = {
     frontmostApp = pushSignal {
         read    = function() return adapter.frontmostApp() end,
         observe = function(emit) return adapter.onAppActivated(emit) end,
+        -- enterWhen/leaveWhen: the TIMING subtitle the rules editor's verb popover
+        -- shows under each edge -- the footgun-killer (focus-gain fires the instant
+        -- you open the app; most rules want the click-away edge). DATA, like the
+        -- verbs; optional (a signal without them shows no subtitle).
         meta    = { label = "Frontmost app", valueLabel = "App name", provides = "app",
-                    enterVerb = "gains focus", leaveVerb = "loses focus", example = "Safari" },
+                    enterVerb = "gains focus", leaveVerb = "loses focus", example = "Safari",
+                    enterWhen = "the moment you switch to it",
+                    leaveWhen = "the moment you click away" },
         candidates = function()
             -- All running regular apps (NSWorkspace) -- PERMISSION-FREE. The old
             -- source was listWindows, which is Accessibility-gated: before that grant
@@ -136,7 +142,9 @@ local REGISTRY = {
         -- can bind to it ("@trigger:display"). The host derives the from-trigger
         -- option + label from this one declaration -- no hardcoded signal names.
         meta    = { label = "Connected display", valueLabel = "Display name", provides = "display",
-                    enterVerb = "connects", leaveVerb = "disconnects", example = "DELL U2720Q" },
+                    enterVerb = "connects", leaveVerb = "disconnects", example = "DELL U2720Q",
+                    enterWhen = "the moment it plugs in",
+                    leaveWhen = "the moment it unplugs" },
         candidates = readDisplayNames,
     },
     -- System appearance: "dark" / "light". Re-read on the appearance-changed
@@ -162,7 +170,9 @@ local REGISTRY = {
         end,
         match   = membership,
         meta    = { label = "Running app", valueLabel = "App name", provides = "app",
-                    enterVerb = "launches", leaveVerb = "quits", example = "Slack" },
+                    enterVerb = "launches", leaveVerb = "quits", example = "Slack",
+                    enterWhen = "the moment it launches",
+                    leaveWhen = "the moment it quits" },
         candidates = function() return adapter.runningApps() end,
     },
     -- Power source: "ac" (plugged in) / "battery". Re-read on power change.
