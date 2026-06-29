@@ -17,44 +17,21 @@
 -- until disable. Stopping a handle removes it from the scope, so well-behaved
 -- features stay lean; teardown is correct either way.
 
-local adapter  = require("platform.adapter")
-local manifest = require("platform.manifest")
-local modal    = require("platform.modal")
-local i18n     = require("platform.i18n")
+local adapter    = require("platform.adapter")
+local manifest   = require("platform.manifest")
+local modal      = require("platform.modal")
+local i18n       = require("platform.i18n")
+local window_ops = require("platform.window_ops")
 
 local M = {}
 
 local function optKey(id, k)   return "hammerdeck.opt." .. id .. "." .. k end
 local function stateKey(id, k) return "hammerdeck.state." .. id .. "." .. k end
 
--- "Pointer Follows Moved Window" (the pointer_follows_window feature): when its
--- toggle is on, repositioning the focused window carries the pointer along,
--- preserving its RELATIVE position inside the window (it was 30% from the left
--- edge -> still 30% from the left edge after the move). Implemented here, at the
--- single window-move seam, so EVERY window feature (window_snap, Window Mode,
--- window_to_next_screen, ...) gets it for free with no per-feature code. The
--- toggle is just that feature's enabled-state; reading the one well-known key
--- avoids a require cycle back into the registry.
-local POINTER_FOLLOWS_KEY = "hammerdeck.enabled.pointer_follows_window"
-
-local function moveWindowMaybeFollowingPointer(f)
-    if adapter.getSetting(POINTER_FOLLOWS_KEY, false) ~= true then
-        return adapter.setFocusedWindowFrame(f)
-    end
-    local old = adapter.focusedWindowFrame()
-    local mp  = adapter.mousePosition()
-    local ok  = adapter.setFocusedWindowFrame(f)
-    -- Carry the pointer only when it was actually inside the window being moved
-    -- (never yank a pointer parked elsewhere); guard degenerate / missing sizes.
-    if ok and old and mp and old.w and old.h and old.w > 0 and old.h > 0
-        and mp.x >= old.x and mp.x <= old.x + old.w
-        and mp.y >= old.y and mp.y <= old.y + old.h then
-        local rx = (mp.x - old.x) / old.w
-        local ry = (mp.y - old.y) / old.h
-        adapter.setMousePosition(f.x + rx * f.w, f.y + ry * f.h)
-    end
-    return ok
-end
+-- The focused-window move + "Pointer Follows Moved Window" policy lives in
+-- platform/window_ops.lua now (ctx.window.setFrame delegates to it). That keeps
+-- the cross-feature policy out of this boundary builder and resolves the old
+-- registry back-door (window_ops takes an injected enabled-state predicate).
 
 -- Build ctx + scope for a validated manifest m.
 -- scope.adopt(rawHandle)  -- track an externally created handle (registry uses
@@ -146,7 +123,6 @@ function M.make(m, resolveTrigger, extra)
     function ctx.log(...) adapter.log("[" .. m.id .. "]", ...) end
     function ctx.notify(title, text) adapter.notify(title, text) end
     function ctx.alert(text) adapter.alert(text) end
-    function ctx.locateMouse(seconds) adapter.locateMouse(seconds) end
 
     -- bindings (all scope-tracked) --------------------------------------------
     function ctx.bindHotkey(mods, key, fn, onRelease) return track(adapter.bindHotkey(mods, key, fn, onRelease)) end
@@ -165,21 +141,34 @@ function M.make(m, resolveTrigger, extra)
     -- enter a modal hotkey group (see platform/modal.lua); stop() exits
     function ctx.modal(spec)     return track(modal.enter(spec)) end
 
-    -- windows / apps -----------------------------------------------------------
-    function ctx.listWindows()      return adapter.listWindows() end
-    function ctx.focusWindow(id)    return adapter.focusWindow(id) end
+    -- apps (Phase 3 will namespace these into ctx.app.*) -----------------------
     function ctx.appIcon(bundleID)  return adapter.appIcon(bundleID) end
     function ctx.frontmostApp()     return adapter.frontmostApp() end
     function ctx.onAppActivated(fn) return track(adapter.onAppActivated(fn)) end
+    -- Accessibility permission gate -- stays TOP-LEVEL (a gate, not a domain).
     function ctx.axTrusted()        return adapter.axTrusted() end
     function ctx.axPrompt()         return adapter.axPrompt() end
-    function ctx.focusedWindowFrame()          return adapter.focusedWindowFrame() end
-    function ctx.focusedWindowTitle()          return adapter.focusedWindowTitle() end
-    function ctx.setFocusedWindowFrame(f)      return moveWindowMaybeFollowingPointer(f) end
-    function ctx.setFocusedWindowFullscreen(b) return adapter.setFocusedWindowFullscreen(b) end
-    function ctx.screenFrames()                return adapter.screenFrames() end
-    function ctx.mousePosition()               return adapter.mousePosition() end
-    function ctx.setMousePosition(x, y)        adapter.setMousePosition(x, y) end
+
+    -- window / screen / mouse domains -----------------------------------------
+    -- Namespaced sub-tables (was a flat ctx.<verb>Window... surface). ctx.window
+    -- .setFrame routes through window_ops (focused-window move + pointer-follow);
+    -- the rest are thin adapter pass-throughs. New pure-Lua window helpers
+    -- (tiling/grid, ported onto platform.windows math) will surface here too.
+    ctx.window = {}
+    function ctx.window.list()           return adapter.listWindows() end
+    function ctx.window.focus(id)        return adapter.focusWindow(id) end
+    function ctx.window.frame()          return adapter.focusedWindowFrame() end
+    function ctx.window.title()          return adapter.focusedWindowTitle() end
+    function ctx.window.setFrame(f)      return window_ops.setFrame(f) end
+    function ctx.window.setFullscreen(b) return adapter.setFocusedWindowFullscreen(b) end
+
+    ctx.screen = {}
+    function ctx.screen.frames()         return adapter.screenFrames() end
+
+    ctx.mouse = {}
+    function ctx.mouse.position()        return adapter.mousePosition() end
+    function ctx.mouse.setPosition(x, y) adapter.setMousePosition(x, y) end
+    function ctx.mouse.locate(seconds)   adapter.locateMouse(seconds) end
 
     -- data files (durable feature-owned storage) ---------------------------------
     function ctx.dataDir()                return adapter.dataDir() end

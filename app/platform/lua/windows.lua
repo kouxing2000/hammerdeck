@@ -166,7 +166,7 @@ end
 ---@param featureName string shown in the Accessibility onboarding message
 ---@return table|nil frame `{x,y,w,h,fullscreen,screenIndex,screen={x,y,w,h}}`
 function M.focusedOrAlert(ctx, featureName)
-    local f = ctx.focusedWindowFrame()
+    local f = ctx.window.frame()
     if f then return f end
     if not ctx.axTrusted() then
         ctx.axPrompt()

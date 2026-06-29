@@ -22,8 +22,8 @@
 
 -- warp the pointer to the center of a frame {x,y,w,h}, then flash the locator
 local function centerOn(ctx, f)
-    ctx.setMousePosition(f.x + f.w / 2, f.y + f.h / 2)
-    ctx.locateMouse(1)
+    ctx.mouse.setPosition(f.x + f.w / 2, f.y + f.h / 2)
+    ctx.mouse.locate(1)
 end
 
 -- the frame after the one currently under the pointer, wrapping around (so on a
@@ -57,7 +57,7 @@ return {
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "m" } },
           mnemonic = "M for Mouse (Hyper+M, then M)",
           run = function(ctx)
-              ctx.locateMouse(ctx.opt("seconds"))
+              ctx.mouse.locate(ctx.opt("seconds"))
           end },
         { id = "center", label = "Center pointer on focused window",
           description = "Warp the mouse pointer to the center of the focused "
@@ -65,7 +65,7 @@ return {
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "c" } },
           mnemonic = "C for Center (same Hyper+M prefix)",
           run = function(ctx)
-              local f = ctx.focusedWindowFrame() or ctx.screenFrames()[1]
+              local f = ctx.window.frame() or ctx.screen.frames()[1]
               if f then centerOn(ctx, f) end
           end },
         { id = "center_screen", label = "Center pointer on main screen",
@@ -74,7 +74,7 @@ return {
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "s" } },
           mnemonic = "S for Screen (same Hyper+M prefix)",
           run = function(ctx)
-              local f = ctx.screenFrames()[1]
+              local f = ctx.screen.frames()[1]
               if f then centerOn(ctx, f) end
           end },
         { id = "center_next_screen", label = "Center pointer on next screen",
@@ -83,7 +83,7 @@ return {
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "n" } },
           mnemonic = "N for Next screen (same Hyper+M prefix)",
           run = function(ctx)
-              local f = nextScreenFrame(ctx.screenFrames(), ctx.mousePosition())
+              local f = nextScreenFrame(ctx.screen.frames(), ctx.mouse.position())
               if f then centerOn(ctx, f) end
           end },
     },

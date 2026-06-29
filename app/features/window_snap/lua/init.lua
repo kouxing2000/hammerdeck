@@ -28,7 +28,7 @@ local function arranger(ctx)
 
     -- Exit fullscreen and re-run `retry` after a beat (donor behavior).
     local function unfullscreenThen(retry)
-        ctx.setFocusedWindowFullscreen(false)
+        ctx.window.setFullscreen(false)
         ctx.afterSeconds(RETRY_SECONDS, retry)
     end
 
@@ -37,7 +37,7 @@ local function arranger(ctx)
     function a.snap(xR, yR, wR, hR)
         local f = focused()
         if not f then return end
-        ctx.setFocusedWindowFrame(W.rectFromRatios(f.screen, xR, yR, wR, hR))
+        ctx.window.setFrame(W.rectFromRatios(f.screen, xR, yR, wR, hR))
     end
 
     -- Maximized (full width or height) -> centered 75%; else maximize.
@@ -48,10 +48,10 @@ local function arranger(ctx)
         local s = f.screen
         if f.w == s.w or f.h == s.h then
             local m = (1 - TOGGLE_SCALE) / 2
-            ctx.setFocusedWindowFrame(
+            ctx.window.setFrame(
                 W.rectFromRatios(s, m, m, TOGGLE_SCALE, TOGGLE_SCALE))
         else
-            ctx.setFocusedWindowFrame(W.rectFromRatios(s, 0, 0, 1, 1))
+            ctx.window.setFrame(W.rectFromRatios(s, 0, 0, 1, 1))
         end
     end
 
@@ -64,7 +64,7 @@ local function arranger(ctx)
         if f.fullscreen then
             return unfullscreenThen(function() a.moveScreen(dir) end)
         end
-        local screens = ctx.screenFrames()
+        local screens = ctx.screen.frames()
         if #screens < 2 then
             ctx.alert(ctx.t("alert.oneScreen", "Only one screen"))
             return
@@ -74,14 +74,14 @@ local function arranger(ctx)
         local s, t = f.screen, screens[j]
 
         -- least-distortion rescale + clamp (shared geometry; see windows.lua).
-        ctx.setFocusedWindowFrame(W.moveToScreen(f, s, t))
+        ctx.window.setFrame(W.moveToScreen(f, s, t))
 
         -- Carry the pointer at the same offset on the new screen, clamped.
-        local m = ctx.mousePosition()
-        ctx.setMousePosition(
+        local m = ctx.mouse.position()
+        ctx.mouse.setPosition(
             t.x + math.min(math.max(m.x - s.x, 0), t.w),
             t.y + math.min(math.max(m.y - s.y, 0), t.h))
-        ctx.locateMouse(2)
+        ctx.mouse.locate(2)
     end
 
     return a

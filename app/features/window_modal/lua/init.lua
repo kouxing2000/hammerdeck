@@ -38,7 +38,7 @@ local function arrangerFor(ctx)
     end
 
     local function setFrame(nf)
-        ctx.setFocusedWindowFrame(nf)
+        ctx.window.setFrame(nf)
     end
 
     -- Stash the pre-op frame (cap like the donor); a new op clears redo.
@@ -56,7 +56,7 @@ local function arrangerFor(ctx)
         if not f then return end
         if f.fullscreen then
             -- Exit fullscreen; the next key press applies normally.
-            ctx.setFocusedWindowFullscreen(false)
+            ctx.window.setFullscreen(false)
             return
         end
         local stepw, steph = steps(f)
@@ -91,7 +91,7 @@ local function arrangerFor(ctx)
     -- shrunk only if larger than the target). dir = left|right|up|down|next.
     local function moveScreen(dir)
         apply(function(f)
-            local screens = ctx.screenFrames()
+            local screens = ctx.screen.frames()
             if #screens < 2 then
                 ctx.alert(ctx.t("alert.oneScreen", "Only one screen"))
                 return nil

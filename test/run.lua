@@ -104,7 +104,7 @@ do
     -- NO require of i18n. A shared key resolves via ctx.t's global fallback.
     local alerted
     local fakeCtx = {
-        focusedWindowFrame = function() return nil end,
+        window    = { frame = function() return nil end },
         axTrusted = function() return false end,
         axPrompt  = function() end,
         alert     = function(s) alerted = s end,
@@ -114,6 +114,33 @@ do
     windows.focusedOrAlert(fakeCtx, "Window Mode")
     ok(alerted and alerted:find("辅助功能", 1, true) and alerted:find("Hammerdeck", 1, true),
         "platform.windows localizes its Accessibility alert via ctx.t")
+
+    -- Leaf-util invariant: the leaf utils (platform.windows/hotkeys/json/urls) must
+    -- have ZERO `require` -- that require-freedom is exactly what lets a feature
+    -- `require` them safely (the layer map's leaf tier). Nothing else guards this
+    -- (no luacheck / CI grep), so assert it HERE: it runs in both `lua test/run.lua`
+    -- and `scripts/test-lua.sh` (the exact embedded engine), failing loudly if a
+    -- ported window algorithm or a careless edit drags a require into the pure layer.
+    -- Code lines only -- a comment mentioning "require" (windows.lua's header does)
+    -- is skipped so prose never trips the guard.
+    do
+        local appdir = require("loader").appdir
+        for _, leaf in ipairs({ "windows", "hotkeys", "json", "urls" }) do
+            local path = appdir .. "/platform/lua/" .. leaf .. ".lua"
+            local fh = assert(io.open(path, "r"), "leaf-guard: cannot open " .. path)
+            local offender
+            for line in fh:lines() do
+                if not line:match("^%s*%-%-") and line:match("require%s*[%(\"']") then
+                    offender = line
+                    break
+                end
+            end
+            fh:close()
+            ok(offender == nil,
+                "leaf util platform." .. leaf .. " stays require-free (layer invariant)"
+                .. (offender and (" -- found: " .. offender) or ""))
+        end
+    end
 
     -- RESET to the source language for the rest of the suite.
     i18n.configure({ locale = "en" })
@@ -2013,8 +2040,9 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after windo
 
 -- T24b: pointer_follows_window (a window move carries the pointer, relative pos) --
 -- Reuses window_snap (already registered above) as the mover under test: the
--- follow lives at the ctx.setFocusedWindowFrame seam, so ANY window feature
--- exercises it. Screen 1 = {0,0,1000,800}; "left" snaps to {0,0,500,800}.
+-- follow lives at the ctx.window.setFrame -> window_ops seam, so ANY feature that
+-- moves the focused window exercises it. Screen 1 = {0,0,1000,800}; "left" snaps
+-- to {0,0,500,800}.
 registry.register(require("features.pointer_follows_window"))
 registry.setEnabled("window_snap", true)
 fake.screenList = {

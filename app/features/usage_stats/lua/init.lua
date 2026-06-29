@@ -69,7 +69,7 @@ local function start(ctx)
         if BROWSER_APPS[app] then
             return getDomain(ctx.browserActiveURL(app)) or ""
         elseif EDITOR_APPS[app] then
-            local title = ctx.focusedWindowTitle() or ""
+            local title = ctx.window.title() or ""
             local project = title:match(" — (.+)$")
             if project then
                 project = project:match("^([^%[]+)") or project

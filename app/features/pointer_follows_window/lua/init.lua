@@ -7,10 +7,13 @@
 -- you never lose the cursor after a snap or a throw to another screen.
 --
 -- This feature has NO runtime of its own: its enabled-state is the toggle. The
--- actual follow happens at the single window-move seam in lua/platform/ctx.lua
--- (ctx.setFocusedWindowFrame -> moveWindowMaybeFollowingPointer), which reads
--- this feature's enabled key. One toggle, every window feature benefits, no
--- per-feature code -- and any future window mover inherits it automatically.
+-- actual follow happens at the single focused-window-move seam
+-- (ctx.window.setFrame -> platform/window_ops.lua), which the registry wires to
+-- read this feature's enabled-state (injected predicate, no magic key). One
+-- toggle, every feature that moves the FOCUSED window benefits, no per-feature
+-- code -- and any future focused-window mover inherits it automatically. (The
+-- rules engine's by-id layout/move-to-display path is separate and intentionally
+-- does NOT follow the pointer -- that would be wrong for a batch layout.)
 --
 -- Why "when WE move it" and not the old app-switch "mouse follows focus": every
 -- move here is one Hammerdeck performed, so the destination is known exactly

@@ -13,12 +13,13 @@
 -- the adapter, keyed by feature id (+ action id), so a restart restores exactly
 -- what the user selected.
 
-local adapter  = require("platform.adapter")
-local manifest = require("platform.manifest")
-local triggers = require("platform.triggers")
-local ctxlib   = require("platform.ctx")
-local json     = require("platform.json")
-local i18n     = require("platform.i18n")
+local adapter   = require("platform.adapter")
+local manifest  = require("platform.manifest")
+local triggers  = require("platform.triggers")
+local ctxlib    = require("platform.ctx")
+local json      = require("platform.json")
+local i18n      = require("platform.i18n")
+local window_ops = require("platform.window_ops")
 
 local registry = {}
 
@@ -896,5 +897,15 @@ function registry.liveHandleCount()
     for _, b in pairs(bound) do n = n + b.scope.liveCount() end
     return n
 end
+
+-- Composition-root wiring: window_ops owns the focused-window move + pointer-
+-- follow policy (ctx.window.setFrame delegates to it), but the "is pointer-follow
+-- on?" answer is the pointer_follows_window feature's enabled-state, which lives
+-- here. Inject it as a predicate so window_ops stays feature-agnostic and we avoid
+-- the ctx -> registry require cycle. Done once at module load; the predicate reads
+-- the live state on every move. This is the single place that names the feature id.
+window_ops.configure({
+    pointerFollowEnabled = function() return registry.isEnabled("pointer_follows_window") end,
+})
 
 return registry

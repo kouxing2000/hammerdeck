@@ -32,7 +32,7 @@ local function jump(ctx, actionId, backward)
             onHide = function() stopAltTimer() end,
             onSelect = function(choice)
                 stopAltTimer()
-                if choice then ctx.focusWindow(choice.id) end
+                if choice then ctx.window.focus(choice.id) end
             end,
         }
     end
@@ -62,7 +62,7 @@ local function jump(ctx, actionId, backward)
             end)
         end
     else
-        local windows = ctx.listWindows()
+        local windows = ctx.window.list()
         if #windows == 0 then
             if not ctx.axTrusted() then
                 -- Accessibility onboarding: fire the system prompt and
