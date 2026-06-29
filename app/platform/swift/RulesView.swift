@@ -226,9 +226,9 @@ private struct RulePageRow: View {
                         }
                         .padding(10).frame(maxWidth: 300)
                     }
-                    .confirmationDialog(String(format: Strings.t("rules.testLockTitle", default: "Test \"%@\"? This will lock your screen now."), primary),
+                    .confirmationDialog(disruptiveTestTitle,
                                         isPresented: $confirmDisruptiveTest, titleVisibility: .visible) {
-                        Button(Strings.t("rules.lockScreen", default: "Lock screen"), role: .destructive) { fireNow() }
+                        Button(disruptiveTestButton, role: .destructive) { fireNow() }
                         Button(Strings.t("rules.cancel", default: "Cancel"), role: .cancel) {}
                     }
                 }
@@ -246,15 +246,56 @@ private struct RulePageRow: View {
         .opacity(rule.unavailable ? 0.6 : (rule.enabled ? 1 : 0.55))
     }
 
-    // Disruptive built-in effects whose Test should confirm first (locking the
-    // screen on a "preview" click is a nasty surprise). Other effects -- including
-    // user-authored runShortcut/command, whose whole point is to run -- fire
-    // immediately. Widen this if a sleep/shutdown-style effect is ever added.
-    private static let disruptiveTestKinds: Set<String> = ["lockScreen", "startScreensaver"]
+    // Disruptive built-in effects whose Test should confirm first -- locking the
+    // screen on a "preview" click is a nasty surprise, and emptyTrash/eject are
+    // IRREVERSIBLE, so a misleading or absent prompt is a real safety hazard. Other
+    // effects -- including user-authored runShortcut/command, whose whole point is
+    // to run -- fire immediately. Widen this if a sleep/shutdown-style effect lands.
+    private static let disruptiveTestKinds: Set<String> = ["lockScreen", "startScreensaver", "emptyTrash", "eject"]
+
+    // The disruptive kind a Test must confirm before firing: the effect's own kind,
+    // or -- for a chain -- the first step that's destructive (so a chain that empties
+    // the Trash still prompts, and prompts about the RIGHT thing). nil = fire freely.
+    private var disruptiveTestKind: String? {
+        guard let kind = rule.effect["kind"] as? String else { return nil }
+        if Self.disruptiveTestKinds.contains(kind) { return kind }
+        if kind == "chain" {
+            let steps = (rule.effect["effects"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+            let disruptive = steps.compactMap { $0["kind"] as? String }
+                .filter { Self.disruptiveTestKinds.contains($0) }
+            // Warn about the IRREVERSIBLE step (empty Trash / eject) ahead of a
+            // reversible one (lock / screensaver) when a chain mixes them.
+            return disruptive.first { $0 == "emptyTrash" || $0 == "eject" } ?? disruptive.first
+        }
+        return nil
+    }
+
+    // Per-kind confirm copy -- the dialog must describe the ACTUAL destructive act,
+    // never a stale "lock screen" while it deletes the Trash (the safety gate is
+    // worthless if it misinforms).
+    private var disruptiveTestTitle: String {
+        switch disruptiveTestKind {
+        case "emptyTrash":
+            return String(format: Strings.t("rules.testEmptyTrashTitle", default: "Test \"%@\"? This permanently empties your Trash now."), primary)
+        case "eject":
+            return String(format: Strings.t("rules.testEjectTitle", default: "Test \"%@\"? This ejects your external disks now."), primary)
+        case "startScreensaver":
+            return String(format: Strings.t("rules.testScreensaverTitle", default: "Test \"%@\"? This starts the screensaver now."), primary)
+        default:
+            return String(format: Strings.t("rules.testLockTitle", default: "Test \"%@\"? This will lock your screen now."), primary)
+        }
+    }
+    private var disruptiveTestButton: String {
+        switch disruptiveTestKind {
+        case "emptyTrash":       return Strings.t("rules.testEmptyTrashConfirm", default: "Empty Trash")
+        case "eject":            return Strings.t("rules.testEjectConfirm", default: "Eject disks")
+        case "startScreensaver": return Strings.t("rules.testScreensaverConfirm", default: "Start screensaver")
+        default:                 return Strings.t("rules.lockScreen", default: "Lock screen")
+        }
+    }
 
     private func runTest() {
-        if let kind = rule.effect["kind"] as? String,
-           Self.disruptiveTestKinds.contains(kind) {
+        if disruptiveTestKind != nil {
             confirmDisruptiveTest = true   // hand the real fire to the dialog's button
             return
         }
@@ -347,8 +388,10 @@ private let chainStepKinds: [(id: String, label: String)] = [
     ("openURL", Strings.t("rules.chainKindOpenURL", default: "Open a URL")),
     ("lockScreen", Strings.t("rules.chainKindLockScreen", default: "Lock the screen")),
     ("startScreensaver", Strings.t("rules.chainKindScreensaver", default: "Start the screensaver")),
+    ("emptyTrash", Strings.t("rules.chainKindEmptyTrash", default: "Empty the Trash")),
+    ("eject", Strings.t("rules.chainKindEject", default: "Eject external disks")),
 ]
-private let chainStepSimpleKinds: Set<String> = ["notify", "speak", "runShortcut", "openURL", "lockScreen", "startScreensaver"]
+private let chainStepSimpleKinds: Set<String> = ["notify", "speak", "runShortcut", "openURL", "lockScreen", "startScreensaver", "emptyTrash", "eject"]
 
 private struct AddRuleForm: View {
     @ObservedObject var store: SettingsStore
@@ -971,6 +1014,8 @@ private struct AddRuleForm: View {
         case "notify":         return Strings.t("rules.verb.notify", default: "notify")
         case "lockScreen":     return Strings.t("rules.verb.lock", default: "lock the screen")
         case "startScreensaver": return Strings.t("rules.verb.screensaver", default: "start the screensaver")
+        case "emptyTrash":     return Strings.t("rules.verb.emptyTrash", default: "empty the Trash")
+        case "eject":          return Strings.t("rules.verb.eject", default: "eject external disks")
         case "solidWallpaper", "setWallpaperImage": return Strings.t("rules.verb.wallpaper", default: "set wallpaper")
         case "moveAppToDisplay": return Strings.t("rules.verb.move", default: "move")
         case "minimizeApp":    return Strings.t("rules.verb.minimize", default: "minimize")
@@ -1353,7 +1398,7 @@ private struct AddRuleForm: View {
         case "speak":       return !s.speakText.trimmingCharacters(in: .whitespaces).isEmpty
         case "runShortcut": return !s.shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
         case "openURL":     return !s.url.trimmingCharacters(in: .whitespaces).isEmpty
-        case "lockScreen", "startScreensaver":  return true
+        case "lockScreen", "startScreensaver", "emptyTrash", "eject":  return true
         default:            return false
         }
     }
@@ -1668,6 +1713,10 @@ private struct AddRuleForm: View {
             effectId = "lockScreen"
         } else if kind == "startScreensaver" {
             effectId = "startScreensaver"
+        } else if kind == "emptyTrash" {
+            effectId = "emptyTrash"
+        } else if kind == "eject" {
+            effectId = "eject"
         } else if kind == "chain" {
             effectId = "chain"
             let steps = (effect["effects"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
@@ -1862,6 +1911,10 @@ private struct AddRuleForm: View {
                     return ["kind": "lockScreen"]
                 case "startScreensaver":
                     return ["kind": "startScreensaver"]
+                case "emptyTrash":
+                    return ["kind": "emptyTrash"]
+                case "eject":
+                    return ["kind": "eject"]
                 default:
                     return nil
                 }
@@ -1872,6 +1925,10 @@ private struct AddRuleForm: View {
             effect = ["kind": "lockScreen"]
         } else if eff.kind == "startScreensaver" {
             effect = ["kind": "startScreensaver"]
+        } else if eff.kind == "emptyTrash" {
+            effect = ["kind": "emptyTrash"]
+        } else if eff.kind == "eject" {
+            effect = ["kind": "eject"]
         } else {
             effect = ["kind": "command", "feature": eff.feature ?? ""]
             if let a = eff.action { effect["action"] = a }

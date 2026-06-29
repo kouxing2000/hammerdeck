@@ -296,6 +296,57 @@ extension Native {
         return 1
     }
 
+    // MARK: - Disk / Trash (rule-effect system actions)
+
+    // empty_trash() -> Int  -- remove every item from the user's home Trash
+    // (~/.Trash) and return the count removed. Deliberately NO Finder prompt (a
+    // rule fires unattended); best-effort per item, so a locked/SIP item is
+    // skipped, not fatal. Scope is the home Trash -- per-external-volume .Trashes
+    // are left alone. The Test button confirms first (see disruptiveTestKinds).
+    func emptyTrash(_ L: OpaquePointer?) -> Int32 {
+        let fm = FileManager.default
+        let trash = (try? fm.url(for: .trashDirectory, in: .userDomainMask,
+                                 appropriateFor: nil, create: false))
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".Trash")
+        let items = (try? fm.contentsOfDirectory(at: trash,
+                        includingPropertiesForKeys: nil, options: [])) ?? []
+        var removed = 0
+        for item in items {
+            if (try? fm.removeItem(at: item)) != nil { removed += 1 }
+        }
+        // Found items but couldn't remove ANY -> almost always a Full Disk Access
+        // (TCC) denial; report -1 so the rule logs a real failure instead of a
+        // green no-op. An already-empty Trash returns 0 (a clean success).
+        lua_pushinteger(L, (!items.isEmpty && removed == 0) ? -1 : lua_Integer(removed))
+        return 1
+    }
+
+    // eject() -> Int  -- unmount and eject every ejectable/removable EXTERNAL
+    // volume and return the count ejected. The boot disk isn't ejectable so it's
+    // naturally excluded (and the explicit !internal guard double-checks); a
+    // volume with open files may refuse, counted as a miss rather than throwing.
+    func eject(_ L: OpaquePointer?) -> Int32 {
+        let keys: Set<URLResourceKey> = [.volumeIsEjectableKey,
+                                         .volumeIsRemovableKey, .volumeIsInternalKey]
+        let fm = FileManager.default
+        let vols = fm.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys),
+                                        options: [.skipHiddenVolumes]) ?? []
+        var candidates = 0, ejected = 0
+        for v in vols {
+            let rv = try? v.resourceValues(forKeys: keys)
+            let removable = (rv?.volumeIsEjectable ?? false) || (rv?.volumeIsRemovable ?? false)
+            let internalVol = rv?.volumeIsInternal ?? false
+            if removable && !internalVol {
+                candidates += 1
+                if (try? NSWorkspace.shared.unmountAndEjectDevice(at: v)) != nil { ejected += 1 }
+            }
+        }
+        // Had ejectable volumes but none came out (all busy / refused) -> -1, a real
+        // failure. No external volumes at all returns 0 (a clean "nothing to do").
+        lua_pushinteger(L, (candidates > 0 && ejected == 0) ? -1 : lua_Integer(ejected))
+        return 1
+    }
+
     func appIcon(_ L: OpaquePointer?) -> Int32 {
         if let bundleID = LuaState.string(L, 1) {
             lua_pushstring(L, "appicon:" + bundleID)

@@ -14,6 +14,8 @@
 --   lockScreen   -- lock the screen:        { kind="lockScreen" }
 --   startScreensaver -- start the screensaver: { kind="startScreensaver" }
 --   speak        -- speak a line aloud:      { kind="speak", text=<str> }
+--   emptyTrash   -- empty the home Trash:    { kind="emptyTrash" }
+--   eject        -- eject external disks:    { kind="eject" }
 --   solidWallpaper -- paint a solid color:  { kind="solidWallpaper", color="#RRGGBB",
 --                   display=<name|"all"|"external"|"primary"|"@trigger:display"> }
 --   setWallpaperImage -- set a wallpaper photo: { kind="setWallpaperImage", image=<path>,
@@ -346,6 +348,10 @@ function effects.validate(node)
         -- no parameters
     elseif kind == "startScreensaver" then
         -- no parameters
+    elseif kind == "emptyTrash" then
+        -- no parameters
+    elseif kind == "eject" then
+        -- no parameters
     elseif kind == "chain" then
         assert(type(node.effects) == "table" and #node.effects > 0,
             "chain effect needs at least one step")
@@ -380,7 +386,8 @@ function effects.requiresContext(node)
     elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen"
         or node.kind == "solidWallpaper" or node.kind == "setWallpaperImage" or node.kind == "minimizeApp"
         or node.kind == "hideApp" or node.kind == "quitApp" or node.kind == "startScreensaver"
-        or node.kind == "moveAppToDisplay" or node.kind == "speak" then
+        or node.kind == "moveAppToDisplay" or node.kind == "speak"
+        or node.kind == "emptyTrash" or node.kind == "eject" then
         return false   -- context-free: fire-and-forget system actions, no live selection
     elseif node.kind == "chain" then
         -- A chain is context-free only if EVERY step is -- so a chain on an
@@ -472,6 +479,26 @@ function effects.dispatch(node, context)
         local ok, err = pcall(adapter.say, node.text)
         if not ok then return false, tostring(err) end
         return true
+    elseif node.kind == "emptyTrash" then
+        local ok, n = pcall(adapter.emptyTrash)
+        if not ok then return false, tostring(n) end
+        -- -1 = found items but removed none (a Full Disk Access denial); surface it
+        -- as a real failure, not a lying green "fired". A count > 0 rides as a note.
+        if n == -1 then
+            return false, "couldn't empty the Trash -- grant Full Disk Access in System Settings > Privacy & Security"
+        end
+        if type(n) == "number" and n > 0 then
+            return true, "emptied " .. n .. (n == 1 and " item" or " items")
+        end
+        return true   -- the Trash was already empty
+    elseif node.kind == "eject" then
+        local ok, n = pcall(adapter.eject)
+        if not ok then return false, tostring(n) end
+        if n == -1 then return false, "external disk(s) busy -- nothing ejected" end
+        if type(n) == "number" and n > 0 then
+            return true, "ejected " .. n .. (n == 1 and " disk" or " disks")
+        end
+        return true   -- no external disks connected
     elseif node.kind == "chain" then
         local ok, res, reason = pcall(applyChain, node, context)
         if not ok then return false, tostring(res) end
@@ -542,6 +569,10 @@ function effects.describe(node, opts)
         return "Lock the screen"
     elseif node.kind == "startScreensaver" then
         return "Start the screensaver"
+    elseif node.kind == "emptyTrash" then
+        return "Empty the Trash"
+    elseif node.kind == "eject" then
+        return "Eject external disks"
     elseif node.kind == "chain" then
         local parts = {}
         if type(node.effects) == "table" then
@@ -580,6 +611,8 @@ function effects.catalog(automatedOnly)
         { kind = "lockScreen",  label = "Lock the screen" },
         { kind = "startScreensaver", label = "Start the screensaver" },
         { kind = "speak",       label = "Speak text aloud" },
+        { kind = "emptyTrash",  label = "Empty the Trash" },
+        { kind = "eject",       label = "Eject external disks" },
         { kind = "solidWallpaper", label = "Set solid wallpaper" },
         { kind = "setWallpaperImage", label = "Set wallpaper image" },
         { kind = "moveAppToDisplay", label = "Move an app to a display" },

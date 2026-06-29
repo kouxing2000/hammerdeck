@@ -3476,6 +3476,35 @@ do
     ok(#fake.spokenTexts == nSp + 1 and fake.spokenTexts[#fake.spokenTexts] == "Battery low",
         "speak dispatch says the text")
 
+    -- emptyTrash / eject: param-free context-free system effects
+    ok(effects.requiresContext({ kind = "emptyTrash" }) == false, "emptyTrash is context-free")
+    ok(effects.requiresContext({ kind = "eject" }) == false, "eject is context-free")
+    ok(pcall(effects.validate, { kind = "emptyTrash" }) == true, "emptyTrash needs no params")
+    ok(pcall(effects.validate, { kind = "eject" }) == true, "eject needs no params")
+    ok(effects.describe({ kind = "emptyTrash" }) == "Empty the Trash", "describe labels emptyTrash")
+    ok(effects.describe({ kind = "eject" }) == "Eject external disks", "describe labels eject")
+    local nT = fake.trashEmptied
+    fake.trashReturn = 3
+    local okT, noteT = effects.dispatch({ kind = "emptyTrash" })
+    ok(fake.trashEmptied == nT + 1, "emptyTrash dispatch empties the trash")
+    ok(okT == true and noteT == "emptied 3 items", "emptyTrash surfaces the count as a note")
+    fake.trashReturn = 0   -- already empty: clean success, no note
+    local okT0, noteT0 = effects.dispatch({ kind = "emptyTrash" })
+    ok(okT0 == true and noteT0 == nil, "empty Trash is a clean success with no note")
+    fake.trashReturn = -1  -- found items, removed none: a Full Disk Access denial
+    local okTf, noteTf = effects.dispatch({ kind = "emptyTrash" })
+    ok(okTf == false and noteTf:find("Full Disk Access"), "emptyTrash -1 surfaces a real failure")
+    fake.trashReturn = 3   -- restore default
+    local nEj = fake.ejected
+    fake.ejectReturn = 1
+    local okE, noteE = effects.dispatch({ kind = "eject" })
+    ok(fake.ejected == nEj + 1, "eject dispatch ejects disks")
+    ok(okE == true and noteE == "ejected 1 disk", "eject surfaces the count as a note")
+    fake.ejectReturn = -1  -- disks present but all busy
+    local okEf, noteEf = effects.dispatch({ kind = "eject" })
+    ok(okEf == false and noteEf:find("busy"), "eject -1 surfaces a real failure")
+    fake.ejectReturn = 1   -- restore default
+
     -- end-to-end on an automated trigger: on wake -> run a Shortcut
     rules.add({ on = { type = "event", event = "wake" },
                 effect = { kind = "runShortcut", name = "Morning" } })

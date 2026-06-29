@@ -732,4 +732,14 @@ function adapter.toggleMute()
     return native.toggle_mute()
 end
 
+-- Empty the user's home Trash (no Finder prompt); returns the count removed.
+function adapter.emptyTrash()
+    return native.empty_trash()
+end
+
+-- Eject every ejectable external volume; returns the count ejected.
+function adapter.eject()
+    return native.eject()
+end
+
 return adapter

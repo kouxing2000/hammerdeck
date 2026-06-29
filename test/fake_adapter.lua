@@ -541,6 +541,19 @@ function adapter.toggleMute()
     return fake.muted
 end
 
+fake.trashEmptied = 0    -- count of empty_trash calls
+fake.trashReturn = 3     -- what empty_trash returns (count, or -1 for a TCC denial)
+function adapter.emptyTrash()
+    fake.trashEmptied = fake.trashEmptied + 1
+    return fake.trashReturn
+end
+fake.ejected = 0         -- count of eject calls
+fake.ejectReturn = 1     -- what eject returns (count, or -1 for all-busy)
+function adapter.eject()
+    fake.ejected = fake.ejected + 1
+    return fake.ejectReturn
+end
+
 function adapter.activateApp(name)
     if fake.runningApps[name] then
         fake.activatedApps[#fake.activatedApps + 1] = name

@@ -200,6 +200,8 @@ final class Native {
             "say": { L in MainActor.assumeIsolated { Native.shared.speak(L) } },
             "adjust_volume": { L in MainActor.assumeIsolated { Native.shared.adjustVolume(L) } },
             "toggle_mute": { L in MainActor.assumeIsolated { Native.shared.toggleMute(L) } },
+            "empty_trash": { L in MainActor.assumeIsolated { Native.shared.emptyTrash(L) } },
+            "eject": { L in MainActor.assumeIsolated { Native.shared.eject(L) } },
         ]
         for chunk in [fns2, fns3, fns4, fns5] { fns.merge(chunk) { current, _ in current } }
         lua.registerTable("native", fns)
