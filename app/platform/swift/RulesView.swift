@@ -439,6 +439,18 @@ private struct AddRuleForm: View {
     @State private var minimizeAppName = ""            // minimizeApp: app name | @trigger:app
     @State private var moveApp = ""                    // moveAppToDisplay: app name | @trigger:app
     @State private var moveDisplay = ""                // moveAppToDisplay: display name | @trigger:display
+    // The canonical match key paired with the *Name display string above: a bundle
+    // id (set when the user picks from the installed-apps list), so a rule matches
+    // by bundle id (stable across locale/rename), not the localized name. Empty for
+    // the "@trigger:app" sentinel and for a manually-typed name (then the engine
+    // falls back to name-matching). Persisted as the effect's `appBundleId`.
+    @State private var minimizeAppBundleId = ""        // minimizeApp/hideApp/quitApp
+    @State private var moveAppBundleId = ""            // moveAppToDisplay
+    // The frontmostApp TRIGGER value reuses the installed-apps chooser (so a rule can
+    // watch for an app that isn't running yet). That signal matches by NAME, so the
+    // chosen name flows into stateValue and this bundle id is ignored.
+    @State private var showFrontmostPicker = false
+    @State private var ignoredAppBundleId = ""
     // The "New rule" landing: a recipe gallery (kills the blank canvas), shown only
     // in add mode. Picking a recipe pre-fills the form below; "Build your own" clears it.
     @State private var showGallery = true
@@ -592,11 +604,15 @@ private struct AddRuleForm: View {
             // keeps the app the user already chose.
             if editing == nil && appTargetKinds.contains(selectedEffect?.kind ?? "")
                 && minimizeAppName.isEmpty {
-                minimizeAppName = (triggerProvides == "app") ? Self.triggerSentinel("app") : (appCandidates.first ?? "")
+                // From-trigger when the trigger publishes an app, else leave empty so
+                // the user picks from the installed-apps list (no surprise auto-pick).
+                minimizeAppName = (triggerProvides == "app") ? Self.triggerSentinel("app") : ""
+                minimizeAppBundleId = ""
             }
             if editing == nil && selectedEffect?.kind == "moveAppToDisplay" {
                 if moveApp.isEmpty {
-                    moveApp = (triggerProvides == "app") ? Self.triggerSentinel("app") : (appCandidates.first ?? "")
+                    moveApp = (triggerProvides == "app") ? Self.triggerSentinel("app") : ""
+                    moveAppBundleId = ""
                 }
                 if moveDisplay.isEmpty {
                     moveDisplay = (triggerProvides == "display") ? Self.triggerSentinel("display") : (opts.layoutDisplays.first ?? "")
@@ -896,7 +912,23 @@ private struct AddRuleForm: View {
             if isStateTrigger {
                 HStack {
                     TextField(valuePlaceholder, text: $stateValue)
-                    if !candidates.isEmpty {
+                    if signal == "frontmostApp" {
+                        // The frontmost-app value: pick from ALL installed apps
+                        // (searchable), not just running ones -- so a rule can watch for
+                        // an app that's closed now. Matched by name, so the chosen name
+                        // lands in stateValue (the chooser's bundle id is ignored here).
+                        Button { showFrontmostPicker.toggle() } label: { Image(systemName: "list.bullet") }
+                            .buttonStyle(.borderless).frame(width: 32)
+                            .help(Strings.t("rules.pickInstalledApp", default: "Pick an installed app"))
+                            .popover(isPresented: $showFrontmostPicker, arrowEdge: .bottom) {
+                                AppTargetChooser(
+                                    name: $stateValue, bundleId: $ignoredAppBundleId,
+                                    sentinel: "", triggerProvidesApp: false, fromTriggerLabel: "",
+                                    warning: nil,
+                                    hint: Strings.t("rules.frontmostPickHint", default: "Pick any installed app -- it needn't be running now."))
+                                    .frame(width: 300).padding(12)
+                            }
+                    } else if !candidates.isEmpty {
                         Menu {
                             ForEach(candidates, id: \.self) { c in Button(c) { stateValue = c } }
                         } label: { Image(systemName: "list.bullet") }
@@ -1288,47 +1320,36 @@ private struct AddRuleForm: View {
         return out
     }
 
-    // The app picker (shown when the effect is "minimizeApp"). The app can be a
-    // running app by name, or -- when the trigger publishes one -- "the app from the
-    // trigger" (resolved at fire time; natural pairing: "Frontmost app loses focus"
-    // -> minimize the app you just clicked away from).
-    // Shared by the app-target effects (minimizeApp / hideApp / quitApp) -- they
-    // differ only in the verb; the editor (app picker + from-trigger) is identical.
+    // The app chooser (shown for minimizeApp / hideApp / quitApp -- they differ only
+    // in the verb, so they share this). Pick from ALL installed apps (not just
+    // running, so "Quit Slack" is authorable while Slack is closed); selecting one
+    // stores its BUNDLE ID as the canonical match key. Or -- when the trigger
+    // publishes one -- "the app from the trigger" (resolved at fire time; natural
+    // pairing: "Frontmost app loses focus" -> minimize the app you clicked away from).
     @ViewBuilder private var minimizeAppEditor: some View {
-        Picker(Strings.t("rules.minimizeAppField", default: "App"), selection: $minimizeAppName) {
-            if triggerProvides == "app" {
-                Text(triggerOptionLabel("app")).tag(Self.triggerSentinel("app"))
-            }
-            ForEach(minimizeAppNames, id: \.self) { Text($0).tag($0) }
-        }
-        // The footgun the user hit: acting on "the app from the trigger" on the
-        // GAINS-focus edge runs the instant you open it. Flag it -- they want "loses focus".
-        if minimizeAppName.hasPrefix("@trigger:") && signal == "frontmostApp" && transition == "becomes" {
-            Text(Strings.t("rules.minimizeBecomesWarning", default: "This acts on the app the moment it gains focus -- you'd never keep it open. Switch the transition to \"loses focus\" to act when you click away."))
-                .font(.caption).foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
-        } else {
-            Text(Strings.t("rules.minimizeAppHint", default: "Targets the app's front window. Pair with \"Frontmost app loses focus\" to act the moment you click away."))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        AppTargetChooser(
+            name: $minimizeAppName, bundleId: $minimizeAppBundleId,
+            sentinel: Self.triggerSentinel("app"),
+            triggerProvidesApp: triggerProvides == "app",
+            fromTriggerLabel: triggerOptionLabel("app"),
+            // The footgun the user hit: acting on "the app from the trigger" on the
+            // GAINS-focus edge fires the instant you open it. Flag it over the hint.
+            warning: (minimizeAppName.hasPrefix("@trigger:") && signal == "frontmostApp" && transition == "becomes")
+                ? Strings.t("rules.minimizeBecomesWarning", default: "This acts on the app the moment it gains focus -- you'd never keep it open. Switch the transition to \"loses focus\" to act when you click away.")
+                : nil,
+            hint: Strings.t("rules.minimizeAppHint", default: "Targets the app's front window. Pair with \"Frontmost app loses focus\" to act the moment you click away."))
     }
 
-    // moveAppToDisplay's app picker (running apps + the from-trigger option) and its
-    // display picker (a single display name + the from-trigger option -- no all/
-    // external/primary, which don't fit a single move). No minimize footgun warning.
+    // moveAppToDisplay's app chooser (same installed-apps picker + the from-trigger
+    // option; no minimize footgun warning).
     @ViewBuilder private var moveAppEditor: some View {
-        Picker(Strings.t("rules.minimizeAppField", default: "App"), selection: $moveApp) {
-            if triggerProvides == "app" {
-                Text(triggerOptionLabel("app")).tag(Self.triggerSentinel("app"))
-            }
-            ForEach(moveAppNames, id: \.self) { Text($0).tag($0) }
-        }
-    }
-    private var moveAppNames: [String] {
-        var out = appCandidates
-        if !moveApp.hasPrefix("@trigger:") && !moveApp.isEmpty && !out.contains(moveApp) { out.insert(moveApp, at: 0) }
-        return out
+        AppTargetChooser(
+            name: $moveApp, bundleId: $moveAppBundleId,
+            sentinel: Self.triggerSentinel("app"),
+            triggerProvidesApp: triggerProvides == "app",
+            fromTriggerLabel: triggerOptionLabel("app"),
+            warning: nil,
+            hint: Strings.t("rules.moveAppHint", default: "Moves the app's windows to the chosen display."))
     }
 
     @ViewBuilder private var moveDisplayEditor: some View {
@@ -1345,19 +1366,11 @@ private struct AddRuleForm: View {
         return out
     }
 
-    // The effect kinds that target an app by name (share the editor + the `app` param).
+    // The effect kinds that target an app (share the chooser + the `app`/`appBundleId`
+    // params). Named "...ByName" historically; matching is now bundle-id-first.
     private let appTargetKinds: Set<String> = ["minimizeApp", "hideApp", "quitApp"]
     // The two wallpaper effects share the solidDisplay @State + the display picker.
     private let wallpaperKinds: Set<String> = ["solidWallpaper", "setWallpaperImage"]
-
-    // App names for the minimize picker: running apps, plus the rule's own saved app
-    // if it isn't running now (so editing doesn't drop it). The sentinel renders apart.
-    private var minimizeAppNames: [String] {
-        var out = appCandidates
-        let cur = minimizeAppName
-        if !cur.hasPrefix("@trigger:") && !cur.isEmpty && !out.contains(cur) { out.insert(cur, at: 0) }
-        return out
-    }
 
     // --- Generic "from the trigger" plumbing (de-hardcoded) --------------------
     // The context field the selected trigger publishes ("display" | "app"), read
@@ -1383,10 +1396,10 @@ private struct AddRuleForm: View {
         }
         if appTargetKinds.contains(selectedEffect?.kind ?? "")
             && minimizeAppName.hasPrefix("@trigger:") && triggerProvides != "app" {
-            minimizeAppName = appCandidates.first ?? ""
+            minimizeAppName = ""; minimizeAppBundleId = ""   // back to "pick an app"
         }
         if selectedEffect?.kind == "moveAppToDisplay" {
-            if moveApp.hasPrefix("@trigger:") && triggerProvides != "app" { moveApp = appCandidates.first ?? "" }
+            if moveApp.hasPrefix("@trigger:") && triggerProvides != "app" { moveApp = ""; moveAppBundleId = "" }
             if moveDisplay.hasPrefix("@trigger:") && triggerProvides != "display" { moveDisplay = opts.layoutDisplays.first ?? "" }
         }
     }
@@ -1623,6 +1636,7 @@ private struct AddRuleForm: View {
         solidDisplay = ""
         moveApp = ""; moveDisplay = ""
         minimizeAppName = ""
+        minimizeAppBundleId = ""; moveAppBundleId = ""
         formError = nil
         advanced = false
         jsonText = ""
@@ -1670,6 +1684,7 @@ private struct AddRuleForm: View {
         placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""; speakText = ""
         wallpaperImage = ""; solidColor = "#FFFFFF"; solidDisplay = ""; minimizeAppName = ""
         moveApp = ""; moveDisplay = ""
+        minimizeAppBundleId = ""; moveAppBundleId = ""
         notifyTitle = AppInfo.displayName; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
@@ -1704,10 +1719,12 @@ private struct AddRuleForm: View {
         } else if kind == "moveAppToDisplay" {
             effectId = "moveAppToDisplay"
             moveApp = effect["app"] as? String ?? ""
+            moveAppBundleId = effect["appBundleId"] as? String ?? ""
             moveDisplay = effect["display"] as? String ?? ""
         } else if let k = kind, appTargetKinds.contains(k) {
             effectId = k
             minimizeAppName = effect["app"] as? String ?? ""
+            minimizeAppBundleId = effect["appBundleId"] as? String ?? ""
         } else if kind == "lockScreen" {
             effectId = "lockScreen"
         } else if kind == "startScreensaver" {
@@ -1879,10 +1896,12 @@ private struct AddRuleForm: View {
             let d = moveDisplay.trimmingCharacters(in: .whitespaces)
             guard !a.isEmpty, !d.isEmpty else { return nil }
             effect = ["kind": "moveAppToDisplay", "app": a, "display": d]
+            if !moveAppBundleId.isEmpty { effect["appBundleId"] = moveAppBundleId }
         } else if appTargetKinds.contains(eff.kind) {
             let a = minimizeAppName.trimmingCharacters(in: .whitespaces)
             guard !a.isEmpty else { return nil }
             effect = ["kind": eff.kind, "app": a]
+            if !minimizeAppBundleId.isEmpty { effect["appBundleId"] = minimizeAppBundleId }
         } else if eff.kind == "chain" {
             // Drop incomplete steps (mirrors layout); keep order.
             let steps: [[String: Any]] = chainSteps.compactMap { s in
@@ -1936,5 +1955,136 @@ private struct AddRuleForm: View {
         let label = name.trimmingCharacters(in: .whitespaces)
         if !label.isEmpty { spec["name"] = label }
         return spec
+    }
+}
+
+/// The app-target chooser shared by the minimize/hide/quit + move-to-display
+/// effects (and the frontmost-app trigger value). Empty search shows the RUNNING
+/// apps as quick options (the common target); typing searches ALL installed apps
+/// (Spotlight via AppCatalog -- so a rule can target an app that isn't running
+/// yet), storing the app's BUNDLE ID as the canonical match key and its display
+/// name for the readable rule sentence. Also offers "the app from the trigger"
+/// (the sentinel) when the trigger publishes one, and a free-text fallback for an
+/// app Spotlight can't see -- that path stores a name only (engine matches by name).
+private struct AppTargetChooser: View {
+    @Binding var name: String        // display name | sentinel | "" (matches the TokenPill text)
+    @Binding var bundleId: String    // canonical id; "" for the sentinel or a manual name
+    let sentinel: String             // "@trigger:app"
+    let triggerProvidesApp: Bool     // show the "from the trigger" row
+    let fromTriggerLabel: String
+    let warning: String?             // shown in place of the hint when non-nil
+    let hint: String
+
+    @State private var installed: [(name: String, bundleId: String)] = []
+    @State private var running: [(name: String, bundleId: String)] = []
+    @State private var query = ""
+    @State private var loaded = false   // installed list finished gathering
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+    private var searching: Bool { !trimmed.isEmpty }
+    // Empty search -> running apps (quick); typing -> all installed, filtered.
+    private var rows: [(name: String, bundleId: String)] {
+        searching ? installed.filter { $0.name.localizedCaseInsensitiveContains(trimmed) } : running
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if triggerProvidesApp {
+                row(label: fromTriggerLabel, selected: name == sentinel) {
+                    name = sentinel; bundleId = ""
+                }
+                Divider()
+            }
+            TextField(Strings.t("rules.searchApps", default: "Search apps"), text: $query)
+                .textFieldStyle(.roundedBorder)
+
+            if searching && !loaded {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(Strings.t("rules.loadingApps", default: "Finding apps…"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else if rows.isEmpty {
+                // Searching with no match -> let the typed text stand as a literal name
+                // (a not-yet-installed app / Spotlight off). Empty with nothing running
+                // -> nudge to search.
+                if searching {
+                    Button { name = trimmed; bundleId = "" } label: {
+                        Text(String(format: Strings.t("rules.useTypedApp", default: "Use \u{201C}%@\u{201D} as a name"), trimmed))
+                            .font(.caption)
+                    }.buttonStyle(.plain)
+                } else {
+                    Text(Strings.t("rules.typeToSearchApps", default: "Type to search all installed apps."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                if !searching {
+                    Text(Strings.t("rules.runningAppsHeader", default: "Running -- type to search all installed"))
+                        .font(.caption2).foregroundStyle(.secondary).textCase(.uppercase)
+                }
+                ScrollView {
+                    // Lazy so a long installed-search list only resolves icons for the
+                    // rows actually on screen.
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(rows, id: \.bundleId) { app in
+                            appRow(app, selected: bundleId == app.bundleId) {
+                                name = app.name; bundleId = app.bundleId; query = ""
+                            }
+                        }
+                    }
+                }
+                // A ScrollView in a popover has NO intrinsic height -- with only a
+                // maxHeight it collapses to zero and the rows vanish (the bug that hid
+                // the running apps). Pin a definite height: fit the content, capped so
+                // a long installed-search list scrolls.
+                .frame(height: min(CGFloat(rows.count) * 28 + 4, 240))
+            }
+
+            Text(warning ?? hint)
+                .font(.caption)
+                .foregroundStyle(warning != nil ? Color.orange : Color.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .task {
+            running = AppCatalog.runningApps()       // instant -- the quick options
+            installed = await AppCatalog.installedApps()
+            loaded = true
+        }
+    }
+
+    // A selectable row: a leading check when chosen, the label, full-width hit area.
+    // Used for the non-app "from the trigger" option.
+    @ViewBuilder private func row(label: String, selected: Bool, _ act: @escaping () -> Void) -> some View {
+        Button(action: act) {
+            HStack(spacing: 6) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.35))
+                Text(label).foregroundStyle(.primary)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 3)
+    }
+
+    // An app row: the app's icon, its name, and a trailing check when chosen.
+    @ViewBuilder private func appRow(_ app: (name: String, bundleId: String),
+                                     selected: Bool, _ act: @escaping () -> Void) -> some View {
+        Button(action: act) {
+            HStack(spacing: 8) {
+                if let icon = AppCatalog.icon(forBundleId: app.bundleId) {
+                    Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: "app").frame(width: 16, height: 16).foregroundStyle(.secondary)
+                }
+                Text(app.name).foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                if selected { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 3)
     }
 }

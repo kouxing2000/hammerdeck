@@ -306,17 +306,28 @@ extension Native {
         return 1
     }
 
-    // minimize_app(name) -> bool. Minimize the named app's front window (sets
-    // AXMinimized). Pairs with a "Frontmost app leaves X" rule to hide a window
-    // the moment focus moves away. The app is found by localizedName and targets
+    // Find a RUNNING app by its bundle identifier OR its localized name. The rules
+    // editor stores a bundle id (stable across locale + app rename -- the canonical
+    // key, matching how launchOrFocusApp resolves apps), but legacy rules and the
+    // "@trigger:app" sentinel still pass a display name, so we accept either: bundle
+    // id first, name as the fallback. No activationPolicy filter -- a target named
+    // explicitly is honored even if it's an agent/accessory app.
+    private func runningApp(matching target: String) -> NSRunningApplication? {
+        let apps = NSWorkspace.shared.runningApplications
+        return apps.first(where: { $0.bundleIdentifier == target })
+            ?? apps.first(where: { $0.localizedName == target })
+    }
+
+    // minimize_app(app) -> bool. Minimize the app's front window (sets AXMinimized).
+    // Pairs with a "Frontmost app leaves X" rule to hide a window the moment focus
+    // moves away. `app` is a bundle id or localized name (see runningApp); targets
     // its main window (falling back to its focused / first standard window), so it
     // works even though the app is no longer frontmost. Needs Accessibility.
     func minimizeApp(_ L: OpaquePointer?) -> Int32 {
-        guard let name = LuaState.string(L, 1) else {
-            return luaError(L, "minimize_app: app name required")
+        guard let target = LuaState.string(L, 1) else {
+            return luaError(L, "minimize_app: app required")
         }
-        guard AXIsProcessTrusted(),
-              let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == name })
+        guard AXIsProcessTrusted(), let app = runningApp(matching: target)
         else {
             lua_pushboolean(L, 0)
             return 1
@@ -332,26 +343,28 @@ extension Native {
         return 1
     }
 
-    // hide_app(name) -> bool. Hide the named app (the system Hide, like Cmd-H) --
-    // all its windows vanish until reactivated. Sibling of minimize_app; uses the
-    // public NSRunningApplication API, so (unlike minimize) it needs no Accessibility.
+    // hide_app(app) -> bool. Hide the app (the system Hide, like Cmd-H) -- all its
+    // windows vanish until reactivated. `app` is a bundle id or localized name (see
+    // runningApp). Sibling of minimize_app; uses the public NSRunningApplication
+    // API, so (unlike minimize) it needs no Accessibility.
     func hideApp(_ L: OpaquePointer?) -> Int32 {
-        guard let name = LuaState.string(L, 1) else {
-            return luaError(L, "hide_app: app name required")
+        guard let target = LuaState.string(L, 1) else {
+            return luaError(L, "hide_app: app required")
         }
-        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == name })
+        guard let app = runningApp(matching: target)
         else { lua_pushboolean(L, 0); return 1 }
         lua_pushboolean(L, app.hide() ? 1 : 0)
         return 1
     }
 
-    // quit_app(name) -> bool. Ask the named app to quit (a graceful terminate, like
-    // Cmd-Q -- the app may still prompt to save). Returns whether the request was sent.
+    // quit_app(app) -> bool. Ask the app to quit (a graceful terminate, like Cmd-Q
+    // -- the app may still prompt to save). `app` is a bundle id or localized name
+    // (see runningApp). Returns whether the request was sent.
     func quitApp(_ L: OpaquePointer?) -> Int32 {
-        guard let name = LuaState.string(L, 1) else {
-            return luaError(L, "quit_app: app name required")
+        guard let target = LuaState.string(L, 1) else {
+            return luaError(L, "quit_app: app required")
         }
-        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == name })
+        guard let app = runningApp(matching: target)
         else { lua_pushboolean(L, 0); return 1 }
         lua_pushboolean(L, app.terminate() ? 1 : 0)
         return 1

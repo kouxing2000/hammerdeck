@@ -120,13 +120,19 @@ local function lowerFirst(s)
     return s:sub(1, 1):lower() .. s:sub(2)
 end
 
--- Run an app-target effect (minimize / hide / quit): resolve its `app` (a literal
--- or "@trigger:app") and apply `fn(app)`. One helper for all three -- they differ
--- only in the adapter call. Returns (true) / (false, reason).
+-- Run an app-target effect (minimize / hide / quit): resolve its `app` (the
+-- readable name, a literal or "@trigger:app") and apply `fn(target)`. One helper
+-- for all three -- they differ only in the adapter call. `target` prefers the
+-- stored bundle id (stable across locale + app rename), falling back to the
+-- resolved name for legacy rules and the from-trigger path (no bundle id); the
+-- native seam dual-matches either. The failure note keeps the readable name.
+-- Returns (true) / (false, reason).
 local function appAction(node, context, fn, verb)
     local app, reason = effects.resolveParam(node.app, context)
     if not app then return false, reason end
-    local ok, res = pcall(fn, app)
+    local target = (type(node.appBundleId) == "string" and #node.appBundleId > 0)
+        and node.appBundleId or app
+    local ok, res = pcall(fn, target)
     if not ok then return false, tostring(res) end
     if not res then return false, "no app to " .. verb .. ": " .. tostring(app) end
     return true
@@ -249,6 +255,10 @@ end
 local function applyMoveToDisplay(node, context)
     local app, areason = effects.resolveParam(node.app, context)
     if not app then return false, areason end
+    -- The canonical match key (stable); nil for legacy rules + the from-trigger
+    -- path, which fall back to the readable name below.
+    local bid = type(node.appBundleId) == "string" and #node.appBundleId > 0
+        and node.appBundleId or nil
     local target, dreason = effects.resolveParam(node.display, context)
     if not target then return false, dreason end
     local screens = adapter.screenFrames() or {}
@@ -257,7 +267,12 @@ local function applyMoveToDisplay(node, context)
     local wins = adapter.listWindows() or {}
     local moved, failed = 0, 0
     for _, w in ipairs(wins) do
-        if w.appName == app then
+        -- Bundle id is AUTHORITATIVE when the rule has one (strict, matching the
+        -- effect side + native runningApp) -- so a different app that merely shares
+        -- the display name isn't moved too. Only legacy / from-trigger rules (no
+        -- bundle id) match by the resolved name. listWindows carries both fields.
+        local hit = bid and (w.bundleID == bid) or (not bid and w.appName == app)
+        if hit then
             local cur = windows.screenOfFrame(screens, w)
             local nx = cur and (dest.x + (w.x - cur.x)) or dest.x
             local ny = cur and (dest.y + (w.y - cur.y)) or dest.y
