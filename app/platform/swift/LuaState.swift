@@ -144,15 +144,32 @@ final class LuaState {
 
     // MARK: - Callback references (the core bridge problem, solved once)
 
+    #if DEBUG
+    /// DEBUG: live count of pinned callback refs (makeRef +1 / releaseRef -1). A
+    /// count that grows across enable/disable cycles is a leaked Lua registry ref
+    /// -- the host's most error-prone bug, the reason the bindObserver /
+    /// fireCallback seam helpers exist. Lua's registry exposes no count, so we
+    /// track it here; an integration test asserts it returns to baseline. All ref
+    /// ops run on the main actor, so a plain Int is safe.
+    private(set) var pinnedRefCount = 0
+    #endif
+
     /// Take the Lua value at `index` (usually a function argument) and pin it
     /// in the Lua registry so Swift can hold it past the current call.
     func makeRef(at index: Int32) -> Int32 {
         lua_pushvalue(L, index)
-        return luaL_ref(L, LUA_REGISTRY_INDEX)
+        let ref = luaL_ref(L, LUA_REGISTRY_INDEX)
+        #if DEBUG
+        pinnedRefCount += 1
+        #endif
+        return ref
     }
 
     func releaseRef(_ ref: Int32) {
         luaL_unref(L, LUA_REGISTRY_INDEX, ref)
+        #if DEBUG
+        pinnedRefCount -= 1
+        #endif
     }
 
     /// Invoke a pinned Lua function. `pushArgs` pushes the arguments and

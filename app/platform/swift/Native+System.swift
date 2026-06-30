@@ -405,18 +405,13 @@ extension Native {
         let ref = lua.makeRef(at: 3)
         DispatchQueue.global(qos: .utility).async {
             let saved = Self.extractFaviconsSync(outDir: outDir, domains: domains)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    Native.shared.lua.callRef(ref) { L in
-                        lua_createtable(L, Int32(saved.count), 0)
-                        for (i, d) in saved.enumerated() {
-                            lua_pushstring(L, d)
-                            lua_rawseti(L, -2, lua_Integer(i + 1))
-                        }
-                        return 1
-                    }
-                    Native.shared.lua.releaseRef(ref)
+            Native.fireCallback(ref) { L in
+                lua_createtable(L, Int32(saved.count), 0)
+                for (i, d) in saved.enumerated() {
+                    lua_pushstring(L, d)
+                    lua_rawseti(L, -2, lua_Integer(i + 1))
                 }
+                return 1
             }
         }
         return 0

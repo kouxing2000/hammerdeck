@@ -24,15 +24,10 @@ extension Native {
         URLSession.shared.dataTask(with: req) { data, resp, _ in
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             let body = data.flatMap { String(data: $0, encoding: .utf8) }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    Native.shared.lua.callRef(ref) { L in
-                        lua_pushinteger(L, lua_Integer(status))
-                        if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
-                        return 2
-                    }
-                    Native.shared.lua.releaseRef(ref)
-                }
+            Native.fireCallback(ref) { L in
+                lua_pushinteger(L, lua_Integer(status))
+                if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
+                return 2
             }
         }.resume()
         return 0
@@ -59,15 +54,10 @@ extension Native {
         URLSession.shared.dataTask(with: req) { data, resp, _ in
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             let body = data.flatMap { String(data: $0, encoding: .utf8) }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    Native.shared.lua.callRef(ref) { L in
-                        lua_pushinteger(L, lua_Integer(status))
-                        if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
-                        return 2
-                    }
-                    Native.shared.lua.releaseRef(ref)
-                }
+            Native.fireCallback(ref) { L in
+                lua_pushinteger(L, lua_Integer(status))
+                if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
+                return 2
             }
         }.resume()
         return 0
@@ -80,21 +70,18 @@ extension Native {
         }
         let ref = lua.makeRef(at: 3)
         URLSession.shared.downloadTask(with: u) { tmp, resp, _ in
-            var ok = false
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let ok: Bool
             if let tmp, (200..<300).contains(status) {
                 let fm = FileManager.default
                 try? fm.removeItem(atPath: path)
                 ok = (try? fm.moveItem(at: tmp, to: URL(fileURLWithPath: path))) != nil
+            } else {
+                ok = false
             }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    Native.shared.lua.callRef(ref) { L in
-                        lua_pushboolean(L, ok ? 1 : 0)
-                        return 1
-                    }
-                    Native.shared.lua.releaseRef(ref)
-                }
+            Native.fireCallback(ref) { L in
+                lua_pushboolean(L, ok ? 1 : 0)
+                return 1
             }
         }.resume()
         return 0

@@ -124,6 +124,30 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    #if DEBUG
+    /// A pinned callback ref leaks if any seam binding drops its releaseRef --
+    /// the host's most error-prone bug, the reason the bindObserver / fireCallback
+    /// helpers exist. on_system_event binds an observer (makeRef) and returns a
+    /// resource id whose stop() must release it; binding then stopping N times
+    /// must leave the live pinned-ref count exactly where it started. The test
+    /// body is synchronous (no run-loop spin), so no async callback fires to
+    /// perturb the count mid-test -- it isolates the observer bind/release path.
+    func testSystemEventObserverReleasesItsRef() {
+        let lua = host.lua
+        let baseline = lua.pinnedRefCount
+        for _ in 0..<5 {
+            guard let id = eval("return native.on_system_event('wake', function() end)") as? Double else {
+                return XCTFail("on_system_event did not return a resource id")
+            }
+            XCTAssertEqual(lua.pinnedRefCount, baseline + 1, "binding an observer pins exactly one ref")
+            eval("native.stop(\(Int(id)))")
+            XCTAssertEqual(lua.pinnedRefCount, baseline, "stopping the observer must release its ref")
+        }
+        XCTAssertEqual(lua.pinnedRefCount, baseline,
+                       "no pinned callback ref leaks across repeated bind/stop cycles")
+    }
+    #endif
+
     /// The bridge reader honors json.lua's `__jsontype` tag, so a value's
     /// array-vs-object shape survives the Lua->Swift hop (decisive for empties).
     func testBridgeHonorsJsonTypeTag() {

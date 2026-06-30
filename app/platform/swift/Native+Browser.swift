@@ -315,14 +315,9 @@ extension Native {
                 ? String(data: data, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 : nil
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    Native.shared.lua.callRef(ref) { L in
-                        if let text { lua_pushstring(L, text) } else { lua_pushnil(L) }
-                        return 1
-                    }
-                    Native.shared.lua.releaseRef(ref)
-                }
+            Native.fireCallback(ref) { L in
+                if let text { lua_pushstring(L, text) } else { lua_pushnil(L) }
+                return 1
             }
         }
         do { try p.run() } catch {

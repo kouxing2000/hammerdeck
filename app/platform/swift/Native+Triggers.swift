@@ -126,45 +126,26 @@ extension Native {
         case "sleep", "wake":
             let name = event == "sleep" ? NSWorkspace.willSleepNotification
                                         : NSWorkspace.didWakeNotification
-            let center = NSWorkspace.shared.notificationCenter
-            let token = center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
-            }
-            cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+            cancel = Native.bindObserver(NSWorkspace.shared.notificationCenter, [name], ref)
         case "screenLock", "screenUnlock":
             let name = Notification.Name(event == "screenLock" ? "com.apple.screenIsLocked"
                                                                : "com.apple.screenIsUnlocked")
-            let center = DistributedNotificationCenter.default()
-            let token = center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
-            }
-            cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+            cancel = Native.bindObserver(DistributedNotificationCenter.default(), [name], ref)
         case "screenChanged":
             // Display added/removed/rearranged (and resolution changes). Lets a
             // feature react to a monitor being plugged in -- e.g. re-assert the
             // wallpaper on the new screen instantly instead of on the next poll.
-            let center = NotificationCenter.default
-            let token = center.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                           object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
-            }
-            cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+            cancel = Native.bindObserver(NotificationCenter.default,
+                                         [NSApplication.didChangeScreenParametersNotification], ref)
         case "appearanceChanged":
             // Dark/light mode flip. The re-read trigger behind the `appearance` signal.
-            let center = DistributedNotificationCenter.default()
-            let token = center.addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
-                                           object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
-            }
-            cancel = { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+            cancel = Native.bindObserver(DistributedNotificationCenter.default(),
+                                         [Notification.Name("AppleInterfaceThemeChangedNotification")], ref)
         case "appsChanged":
             // An app launched or quit -- the re-read trigger behind `runningApps`.
-            let center = NSWorkspace.shared.notificationCenter
-            let t1 = center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification,
-                                        object: nil, queue: .main) { _ in MainActor.assumeIsolated { Native.shared.lua.callRef(ref) } }
-            let t2 = center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
-                                        object: nil, queue: .main) { _ in MainActor.assumeIsolated { Native.shared.lua.callRef(ref) } }
-            cancel = { center.removeObserver(t1); center.removeObserver(t2); Native.shared.lua.releaseRef(ref) }
+            cancel = Native.bindObserver(NSWorkspace.shared.notificationCenter,
+                                         [NSWorkspace.didLaunchApplicationNotification,
+                                          NSWorkspace.didTerminateApplicationNotification], ref)
         case "powerChanged":
             // AC <-> battery (and battery-level) change, via IOKit's power-source
             // run-loop source. The re-read trigger behind `powerSource`.
