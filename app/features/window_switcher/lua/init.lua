@@ -16,22 +16,20 @@ local st = nil
 -- Release-to-pick watches the modifier of the hotkey that fired this action
 -- (shared with tab_switcher; nil when fired without a hotkey -> pick on Enter).
 local cycleModifier = require("platform.hotkeys").cycleModifier
+-- Shared cycle-with-wrap + release-to-pick mechanics (also drives tab_switcher).
+local cyclingChooser = require("platform.cyclingChooser")
 
 local function jump(ctx, actionId, backward)
     if not st or st.ctx ~= ctx then
         st = { ctx = ctx, chooser = nil, altTimer = nil }
     end
 
-    local function stopAltTimer()
-        if st.altTimer then st.altTimer.stop(); st.altTimer = nil end
-    end
-
     if not st.chooser then
         st.chooser = ctx.chooser {
             searchSubText = true,
-            onHide = function() stopAltTimer() end,
+            onHide = function() cyclingChooser.stop(st) end,
             onSelect = function(choice)
-                stopAltTimer()
+                cyclingChooser.stop(st)
                 if choice then ctx.window.focus(choice.id) end
             end,
         }
@@ -39,28 +37,15 @@ local function jump(ctx, actionId, backward)
 
     if st.chooser.isVisible() then
         -- Repeat invocation while open: cycle selection (either direction).
-        -- Wrap against the VISIBLE rows (a search query may have filtered
-        -- the list): the chooser rejects an out-of-range row, which we
-        -- detect to wrap around.
+        -- Wrap against the VISIBLE rows (a search query may have filtered the
+        -- list). Release-to-pick arms ONLY while cycling here (the switcher has
+        -- no preview-on-open step); armRelease self-gates on the modifier.
         local mod = cycleModifier(ctx.actionTrigger(actionId))
         st.chooser.setPlaceholder(mod
             and string.format(ctx.t("chooser.release", "Release %s to switch"), mod)
             or ctx.t("chooser.pressEnter", "Press Enter to switch"))
-        local row = st.chooser.getSelectedRow() + (backward and -1 or 1)
-        st.chooser.setSelectedRow(row)
-        if st.chooser.getSelectedRow() ~= row then
-            st.chooser.setSelectedRow(backward and #st.lastChoices or 1)
-        end
-
-        -- Release-to-pick: poll the cycle modifier (when there is one).
-        if mod and not st.altTimer then
-            st.altTimer = ctx.everySeconds(0.1, function()
-                if not ctx.isModifierHeld(mod) then
-                    stopAltTimer()
-                    st.chooser.select(st.chooser.getSelectedRow())
-                end
-            end)
-        end
+        cyclingChooser.cycle(st.chooser, backward, #st.lastChoices)
+        cyclingChooser.armRelease(ctx, st.chooser, st, mod)
     else
         local windows = ctx.window.list()
         if #windows == 0 then

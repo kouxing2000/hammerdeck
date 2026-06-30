@@ -136,8 +136,8 @@ do
         end
     end
 
-    -- Leaf-util invariant: the leaf utils (platform.windows/hotkeys/json/urls) must
-    -- have ZERO `require` -- that require-freedom is exactly what lets a feature
+    -- Leaf-util invariant: the leaf utils (platform.windows/hotkeys/json/urls/
+    -- cyclingChooser) must have ZERO `require` -- that require-freedom is exactly what lets a feature
     -- `require` them safely (the layer map's leaf tier). Nothing else guards this
     -- (no luacheck / CI grep), so assert it HERE: it runs in both `lua test/run.lua`
     -- and `scripts/test-lua.sh` (the exact embedded engine), failing loudly if a
@@ -146,7 +146,7 @@ do
     -- is skipped so prose never trips the guard.
     do
         local appdir = require("loader").appdir
-        for _, leaf in ipairs({ "windows", "hotkeys", "json", "urls" }) do
+        for _, leaf in ipairs({ "windows", "hotkeys", "json", "urls", "cyclingChooser" }) do
             local path = appdir .. "/platform/lua/" .. leaf .. ".lua"
             local fh = assert(io.open(path, "r"), "leaf-guard: cannot open " .. path)
             local offender

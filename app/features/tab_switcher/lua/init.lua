@@ -38,6 +38,8 @@ local favicons = require("platform.favicons")
 -- Release-to-jump watches the modifier of the hotkey that fired this action
 -- (shared with window_switcher; nil when fired without a hotkey -> pick on Enter).
 local cycleModifier = require("platform.hotkeys").cycleModifier
+-- Shared cycle-with-wrap + release-to-pick mechanics (also drives window_switcher).
+local cyclingChooser = require("platform.cyclingChooser")
 
 local function jumperFor(ctx)
     local st = {
@@ -170,22 +172,15 @@ local function jumperFor(ctx)
             end)
     end
 
-    local function stopAltTimer()
-        if st.altTimer then st.altTimer.stop(); st.altTimer = nil end
-    end
-
-    -- Release-to-jump: poll the cycle modifier while cycling (window_switcher's
-    -- pattern, donor's autoJump). st.cycleMod is derived from the trigger
-    -- that fired (set in open()).
+    -- Release-to-jump: poll the cycle modifier (donor's autoJump). Unlike
+    -- window_switcher, tab_switcher arms it on OPEN too (the held-modifier preview),
+    -- so it gates on the modifier actually being held before arming -- a fire with
+    -- no modifier held (menubar / chord) must wait for Enter, not jump instantly.
+    -- st.cycleMod is derived from the trigger that fired (set in open()).
     local function armAutoJump()
         local mod = st.cycleMod
-        if not mod or st.altTimer or not ctx.isModifierHeld(mod) then return end
-        st.altTimer = ctx.everySeconds(0.1, function()
-            if not ctx.isModifierHeld(mod) then
-                stopAltTimer()
-                st.chooser.select(st.chooser.getSelectedRow())
-            end
-        end)
+        if not mod or not ctx.isModifierHeld(mod) then return end
+        cyclingChooser.armRelease(ctx, st.chooser, st, mod)
     end
 
     local function showChooser()
@@ -208,9 +203,9 @@ local function jumperFor(ctx)
         if not st.chooser then
             st.chooser = ctx.chooser {
                 searchSubText = true,
-                onHide = function() stopAltTimer() end,
+                onHide = function() cyclingChooser.stop(st) end,
                 onSelect = function(choice)
-                    stopAltTimer()
+                    cyclingChooser.stop(st)
                     onPick(choice)
                 end,
             }
@@ -221,11 +216,7 @@ local function jumperFor(ctx)
             st.chooser.setPlaceholder(st.cycleMod
                 and string.format(ctx.t("chooser.releaseToJump", "Release %s to jump"), st.cycleMod)
                 or ctx.t("chooser.pressEnter", "Press Enter to jump"))
-            local row = st.chooser.getSelectedRow() + (backward and -1 or 1)
-            st.chooser.setSelectedRow(row)
-            if st.chooser.getSelectedRow() ~= row then
-                st.chooser.setSelectedRow(backward and #st.choices or 1)
-            end
+            cyclingChooser.cycle(st.chooser, backward, #st.choices)
             armAutoJump()
             return
         end

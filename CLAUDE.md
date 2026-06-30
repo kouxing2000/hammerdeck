@@ -51,10 +51,10 @@ not show): **SEAM** = `adapter.lua` (the only file here that reaches `native.*`)
 predicate at boot. **SUBSYSTEM** = the automation rules engine
 (`rules` + `signals` + `effects` -- domain logic that reaches the OS only through
 registry/adapter, never the seam), plus `i18n`, `favicons`. **LEAF UTILS** =
-`json`, `urls`, `hotkeys`, `windows` (the invariant is ZERO `require`, NOT purity
--- they may call native, but only via a `ctx` passed in, e.g.
+`json`, `urls`, `hotkeys`, `windows`, `cyclingChooser` (the invariant is ZERO
+`require`, NOT purity -- they may call native, but only via a `ctx` passed in, e.g.
 `windows.focusedOrAlert`; the only platform modules a feature may `require`; a
-test-suite guard fails if any of the four grows a `require`). The `ctx` surface is
+test-suite guard fails if any of the five grows a `require`). The `ctx` surface is
 namespaced into domain sub-tables (`ctx.window.*` / `ctx.screen.*` /
 `ctx.mouse.*`) -- Phase 1 of `docs/specs/CTX_DOMAIN_NAMESPACES_SPEC.md`, landed
 2026-06-29. The remaining Phase 2 (porting Hammerspoon's pure-Lua tiling/grid
@@ -75,7 +75,8 @@ pending.
   surface. Never touches native APIs or the seam/stateful platform modules
   (`adapter`, `ctx`, `registry`, `triggers`, `manifest`, `modal`, `window_ops`);
   MAY `require` the pure leaf util modules (`platform.json`, `platform.urls`,
-  `platform.hotkeys`, `platform.windows` -- stateless, no `require` of their own). Get the current time only from
+  `platform.hotkeys`, `platform.windows`, `platform.cyclingChooser` -- stateless,
+  no `require` of their own). Get the current time only from
   `ctx.now()` (never bare `os.time()`/`os.date()`, which read the uncontrolled
   wall clock and tests can't drive); `os.date`/`os.time` are fine for FORMATTING
   or decomposing a time you already got from `ctx.now()`.
