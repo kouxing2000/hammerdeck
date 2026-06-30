@@ -220,17 +220,27 @@ fake.modifiers.alt = false
 fake.fireTimers("every", 0.1)
 ok(fake.focused[#fake.focused] == 33, "release still picks after backward cycling")
 
--- screen name IS the subtext (app name dropped -- the icon carries it), and
--- only when the display is reported (native reports it only on multi-display)
+-- subtext = browser tab count and/or screen name (app name dropped -- the icon
+-- carries it); screen name only when the display is reported (native reports it
+-- only on multi-display), tab count only for browser windows (native reports it
+-- only for them). Either may be absent; both nil collapses the row to one line.
 fake.windows = {
-    { id = 11, title = "W1", appName = "AppA", bundleID = "com.a", screenName = "Studio Display" },
-    { id = 22, title = "W2", appName = "AppB", bundleID = "com.b" },
+    { id = 11, title = "W1", appName = "AppA", bundleID = "com.a", screenName = "Studio Display", tabCount = 12 },
+    { id = 22, title = "W2", appName = "AppB", bundleID = "com.b", tabCount = 1 },
+    { id = 33, title = "W3", appName = "AppC", bundleID = "com.c", screenName = "Studio Display" },
+    { id = 44, title = "W4", appName = "AppD", bundleID = "com.d" },
 }
 fake.modifiers.alt = true
 fake.pressHotkey("tab")
 ch = fake.visibleChooser()
-ok(ch.choices[1].subText == "Studio Display" and ch.choices[2].subText == nil,
-    "screen name is the subtext when reported; nil collapses the row to one line")
+ok(ch.choices[1].subText == "12 tabs · Studio Display",
+    "tab count and screen name join in the subtext when both reported")
+ok(ch.choices[2].subText == "1 tab",
+    "tab count alone is the subtext (singular pluralization), no screen name")
+ok(ch.choices[3].subText == "Studio Display",
+    "screen name alone is the subtext when there is no tab count")
+ok(ch.choices[4].subText == nil,
+    "no tab count and no screen name collapses the row to one line")
 ch.userSelect(1)
 fake.modifiers.alt = false
 

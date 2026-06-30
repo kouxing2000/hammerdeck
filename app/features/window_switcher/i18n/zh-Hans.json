@@ -11,6 +11,7 @@
 
   "chooser.title": "切换窗口",
   "chooser.count": { "one": "%d 个窗口", "other": "%d 个窗口" },
+  "chooser.tabs": { "one": "%d 个标签页", "other": "%d 个标签页" },
   "chooser.search": "搜索窗口",
   "chooser.release": "松开 %s 切换",
   "chooser.pressEnter": "按 Enter 切换",

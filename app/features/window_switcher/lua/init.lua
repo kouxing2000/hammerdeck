@@ -76,16 +76,25 @@ local function jump(ctx, actionId, backward)
             end
             return
         end
-        -- Second line = the display the window is on, but ONLY on multi-display
-        -- setups: native reports w.screenName only then (nil on a single screen),
-        -- so a nil subText collapses the row back to one line. The app name is
-        -- dropped on purpose -- the leading icon already identifies the app, so
-        -- the only thing worth a second line is which monitor the window is on.
+        -- Second line = tab count (browser windows only -- native reports
+        -- w.tabCount just for them) and/or the display the window is on (ONLY on
+        -- multi-display setups: native reports w.screenName only then). Either
+        -- may be absent; when both are nil the subText collapses the row back to
+        -- one line. The app name is dropped on purpose -- the leading icon
+        -- already identifies the app.
         local choices = {}
         for _, w in ipairs(windows) do
+            local parts = {}
+            -- `> 0` guards the seam: 0 is truthy in Lua, so a future native
+            -- change that emitted 0 would otherwise render "0 tabs".
+            if w.tabCount and w.tabCount > 0 then
+                parts[#parts + 1] = string.format(ctx.plural("chooser.tabs", w.tabCount,
+                    { one = "%d tab", other = "%d tabs" }), w.tabCount)
+            end
+            if w.screenName then parts[#parts + 1] = w.screenName end
             choices[#choices + 1] = {
                 text = w.title,
-                subText = w.screenName,
+                subText = parts[1] and table.concat(parts, " · ") or nil,
                 image = w.icon or ctx.appIcon(w.bundleID),
                 id = w.id,
             }

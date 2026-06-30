@@ -45,7 +45,7 @@ extension Native {
         struct Row {
             let z: Int; let id: Int; let app: String; let title: String
             let bundleID: String; let screenName: String?; let iconToken: String
-            let frame: CGRect
+            let frame: CGRect; let tabCount: Int?
         }
         var rows: [Row] = []
         // Screen names only matter (and only render) on multi-display setups.
@@ -99,17 +99,21 @@ extension Native {
                 // Use bundleID for installed apps; fall back to pid for processes
                 // without a .app bundle (e.g. the app itself under `swift run`).
                 let iconToken = bundleID.isEmpty ? "appiconpid:\(pid)" : "appicon:\(bundleID)"
+                // Tab count, browser windows only (gated so a non-browser app's
+                // AXTabGroup never yields a misleading badge); nil otherwise.
+                let tabCount = Self.browserBundleIDs.contains(bundleID)
+                    ? browserTabCount(win) : nil
                 rows.append(Row(z: z, id: id, app: appName,
                                 title: title.isEmpty ? appName : title,
                                 bundleID: bundleID, screenName: screenName,
-                                iconToken: iconToken, frame: frame))
+                                iconToken: iconToken, frame: frame, tabCount: tabCount))
             }
         }
         rows.sort { $0.z < $1.z }
 
         lua_createtable(L, Int32(rows.count), 0)
         for (i, r) in rows.enumerated() {
-            lua_createtable(L, 0, 10)
+            lua_createtable(L, 0, 11)
             lua_pushinteger(L, lua_Integer(r.id)); lua_setfield(L, -2, "id")
             lua_pushstring(L, r.title);            lua_setfield(L, -2, "title")
             lua_pushstring(L, r.app);              lua_setfield(L, -2, "appName")
@@ -117,6 +121,9 @@ extension Native {
             lua_pushstring(L, r.iconToken);        lua_setfield(L, -2, "icon")
             if let s = r.screenName {
                 lua_pushstring(L, s);              lua_setfield(L, -2, "screenName")
+            }
+            if let n = r.tabCount {
+                lua_pushinteger(L, lua_Integer(n)); lua_setfield(L, -2, "tabCount")
             }
             // The window's frame (top-left-origin global points) -- lets the rules
             // engine snapshot the current arrangement ("Capture current layout").
@@ -187,6 +194,61 @@ extension Native {
         guard AXUIElementCopyAttributeValue(element, attr, &ref) == .success,
               let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
         return (ref as! AXUIElement)
+    }
+
+    private func axRole(_ element: AXUIElement) -> String? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &ref) == .success
+        else { return nil }
+        return ref as? String
+    }
+
+    private func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &ref) == .success,
+              let arr = ref as? [AXUIElement] else { return [] }
+        return arr
+    }
+
+    /// Bundle IDs whose standard windows host a countable tab strip. Gated so a
+    /// non-browser app that happens to use an AXTabGroup never gets a misleading
+    /// "N tabs" badge in the switcher (the count heuristic is browser-shaped).
+    private static let browserBundleIDs: Set<String> = [
+        "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",
+        "org.chromium.Chromium", "com.brave.Browser", "com.microsoft.edgemac",
+        "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "company.thebrowser.Browser",
+        "com.apple.Safari", "com.apple.SafariTechnologyPreview",
+    ]
+
+    /// Tab count for a browser window: the AXGroup/AXRadioButton children of the
+    /// first AXTabGroup in the window's subtree (the lone trailing AXButton "+"
+    /// is excluded by role). nil when no tab strip is found (row shows no badge).
+    /// Bounded BFS: the tab strip lives ~6 levels down in the browser chrome, so
+    /// a small node budget plus pruning of rendered web content (AXWebArea /
+    /// AXScrollArea -- the page DOM is thousands of nodes) keeps this cheap and
+    /// guarantees we never walk into the page.
+    private func browserTabCount(_ win: AXUIElement) -> Int? {
+        var frontier: [(AXUIElement, Int)] = [(win, 0)]
+        // Worst-case bound on blocking main-thread AX IPC for a browser window
+        // with NO tab strip (a PWA / app-shell / popup, which still carries a
+        // browser bundle ID): such a window otherwise walks the whole tree.
+        // A real strip is found within a few dozen nodes, well under this.
+        var budget = 200
+        while !frontier.isEmpty, budget > 0 {
+            budget -= 1
+            let (node, depth) = frontier.removeFirst()
+            let role = axRole(node)
+            if role == "AXTabGroup" {
+                let n = axChildren(node).filter {
+                    let r = axRole($0); return r == "AXGroup" || r == "AXRadioButton"
+                }.count
+                return n > 0 ? n : nil
+            }
+            if depth < 8, role != "AXWebArea", role != "AXScrollArea" {
+                for k in axChildren(node) { frontier.append((k, depth + 1)) }
+            }
+        }
+        return nil
     }
 
     private func pushRect(_ L: OpaquePointer?, _ r: CGRect) {
