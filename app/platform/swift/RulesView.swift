@@ -651,6 +651,9 @@ private struct AddRuleForm: View {
 
     // The repeatable window-placement editor (shown when the effect is "layout").
     @ViewBuilder private var layoutEditor: some View {
+        // Read the running apps ONCE per render -- appCandidates hits NSWorkspace + a
+        // sort, and the menu uses it inside the per-placement ForEach below.
+        let running = appCandidates
         if placements.isEmpty {
             Text(Strings.t("rules.noWindowsYet", default: "No windows yet -- add one, or capture your current arrangement."))
                 .font(.caption).foregroundStyle(.secondary)
@@ -659,9 +662,9 @@ private struct AddRuleForm: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     TextField(Strings.t("rules.appField", default: "App (e.g. Safari)"), text: $placements[i].app)
-                    if !appCandidates.isEmpty {
+                    if !running.isEmpty {
                         Menu {
-                            ForEach(appCandidates, id: \.self) { a in
+                            ForEach(running, id: \.self) { a in
                                 Button(a) { placements[i].app = a }
                             }
                         } label: { Image(systemName: "list.bullet") }
@@ -1473,9 +1476,12 @@ private struct AddRuleForm: View {
         return ex.isEmpty ? label : String(format: Strings.t("rules.valueExample", default: "%@ (e.g. %@)"), label, ex)
     }
 
-    // The layout editor's app picker draws from the running apps (same source as
-    // the state trigger's app candidates).
-    private var appCandidates: [String] { opts.signalCandidates["frontmostApp"] ?? [] }
+    // The layout editor's app picker draws from the running apps -- sourced directly
+    // from the host-UI catalog (sorted, deduped), the same way the chooser + the
+    // generic appList option do. (It used to read the frontmostApp signal's candidates,
+    // an odd dependency on a TRIGGER signal that survived only here once the app-target
+    // effect editors moved to AppTargetChooser.)
+    private var appCandidates: [String] { AppCatalog.runningApps().map(\.name) }
 
     /// Display options for a placement: the connected displays, plus the
     /// placement's OWN display if it isn't connected now (so editing a captured
