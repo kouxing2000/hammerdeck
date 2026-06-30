@@ -23,6 +23,20 @@ platform module go through the adapter. This keeps the host
 swappable and the layers clean. If you need a native call elsewhere, add it to
 the bridge + adapter, never reach past the seam.
 
+**One sanctioned exception -- the feature-contributed host reporter.** Just as a
+feature may contribute a `swift/` host page, it may contribute a `lua/` *host
+reporter* (today: `usage_stats/lua/report.lua`): a host-CALLABLE module that runs
+OUTSIDE any `ctx` -- invoked by the host, and working even when the feature is
+DISABLED (it reads data the feature left behind, e.g. usage CSVs that outlive any
+run). It has no enable lifecycle a `ctx` could attach to, so it may touch the
+seam (`require "platform.adapter"`) and the wall clock (`os.date`/`os.time`)
+DIRECTLY -- the two rules below that normally bind feature code. This is a
+narrow, declared role, NOT a loophole: such a module must self-declare it in its
+header (as report.lua does -- "host-callable historical reporter, NOT feature
+logic"), so the exemption is explicit and greppable rather than an unspoken
+special case. A reporter is still pure Lua over the adapter -- it reaches the OS
+only through the seam, never `native.*`.
+
 > Current state (2026-06-24): **no Hammerspoon** -- dropped as a backend by
 > owner decision. **Co-located layout** (refactor of 2026-06-24): everything
 > lives under `app/` -- `app/platform/{lua,swift}/`, and each feature is
@@ -50,10 +64,15 @@ not show): **SEAM** = `adapter.lua` (the only file here that reaches `native.*`)
 (`ctx.window.setFrame` delegates to it); the registry injects its pointer-follow
 predicate at boot. **SUBSYSTEM** = the automation rules engine
 (`rules` + `signals` + `effects` -- domain logic that reaches the OS only through
-registry/adapter, never the seam), plus `i18n`, `favicons`. **LEAF UTILS** =
+registry/adapter, never the seam), plus `i18n` (locale-injected, internal).
+`favicons` sits in this tier structurally but is a **pure factory subsystem** a
+feature MAY `require` (it needs only the `urls` leaf util, used as
+`favicons.new(ctx)`) -- a sibling to the leaf utils, NOT a zero-`require` leaf
+itself (so it stays OFF the leaf-guard list). **LEAF UTILS** =
 `json`, `urls`, `hotkeys`, `windows`, `cyclingChooser` (the invariant is ZERO
 `require`, NOT purity -- they may call native, but only via a `ctx` passed in, e.g.
-`windows.focusedOrAlert`; the only platform modules a feature may `require`; a
+`windows.focusedOrAlert`; the only ZERO-`require` platform modules a feature may
+`require` -- `favicons` above is the one require-ful module also allowed; a
 test-suite guard fails if any of the five grows a `require`). The `ctx` surface is
 namespaced into domain sub-tables (`ctx.window.*` / `ctx.screen.*` /
 `ctx.mouse.*`) -- Phase 1 of `docs/specs/CTX_DOMAIN_NAMESPACES_SPEC.md`, landed
@@ -76,10 +95,15 @@ pending.
   (`adapter`, `ctx`, `registry`, `triggers`, `manifest`, `modal`, `window_ops`);
   MAY `require` the pure leaf util modules (`platform.json`, `platform.urls`,
   `platform.hotkeys`, `platform.windows`, `platform.cyclingChooser` -- stateless,
-  no `require` of their own). Get the current time only from
+  no `require` of their own), PLUS the pure factory subsystem `platform.favicons`
+  -- a sibling category to the leaf utils (it requires only the `urls` leaf util
+  and is used via `favicons.new(ctx)`), NOT itself a zero-`require` leaf util, so
+  it must NOT join the leaf-guard list. Get the current time only from
   `ctx.now()` (never bare `os.time()`/`os.date()`, which read the uncontrolled
   wall clock and tests can't drive); `os.date`/`os.time` are fine for FORMATTING
-  or decomposing a time you already got from `ctx.now()`.
+  or decomposing a time you already got from `ctx.now()`. (Exception: a
+  feature-contributed *host reporter* -- see "The one inviolable rule" -- runs
+  outside `ctx`, so it has no `ctx.now()` and reads the wall clock directly.)
 - **app/loader.lua** -- installs the `package.searcher` that maps the stable
   `platform.*` / `features.<id>.*` require names onto their `lua/` subfolders, so
   the co-located layout needs zero require rewrites. Exposes `appdir` (the

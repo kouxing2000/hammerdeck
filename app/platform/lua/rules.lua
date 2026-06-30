@@ -39,6 +39,19 @@ local live  = {}   -- id -> handle (.stop()), only for ENABLED + bound rules
 -- never firing is visible at a glance. Reset on load (a fresh boot/reload).
 local lastFire = {}
 
+-- Per-rule consecutive-failure streak: id -> count of REAL fires that failed in a
+-- row. Mirrors the registry's directly-bound `FAIL_ALERT_AFTER` path (which keys
+-- by action), but keyed by RULE id -- after N real fires fail back-to-back, raise
+-- ONE visible alert, then stay quiet until a success resets it (so a chain firing
+-- several effects can't spray popups, and a persistently-dead rule can't spam).
+-- A manual "Test" fire (via ~= nil) neither increments nor resets the streak --
+-- its failure is already visible in the editor -- exactly as the registry's manual
+-- menubar path stays out of the trigger-fired streak. This closes the asymmetry
+-- where a scheduled rule silently dying was invisible to a user who never opened
+-- the Rules tab.
+local fireFailures = {}   -- id -> consecutive real-fire failure count
+local FAIL_ALERT_AFTER = 3
+
 local RULES_SETTING = "hammerdeck.rules"
 
 local function isEnabled(spec) return spec.enabled ~= false end
@@ -127,7 +140,8 @@ function rules.load(list)
     rules.stopAll()
     specs = {}
     parked = {}
-    lastFire = {}   -- a fresh boot/reload starts the fire history clean
+    lastFire = {}      -- a fresh boot/reload starts the fire history clean
+    fireFailures = {}  -- ...and the failure streaks
     for _, spec in ipairs(list or {}) do
         local ok, err = pcall(loadOne, spec)
         if not ok then
@@ -185,6 +199,20 @@ end
 -- matters: a rule that silently never runs (a typo'd app name that no app ever
 -- matches, an effect targeting a now-disabled feature) is otherwise impossible
 -- to diagnose -- this trace ("Open Logs" in the menubar) is the only window in.
+-- The user-facing name for a rule in a failure alert: its label if set, else its
+-- plain-English sentence (what the UI shows for an unnamed rule), else the bare
+-- id -- so the alert names the rule the way the Rules list does, never a raw id.
+local function ruleLabel(spec, id)
+    if type(spec.name) == "string" and spec.name ~= "" then
+        return "Rule '" .. spec.name .. "'"
+    end
+    local okSent, sent = pcall(rules.sentence, spec)
+    if okSent and type(sent) == "string" and sent ~= "" then
+        return 'Rule "' .. sent .. '"'
+    end
+    return "Rule '" .. tostring(id) .. "'"
+end
+
 local function fire(id, spec, via)
     local ok, note = effects.dispatch(spec.effect, triggerContext(spec))
     -- Stamp the fire history (the list's "fired/not-fired" status). A real trigger
@@ -201,6 +229,20 @@ local function fire(id, spec, via)
         adapter.log(msg)
     else
         adapter.log("rule '" .. id .. "'" .. tag .. " effect FAILED: " .. tostring(note))
+    end
+    -- Failure-streak alert -- only REAL fires count (a manual Test neither
+    -- increments nor resets, matching the registry's manual menubar path).
+    if via == nil then
+        if ok then
+            fireFailures[id] = nil   -- a success clears the streak
+        else
+            local n = (fireFailures[id] or 0) + 1
+            fireFailures[id] = n
+            if n == FAIL_ALERT_AFTER then
+                adapter.alert(ruleLabel(spec, id) .. " keeps failing:\n" .. tostring(note)
+                    .. "\n\nSee \"Open Logs\" in the menubar for details.")
+            end
+        end
     end
     return ok, note
 end
@@ -343,7 +385,8 @@ end
 
 --- Remove a rule by id. Returns (true) or (false, reason).
 function rules.remove(id)
-    lastFire[id] = nil   -- drop its fire history too
+    lastFire[id] = nil      -- drop its fire history too
+    fireFailures[id] = nil  -- ...and its failure streak
     if specs[id] then
         specs[id] = nil
         save(); restart()
@@ -385,6 +428,7 @@ function rules.update(id, spec)
     if not okV then return false, tostring(err) end
     if pi then table.remove(parked, pi) end   -- the edit fixed it: un-park into the live set
     lastFire[id] = nil                         -- behavior changed: the old fire no longer applies
+    fireFailures[id] = nil                      -- ...so does its failure streak
     specs[id] = spec
     save(); restart()
     return true
