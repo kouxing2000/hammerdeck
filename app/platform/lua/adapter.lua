@@ -68,9 +68,11 @@ function adapter.appearance()
     return native.appearance()
 end
 
--- Names of all currently-running apps (the runningApps signal's value set).
-function adapter.runningApps()
-    return native.running_apps()
+-- { name, bundleId } of every running regular app (the runningApps signal's value
+-- set), read so a "launches/quits X" rule matches on the stable bundle id, not the
+-- locale-sensitive name (cf. frontmostAppInfo).
+function adapter.runningAppsInfo()
+    return native.running_apps_info()
 end
 
 -- Power source: "ac" (plugged in) | "battery".

@@ -3611,18 +3611,27 @@ do
     fake.systemEvent("appearanceChanged")
     ok(#fake.notifications == nB + 1, "appearance becomes dark -> fires")
 
-    -- (b) runningApps: a membership set signal, "launches"/"quits"
+    -- (b) runningApps: a membership set signal, "launches"/"quits". Like frontmostApp
+    -- it now matches by the stable BUNDLE ID (name as a fallback); the value is a list
+    -- of { name, bundleId }.
     rules.load({})
-    fake.runningAppList = { "Finder" }
-    ok(signals.get("runningApps").match({ "Finder", "Safari" }, "Safari") == true,
-        "runningApps uses membership match")
+    fake.runningAppInfoList = { { name = "Finder", bundleId = "com.apple.finder" } }
+    ok(signals.get("runningApps").match(
+        { { name = "Finder", bundleId = "com.apple.finder" },
+          { name = "Safari", bundleId = "com.apple.Safari" } }, "com.apple.Safari") == true,
+        "runningApps membership matches by bundle id")
+    ok(signals.get("runningApps").match(
+        { { name = "Finder", bundleId = "com.apple.finder" } }, "Finder") == true,
+        "runningApps membership also matches by name (fallback)")
     local nL = #fake.notifications
-    rules.add({ on = { type = "state", signal = "runningApps", becomes = "Slack" },
+    rules.add({ on = { type = "state", signal = "runningApps", becomes = "Slack",
+                       bundleId = "com.tinyspeck.slackmacgap" },
                 effect = { kind = "notify", title = "Slack up" } })
-    fake.runningAppList = { "Finder", "Slack" }
+    fake.runningAppInfoList = { { name = "Finder", bundleId = "com.apple.finder" },
+                               { name = "Slack",  bundleId = "com.tinyspeck.slackmacgap" } }
     fake.systemEvent("appsChanged")
-    ok(#fake.notifications == nL + 1, "Slack launches -> the runningApps rule fires")
-    fake.runningAppList = { "Finder" }
+    ok(#fake.notifications == nL + 1, "Slack launches (matched by bundle id) -> the runningApps rule fires")
+    fake.runningAppInfoList = { { name = "Finder", bundleId = "com.apple.finder" } }
     fake.systemEvent("appsChanged")
     ok(#fake.notifications == nL + 1, "Slack quitting does not fire a 'launches' rule")
 
@@ -3643,6 +3652,15 @@ do
         "signalMeta carries a label per signal")
     ok(fo.signalMeta.runningApps and fo.signalMeta.runningApps.enterVerb == "launches",
         "signalMeta carries the transition verbs (runningApps: launches/quits)")
+    -- bundleIdMatch rides signalMeta so the host gates its installed-apps app picker on
+    -- the signal's capability, not a hardcoded name: true for the app-identity signals,
+    -- false (default) for an enum signal like appearance.
+    ok(fo.signalMeta.frontmostApp and fo.signalMeta.frontmostApp.bundleIdMatch == true,
+        "signalMeta marks frontmostApp as bundleIdMatch")
+    ok(fo.signalMeta.runningApps and fo.signalMeta.runningApps.bundleIdMatch == true,
+        "signalMeta marks runningApps as bundleIdMatch")
+    ok(fo.signalMeta.appearance and fo.signalMeta.appearance.bundleIdMatch == false,
+        "signalMeta marks an enum signal (appearance) as NOT bundleIdMatch")
     -- timing subtitle (the verb-popover footgun-killer) rides signalMeta too
     ok(fo.signalMeta.frontmostApp and fo.signalMeta.frontmostApp.leaveWhen == "the moment you click away",
         "signalMeta carries the per-edge timing copy (frontmostApp leaveWhen)")
@@ -3653,7 +3671,7 @@ do
     -- cleanup
     rules.load({})
     fake.settings["hammerdeck.rules"] = nil
-    fake.appearance = "light"; fake.runningAppList = {}; fake.power = "ac"
+    fake.appearance = "light"; fake.runningAppInfoList = {}; fake.power = "ac"
     ok(fake.liveHandles == 0, "no native handle leaked across the new-signal tests")
 end
 

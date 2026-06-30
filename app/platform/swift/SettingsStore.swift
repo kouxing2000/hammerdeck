@@ -343,6 +343,11 @@ struct SignalMeta {
     // the verb in the token verb-popover. Optional -- nil = no subtitle.
     let enterWhen: String?
     let leaveWhen: String?
+    // Whether this signal matches a rule by a stored bundle id (the app-identity
+    // signals: frontmostApp, runningApps). Drives the installed-apps app picker +
+    // the `on.bundleId` persistence -- a capability from the signal, NOT a hardcoded
+    // signal name (mirrors the engine's sig.bundleIdMatch gate in rules.bindOne).
+    let bundleIdMatch: Bool
 
     init(_ d: [String: Any]) {
         label = d["label"] as? String ?? ""
@@ -353,6 +358,7 @@ struct SignalMeta {
         provides = d["provides"] as? String
         enterWhen = d["enterWhen"] as? String
         leaveWhen = d["leaveWhen"] as? String
+        bundleIdMatch = d["bundleIdMatch"] as? Bool ?? false
     }
 }
 

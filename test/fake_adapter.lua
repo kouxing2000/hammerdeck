@@ -403,10 +403,10 @@ function adapter.locale() return fake.locale end
 
 -- State-signal reads (drive via the fake.* fields + fake.systemEvent("...Changed")).
 fake.appearance     = "light"   -- "dark" | "light"
-fake.runningAppList = {}         -- list of running app names
+fake.runningAppInfoList = {}     -- list of { name, bundleId } (runningAppsInfo signal)
 fake.power          = "ac"       -- "ac" | "battery"
 function adapter.appearance()  return fake.appearance end
-function adapter.runningApps()  return fake.runningAppList end
+function adapter.runningAppsInfo()  return fake.runningAppInfoList end
 function adapter.powerSource()  return fake.power end
 
 fake.appWatchers = {}    -- {fn, stopped} for onAppActivated (name)

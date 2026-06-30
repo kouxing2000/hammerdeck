@@ -95,10 +95,22 @@ local function readDisplayNames()
 end
 
 -- Set-membership match (a value crosses INTO/OUT OF a list): used by signals
--- whose value is a set -- displaysPresent (connected monitors), runningApps.
+-- whose value is a set of strings -- displaysPresent (connected monitor names).
 local function membership(v, target)
     if type(v) ~= "table" then return false end
     for _, x in ipairs(v) do if x == target then return true end end
+    return false
+end
+
+-- Set-membership over a list of { name, bundleId } entries (the runningApps
+-- value): the target may be a stable bundle id OR a localized name, matched
+-- against either field -- the SET twin of frontmostApp's bundle-id/name match,
+-- so a "launches/quits X" rule survives a locale rename like the frontmost one.
+local function membershipInfo(v, target)
+    if type(v) ~= "table" then return false end
+    for _, x in ipairs(v) do
+        if type(x) == "table" and (x.bundleId == target or x.name == target) then return true end
+    end
     return false
 end
 
@@ -124,23 +136,13 @@ local REGISTRY = {
         -- shows under each edge -- the footgun-killer (focus-gain fires the instant
         -- you open the app; most rules want the click-away edge). DATA, like the
         -- verbs; optional (a signal without them shows no subtitle).
+        -- No candidates() provider: a bundleIdMatch signal is picked through the
+        -- host's installed-apps chooser (AppCatalog, Swift-side), not a Lua value
+        -- dropdown -- so a value list here would be dead weight (the form ignores it).
         meta    = { label = "Frontmost app", valueLabel = "App name", provides = "app",
                     enterVerb = "gains focus", leaveVerb = "loses focus", example = "Safari",
                     enterWhen = "the moment you switch to it",
                     leaveWhen = "the moment you click away" },
-        candidates = function()
-            -- All running regular apps (NSWorkspace) -- PERMISSION-FREE. The old
-            -- source was listWindows, which is Accessibility-gated: before that grant
-            -- it sees only Hammerdeck's own window, so the dropdown showed just
-            -- "Hammerdeck". The frontmost-app TRIGGER itself never needs the grant
-            -- (frontmostApp is NSWorkspace too), so its suggestions shouldn't either.
-            local out = { adapter.frontmostApp() }
-            local ok, apps = pcall(adapter.runningApps)
-            if ok and type(apps) == "table" then
-                for _, name in ipairs(apps) do out[#out + 1] = name end
-            end
-            return out
-        end,
     },
     -- The set of connected displays (by name). Re-read on every screenChanged;
     -- membership match turns "connects <name>" into "that monitor connected" and
@@ -176,19 +178,22 @@ local REGISTRY = {
                     enterVerb = "becomes", leaveVerb = "is no longer", example = "dark" },
         candidates = function() return { "dark", "light" } end,
     },
-    -- The set of running apps (by name). "launches <name>" = it started,
-    -- "quits <name>" = it terminated. Re-read on app launch/quit.
+    -- The set of running apps, each { name, bundleId }. "launches <app>" = it
+    -- started, "quits <app>" = it terminated. Re-read on app launch/quit. Like
+    -- frontmostApp, a rule stores the STABLE bundle id (matched by membershipInfo);
+    -- the name remains a free-text fallback. The host picks from installed apps
+    -- (AppCatalog), so no candidates() provider -- same as frontmostApp.
     runningApps = pushSignal {
-        read    = function() return adapter.runningApps() end,
+        read    = function() return adapter.runningAppsInfo() end,
         observe = function(emit)
-            return adapter.onSystemEvent("appsChanged", function() emit(adapter.runningApps()) end)
+            return adapter.onSystemEvent("appsChanged", function() emit(adapter.runningAppsInfo()) end)
         end,
-        match   = membership,
+        match   = membershipInfo,
+        bundleIdMatch = true,   -- value entries carry bundleId; a rule may store on.bundleId
         meta    = { label = "Running app", valueLabel = "App name", provides = "app",
                     enterVerb = "launches", leaveVerb = "quits", example = "Slack",
                     enterWhen = "the moment it launches",
                     leaveWhen = "the moment it quits" },
-        candidates = function() return adapter.runningApps() end,
     },
     -- Power source: "ac" (plugged in) / "battery". Re-read on power change.
     powerSource = pushSignal {
@@ -226,12 +231,18 @@ function signals.list()
     return out
 end
 
---- UI metadata for a signal (label, value noun, transition verbs), or nil.
+--- UI metadata for a signal (label, value noun, transition verbs), or nil. The
+--- engine's `bundleIdMatch` capability is composed in (a copy, so the curated meta
+--- table is never mutated) -- so the host gates its installed-apps app picker on
+--- THIS flag, not a hardcoded signal name (mirrors rules.bindOne's gate).
 ---@param name string
 ---@return table|nil
 function signals.meta(name)
     local sig = REGISTRY[name]
-    return sig and sig.meta or nil
+    if not sig or not sig.meta then return nil end
+    local m = { bundleIdMatch = sig.bundleIdMatch or false }
+    for k, v in pairs(sig.meta) do m[k] = v end
+    return m
 end
 
 --- Best-effort candidate values for a signal's value dropdown -- deduped + sorted,

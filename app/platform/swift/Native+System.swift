@@ -240,16 +240,17 @@ extension Native {
         return 1
     }
 
-    // running_apps() -> [appName] -- localized names of the regular (user-facing)
-    // running apps. Backs the `runningApps` set signal; the appsChanged event
-    // (launch/quit) re-reads it. Filters out background daemons/agents.
-    func runningApps(_ L: OpaquePointer?) -> Int32 {
-        let names = NSWorkspace.shared.runningApplications
+    // running_apps_info() -> [{ name, bundleId }] -- every running regular app.
+    // Backs the `runningApps` SET signal so a "launches/quits X" rule matches on the
+    // stable bundle id (not the locale-sensitive name), the way frontmost_app_info
+    // does for the frontmost signal. Regular-app filter (skips daemons/agents);
+    // bundleId is "" for the rare app without one (pushAppInfo fills the blanks).
+    func runningAppsInfo(_ L: OpaquePointer?) -> Int32 {
+        let apps = NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular }
-            .compactMap { $0.localizedName }
-        lua_createtable(L, Int32(names.count), 0)
-        for (i, n) in names.enumerated() {
-            lua_pushstring(L, n)
+        lua_createtable(L, Int32(apps.count), 0)
+        for (i, a) in apps.enumerated() {
+            pushAppInfo(L, a)
             lua_rawseti(L, -2, lua_Integer(i + 1))
         }
         return 1

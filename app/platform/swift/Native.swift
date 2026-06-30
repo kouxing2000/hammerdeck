@@ -141,7 +141,7 @@ final class Native {
             "set_window_frame": { L in MainActor.assumeIsolated { Native.shared.setWindowFrame(L) } },
             "appearance":    { L in MainActor.assumeIsolated { Native.shared.appearance(L) } },
             "set_appearance": { L in MainActor.assumeIsolated { Native.shared.setAppearance(L) } },
-            "running_apps":  { L in MainActor.assumeIsolated { Native.shared.runningApps(L) } },
+            "running_apps_info": { L in MainActor.assumeIsolated { Native.shared.runningAppsInfo(L) } },
             "power_source":  { L in MainActor.assumeIsolated { Native.shared.powerSource(L) } },
             "set_focused_window_fullscreen": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFullscreen(L) } },
             "minimize_app":  { L in MainActor.assumeIsolated { Native.shared.minimizeApp(L) } },
