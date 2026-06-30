@@ -271,6 +271,18 @@ local function runActionGuarded(m, a, ctx)
     end
 end
 
+-- Bind one action's trigger inside the feature's scope and record the live
+-- handle. The lifecycle's subtlest line -- kept in one place so the four call
+-- sites can't drift. ASSIGNMENT-ONLY by contract: it must NOT pcall internally,
+-- because each caller owns failure isolation at its own granularity (bindFeature
+-- wraps the whole action loop in one pcall; setTrigger/swapTriggers wrap per
+-- action; clearTrigger trusts its own default trigger and wraps nothing).
+local function bindAction(b, m, a, spec)
+    b.actionHandles[a.id] =
+        b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end,
+            a.label or a.id))
+end
+
 -- Find an action by id; with actionId == nil, resolve the feature's sole
 -- action (the legacy single-action call shape). Raises on a miss.
 local function resolveAction(m, actionId)
@@ -319,9 +331,7 @@ local function bindFeature(m)
         for _, a in ipairs(m.actions) do
             local spec = triggerFor(m, a)
             if spec then
-                b.actionHandles[a.id] =
-                    scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, ctx) end,
-                        a.label or a.id))
+                bindAction(b, m, a, spec)
                 adapter.log(m.id .. "." .. a.id .. ": bound (" .. spec.type .. ")")
             else
                 adapter.log(m.id .. "." .. a.id .. ": no trigger; manual only")
@@ -486,11 +496,7 @@ function registry.setTrigger(id, actionId, spec)
         adapter.setSetting("hammerdeck.trigger." .. id, nil)   -- retire the legacy key
     end
     if b then
-        local okBind, err = pcall(function()
-            b.actionHandles[a.id] =
-                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end,
-                    a.label or a.id))
-        end)
+        local okBind, err = pcall(bindAction, b, m, a, spec)
         if not okBind then return false, "bind failed: " .. tostring(err) end
     end
     return true
@@ -510,9 +516,7 @@ function registry.clearTrigger(id, actionId)
         adapter.setSetting("hammerdeck.trigger." .. id, nil)
     end
     if b and a.defaultTrigger then
-        b.actionHandles[a.id] =
-            b.scope.adopt(triggers.bind(a.defaultTrigger, function() runActionGuarded(m, a, b.ctx) end,
-                a.label or a.id))
+        bindAction(b, m, a, a.defaultTrigger)
     end
     return true
 end
@@ -552,11 +556,7 @@ function registry.swapTriggers(idA, actA, idB, actB)
         if not b then return end
         local spec = triggerFor(m, a)
         if not spec then return end
-        local ok, err = pcall(function()
-            b.actionHandles[a.id] =
-                b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end,
-                    a.label or a.id))
-        end)
+        local ok, err = pcall(bindAction, b, m, a, spec)
         if not ok then adapter.log(m.id .. "." .. a.id .. ": swap rebind failed: " .. tostring(err)) end
     end
     rebind(mA, aA)
