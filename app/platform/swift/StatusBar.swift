@@ -96,6 +96,22 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         settings.toolTip = Strings.t("menu.settings.tip", default: "Enable/disable features, options, and trigger bindings")
         menu.addItem(settings)
 
+        // Feature Pages: a feature that contributes a native page (e.g. usage_stats'
+        // Usage Report) is a SERVICE with no actions, so it never shows in Quick
+        // Triggers above and was reachable only via Open -> sidebar. Give each a direct
+        // entry here. Data-driven (enabled + page-registered features), so a new
+        // page-contributing feature appears with zero menu code.
+        let pages = store.featurePages()
+        if !pages.isEmpty {
+            menu.addItem(.separator())
+            for f in pages {
+                let item = NSMenuItem(title: f.name + "…", action: #selector(showFeaturePage(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = f.id
+                menu.addItem(item)
+            }
+        }
+
         // "More": the other Homepage tabs plus rarely-touched utilities, tucked
         // into one submenu so the top level stays short.
         let more = NSMenuItem(title: Strings.t("menu.more", default: "More"), action: nil, keyEquivalent: "")
@@ -242,6 +258,11 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
 
     @objc private func showSettings() {
         openHome(.settings)
+    }
+
+    @objc private func showFeaturePage(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        openHome(.feature(id))
     }
 
     @objc private func showRules() {

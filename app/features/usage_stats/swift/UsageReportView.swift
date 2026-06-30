@@ -15,6 +15,12 @@ struct UsageReportView: View {
     @State private var selectedApp: String?
 
     private let accent = Color.accentColor
+    // Hoisted (NOT created in body): an inline Timer.publish is rebuilt on every
+    // re-render, restarting the 30s countdown each time -- and since each fire
+    // reassigns the non-Equatable `data`, body re-renders, so the timer could churn
+    // and never reach its deadline (defeating the live refresh). A stored publisher
+    // ticks at a steady 30s; autoconnect drops it when the view leaves the hierarchy.
+    private let refreshTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ScrollView {
@@ -37,20 +43,31 @@ struct UsageReportView: View {
             }
             .padding(18)
         }
-        // Reloads on first appear and whenever the window changes; selecting an
+        // Reloads on first appear and whenever the range/period changes; selecting an
         // app does NOT change this id, so a drill-in never refetches.
         .task(id: "\(range.rawValue)|\(periodsBack)") { load() }
+        // The CURRENT period accrues live (usage_stats writes per-app focus as you
+        // work), but .task only fires on a range/period switch -- so the report would
+        // sit stale while open. Refresh the live window on a light timer, preserving any
+        // drill-in. Historical periods (periodsBack > 0) are static, so skip them.
+        .onReceive(refreshTimer) { _ in
+            if periodsBack == 0 { load(reset: false) }
+        }
     }
 
     // MARK: data
 
-    private func load() {
-        selectedApp = nil
+    // `reset` true (a range/period switch via .task, or Enable): clear the drill-in and
+    // blank on a read miss. false (the live-period auto-refresh): keep the drill-in AND
+    // the old data on a miss, so a transient read hiccup never flashes an empty report
+    // or kicks the user out of an app they drilled into.
+    private func load(reset: Bool = true) {
+        if reset { selectedApp = nil }
         let b = range.isoBounds(periodsBack: periodsBack)
         if let raw = store.readerCall("features.usage_stats.report", "range",
                                       [.string(b.from), .string(b.to)]) as? [String: Any] {
             data = UsageReportData(raw)
-        } else {
+        } else if reset {
             data = .empty
         }
     }
