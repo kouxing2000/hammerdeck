@@ -979,7 +979,7 @@ private struct AddRuleForm: View {
                     Stepper(String(format: Strings.t("rules.everyMinStepper", default: "Every %d min"), everyMin), value: $everyMin, in: 1...1440)
                 } else {
                     TextField(Strings.t("rules.hhmm", default: "HH:MM"), text: $atTime)
-                    if !Self.isValidHHMM(atTime) {
+                    if !HHMM.isValid(atTime) {
                         Text(Strings.t("rules.hhmmHint", default: "Enter a 24-hour time like 09:00 or 23:30."))
                             .font(.caption).foregroundStyle(.orange)
                     }
@@ -1604,21 +1604,11 @@ private struct AddRuleForm: View {
         return String(format: Strings.t("rules.notPresentWarning", default: "\"%@\" isn't present right now -- the name must match exactly when it is, or the rule won't fire."), v)
     }
 
-    // A 24-hour HH:MM (1-2 digit hour 0-23, 2-digit minute 0-59) -- mirrors the
-    // engine's range check so the form grays "Add" instead of failing on save.
-    private static func isValidHHMM(_ s: String) -> Bool {
-        let parts = s.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 2, (1...2).contains(parts[0].count), parts[1].count == 2,
-              let h = Int(parts[0]), let m = Int(parts[1]),
-              (0...23).contains(h), (0...59).contains(m) else { return false }
-        return true
-    }
-
     private var canSubmit: Bool {
         if advanced {
             return !jsonText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        if triggerType == "schedule", scheduleMode == "at", !Self.isValidHHMM(atTime) {
+        if triggerType == "schedule", scheduleMode == "at", !HHMM.isValid(atTime) {
             return false
         }
         if isStateTrigger,

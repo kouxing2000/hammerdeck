@@ -195,10 +195,8 @@ struct ScheduleEntry: Identifiable {
 
     /// Minutes-since-midnight for an `at` entry; nil for non-time entries.
     var minutesOfDay: Int? {
-        guard kind == "at", let at, let colon = at.firstIndex(of: ":") else { return nil }
-        guard let h = Int(at[at.startIndex..<colon]),
-              let m = Int(at[at.index(after: colon)...]) else { return nil }
-        return h * 60 + m
+        guard kind == "at", let at else { return nil }
+        return HHMM.minutesOfDay(at)
     }
 }
 

@@ -593,10 +593,26 @@ ok(roundtrip({ type = "event", event = "wake" }).event == "wake", "event codec r
 ok(triggers.decode("garbage") == nil, "decode rejects a malformed string")
 ok(triggers.decode("event|bogus") == nil, "decode rejects an unknown event")
 
+-- shared HH:MM parse: valid times parse to numbers, out-of-range/malformed reject
+do
+    local h, m = triggers.parseTimeOfDay("09:05")
+    ok(h == 9 and m == 5, "parseTimeOfDay reads a valid HH:MM")
+    local zh, zm = triggers.parseTimeOfDay("00:00")
+    ok(zh == 0 and zm == 0, "parseTimeOfDay reads midnight (0 is a valid hour)")
+    ok(triggers.parseTimeOfDay("29:99") == nil, "parseTimeOfDay rejects out-of-range 29:99")
+    ok(triggers.parseTimeOfDay("8:5") == nil, "parseTimeOfDay rejects a 1-digit minute")
+    ok(triggers.parseTimeOfDay("8") == nil, "parseTimeOfDay rejects a bare hour")
+end
+-- the gap the unified util closes: decode used to accept an out-of-range "at"
+ok(triggers.decode("schedule|at|29:99") == nil, "decode rejects an out-of-range schedule at")
+ok(triggers.decode("schedule|at|07:30").at == "07:30", "decode still accepts a valid schedule at")
+
 -- validate rejects malformed specs
 ok(not pcall(triggers.validate, { type = "hotkey" }), "validate rejects a hotkey with no key")
 ok(not pcall(triggers.validate, { type = "event", event = "nope" }), "validate rejects an unknown event")
 ok(not pcall(triggers.validate, { type = "schedule" }), "validate rejects a schedule with no when")
+ok(not pcall(triggers.validate, { type = "schedule", at = "29:99" }),
+    "validate rejects a schedule with an out-of-range at")
 
 -- spec -> string formatters (the verbose describe + compact glyph forms)
 ok(triggers.describe(nil) == "no trigger", "describe: nil -> no trigger")

@@ -222,11 +222,7 @@ struct AutomationTimelineView: View {
         }
     }
 
-    static func minutesOf(_ hhmm: String) -> Int? {
-        let parts = hhmm.split(separator: ":")
-        guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) else { return nil }
-        return h * 60 + m
-    }
+    static func minutesOf(_ hhmm: String) -> Int? { HHMM.minutesOfDay(hhmm) }
 }
 
 // MARK: - Day view (24h ruler + lanes)

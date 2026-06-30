@@ -765,9 +765,8 @@ local function normalizeScheduleEntry(e)
         if not n or n <= 0 then return nil end
         row.kind = "everyMin"; row.everyMin = n
     elseif e.at ~= nil then
-        local h, mm = tostring(e.at):match("^(%d%d?):(%d%d)$")
-        h, mm = tonumber(h), tonumber(mm)
-        if not h or h > 23 or mm > 59 then return nil end   -- shape AND range
+        local h, mm = triggers.parseTimeOfDay(e.at)   -- shape AND range
+        if not h then return nil end
         row.kind = "at"; row.at = string.format("%02d:%02d", h, mm)
     elseif e.event ~= nil then
         row.kind = "event"; row.event = tostring(e.event)

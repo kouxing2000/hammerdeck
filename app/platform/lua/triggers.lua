@@ -42,6 +42,19 @@ function triggers.isAutomated(spec)
     return spec.type == "schedule" or spec.type == "event" or spec.type == "state"
 end
 
+-- Parse an "HH:MM" daily time: 1-or-2-digit hour, 2-digit minute, range-checked
+-- to a real clock time (00:00-23:59). Returns the hour and minute as numbers, or
+-- nil for anything malformed or out of range ("29:99", "8", "8:5", ""). The one
+-- place HH:MM is parsed -- callers needing only a yes/no use it as a predicate
+-- (`if triggers.parseTimeOfDay(s) then`). Mirrors the Swift HHMM util.
+function triggers.parseTimeOfDay(str)
+    local hh, mm = tostring(str):match("^(%d%d?):(%d%d)$")
+    if not hh then return nil end
+    local h, m = tonumber(hh), tonumber(mm)
+    if h > 23 or m > 59 then return nil end
+    return h, m
+end
+
 -- Validate a trigger spec (used before persisting a user rebind). Throws on a
 -- malformed spec; returns true on success.
 function triggers.validate(spec)
@@ -68,8 +81,7 @@ function triggers.validate(spec)
                 "schedule everyMin must be a positive number")
         end
         if spec.at then
-            local hh, mm = tostring(spec.at):match("^(%d%d?):(%d%d)$")
-            assert(hh and tonumber(hh) < 24 and tonumber(mm) < 60,
+            assert(triggers.parseTimeOfDay(spec.at),
                 "schedule at must be a valid HH:MM (00:00-23:59)")
         end
     elseif spec.type == "event" then
@@ -152,7 +164,7 @@ function triggers.decode(str)
         local mode, val = str:match("^schedule|([^|]+)|(.*)$")
         if mode == "every" and tonumber(val) then
             return { type = "schedule", everyMin = tonumber(val) }
-        elseif mode == "at" and tostring(val):match("^%d%d?:%d%d$") then
+        elseif mode == "at" and triggers.parseTimeOfDay(val) then
             return { type = "schedule", at = val }
         end
         return nil

@@ -576,7 +576,7 @@ private struct OptionEditor: View {
         Binding(
             get: { store.optionValue(featureId, opt) as? String ?? (opt.defaultValue as? String ?? "") },
             set: { newValue in
-                if newValue.range(of: #"^\d{1,2}:\d{2}$"#, options: .regularExpression) != nil {
+                if HHMM.isValid(newValue) {
                     store.setOptionValue(featureId, opt, newValue)
                 }
             }
@@ -828,7 +828,7 @@ private struct TriggerEditor: View {
         case .hotkey:     return key.trimmingCharacters(in: .whitespaces).isEmpty
         case .chord:      return key.trimmingCharacters(in: .whitespaces).isEmpty
                               || followKeys.isEmpty
-        case .scheduleAt: return at.range(of: #"^\d{1,2}:\d{2}$"#, options: .regularExpression) == nil
+        case .scheduleAt: return !HHMM.isValid(at)
         default:          return false
         }
     }
