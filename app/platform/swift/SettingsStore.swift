@@ -858,7 +858,7 @@ final class SettingsStore: ObservableObject {
     /// UserDefaults, and have NO manifest default fallback.
     func optionValue(_ featureId: String, _ opt: OptionInfo) -> Any? {
         if opt.type == "secret" {
-            return KeychainStore.get(optKey(featureId, opt.key))
+            return KeychainBox.get(optKey(featureId, opt.key))
         }
         let v = UserDefaults.standard.object(forKey: optKey(featureId, opt.key))
         switch v {
@@ -875,7 +875,7 @@ final class SettingsStore: ObservableObject {
         let key = optKey(featureId, opt.key)
         if opt.type == "secret" {
             let s = value as? String ?? ""
-            if s.isEmpty { KeychainStore.delete(key) } else { KeychainStore.set(key, s) }
+            if s.isEmpty { KeychainBox.delete(key) } else { KeychainBox.set(key, s) }
             // Editing a validatable credential invalidates any prior validation:
             // re-lock the gated options until the user validates the new key.
             if opt.validate != nil {
@@ -899,7 +899,7 @@ final class SettingsStore: ObservableObject {
 
     func resetOption(_ featureId: String, _ opt: OptionInfo) {
         if opt.type == "secret" {
-            KeychainStore.delete(optKey(featureId, opt.key))
+            KeychainBox.delete(optKey(featureId, opt.key))
         } else {
             UserDefaults.standard.removeObject(forKey: optKey(featureId, opt.key))
         }
@@ -915,7 +915,7 @@ final class SettingsStore: ObservableObject {
 
     func isOptionOverridden(_ featureId: String, _ opt: OptionInfo) -> Bool {
         if opt.type == "secret" {
-            return KeychainStore.get(optKey(featureId, opt.key)) != nil
+            return KeychainBox.get(optKey(featureId, opt.key)) != nil
         }
         return UserDefaults.standard.object(forKey: optKey(featureId, opt.key)) != nil
     }
@@ -966,7 +966,7 @@ final class SettingsStore: ObservableObject {
     func validate(_ featureId: String, _ opt: OptionInfo) {
         let secretKey = opt.key
         let lookup = validationLookupKey(featureId, secretKey)
-        guard let key = KeychainStore.get(optKey(featureId, secretKey)), !key.isEmpty else {
+        guard let key = KeychainBox.get(optKey(featureId, secretKey)), !key.isEmpty else {
             validation[lookup] = .failed("Enter an API key first")
             return
         }
@@ -985,7 +985,7 @@ final class SettingsStore: ObservableObject {
             // request was in flight (setOptionValue re-locks the gate). If the
             // stored key no longer matches what we validated, drop this result --
             // otherwise we'd unlock the gate for a key that was never validated.
-            guard KeychainStore.get(self.optKey(featureId, secretKey)) == key else { return }
+            guard KeychainBox.get(self.optKey(featureId, secretKey)) == key else { return }
             switch result {
             case .success(let choices):
                 UserDefaults.standard.set(true, forKey: self.validatedStateKey(featureId, secretKey))
@@ -1012,7 +1012,7 @@ final class SettingsStore: ObservableObject {
 }
 
 /// Checks a credential against its provider's API. The OpenAI specifics live
-/// here (host config surface, same role as KeychainStore) -- a new provider adds
+/// here (host config surface, same role as KeychainBox) -- a new provider adds
 /// a case. Returns the provider's offered chat models on success so a `valuesFrom`
 /// enum can populate from the live account.
 enum SecretValidator {
@@ -1077,49 +1077,7 @@ enum SecretValidator {
     }
 }
 
-/// The config UI's write side for `secret` options. Mirrors the Lua-facing
-/// `keychain_*` bindings (Native+Keychain.swift): SAME service + account string
-/// (`hammerdeck.opt.<id>.<key>`), so what Settings writes is what ctx.secret
-/// reads. This is the Swift config surface, not the Lua seam -- the same role
-/// SettingsStore already plays mirroring native.get_setting's UserDefaults.
-enum KeychainStore {
-    static let service = "com.hammerdeck.secrets"
-
-    private static func baseQuery(_ account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-    }
-
-    static func get(_ account: String) -> String? {
-        #if DEBUG
-        // Dev: serve secrets from `.env` so the config UI never hits the login
-        // Keychain (which re-prompts on every rebuild). See DevEnv.cachedSecret.
-        if let value = DevEnv.cachedSecret(account) { return value }
-        #endif
-        var query = baseQuery(account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    @discardableResult
-    static func set(_ account: String, _ value: String) -> Bool {
-        SecItemDelete(baseQuery(account) as CFDictionary)
-        var attrs = baseQuery(account)
-        attrs[kSecValueData as String] = Data(value.utf8)
-        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(attrs as CFDictionary, nil) == errSecSuccess
-    }
-
-    @discardableResult
-    static func delete(_ account: String) -> Bool {
-        let status = SecItemDelete(baseQuery(account) as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
-    }
-}
+// Secret `secret` options round-trip through KeychainBox (the shared
+// login-Keychain accessor). The config UI here is just one of its two callers;
+// the Lua seam (Native+Keychain.swift) is the other, and both use the SAME
+// service + account string so what Settings writes is what ctx.secret reads.

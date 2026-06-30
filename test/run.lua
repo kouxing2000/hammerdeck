@@ -2713,7 +2713,6 @@ do
     local r = report.range("2026-06-20", "2026-06-22")
 
     ok(r.total == 7500, "report total sums all apps across the range")
-    ok(r.dayCount == 3, "dayCount counts every day in the range")
     ok(r.activeDays == 2, "activeDays counts only days with recorded time")
     ok(r.dailyAvg == 3750, "dailyAvg = total / active days")
     ok(#r.days == 3 and r.days[3].date == "2026-06-22" and r.days[3].secs == 0,
@@ -2734,9 +2733,6 @@ do
     ok(r.apps[2].contexts[1].name == "github.com" and r.apps[2].contexts[1].secs == 1800,
         "top context first")
     ok(approx(r.apps[2].contexts[1].share, 1800 / 2400), "context share is within its app")
-
-    ok(r.busiestDay and r.busiestDay.date == "2026-06-20" and r.busiestDay.secs == 5400,
-        "busiestDay is the highest-total day")
 
     -- sessions (machine-active spans)
     ok(#r.sessions == 1 and r.sessions[1].date == "2026-06-20", "session row read")

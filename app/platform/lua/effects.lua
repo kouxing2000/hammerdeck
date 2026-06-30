@@ -133,11 +133,8 @@ end
 
 -- Lowercase only the first character (so a step reads mid-sentence: "Notify ..."
 -- -> "notify ..."). Used by the chain read-back, where every step after the
--- first joins as a lowercase clause. ASCII-first; mirrors rules.lua's helper.
-local function lowerFirst(s)
-    if type(s) ~= "string" or #s == 0 then return s end
-    return s:sub(1, 1):lower() .. s:sub(2)
-end
+-- first joins as a lowercase clause. Shared with rules.lua via platform.text.
+local lowerFirst = require("platform.text").lowerFirst
 
 -- Run an app-target effect (minimize / hide / quit): resolve its `app` (the
 -- readable name, a literal or "@trigger:app") and apply `fn(target)`. One helper

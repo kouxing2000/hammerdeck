@@ -29,8 +29,6 @@ struct UsageDay: Identifiable {
 
 struct UsageSession: Identifiable {
     let date: String
-    let wake: String
-    let sleep: String
     let minutes: Double
     let wakeMin: Double?    // minutes since midnight
     let sleepMin: Double?
@@ -42,7 +40,6 @@ struct UsageSession: Identifiable {
 /// state handles "no data").
 struct UsageReportData {
     let total: Double
-    let dayCount: Int
     let activeDays: Int
     let dailyAvg: Double
     let prevTotal: Double
@@ -51,8 +48,6 @@ struct UsageReportData {
     let apps: [UsageAppRow]
     let sessions: [UsageSession]
     let busiestApp: String?
-    let busiestDayDate: String?
-    let busiestDaySecs: Double?
     let firstWakeMin: Int?
     let lastSleepMin: Int?
     let sessionCount: Int
@@ -66,7 +61,6 @@ struct UsageReportData {
     init(_ d: [String: Any]) {
         func num(_ k: String) -> Double { d[k] as? Double ?? 0 }
         total = num("total")
-        dayCount = Int(num("dayCount"))
         activeDays = Int(num("activeDays"))
         dailyAvg = num("dailyAvg")
         prevTotal = num("prevTotal")
@@ -89,19 +83,11 @@ struct UsageReportData {
         }
         sessions = ((d["sessions"] as? [Any]) ?? []).compactMap { e in
             guard let r = e as? [String: Any], let date = r["date"] as? String else { return nil }
-            return UsageSession(date: date, wake: r["wake"] as? String ?? "",
-                                sleep: r["sleep"] as? String ?? "",
+            return UsageSession(date: date,
                                 minutes: r["min"] as? Double ?? 0,
                                 wakeMin: r["wakeMin"] as? Double, sleepMin: r["sleepMin"] as? Double)
         }
         busiestApp = d["busiestApp"] as? String
-        if let bd = d["busiestDay"] as? [String: Any] {
-            busiestDayDate = bd["date"] as? String
-            busiestDaySecs = bd["secs"] as? Double
-        } else {
-            busiestDayDate = nil
-            busiestDaySecs = nil
-        }
         firstWakeMin = (d["firstWakeMin"] as? Double).map(Int.init)
         lastSleepMin = (d["lastSleepMin"] as? Double).map(Int.init)
         sessionCount = Int(num("sessionCount"))

@@ -51,11 +51,11 @@ end
 
 -- Aggregate the usage history over [fromISO, toISO] (inclusive) into a plain
 -- table the host renders. Shapes (numbers cross the bridge as doubles):
---   total, activeDays, dayCount, dailyAvg, prevTotal, prevHasData
+--   total, activeDays, dailyAvg, prevTotal, prevHasData
 --   days     = { {date, label, secs, today}, ... }              -- per-day trend
 --   apps     = { {app, secs, share, contexts={ {name,secs,share} }}, ... } (ranked, full)
---   sessions = { {date, wake, sleep, min, wakeMin, sleepMin}, ... } -- machine-active spans
---   busiestApp, busiestDay = {date, secs}
+--   sessions = { {date, min, wakeMin, sleepMin}, ... }          -- machine-active spans
+--   busiestApp
 --   firstWakeMin, lastSleepMin, sessionCount, longestSessionMin, activeMinutes
 function M.range(fromISO, toISO)
     local base = resolveBase()
@@ -64,7 +64,6 @@ function M.range(fromISO, toISO)
 
     local acc, days = {}, {}
     local total, activeDays = 0, 0
-    local busiestDay = nil
 
     local sessions = {}
     local firstWakeMin, lastSleepMin = nil, nil
@@ -80,9 +79,6 @@ function M.range(fromISO, toISO)
             secs  = math.floor(dayTotal),
             today = (d == today),
         }
-        if dayTotal > 0 and (not busiestDay or dayTotal > busiestDay.secs) then
-            busiestDay = { date = d, secs = math.floor(dayTotal) }
-        end
 
         -- Sessions (machine-active wake->sleep spans) for the day.
         local body = read(store.sessionsPath(base, d))
@@ -96,7 +92,7 @@ function M.range(fromISO, toISO)
                     if wake then
                         local wmin, smin, mn = hmsToMin(wake), hmsToMin(sleep), tonumber(dur)
                         sessions[#sessions + 1] = {
-                            date = d, wake = wake, sleep = sleep, min = mn,
+                            date = d, min = mn,
                             wakeMin = wmin, sleepMin = smin,
                         }
                         sessCount = sessCount + 1
@@ -137,7 +133,6 @@ function M.range(fromISO, toISO)
         from              = fromISO,
         to                = toISO,
         total             = math.floor(total),
-        dayCount          = #days,
         activeDays        = activeDays,
         dailyAvg          = activeDays > 0 and math.floor(total / activeDays) or 0,
         prevTotal         = math.floor(prevTotal),
@@ -146,7 +141,6 @@ function M.range(fromISO, toISO)
         apps              = apps,
         sessions          = sessions,
         busiestApp        = apps[1] and apps[1].app or nil,
-        busiestDay        = busiestDay,
         firstWakeMin      = firstWakeMin,
         lastSleepMin      = lastSleepMin,
         sessionCount      = sessCount,

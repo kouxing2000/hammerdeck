@@ -522,12 +522,8 @@ function rules.describe()
 end
 
 -- Lowercase only the first character (so an effect fragment reads mid-sentence:
--- "Minimize it" -> "minimize it"). ASCII-first; non-English is left as-is (the
--- whole read-back is English, like the rest of the describe layer).
-local function lowerFirst(s)
-    if type(s) ~= "string" or #s == 0 then return s end
-    return s:sub(1, 1):lower() .. s:sub(2)
-end
+-- "Minimize it" -> "minimize it"). Shared with effects.lua via platform.text.
+local lowerFirst = require("platform.text").lowerFirst
 
 -- A friendly clause for a system event in the read-back ("the Mac wakes").
 local EVENT_PHRASES = {

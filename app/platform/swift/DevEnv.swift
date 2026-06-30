@@ -56,9 +56,9 @@ enum DevEnv {
     }
 
     /// DEBUG dev-secret cache: account -> value, sourced from `.env`. Consulted by
-    /// BOTH secret read paths (the Lua seam `keychainGet` and the Swift
-    /// `KeychainStore.get`) BEFORE the system Keychain, so dev never round-trips a
-    /// secret through the login Keychain.
+    /// `KeychainBox.get` (the one shared accessor behind both the Lua seam and the
+    /// config UI) BEFORE the system Keychain, so dev never round-trips a secret
+    /// through the login Keychain.
     ///
     /// Why bypass the Keychain in dev: macOS ties Keychain access to the binary's
     /// code identity. For a self-signed (non-Apple-anchored) `swift build` binary,
