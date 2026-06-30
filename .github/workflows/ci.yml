@@ -1,0 +1,58 @@
+name: CI
+
+# Per-commit test gate. release.yml only runs on `v*` tags, so until now nothing
+# exercised the suite on a normal push. This runs the parts that pass reliably on a
+# GitHub-hosted runner on every push/PR, plus -- on a MANUAL dispatch -- the gated
+# UI tests (real NSPanels / Keychain / synthesized keystrokes).
+#
+# Why the UI tests are dispatch-only and best-effort: the 3 CGEvent/keystroke tests
+# need Accessibility trust (AXIsProcessTrusted), which a hosted runner can't be
+# granted -- they skip there no matter what. The 4 panel + 2 Keychain tests don't
+# need AX, so the dispatch run exercises THOSE (so they stop bit-rotting), while
+# `continue-on-error` keeps any hosted-runner WindowServer/Keychain quirk from
+# turning into a red build. To run the keystroke tests too, run them locally with
+# Accessibility granted: `HAMMERDECK_UI_TESTS=1 swift test` (see CLAUDE.md).
+
+on:
+  push:
+    branches: [master]   # not tags -- release.yml's package.sh already gates v* tags
+  pull_request:
+  workflow_dispatch:
+
+# Cancel a superseded in-progress run when newer commits land on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-15   # Apple Silicon, same image release.yml builds on
+    steps:
+      - uses: actions/checkout@v4
+
+      # Package.swift is swift-tools-version 6.0 -> Swift 6 (Xcode 16+). Pick the
+      # newest Xcode 16 present so an image-default bump can't silently downgrade us
+      # (mirrors release.yml).
+      - name: Select Xcode 16 (Swift 6)
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+
+      - name: Show toolchain
+        run: swift --version
+
+      # The headless Lua suite on the EXACT embedded engine (compiles a 5.4.7
+      # interpreter from Sources/CLua -- self-contained, no brew). Catches Lua-only
+      # regressions swift test doesn't fully cover.
+      - name: Lua suite (vendored 5.4.7)
+        run: scripts/test-lua.sh
+
+      # Real-bridge integration tests. The 8 gated UI tests auto-skip here
+      # (HAMMERDECK_UI_TESTS unset), so this is the reliable per-commit gate.
+      - name: Swift integration tests
+        run: swift test
+
+      # Manual, best-effort: exercise the panel + Keychain UI tests on CI so they
+      # stop rotting. CGEvent/keystroke tests still skip (no Accessibility trust).
+      - name: Gated UI tests (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        run: HAMMERDECK_UI_TESTS=1 swift test
