@@ -179,6 +179,8 @@
   "rules.justNow": "刚刚",
   "rules.keepEditing": "继续编辑",
   "rules.keepEditingJSON": "继续编辑 JSON",
+  "rules.launchAppHint": "规则触发时打开 (启动) 该应用 -- 例如每天 9:00 打开 Slack.",
+  "rules.launchAppNeedsBundleId": "请从列表中选择一个应用 -- 仅输入名称无法打开应用.",
   "rules.leaves": "离开",
   "rules.lockScreen": "锁定屏幕",
   "rules.minimizeAppField": "应用",

@@ -23,6 +23,8 @@
 --   minimizeApp  -- minimize an app's window: { kind="minimizeApp", app=<name|"@trigger:app"> }
 --   hideApp      -- hide an app:             { kind="hideApp", app=<name|"@trigger:app"> }
 --   quitApp      -- quit an app:             { kind="quitApp", app=<name|"@trigger:app"> }
+--   launchApp    -- open (launch) an app:    { kind="launchApp", app=<name>, appBundleId=<id> }
+--                   -- the positive counterpart to quit; bundle id is the launch key
 --   moveAppToDisplay -- move an app's window to another display, keeping its size:
 --                   { kind="moveAppToDisplay", app=<name|"@trigger:app">,
 --                     display=<name|"@trigger:display"> }
@@ -357,6 +359,19 @@ function effects.validate(node)
     elseif kind == "minimizeApp" or kind == "hideApp" or kind == "quitApp" then
         assert(type(node.app) == "string" and #node.app > 0,
             kind .. " effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
+    elseif kind == "launchApp" then
+        -- Unlike minimize/hide/quit (which act on a RUNNING app, found by name or id),
+        -- launch needs the bundle id -- the only identifier that resolves to a launchable
+        -- app URL. `app` is the readable name for the sentence/log; appBundleId is required.
+        -- No "@trigger:app": launch targets a SPECIFIC installed app (the form never emits
+        -- the sentinel) -- reject a hand-authored one loudly, rather than launching the
+        -- bundle id while the sentence reads the raw "@trigger:app" literal.
+        assert(node.app ~= effects.TRIGGER_APP,
+            "launchApp does not support '" .. effects.TRIGGER_APP .. "' -- it targets a specific app")
+        assert(type(node.app) == "string" and #node.app > 0,
+            "launchApp effect needs an app name")
+        assert(type(node.appBundleId) == "string" and #node.appBundleId > 0,
+            "launchApp effect needs the app's bundle id (pick it from the installed-apps list)")
     elseif kind == "moveAppToDisplay" then
         assert(type(node.app) == "string" and #node.app > 0,
             "moveAppToDisplay effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
@@ -407,7 +422,7 @@ function effects.requiresContext(node)
     elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen"
         or node.kind == "solidWallpaper" or node.kind == "setWallpaperImage" or node.kind == "minimizeApp"
         or node.kind == "hideApp" or node.kind == "quitApp" or node.kind == "startScreensaver"
-        or node.kind == "moveAppToDisplay" or node.kind == "speak"
+        or node.kind == "moveAppToDisplay" or node.kind == "speak" or node.kind == "launchApp"
         or node.kind == "emptyTrash" or node.kind == "eject" then
         return false   -- context-free: fire-and-forget system actions, no live selection
     elseif node.kind == "chain" then
@@ -488,6 +503,14 @@ function effects.dispatch(node, context)
         local ok, res, reason = pcall(applyMoveToDisplay, node, context)
         if not ok then return false, tostring(res) end
         return res, reason
+    elseif node.kind == "launchApp" then
+        -- Launch (or focus, if already running) the app by its bundle id. A false
+        -- return means no installed app carries that id -- surface it as a real
+        -- failure in the fire log, not a lying green "fired" (parity with appAction).
+        local ok, res = pcall(adapter.launchOrFocusApp, node.appBundleId)
+        if not ok then return false, tostring(res) end
+        if not res then return false, "no installed app: " .. tostring(node.app) end
+        return true
     elseif node.kind == "lockScreen" then
         local ok, err = pcall(adapter.lockScreen)
         if not ok then return false, tostring(err) end
@@ -577,6 +600,8 @@ function effects.describe(node, opts)
         local verb = (node.kind == "hideApp" and "Hide")
             or (node.kind == "quitApp" and "Quit") or "Minimize"
         return verb .. " " .. who
+    elseif node.kind == "launchApp" then
+        return "Open " .. tostring(node.app or "")
     elseif node.kind == "moveAppToDisplay" then
         local af = triggerField(node.app)
         local who = af and (pronoun and "it" or ("the triggering " .. af)) or tostring(node.app or "")
@@ -637,6 +662,7 @@ function effects.catalog(automatedOnly)
         { kind = "solidWallpaper", label = "Set solid wallpaper" },
         { kind = "setWallpaperImage", label = "Set wallpaper image" },
         { kind = "moveAppToDisplay", label = "Move an app to a display" },
+        { kind = "launchApp",   label = "Open an app" },
         { kind = "minimizeApp", label = "Minimize an app's window" },
         { kind = "hideApp",     label = "Hide an app" },
         { kind = "quitApp",     label = "Quit an app" },

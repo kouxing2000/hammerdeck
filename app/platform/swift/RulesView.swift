@@ -446,6 +446,12 @@ private struct AddRuleForm: View {
     // falls back to name-matching). Persisted as the effect's `appBundleId`.
     @State private var minimizeAppBundleId = ""        // minimizeApp/hideApp/quitApp
     @State private var moveAppBundleId = ""            // moveAppToDisplay
+    // launchApp (Open an app): unlike the act-on-running-app effects above, launch
+    // REQUIRES a bundle id (the only launchable identifier), so this drives canSubmit
+    // -- a free-typed name alone can't open an app. No "@trigger:app" form (you can't
+    // meaningfully launch the app a trigger reacts to), so it needs its own state.
+    @State private var launchAppName = ""              // launchApp: display name
+    @State private var launchAppBundleId = ""          // launchApp: the launch key (required)
     // The frontmostApp TRIGGER value reuses the installed-apps chooser (so a rule can
     // watch for an app that isn't running yet). stateValue holds the display NAME (the
     // sentence reads it); stateValueBundleId is the bundle id stored as `on.bundleId`
@@ -890,6 +896,10 @@ private struct AddRuleForm: View {
                 TokenPill(text: minimizeAppName.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : minimizeAppName,
                           muted: minimizeAppName.isEmpty) { minimizeAppEditor.frame(minWidth: 300) }
             }
+        case "launchApp":
+            // No "@trigger:" form -- launch always targets a literal installed app.
+            TokenPill(text: launchAppName.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : launchAppName,
+                      muted: launchAppName.isEmpty) { launchAppEditor.frame(minWidth: 300) }
         case "layout", "chain":
             // "stem + block": the effect-verb pill ("arrange windows" / "do several
             // things") is the stem; the existing layoutEditor/chainEditor block
@@ -1064,6 +1074,7 @@ private struct AddRuleForm: View {
         case "minimizeApp":    return Strings.t("rules.verb.minimize", default: "minimize")
         case "hideApp":        return Strings.t("rules.verb.hide", default: "hide")
         case "quitApp":        return Strings.t("rules.verb.quit", default: "quit")
+        case "launchApp":      return Strings.t("rules.verb.launchApp", default: "open")
         case "openURL":        return Strings.t("rules.verb.open", default: "open")
         case "speak":          return Strings.t("rules.verb.speak", default: "say")
         case "runShortcut":    return Strings.t("rules.verb.runShortcut", default: "run Shortcut")
@@ -1364,6 +1375,22 @@ private struct AddRuleForm: View {
             hint: Strings.t("rules.moveAppHint", default: "Moves the app's windows to the chosen display."))
     }
 
+    // launchApp's app chooser. Pick any INSTALLED app to open -- its bundle id is the
+    // launch key, so (unlike minimize/move, which act on a running app by name or id) a
+    // manually-typed name isn't enough; the picker must resolve a bundle id. No "from
+    // the trigger" option: you can't meaningfully launch the app a trigger reacts to.
+    @ViewBuilder private var launchAppEditor: some View {
+        AppTargetChooser(
+            name: $launchAppName, bundleId: $launchAppBundleId,
+            sentinel: "", triggerProvidesApp: false, fromTriggerLabel: "",
+            // A typed name with no resolved bundle id can't launch -- flag it (canSubmit
+            // also blocks save until a real app is picked from the list).
+            warning: (!launchAppName.isEmpty && launchAppBundleId.isEmpty)
+                ? Strings.t("rules.launchAppNeedsBundleId", default: "Pick an app from the list -- a typed name alone can't open an app.")
+                : nil,
+            hint: Strings.t("rules.launchAppHint", default: "Opens (launches) the app when the rule fires -- e.g. open Slack every day at 9am."))
+    }
+
     @ViewBuilder private var moveDisplayEditor: some View {
         Picker(Strings.t("rules.moveToDisplay", default: "To display"), selection: $moveDisplay) {
             if triggerProvides == "display" {
@@ -1594,6 +1621,10 @@ private struct AddRuleForm: View {
         if appTargetKinds.contains(selectedEffect?.kind ?? "") {
             return !minimizeAppName.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        if selectedEffect?.kind == "launchApp" {
+            // Require the bundle id (not just the name) -- launch needs it.
+            return !launchAppBundleId.trimmingCharacters(in: .whitespaces).isEmpty
+        }
         if selectedEffect?.kind == "moveAppToDisplay" {
             return !moveApp.trimmingCharacters(in: .whitespaces).isEmpty
                 && !moveDisplay.trimmingCharacters(in: .whitespaces).isEmpty
@@ -1663,6 +1694,7 @@ private struct AddRuleForm: View {
         moveApp = ""; moveDisplay = ""
         minimizeAppName = ""
         minimizeAppBundleId = ""; moveAppBundleId = ""
+        launchAppName = ""; launchAppBundleId = ""
         formError = nil
         advanced = false
         jsonText = ""
@@ -1716,6 +1748,7 @@ private struct AddRuleForm: View {
         wallpaperImage = ""; solidColor = "#FFFFFF"; solidDisplay = ""; minimizeAppName = ""
         moveApp = ""; moveDisplay = ""
         minimizeAppBundleId = ""; moveAppBundleId = ""
+        launchAppName = ""; launchAppBundleId = ""
         notifyTitle = AppInfo.displayName; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
@@ -1756,6 +1789,10 @@ private struct AddRuleForm: View {
             effectId = k
             minimizeAppName = effect["app"] as? String ?? ""
             minimizeAppBundleId = effect["appBundleId"] as? String ?? ""
+        } else if kind == "launchApp" {
+            effectId = "launchApp"
+            launchAppName = effect["app"] as? String ?? ""
+            launchAppBundleId = effect["appBundleId"] as? String ?? ""
         } else if kind == "lockScreen" {
             effectId = "lockScreen"
         } else if kind == "startScreensaver" {
@@ -1939,6 +1976,13 @@ private struct AddRuleForm: View {
             guard !a.isEmpty else { return nil }
             effect = ["kind": eff.kind, "app": a]
             if !minimizeAppBundleId.isEmpty { effect["appBundleId"] = minimizeAppBundleId }
+        } else if eff.kind == "launchApp" {
+            // The bundle id is the launch key (required); the name rides along for the
+            // sentence/log. A typed-name-only pick (no id) is blocked by canSubmit.
+            let bid = launchAppBundleId.trimmingCharacters(in: .whitespaces)
+            let a = launchAppName.trimmingCharacters(in: .whitespaces)
+            guard !bid.isEmpty, !a.isEmpty else { return nil }
+            effect = ["kind": "launchApp", "app": a, "appBundleId": bid]
         } else if eff.kind == "chain" {
             // Drop incomplete steps (mirrors layout); keep order.
             let steps: [[String: Any]] = chainSteps.compactMap { s in
