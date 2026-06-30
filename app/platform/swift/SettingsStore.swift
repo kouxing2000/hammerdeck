@@ -134,6 +134,39 @@ struct TriggerSpec: Equatable {
     }
 }
 
+extension TriggerSpec {
+    /// Canonical modifier order for a persisted hotkey/chord spec, so the SAME
+    /// keystroke yields the SAME mods[] no matter which editor built it (the
+    /// Settings TriggerEditor vs the Shortcut Map row). Keyboard order,
+    /// outermost-to-innermost on a Mac: ⇧⌃⌥⌘. (triggers.encode also canonicalizes
+    /// mod order on the Lua side, so this is belt-and-suspenders -- but it keeps
+    /// the two Swift surfaces from emitting visibly-different mods[] for one combo.)
+    static let modOrder = ["shift", "ctrl", "alt", "cmd"]
+
+    /// Parse a chord follow-key field (space/comma separated) into a lowercased
+    /// key list -- the one parser both editors share.
+    static func parseFollows(_ field: String) -> [String] {
+        field.split(whereSeparator: { $0 == " " || $0 == "," }).map { $0.lowercased() }
+    }
+
+    /// Build a hotkey/chord spec from an editor's live modifier set, key field,
+    /// and follow-key field: modifiers in canonical order, the key trimmed +
+    /// lowercased, and a non-empty follows field promoting it to a chord. The
+    /// single home for "keystroke editor fields -> a TriggerSpec", so the
+    /// TriggerEditor and the Shortcut Map can't drift on modifier order or key
+    /// casing (they did: cmd,alt,ctrl,shift vs shift,ctrl,alt,cmd, and one
+    /// lowercased the key while the other didn't).
+    static func keyish(mods: Set<String>, key: String, follows: String) -> TriggerSpec {
+        let ordered = modOrder.filter { mods.contains($0) }
+        let k = key.trimmingCharacters(in: .whitespaces).lowercased()
+        let followKeys = parseFollows(follows)
+        if followKeys.isEmpty {
+            return TriggerSpec(type: "hotkey", mods: ordered, key: k)
+        }
+        return TriggerSpec(type: "chord", mods: ordered, key: k, follows: followKeys)
+    }
+}
+
 // One named, independently triggerable entry point of a feature (a plugin may
 // declare several -- each gets its own trigger editor).
 struct ActionInfo: Identifiable {

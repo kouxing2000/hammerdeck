@@ -616,8 +616,6 @@ private enum TriggerMode: String, CaseIterable, Identifiable {
     }
 }
 
-private let allMods: [(id: String, symbol: String)] =
-    [("cmd", "⌘"), ("alt", "⌥"), ("ctrl", "⌃"), ("shift", "⇧")]
 private let allEvents = ["sleep", "wake", "screenLock", "screenUnlock", "screenChanged"]
 
 /// Edits one action's trigger and applies it via registry.setTrigger.
@@ -866,22 +864,16 @@ private struct TriggerEditor: View {
     }
 
     /// The chord follow sequence parsed from the space-separated field.
-    private var followKeys: [String] {
-        follows.split(whereSeparator: { $0 == " " || $0 == "," })
-            .map { $0.lowercased() }
-    }
+    private var followKeys: [String] { TriggerSpec.parseFollows(follows) }
 
     private func buildSpec() -> TriggerSpec {
         switch mode {
+        // hotkey + chord share TriggerSpec.keyish with the Shortcut Map, so the
+        // canonical mod order + key casing can't drift between the two surfaces.
         case .hotkey:
-            let ordered = allMods.map(\.id).filter { mods.contains($0) }
-            return TriggerSpec(type: "hotkey", mods: ordered,
-                               key: key.trimmingCharacters(in: .whitespaces))
+            return TriggerSpec.keyish(mods: mods, key: key, follows: "")
         case .chord:
-            let ordered = allMods.map(\.id).filter { mods.contains($0) }
-            return TriggerSpec(type: "chord", mods: ordered,
-                               key: key.trimmingCharacters(in: .whitespaces),
-                               follows: followKeys)
+            return TriggerSpec.keyish(mods: mods, key: key, follows: follows)
         case .scheduleEvery:
             return TriggerSpec(type: "schedule", everyMin: everyMin)
         case .scheduleAt:

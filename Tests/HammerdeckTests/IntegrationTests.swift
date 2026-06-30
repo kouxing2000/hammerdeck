@@ -148,6 +148,24 @@ final class IntegrationTests: XCTestCase {
     }
     #endif
 
+    /// P11: both keystroke editors (the Settings TriggerEditor and the Shortcut
+    /// Map row) build their spec via TriggerSpec.keyish, so the SAME combo
+    /// persists identically no matter which surface bound it -- canonical mod
+    /// order (⇧⌃⌥⌘), a lowercased key, and a non-empty follows field promoting to
+    /// a chord. (They used to order mods oppositely and one skipped lowercasing.)
+    func testTriggerSpecKeyishIsCanonical() {
+        let hk = TriggerSpec.keyish(mods: ["cmd", "shift"], key: "K", follows: "")
+        XCTAssertEqual(hk.type, "hotkey")
+        XCTAssertEqual(hk.mods, ["shift", "cmd"], "mods emit in canonical ⇧⌃⌥⌘ order")
+        XCTAssertEqual(hk.key, "k", "the key is trimmed + lowercased")
+        XCTAssertTrue(hk.follows.isEmpty)
+
+        let chord = TriggerSpec.keyish(mods: ["alt", "ctrl", "cmd"], key: "A", follows: "B, c")
+        XCTAssertEqual(chord.type, "chord", "a non-empty follows field promotes to a chord")
+        XCTAssertEqual(chord.mods, ["ctrl", "alt", "cmd"], "canonical order regardless of input set")
+        XCTAssertEqual(chord.follows, ["b", "c"], "follow keys split on space/comma, lowercased")
+    }
+
     /// The bridge reader honors json.lua's `__jsontype` tag, so a value's
     /// array-vs-object shape survives the Lua->Swift hop (decisive for empties).
     func testBridgeHonorsJsonTypeTag() {

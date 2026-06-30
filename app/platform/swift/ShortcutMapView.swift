@@ -22,7 +22,6 @@ import AppKit
 // outermost to innermost: ⇧ Shift, ⌃ Control, ⌥ Option, ⌘ Command.
 private let kMods: [(id: String, glyph: String)] =
     [("shift", "⇧"), ("ctrl", "⌃"), ("alt", "⌥"), ("cmd", "⌘")]
-private let kModOrder = ["shift", "ctrl", "alt", "cmd"]
 
 private let kModW: CGFloat = 34
 private let kKeyW: CGFloat = 132
@@ -482,16 +481,11 @@ private struct BindingRow: View {
     /// a CHORD (prefix mods+key, then the follow sequence); an empty Then is a
     /// plain hotkey. The grid edits both keyboard trigger types; the type is
     /// inferred so there's no separate picker.
+    // Shared with the Settings TriggerEditor (TriggerSpec.keyish): canonical mod
+    // order + key casing, follows promoting to a chord -- so the same keystroke
+    // persists identically no matter which surface bound it.
     private func buildSpec() -> TriggerSpec {
-        let ordered = kModOrder.filter { mods.contains($0) }
-        let prefixKey = key.trimmingCharacters(in: .whitespaces).lowercased()
-        let followKeys = follows
-            .split(whereSeparator: { $0 == " " || $0 == "," })
-            .map { $0.lowercased() }
-        if followKeys.isEmpty {
-            return TriggerSpec(type: "hotkey", mods: ordered, key: prefixKey)
-        }
-        return TriggerSpec(type: "chord", mods: ordered, key: prefixKey, follows: followKeys)
+        TriggerSpec.keyish(mods: mods, key: key, follows: follows)
     }
 
     /// Apply the current mods+key (+ follow keys = chord) as the trigger. A hard
@@ -506,9 +500,9 @@ private struct BindingRow: View {
         let current = store.features.first { $0.id == feature.id }?
             .actions.first { $0.id == action.id }?.trigger
         // No-op if the built spec already matches what's stored. Compare mods as
-        // a SET: buildSpec orders them via kModOrder, but a never-edited default
-        // carries them in the feature's declared order, so an ordered == would
-        // false-negative and rebind needlessly on a plain focus-out.
+        // a SET: buildSpec orders them canonically (TriggerSpec.modOrder), but a
+        // never-edited default carries them in the feature's declared order, so an
+        // ordered == would false-negative and rebind needlessly on a plain focus-out.
         if let current, current.type == spec.type,
            Set(current.mods) == Set(spec.mods),
            current.key == spec.key, current.follows == spec.follows {
