@@ -29,8 +29,10 @@
 --                   { kind="moveAppToDisplay", app=<name|"@trigger:app">,
 --                     display=<name|"@trigger:display"> }
 --
--- chain / scene arrive in later milestones. `dispatch` and the predicates are a
--- switch on `kind`, so adding a kind is additive (open/closed) -- no caller changes.
+-- `scene` arrives in a later milestone. dispatch / validate / describe /
+-- requiresContext / catalog are GENERIC over the EFFECT_KINDS descriptor table
+-- below, so adding a kind is genuinely additive (open/closed): one table entry
+-- (plus a CATALOG_ORDER slot if it's a curated atom), no function to edit.
 
 local registry = require("platform.registry")
 local adapter  = require("platform.adapter")
@@ -113,6 +115,21 @@ end
 local DISPLAY_TARGETS = {
     all = "all displays", external = "external displays", primary = "the main display",
 }
+
+-- describe(): render a DISPLAY param -- "it" (pronoun read-back) or "the
+-- triggering <field>" for a from-trigger ref, a friendly category, else the
+-- literal name. Shared by every effect that names a display.
+local function displayWhere(value, pronoun)
+    local f = triggerField(value)
+    return f and (pronoun and "it" or ("the triggering " .. f))
+        or DISPLAY_TARGETS[value] or tostring(value or "")
+end
+
+-- describe(): render an APP param the same way (no friendly-category map).
+local function appWho(value, pronoun)
+    local f = triggerField(value)
+    return f and (pronoun and "it" or ("the triggering " .. f)) or tostring(value or "")
+end
 
 -- Lowercase only the first character (so a step reads mid-sentence: "Notify ..."
 -- -> "notify ..."). Used by the chain read-back, where every step after the
@@ -301,140 +318,399 @@ local function applyMoveToDisplay(node, context)
     return true
 end
 
+-- The per-kind descriptor table -- the single source of truth Theme A asked for.
+-- Each entry carries everything the five generic dispatchers below need:
+--   validate(node)            -- assertions (nil = the kind takes no params)
+--   run(node, context)        -- dispatch; returns ok[, reasonOrNote] like effects.dispatch
+--   describe(node, pronoun)   -- the short human label
+--   contextFree = true        -- safe on an automated trigger (no live selection)
+--   requiresContext(node)     -- OR a dynamic computation (command/chain), overrides contextFree
+--   label                     -- the "Do"-dropdown caption (nil = not a catalog atom, e.g. command)
+-- Adding an effect kind is now genuinely additive: one entry here, plus its slot
+-- in CATALOG_ORDER if it's a curated atom -- no switch in any of the five
+-- functions to touch. A kind that omits contextFree/requiresContext defaults to
+-- context-DEPENDENT (un-schedulable) -- the safe side, declared right where the
+-- kind is, so a context-free kind can't be silently forgotten in a shared chain.
+local EFFECT_KINDS
+
+-- minimize / hide / quit share validate (one app param), run (appAction with a
+-- different adapter call + verb), describe (only the verb differs), and context-
+-- freeness -- so build the three entries from one factory.
+local function appTargetKind(verb, displayVerb, fn, label)
+    return {
+        validate = function(node)
+            assert(type(node.app) == "string" and #node.app > 0,
+                node.kind .. " effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
+        end,
+        run = function(node, context) return appAction(node, context, fn, verb) end,
+        describe = function(node, pronoun) return displayVerb .. " " .. appWho(node.app, pronoun) end,
+        contextFree = true,
+        label = label,
+    }
+end
+
+EFFECT_KINDS = {
+    command = {
+        validate = function(node)
+            assert(type(node.feature) == "string" and #node.feature > 0,
+                "command effect needs a feature id")
+            assert(node.action == nil or type(node.action) == "string",
+                "command effect action must be a string id (or nil for a sole action)")
+        end,
+        run = function(node) return registry.runAction(node.feature, node.action) end,
+        describe = function(node)
+            -- Prefer the action's friendly "Do"-dropdown label (the feature name for
+            -- a sole action, e.g. "Run Bing Daily Wallpaper") over the raw
+            -- "feature.action" id; fall back to the ids when the target feature isn't
+            -- loaded this boot (a parked rule). The label is feature-localized DATA --
+            -- the same class as a notify title / app name / display name already shown
+            -- verbatim -- NOT English glue, so it echoes the localized dropdown label
+            -- (Chinese in a zh-Hans build); the glue ("Run") stays English.
+            local label = registry.actionLabel(node.feature, node.action)
+            if label then return "Run " .. label end
+            return "Run " .. tostring(node.feature)
+                .. (node.action and ("." .. node.action) or "")
+        end,
+        -- An unknown command target (a typo'd feature/action) reads as
+        -- context-dependent -- the safe default.
+        requiresContext = function(node)
+            return registry.isActionAutomatable(node.feature, node.action) ~= true
+        end,
+    },
+    notify = {
+        validate = function(node)
+            assert(type(node.title) == "string" and #node.title > 0,
+                "notify effect needs a title")
+            assert(node.text == nil or type(node.text) == "string",
+                "notify effect text must be a string")
+            -- Optional delivery channel: "system" (Notification Center) or "app" (the
+            -- in-app banner). Absent = app (back-compat with rules authored before this).
+            assert(node.channel == nil or node.channel == "system" or node.channel == "app",
+                "notify channel must be 'system' or 'app'")
+        end,
+        run = function(node)
+            if node.channel == "system" then
+                -- Deliver to Notification Center; fall back to the in-app banner when
+                -- the system path is unavailable (dev `swift run` -- no app bundle).
+                local okS, delivered = pcall(adapter.systemNotify, node.title, node.text or "")
+                if okS and delivered then return true end
+                local okB, errB = pcall(adapter.notify, node.title, node.text or "")
+                if not okB then return false, tostring(errB) end
+                return true, "shown in-app (system notification unavailable)"
+            end
+            local ok, err = pcall(adapter.notify, node.title, node.text or "")
+            if not ok then return false, tostring(err) end
+            return true
+        end,
+        describe = function(node) return 'Notify "' .. tostring(node.title or "") .. '"' end,
+        contextFree = true,
+        label = "Notify (banner)",
+    },
+    layout = {
+        validate = function(node)
+            assert(type(node.placements) == "table" and #node.placements > 0,
+                "layout effect needs at least one placement")
+            for i, p in ipairs(node.placements) do
+                assert(type(p) == "table", "layout placement #" .. i .. " must be a table")
+                assert(type(p.app) == "string" and #p.app > 0,
+                    "layout placement #" .. i .. " needs an app name")
+                assert(type(p.screen) == "string" and #p.screen > 0,
+                    "layout placement #" .. i .. " needs a screen (display name)")
+                assert(windows.ratiosFor(p.pos) ~= nil,
+                    "layout placement #" .. i .. " needs a valid position")
+                -- Optional window disambiguator: a plain substring of the title (lets
+                -- a rule target ONE of several same-app windows). The advanced JSON
+                -- editor is the way to set it; the guided form doesn't expose it.
+                assert(p.titlePattern == nil or type(p.titlePattern) == "string",
+                    "layout placement #" .. i .. " titlePattern must be a string")
+            end
+        end,
+        run = function(node)
+            local ok, res, reason = pcall(applyLayout, node)
+            if not ok then return false, tostring(res) end
+            return res, reason
+        end,
+        describe = function(node)
+            local n = (type(node.placements) == "table") and #node.placements or 0
+            return "Arrange " .. n .. (n == 1 and " window" or " windows")
+        end,
+        contextFree = true,
+        label = "Arrange windows (layout)",
+    },
+    runShortcut = {
+        validate = function(node)
+            assert(type(node.name) == "string" and #node.name > 0,
+                "runShortcut effect needs a Shortcut name")
+        end,
+        run = function(node)
+            local ok, err = pcall(adapter.runShortcut, node.name)
+            if not ok then return false, tostring(err) end
+            return true
+        end,
+        describe = function(node) return 'Run Shortcut "' .. tostring(node.name or "") .. '"' end,
+        contextFree = true,
+        label = "Run a Shortcut",
+    },
+    openURL = {
+        validate = function(node)
+            assert(type(node.url) == "string" and #node.url > 0,
+                "openURL effect needs a url")
+        end,
+        run = function(node)
+            local ok, err = pcall(adapter.openURL, node.url)
+            if not ok then return false, tostring(err) end
+            return true
+        end,
+        describe = function(node) return "Open " .. tostring(node.url or "") end,
+        contextFree = true,
+        label = "Open a URL",
+    },
+    solidWallpaper = {
+        validate = function(node)
+            assert(type(node.color) == "string" and node.color:match("^#%x%x%x%x%x%x$"),
+                "solidWallpaper effect needs a #RRGGBB color")
+            assert(type(node.display) == "string" and #node.display > 0,
+                "solidWallpaper effect needs a display (a name, 'all'/'external'/'primary', "
+                .. "or '" .. effects.TRIGGER_DISPLAY .. "')")
+        end,
+        run = function(node, context)
+            local target, reason = effects.resolveParam(node.display, context)
+            if not target then return false, reason end
+            -- Check the adapter's success boolean (parity with appAction): a typo'd or
+            -- now-disconnected display matches no screen -> paint nothing, which must
+            -- read as a FAILURE in the rule's fire log, not a silent green "fired".
+            local ok, res = pcall(adapter.setWallpaperColor, node.color, target)
+            if not ok then return false, tostring(res) end
+            if not res then return false, "no display to paint: " .. tostring(target) end
+            return true
+        end,
+        describe = function(node, pronoun)
+            return "Set wallpaper " .. colorName(node.color) .. " on " .. displayWhere(node.display, pronoun)
+        end,
+        contextFree = true,
+        label = "Set solid wallpaper",
+    },
+    setWallpaperImage = {
+        validate = function(node)
+            assert(type(node.image) == "string" and #node.image > 0,
+                "setWallpaperImage effect needs an image file path")
+            assert(type(node.display) == "string" and #node.display > 0,
+                "setWallpaperImage effect needs a display (a name, 'all'/'external'/'primary', "
+                .. "or '" .. effects.TRIGGER_DISPLAY .. "')")
+        end,
+        run = function(node, context)
+            local target, reason = effects.resolveParam(node.display, context)
+            if not target then return false, reason end
+            -- Same success-boolean contract as solidWallpaper: a typo'd/disconnected
+            -- display matches no screen -> nothing set -> a FAILURE in the fire log.
+            local ok, res = pcall(adapter.setWallpaper, node.image, target)
+            if not ok then return false, tostring(res) end
+            if not res then return false, "no display for the wallpaper: " .. tostring(target) end
+            return true
+        end,
+        describe = function(node, pronoun)
+            return "Set wallpaper " .. baseName(node.image) .. " on " .. displayWhere(node.display, pronoun)
+        end,
+        contextFree = true,
+        label = "Set wallpaper image",
+    },
+    minimizeApp = appTargetKind("minimize", "Minimize", adapter.minimizeApp, "Minimize an app's window"),
+    hideApp     = appTargetKind("hide", "Hide", adapter.hideApp, "Hide an app"),
+    quitApp     = appTargetKind("quit", "Quit", adapter.quitApp, "Quit an app"),
+    launchApp = {
+        validate = function(node)
+            -- Unlike minimize/hide/quit (which act on a RUNNING app, found by name or
+            -- id), launch needs the bundle id -- the only identifier that resolves to a
+            -- launchable app URL. `app` is the readable name for the sentence/log;
+            -- appBundleId is required. No "@trigger:app": launch targets a SPECIFIC
+            -- installed app (the form never emits the sentinel) -- reject a hand-authored
+            -- one loudly, rather than launching the bundle id while the sentence reads
+            -- the raw "@trigger:app" literal.
+            assert(node.app ~= effects.TRIGGER_APP,
+                "launchApp does not support '" .. effects.TRIGGER_APP .. "' -- it targets a specific app")
+            assert(type(node.app) == "string" and #node.app > 0,
+                "launchApp effect needs an app name")
+            assert(type(node.appBundleId) == "string" and #node.appBundleId > 0,
+                "launchApp effect needs the app's bundle id (pick it from the installed-apps list)")
+        end,
+        run = function(node)
+            -- Launch (or focus, if already running) the app by its bundle id. A false
+            -- return means no installed app carries that id -- surface it as a real
+            -- failure in the fire log, not a lying green "fired" (parity with appAction).
+            local ok, res = pcall(adapter.launchOrFocusApp, node.appBundleId)
+            if not ok then return false, tostring(res) end
+            if not res then return false, "no installed app: " .. tostring(node.app) end
+            return true
+        end,
+        describe = function(node) return "Open " .. tostring(node.app or "") end,
+        contextFree = true,
+        label = "Open an app",
+    },
+    moveAppToDisplay = {
+        validate = function(node)
+            assert(type(node.app) == "string" and #node.app > 0,
+                "moveAppToDisplay effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
+            assert(type(node.display) == "string" and #node.display > 0,
+                "moveAppToDisplay effect needs a display (a name or '" .. effects.TRIGGER_DISPLAY .. "')")
+        end,
+        run = function(node, context)
+            local ok, res, reason = pcall(applyMoveToDisplay, node, context)
+            if not ok then return false, tostring(res) end
+            return res, reason
+        end,
+        describe = function(node, pronoun)
+            return "Move " .. appWho(node.app, pronoun) .. " to " .. displayWhere(node.display, pronoun)
+        end,
+        contextFree = true,
+        label = "Move an app to a display",
+    },
+    speak = {
+        validate = function(node)
+            assert(type(node.text) == "string" and #node.text > 0,
+                "speak effect needs text to say")
+        end,
+        run = function(node)
+            local ok, err = pcall(adapter.say, node.text)
+            if not ok then return false, tostring(err) end
+            return true
+        end,
+        describe = function(node) return 'Say "' .. tostring(node.text or "") .. '"' end,
+        contextFree = true,
+        label = "Speak text aloud",
+    },
+    lockScreen = {
+        run = function()
+            local ok, err = pcall(adapter.lockScreen)
+            if not ok then return false, tostring(err) end
+            return true
+        end,
+        describe = function() return "Lock the screen" end,
+        contextFree = true,
+        label = "Lock the screen",
+    },
+    startScreensaver = {
+        run = function()
+            local ok, err = pcall(adapter.startScreensaver)
+            if not ok then return false, tostring(err) end
+            return true
+        end,
+        describe = function() return "Start the screensaver" end,
+        contextFree = true,
+        label = "Start the screensaver",
+    },
+    emptyTrash = {
+        run = function()
+            local ok, n = pcall(adapter.emptyTrash)
+            if not ok then return false, tostring(n) end
+            -- -1 = found items but removed none (a Full Disk Access denial); surface it
+            -- as a real failure, not a lying green "fired". A count > 0 rides as a note.
+            if n == -1 then
+                return false, "couldn't empty the Trash -- grant Full Disk Access in System Settings > Privacy & Security"
+            end
+            if type(n) == "number" and n > 0 then
+                return true, "emptied " .. n .. (n == 1 and " item" or " items")
+            end
+            return true   -- the Trash was already empty
+        end,
+        describe = function() return "Empty the Trash" end,
+        contextFree = true,
+        label = "Empty the Trash",
+    },
+    eject = {
+        run = function()
+            local ok, n = pcall(adapter.eject)
+            if not ok then return false, tostring(n) end
+            if n == -1 then return false, "external disk(s) busy -- nothing ejected" end
+            if type(n) == "number" and n > 0 then
+                return true, "ejected " .. n .. (n == 1 and " disk" or " disks")
+            end
+            return true   -- no external disks connected
+        end,
+        describe = function() return "Eject external disks" end,
+        contextFree = true,
+        label = "Eject external disks",
+    },
+    chain = {
+        validate = function(node)
+            assert(type(node.effects) == "table" and #node.effects > 0,
+                "chain effect needs at least one step")
+            for i, step in ipairs(node.effects) do
+                assert(type(step) == "table", "chain step #" .. i .. " must be a table")
+                -- No nesting: a chain of chains buys nothing and complicates the editor.
+                assert(step.kind ~= "chain", "a chain step cannot itself be a chain")
+                local okS, errS = pcall(effects.validate, step)
+                assert(okS, "chain step #" .. i .. ": " .. tostring(errS))
+            end
+        end,
+        run = function(node, context)
+            local ok, res, reason = pcall(applyChain, node, context)
+            if not ok then return false, tostring(res) end
+            return res, reason
+        end,
+        describe = function(node, pronoun)
+            local parts = {}
+            if type(node.effects) == "table" then
+                for _, step in ipairs(node.effects) do
+                    parts[#parts + 1] = effects.describe(step, pronoun and { pronoun = true } or nil)
+                end
+            end
+            local n = #parts
+            if n == 0 then return "Chain (empty)" end
+            if pronoun then
+                -- Read-back SENTENCE form: "minimize it, then notify ...". The outer
+                -- rules.sentence lowercases the first char; lowercase each SUBSEQUENT
+                -- step so the joined steps stay one flowing sentence (vs the compact
+                -- "N steps: A -> B" the list row / fire log keep below).
+                for i = 2, n do parts[i] = lowerFirst(parts[i]) end
+                return table.concat(parts, ", then ")
+            end
+            return n .. (n == 1 and " step: " or " steps: ") .. table.concat(parts, " -> ")
+        end,
+        -- A chain is context-free only if EVERY step is -- so a chain on an automated
+        -- trigger is allowed iff none of its steps needs live context.
+        requiresContext = function(node)
+            if type(node.effects) ~= "table" then return true end
+            for _, step in ipairs(node.effects) do
+                if effects.requiresContext(step) then return true end
+            end
+            return false
+        end,
+    },
+}
+
+-- The "Do"-dropdown ORDER (a Lua map is unordered, so the curated atom sequence
+-- lives here). `command` is appended per-action by catalog(), not listed here.
+local CATALOG_ORDER = {
+    "notify", "layout", "runShortcut", "openURL", "lockScreen", "startScreensaver",
+    "speak", "emptyTrash", "eject", "solidWallpaper", "setWallpaperImage",
+    "moveAppToDisplay", "launchApp", "minimizeApp", "hideApp", "quitApp", "chain",
+}
+
 --- Validate an effect node. Throws on a malformed node; returns it on success.
 ---@param node table an effect node
 ---@return table
 function effects.validate(node)
     assert(type(node) == "table", "effect must be a table")
-    local kind = node.kind
-    if kind == "command" then
-        assert(type(node.feature) == "string" and #node.feature > 0,
-            "command effect needs a feature id")
-        assert(node.action == nil or type(node.action) == "string",
-            "command effect action must be a string id (or nil for a sole action)")
-    elseif kind == "notify" then
-        assert(type(node.title) == "string" and #node.title > 0,
-            "notify effect needs a title")
-        assert(node.text == nil or type(node.text) == "string",
-            "notify effect text must be a string")
-        -- Optional delivery channel: "system" (Notification Center) or "app" (the
-        -- in-app banner). Absent = app (back-compat with rules authored before this).
-        assert(node.channel == nil or node.channel == "system" or node.channel == "app",
-            "notify channel must be 'system' or 'app'")
-    elseif kind == "layout" then
-        assert(type(node.placements) == "table" and #node.placements > 0,
-            "layout effect needs at least one placement")
-        for i, p in ipairs(node.placements) do
-            assert(type(p) == "table", "layout placement #" .. i .. " must be a table")
-            assert(type(p.app) == "string" and #p.app > 0,
-                "layout placement #" .. i .. " needs an app name")
-            assert(type(p.screen) == "string" and #p.screen > 0,
-                "layout placement #" .. i .. " needs a screen (display name)")
-            assert(windows.ratiosFor(p.pos) ~= nil,
-                "layout placement #" .. i .. " needs a valid position")
-            -- Optional window disambiguator: a plain substring of the title (lets
-            -- a rule target ONE of several same-app windows). The advanced JSON
-            -- editor is the way to set it; the guided form doesn't expose it.
-            assert(p.titlePattern == nil or type(p.titlePattern) == "string",
-                "layout placement #" .. i .. " titlePattern must be a string")
-        end
-    elseif kind == "runShortcut" then
-        assert(type(node.name) == "string" and #node.name > 0,
-            "runShortcut effect needs a Shortcut name")
-    elseif kind == "openURL" then
-        assert(type(node.url) == "string" and #node.url > 0,
-            "openURL effect needs a url")
-    elseif kind == "solidWallpaper" then
-        assert(type(node.color) == "string" and node.color:match("^#%x%x%x%x%x%x$"),
-            "solidWallpaper effect needs a #RRGGBB color")
-        assert(type(node.display) == "string" and #node.display > 0,
-            "solidWallpaper effect needs a display (a name, 'all'/'external'/'primary', "
-            .. "or '" .. effects.TRIGGER_DISPLAY .. "')")
-    elseif kind == "setWallpaperImage" then
-        assert(type(node.image) == "string" and #node.image > 0,
-            "setWallpaperImage effect needs an image file path")
-        assert(type(node.display) == "string" and #node.display > 0,
-            "setWallpaperImage effect needs a display (a name, 'all'/'external'/'primary', "
-            .. "or '" .. effects.TRIGGER_DISPLAY .. "')")
-    elseif kind == "minimizeApp" or kind == "hideApp" or kind == "quitApp" then
-        assert(type(node.app) == "string" and #node.app > 0,
-            kind .. " effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
-    elseif kind == "launchApp" then
-        -- Unlike minimize/hide/quit (which act on a RUNNING app, found by name or id),
-        -- launch needs the bundle id -- the only identifier that resolves to a launchable
-        -- app URL. `app` is the readable name for the sentence/log; appBundleId is required.
-        -- No "@trigger:app": launch targets a SPECIFIC installed app (the form never emits
-        -- the sentinel) -- reject a hand-authored one loudly, rather than launching the
-        -- bundle id while the sentence reads the raw "@trigger:app" literal.
-        assert(node.app ~= effects.TRIGGER_APP,
-            "launchApp does not support '" .. effects.TRIGGER_APP .. "' -- it targets a specific app")
-        assert(type(node.app) == "string" and #node.app > 0,
-            "launchApp effect needs an app name")
-        assert(type(node.appBundleId) == "string" and #node.appBundleId > 0,
-            "launchApp effect needs the app's bundle id (pick it from the installed-apps list)")
-    elseif kind == "moveAppToDisplay" then
-        assert(type(node.app) == "string" and #node.app > 0,
-            "moveAppToDisplay effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
-        assert(type(node.display) == "string" and #node.display > 0,
-            "moveAppToDisplay effect needs a display (a name or '" .. effects.TRIGGER_DISPLAY .. "')")
-    elseif kind == "speak" then
-        assert(type(node.text) == "string" and #node.text > 0,
-            "speak effect needs text to say")
-    elseif kind == "lockScreen" then
-        -- no parameters
-    elseif kind == "startScreensaver" then
-        -- no parameters
-    elseif kind == "emptyTrash" then
-        -- no parameters
-    elseif kind == "eject" then
-        -- no parameters
-    elseif kind == "chain" then
-        assert(type(node.effects) == "table" and #node.effects > 0,
-            "chain effect needs at least one step")
-        for i, step in ipairs(node.effects) do
-            assert(type(step) == "table", "chain step #" .. i .. " must be a table")
-            -- No nesting: a chain of chains buys nothing and complicates the editor.
-            assert(step.kind ~= "chain", "a chain step cannot itself be a chain")
-            local okS, errS = pcall(effects.validate, step)
-            assert(okS, "chain step #" .. i .. ": " .. tostring(errS))
-        end
-    else
-        error("unknown effect kind '" .. tostring(kind) .. "'")
-    end
+    local spec = EFFECT_KINDS[node.kind]
+    if not spec then error("unknown effect kind '" .. tostring(node.kind) .. "'") end
+    if spec.validate then spec.validate(node) end
     return node
 end
 
 --- Does this effect need live UI context (selection / focused window / clipboard)?
 --- Context-FREE only if every action it runs is `automatable`. The rules engine
 --- uses this to keep context-dependent effects off automated triggers (schedule/
---- event/state -- fired with nobody present). An unknown command target (a typo'd
---- feature/action) is treated as context-dependent -- the safe default.
+--- event/state -- fired with nobody present). An unknown kind, or a kind that
+--- declares neither contextFree nor requiresContext, is treated as context-
+--- dependent -- the safe default.
 ---@param node table an effect node
 ---@return boolean
 function effects.requiresContext(node)
     if type(node) ~= "table" then return true end
-    if node.kind == "command" then
-        return registry.isActionAutomatable(node.feature, node.action) ~= true
-    elseif node.kind == "notify" then
-        return false   -- context-free: just shows a notification
-    elseif node.kind == "layout" then
-        return false   -- context-free: places windows by declared rules, no live selection
-    elseif node.kind == "runShortcut" or node.kind == "openURL" or node.kind == "lockScreen"
-        or node.kind == "solidWallpaper" or node.kind == "setWallpaperImage" or node.kind == "minimizeApp"
-        or node.kind == "hideApp" or node.kind == "quitApp" or node.kind == "startScreensaver"
-        or node.kind == "moveAppToDisplay" or node.kind == "speak" or node.kind == "launchApp"
-        or node.kind == "emptyTrash" or node.kind == "eject" then
-        return false   -- context-free: fire-and-forget system actions, no live selection
-    elseif node.kind == "chain" then
-        -- A chain is context-free only if EVERY step is -- so a chain on an
-        -- automated trigger is allowed iff none of its steps needs live context.
-        if type(node.effects) ~= "table" then return true end
-        for _, step in ipairs(node.effects) do
-            if effects.requiresContext(step) then return true end
-        end
-        return false
-    end
-    return true
+    local spec = EFFECT_KINDS[node.kind]
+    if not spec then return true end
+    if spec.requiresContext then return spec.requiresContext(node) end
+    return not spec.contextFree
 end
 
 --- Run an effect node. Returns (true) on success, (false, reason) on failure, or
@@ -447,108 +723,9 @@ end
 ---@return boolean ok
 ---@return string|nil reasonOrNote  failure reason, or a partial-success note
 function effects.dispatch(node, context)
-    if node.kind == "command" then
-        return registry.runAction(node.feature, node.action)
-    elseif node.kind == "notify" then
-        if node.channel == "system" then
-            -- Deliver to Notification Center; fall back to the in-app banner when
-            -- the system path is unavailable (dev `swift run` -- no app bundle).
-            local okS, delivered = pcall(adapter.systemNotify, node.title, node.text or "")
-            if okS and delivered then return true end
-            local okB, errB = pcall(adapter.notify, node.title, node.text or "")
-            if not okB then return false, tostring(errB) end
-            return true, "shown in-app (system notification unavailable)"
-        end
-        local ok, err = pcall(adapter.notify, node.title, node.text or "")
-        if not ok then return false, tostring(err) end
-        return true
-    elseif node.kind == "layout" then
-        local ok, res, reason = pcall(applyLayout, node)
-        if not ok then return false, tostring(res) end
-        return res, reason
-    elseif node.kind == "runShortcut" then
-        local ok, err = pcall(adapter.runShortcut, node.name)
-        if not ok then return false, tostring(err) end
-        return true
-    elseif node.kind == "openURL" then
-        local ok, err = pcall(adapter.openURL, node.url)
-        if not ok then return false, tostring(err) end
-        return true
-    elseif node.kind == "solidWallpaper" then
-        local target, reason = effects.resolveParam(node.display, context)
-        if not target then return false, reason end
-        -- Check the adapter's success boolean (parity with appAction): a typo'd or
-        -- now-disconnected display matches no screen -> paint nothing, which must
-        -- read as a FAILURE in the rule's fire log, not a silent green "fired".
-        local ok, res = pcall(adapter.setWallpaperColor, node.color, target)
-        if not ok then return false, tostring(res) end
-        if not res then return false, "no display to paint: " .. tostring(target) end
-        return true
-    elseif node.kind == "setWallpaperImage" then
-        local target, reason = effects.resolveParam(node.display, context)
-        if not target then return false, reason end
-        -- Same success-boolean contract as solidWallpaper: a typo'd/disconnected
-        -- display matches no screen -> nothing set -> a FAILURE in the fire log.
-        local ok, res = pcall(adapter.setWallpaper, node.image, target)
-        if not ok then return false, tostring(res) end
-        if not res then return false, "no display for the wallpaper: " .. tostring(target) end
-        return true
-    elseif node.kind == "minimizeApp" then
-        return appAction(node, context, adapter.minimizeApp, "minimize")
-    elseif node.kind == "hideApp" then
-        return appAction(node, context, adapter.hideApp, "hide")
-    elseif node.kind == "quitApp" then
-        return appAction(node, context, adapter.quitApp, "quit")
-    elseif node.kind == "moveAppToDisplay" then
-        local ok, res, reason = pcall(applyMoveToDisplay, node, context)
-        if not ok then return false, tostring(res) end
-        return res, reason
-    elseif node.kind == "launchApp" then
-        -- Launch (or focus, if already running) the app by its bundle id. A false
-        -- return means no installed app carries that id -- surface it as a real
-        -- failure in the fire log, not a lying green "fired" (parity with appAction).
-        local ok, res = pcall(adapter.launchOrFocusApp, node.appBundleId)
-        if not ok then return false, tostring(res) end
-        if not res then return false, "no installed app: " .. tostring(node.app) end
-        return true
-    elseif node.kind == "lockScreen" then
-        local ok, err = pcall(adapter.lockScreen)
-        if not ok then return false, tostring(err) end
-        return true
-    elseif node.kind == "startScreensaver" then
-        local ok, err = pcall(adapter.startScreensaver)
-        if not ok then return false, tostring(err) end
-        return true
-    elseif node.kind == "speak" then
-        local ok, err = pcall(adapter.say, node.text)
-        if not ok then return false, tostring(err) end
-        return true
-    elseif node.kind == "emptyTrash" then
-        local ok, n = pcall(adapter.emptyTrash)
-        if not ok then return false, tostring(n) end
-        -- -1 = found items but removed none (a Full Disk Access denial); surface it
-        -- as a real failure, not a lying green "fired". A count > 0 rides as a note.
-        if n == -1 then
-            return false, "couldn't empty the Trash -- grant Full Disk Access in System Settings > Privacy & Security"
-        end
-        if type(n) == "number" and n > 0 then
-            return true, "emptied " .. n .. (n == 1 and " item" or " items")
-        end
-        return true   -- the Trash was already empty
-    elseif node.kind == "eject" then
-        local ok, n = pcall(adapter.eject)
-        if not ok then return false, tostring(n) end
-        if n == -1 then return false, "external disk(s) busy -- nothing ejected" end
-        if type(n) == "number" and n > 0 then
-            return true, "ejected " .. n .. (n == 1 and " disk" or " disks")
-        end
-        return true   -- no external disks connected
-    elseif node.kind == "chain" then
-        local ok, res, reason = pcall(applyChain, node, context)
-        if not ok then return false, tostring(res) end
-        return res, reason
-    end
-    return false, "unknown effect kind: " .. tostring(node and node.kind)
+    local spec = EFFECT_KINDS[node.kind]
+    if not spec then return false, "unknown effect kind: " .. tostring(node and node.kind) end
+    return spec.run(node, context)
 end
 
 --- A short human label for an effect node (the rules-list "→ ..." column).
@@ -561,82 +738,9 @@ end
 ---@return string
 function effects.describe(node, opts)
     if type(node) ~= "table" then return "?" end
-    local pronoun = opts and opts.pronoun
-    if node.kind == "command" then
-        -- Prefer the action's friendly "Do"-dropdown label (the feature name for a
-        -- sole action, e.g. "Run Bing Daily Wallpaper") over the raw "feature.action"
-        -- id; fall back to the ids when the target feature isn't loaded this boot (a
-        -- parked rule). The label is feature-localized DATA -- the same class as a
-        -- notify title / app name / display name already shown verbatim in the
-        -- sentence -- NOT English glue, so it intentionally echoes the localized
-        -- label the user picked in the dropdown (Chinese in a zh-Hans build); the
-        -- glue around it ("run", "when") stays English like the rest of describe.
-        local label = registry.actionLabel(node.feature, node.action)
-        if label then return "Run " .. label end
-        return "Run " .. tostring(node.feature)
-            .. (node.action and ("." .. node.action) or "")
-    elseif node.kind == "notify" then
-        return 'Notify "' .. tostring(node.title or "") .. '"'
-    elseif node.kind == "layout" then
-        local n = (type(node.placements) == "table") and #node.placements or 0
-        return "Arrange " .. n .. (n == 1 and " window" or " windows")
-    elseif node.kind == "runShortcut" then
-        return 'Run Shortcut "' .. tostring(node.name or "") .. '"'
-    elseif node.kind == "openURL" then
-        return "Open " .. tostring(node.url or "")
-    elseif node.kind == "solidWallpaper" then
-        local f = triggerField(node.display)
-        local where = f and (pronoun and "it" or ("the triggering " .. f))
-            or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
-        return "Set wallpaper " .. colorName(node.color) .. " on " .. where
-    elseif node.kind == "setWallpaperImage" then
-        local f = triggerField(node.display)
-        local where = f and (pronoun and "it" or ("the triggering " .. f))
-            or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
-        return "Set wallpaper " .. baseName(node.image) .. " on " .. where
-    elseif node.kind == "minimizeApp" or node.kind == "hideApp" or node.kind == "quitApp" then
-        local f = triggerField(node.app)
-        local who = f and (pronoun and "it" or ("the triggering " .. f)) or tostring(node.app or "")
-        local verb = (node.kind == "hideApp" and "Hide")
-            or (node.kind == "quitApp" and "Quit") or "Minimize"
-        return verb .. " " .. who
-    elseif node.kind == "launchApp" then
-        return "Open " .. tostring(node.app or "")
-    elseif node.kind == "moveAppToDisplay" then
-        local af = triggerField(node.app)
-        local who = af and (pronoun and "it" or ("the triggering " .. af)) or tostring(node.app or "")
-        local df = triggerField(node.display)
-        local where = df and (pronoun and "it" or ("the triggering " .. df))
-            or DISPLAY_TARGETS[node.display] or tostring(node.display or "")
-        return "Move " .. who .. " to " .. where
-    elseif node.kind == "speak" then
-        return 'Say "' .. tostring(node.text or "") .. '"'
-    elseif node.kind == "lockScreen" then
-        return "Lock the screen"
-    elseif node.kind == "startScreensaver" then
-        return "Start the screensaver"
-    elseif node.kind == "emptyTrash" then
-        return "Empty the Trash"
-    elseif node.kind == "eject" then
-        return "Eject external disks"
-    elseif node.kind == "chain" then
-        local parts = {}
-        if type(node.effects) == "table" then
-            for _, step in ipairs(node.effects) do parts[#parts + 1] = effects.describe(step, opts) end
-        end
-        local n = #parts
-        if n == 0 then return "Chain (empty)" end
-        if pronoun then
-            -- Read-back SENTENCE form: "minimize it, then notify ...". The outer
-            -- rules.sentence lowercases the first char; lowercase each SUBSEQUENT
-            -- step so the joined steps stay one flowing sentence (vs the compact
-            -- "N steps: A -> B" the list row / fire log keep below).
-            for i = 2, n do parts[i] = lowerFirst(parts[i]) end
-            return table.concat(parts, ", then ")
-        end
-        return n .. (n == 1 and " step: " or " steps: ") .. table.concat(parts, " -> ")
-    end
-    return tostring(node.kind)
+    local spec = EFFECT_KINDS[node.kind]
+    if not spec then return tostring(node.kind) end
+    return spec.describe(node, opts and opts.pronoun)
 end
 
 --- Selectable effects for the rules UI's "Do" dropdown. `automatedOnly` keeps
@@ -649,25 +753,10 @@ function effects.catalog(automatedOnly)
     -- These curated effects are all context-free, so they survive `automatedOnly`.
     -- (chain's context-freeness depends on its steps -- the form editor only offers
     -- context-free atoms, and validate is the backstop, so it's safe to list here.)
-    local out = {
-        { kind = "notify",      label = "Notify (banner)" },
-        { kind = "layout",      label = "Arrange windows (layout)" },
-        { kind = "runShortcut", label = "Run a Shortcut" },
-        { kind = "openURL",     label = "Open a URL" },
-        { kind = "lockScreen",  label = "Lock the screen" },
-        { kind = "startScreensaver", label = "Start the screensaver" },
-        { kind = "speak",       label = "Speak text aloud" },
-        { kind = "emptyTrash",  label = "Empty the Trash" },
-        { kind = "eject",       label = "Eject external disks" },
-        { kind = "solidWallpaper", label = "Set solid wallpaper" },
-        { kind = "setWallpaperImage", label = "Set wallpaper image" },
-        { kind = "moveAppToDisplay", label = "Move an app to a display" },
-        { kind = "launchApp",   label = "Open an app" },
-        { kind = "minimizeApp", label = "Minimize an app's window" },
-        { kind = "hideApp",     label = "Hide an app" },
-        { kind = "quitApp",     label = "Quit an app" },
-        { kind = "chain",       label = "Do several things (chain)" },
-    }
+    local out = {}
+    for _, kind in ipairs(CATALOG_ORDER) do
+        out[#out + 1] = { kind = kind, label = EFFECT_KINDS[kind].label }
+    end
     for _, a in ipairs(registry.enabledActions()) do
         if (not automatedOnly) or a.automatable then
             out[#out + 1] = {
