@@ -158,8 +158,13 @@ local REGISTRY = {
         -- display name) into the trigger CONTEXT under that key, so an effect param
         -- can bind to it ("@trigger:display"). The host derives the from-trigger
         -- option + label from this one declaration -- no hardcoded signal names.
+        -- goneOnLeave: on the LEAVE edge (disconnect) the display is GONE, so a
+        -- from-trigger effect that acts on it (paint @trigger:display) has nothing to
+        -- target -- the host warns. (frontmostApp omits it: "loses focus" keeps the
+        -- app alive.) See rules.triggerContext + RulesView.leaveGoneFootgun.
         meta    = { label = "Connected display", valueLabel = "Display name", provides = "display",
                     enterVerb = "connects", leaveVerb = "disconnects", example = "DELL U2720Q",
+                    goneOnLeave = true,
                     enterWhen = "the moment it plugs in",
                     leaveWhen = "the moment it unplugs" },
         candidates = readDisplayNames,
@@ -190,8 +195,13 @@ local REGISTRY = {
         end,
         match   = membershipInfo,
         bundleIdMatch = true,   -- value entries carry bundleId; a rule may store on.bundleId
+        -- goneOnLeave: on the LEAVE edge (quits) the app is TERMINATED, so a
+        -- from-trigger effect that acts on it (minimize/move @trigger:app) has nothing
+        -- to target -- the host warns. (frontmostApp omits it: "loses focus" keeps the
+        -- app running.) See rules.triggerContext + RulesView.leaveGoneFootgun.
         meta    = { label = "Running app", valueLabel = "App name", provides = "app",
                     enterVerb = "launches", leaveVerb = "quits", example = "Slack",
+                    goneOnLeave = true,
                     enterWhen = "the moment it launches",
                     leaveWhen = "the moment it quits" },
     },

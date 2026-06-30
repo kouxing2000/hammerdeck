@@ -147,12 +147,15 @@ end
 -- The values a rule's TRIGGER makes available to its effect (for params bound to
 -- the trigger rather than a literal -- see effects.resolveParam / TRIGGER_*). The
 -- matched entity comes from whichever transition the rule uses (`becomes` OR
--- `leaves`): a Connected-display rule yields {display=...} (meaningful on connect,
--- not on disconnect -- a gone monitor); a Frontmost/Running-app rule yields
--- {app=...}, meaningful on BOTH edges -- the app that gained OR lost focus is
--- still alive to act on (e.g. minimize-on-focus-loss). Spec-derived, so it works
--- on a real fire AND the Test button (both go through `fire`). The "any X -> the
--- entered one" case is future work (it needs bindOne to diff the live set).
+-- `leaves`), and is published on BOTH edges. CAVEAT: on a LEAVE edge the entity may
+-- already be GONE -- a disconnected display, a quit app -- so a from-trigger effect
+-- that acts ON it (paint that display, minimize that app) finds nothing and fails.
+-- The signal's `goneOnLeave` meta marks exactly those signals so the host can warn
+-- (RulesView.leaveGoneFootgun). The one leave edge where the entity SURVIVES is
+-- frontmostApp "loses focus" (the app is still running -- you clicked away), the
+-- flagship minimize-on-focus-loss case, so frontmostApp is not marked. Spec-derived,
+-- so it works on a real fire AND the Test button (both go through `fire`). The
+-- "any X -> the entered one" case is future work (it needs bindOne to diff the set).
 local function triggerContext(spec)
     local on = spec.on
     if type(on) ~= "table" or on.type ~= "state" then return {} end

@@ -348,6 +348,11 @@ struct SignalMeta {
     // the `on.bundleId` persistence -- a capability from the signal, NOT a hardcoded
     // signal name (mirrors the engine's sig.bundleIdMatch gate in rules.bindOne).
     let bundleIdMatch: Bool
+    // Whether the matched entity is GONE on the LEAVE edge (runningApps quits,
+    // displaysPresent disconnects) -- so a from-trigger effect that acts on it would
+    // always fail. Drives the leave-edge footgun warning. False for frontmostApp
+    // ("loses focus" keeps the app alive).
+    let goneOnLeave: Bool
 
     init(_ d: [String: Any]) {
         label = d["label"] as? String ?? ""
@@ -359,6 +364,7 @@ struct SignalMeta {
         enterWhen = d["enterWhen"] as? String
         leaveWhen = d["leaveWhen"] as? String
         bundleIdMatch = d["bundleIdMatch"] as? Bool ?? false
+        goneOnLeave = d["goneOnLeave"] as? Bool ?? false
     }
 }
 

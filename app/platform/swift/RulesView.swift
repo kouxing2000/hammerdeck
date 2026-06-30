@@ -544,6 +544,10 @@ private struct AddRuleForm: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if leaveGoneFootgun {
+                Label(leaveGoneWarningText, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if effectUsesTriggerContext {
                 Label(Strings.t("rules.reactsToTrigger", default: "Reacts to its trigger -- no \"Test\" for it (the real event supplies \"it\")."),
                       systemImage: "info.circle")
@@ -1145,6 +1149,31 @@ private struct AddRuleForm: View {
         appTargetKinds.contains(selectedEffect?.kind ?? "")
             && minimizeAppName.hasPrefix("@trigger:")
             && signal == "frontmostApp" && transition == "becomes"
+    }
+
+    // A from-trigger effect bound on the LEAVE edge of a signal whose entity is GONE
+    // then (runningApps quits, displaysPresent disconnects) -- the effect would act on
+    // something that no longer exists and always fail. Data-driven via the signal's
+    // `goneOnLeave` meta, not a hardcoded signal name (mirrors signalUsesBundleId).
+    // frontmostApp "loses focus" is NOT flagged: that leave edge keeps the app alive
+    // (the flagship minimize-on-focus-loss case). Distinct from minimizeBecomesFootgun
+    // (a frontmost GAINS-focus trap) -- the two never overlap (different signal/edge).
+    private var leaveGoneFootgun: Bool {
+        isStateTrigger && (meta?.goneOnLeave ?? false)
+            && transition == "leaves" && effectUsesTriggerContext
+    }
+
+    // The leave-edge warning, phrased from the signal's own meta (the entity noun +
+    // its verbs) so it reads for any such signal: "On 'quits' the app is already gone
+    // ... switch to 'launches'" / "On 'disconnects' the display is already gone ...".
+    private var leaveGoneWarningText: String {
+        let field = meta?.provides ?? ""
+        let noun = Strings.t("rules.triggerField." + field, default: field.isEmpty ? "it" : field)
+        let leaveVerb = meta?.leaveVerb ?? Strings.t("rules.leaves", default: "leaves")
+        let enterVerb = meta?.enterVerb ?? Strings.t("rules.becomes", default: "becomes")
+        return String(format: Strings.t("rules.leaveGoneWarning",
+            default: "On \"%1$@\" the %2$@ is already gone, so this effect has nothing to act on. Switch the transition to \"%3$@\" to act while it's still there."),
+            leaveVerb, noun, enterVerb)
     }
 
     // --- Recipe gallery (the "New rule" landing) -------------------------------

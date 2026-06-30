@@ -3661,6 +3661,15 @@ do
         "signalMeta marks runningApps as bundleIdMatch")
     ok(fo.signalMeta.appearance and fo.signalMeta.appearance.bundleIdMatch == false,
         "signalMeta marks an enum signal (appearance) as NOT bundleIdMatch")
+    -- goneOnLeave rides signalMeta so the host can warn when a from-trigger effect
+    -- binds on a leave edge whose entity is gone (runningApps quits, displaysPresent
+    -- disconnects) -- but NOT frontmostApp, whose "loses focus" keeps the app alive.
+    ok(fo.signalMeta.runningApps and fo.signalMeta.runningApps.goneOnLeave == true,
+        "signalMeta marks runningApps goneOnLeave (a quit app is gone)")
+    ok(fo.signalMeta.displaysPresent and fo.signalMeta.displaysPresent.goneOnLeave == true,
+        "signalMeta marks displaysPresent goneOnLeave (a disconnected display is gone)")
+    ok(fo.signalMeta.frontmostApp and not fo.signalMeta.frontmostApp.goneOnLeave,
+        "signalMeta does NOT mark frontmostApp goneOnLeave (losing focus keeps it alive)")
     -- timing subtitle (the verb-popover footgun-killer) rides signalMeta too
     ok(fo.signalMeta.frontmostApp and fo.signalMeta.frontmostApp.leaveWhen == "the moment you click away",
         "signalMeta carries the per-edge timing copy (frontmostApp leaveWhen)")
