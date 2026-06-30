@@ -8,6 +8,29 @@ import Security
 // read options live via ctx.opt, so option edits apply without a restart;
 // enable/disable goes through registry.setEnabled so bindings rebind properly.
 
+// MARK: - Lua-bridged dictionary accessors
+//
+// Lua tables cross the bridge as [String: Any] (numbers always as Double -- see
+// LuaState.any). These fold the repeated `dict["k"] as? T ?? default` reads in
+// the init?(_ dict:) decoders below into one named, type-correct accessor each,
+// so a decoder reads as a field list rather than a wall of casts.
+extension Dictionary where Key == String, Value == Any {
+    /// String field, or `def` (default "") when absent / not a string.
+    func str(_ key: String, _ def: String = "") -> String { self[key] as? String ?? def }
+    /// Optional string field (nil when absent) -- for genuinely optional fields.
+    func strOpt(_ key: String) -> String? { self[key] as? String }
+    /// Bool field, or `def` (default false) when absent / not a bool.
+    func bool(_ key: String, _ def: Bool = false) -> Bool { self[key] as? Bool ?? def }
+    /// Optional Double field (nil when absent / not a number).
+    func doubleOpt(_ key: String) -> Double? { self[key] as? Double }
+    /// Optional Int field, decoded from a Lua number (which bridges as Double).
+    func intOpt(_ key: String) -> Int? { (self[key] as? Double).map(Int.init) }
+    /// Lua array-of-strings, dropping non-string entries; [] when absent.
+    func strArray(_ key: String) -> [String] {
+        (self[key] as? [Any])?.compactMap { $0 as? String } ?? []
+    }
+}
+
 struct OptionInfo: Identifiable {
     let key: String
     let type: String        // bool | int | string | enum | time | appList | secret
@@ -33,22 +56,22 @@ struct OptionInfo: Identifiable {
         guard let key = dict["key"] as? String, let type = dict["type"] as? String else { return nil }
         self.key = key
         self.type = type
-        self.label = dict["label"] as? String ?? key
+        self.label = dict.str("label", key)
         self.defaultValue = dict["default"]
-        self.min = dict["min"] as? Double
-        self.max = dict["max"] as? Double
-        self.values = (dict["values"] as? [Any])?.compactMap { $0 as? String } ?? []
-        self.labels = (dict["labels"] as? [Any])?.compactMap { $0 as? String } ?? []
-        self.multiline = dict["multiline"] as? Bool ?? false
-        self.defaultLabel = dict["defaultLabel"] as? String ?? ""
-        self.hint = dict["hint"] as? String ?? ""
-        self.section = dict["section"] as? String ?? ""
-        self.actionLabel = dict["actionLabel"] as? String ?? ""
-        self.preview = dict["preview"] as? String ?? ""
-        self.validate = dict["validate"] as? String
-        self.gatedBy = dict["gatedBy"] as? String
-        self.valuesFrom = dict["valuesFrom"] as? String
-        self.collapsible = dict["collapsible"] as? Bool ?? false
+        self.min = dict.doubleOpt("min")
+        self.max = dict.doubleOpt("max")
+        self.values = dict.strArray("values")
+        self.labels = dict.strArray("labels")
+        self.multiline = dict.bool("multiline")
+        self.defaultLabel = dict.str("defaultLabel")
+        self.hint = dict.str("hint")
+        self.section = dict.str("section")
+        self.actionLabel = dict.str("actionLabel")
+        self.preview = dict.str("preview")
+        self.validate = dict.strOpt("validate")
+        self.gatedBy = dict.strOpt("gatedBy")
+        self.valuesFrom = dict.strOpt("valuesFrom")
+        self.collapsible = dict.bool("collapsible")
     }
 
     /// The display label for an enum value -- the parallel `labels` entry when
@@ -81,12 +104,12 @@ struct TriggerSpec: Equatable {
     init?(_ dict: [String: Any]?) {
         guard let dict, let type = dict["type"] as? String else { return nil }
         self.type = type
-        self.mods = (dict["mods"] as? [Any])?.compactMap { $0 as? String } ?? []
-        self.key = dict["key"] as? String ?? ""
-        self.follows = (dict["follows"] as? [Any])?.compactMap { $0 as? String } ?? []
-        self.everyMin = (dict["everyMin"] as? Double).map(Int.init)
-        self.at = dict["at"] as? String
-        self.event = dict["event"] as? String
+        self.mods = dict.strArray("mods")
+        self.key = dict.str("key")
+        self.follows = dict.strArray("follows")
+        self.everyMin = dict.intOpt("everyMin")
+        self.at = dict.strOpt("at")
+        self.event = dict.strOpt("event")
     }
 
     /// Marshal as a Lua call argument (a real table value, not source) for
@@ -130,14 +153,14 @@ struct ActionInfo: Identifiable {
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
         self.id = id
-        self.label = dict["label"] as? String ?? id
-        self.description = dict["description"] as? String ?? ""
-        self.mnemonic = dict["mnemonic"] as? String ?? ""
+        self.label = dict.str("label", id)
+        self.description = dict.str("description")
+        self.mnemonic = dict.str("mnemonic")
         self.trigger = TriggerSpec(dict["trigger"] as? [String: Any])
         self.defaultTrigger = TriggerSpec(dict["defaultTrigger"] as? [String: Any])
-        self.triggerOverridden = dict["triggerOverridden"] as? Bool ?? false
-        self.triggerDesc = dict["triggerDesc"] as? String ?? ""
-        self.automatable = dict["automatable"] as? Bool ?? false
+        self.triggerOverridden = dict.bool("triggerOverridden")
+        self.triggerDesc = dict.str("triggerDesc")
+        self.automatable = dict.bool("automatable")
     }
 }
 
@@ -162,12 +185,12 @@ struct ScheduleEntry: Identifiable {
         guard let label = dict["label"] as? String, let kind = dict["kind"] as? String else { return nil }
         self.label = label
         self.kind = kind
-        self.everyMin = (dict["everyMin"] as? Double).map(Int.init)
-        self.at = dict["at"] as? String
-        self.event = dict["event"] as? String
-        self.note = dict["note"] as? String
-        self.optionKey = dict["optionKey"] as? String
-        self.category = dict["category"] as? String ?? "general"
+        self.everyMin = dict.intOpt("everyMin")
+        self.at = dict.strOpt("at")
+        self.event = dict.strOpt("event")
+        self.note = dict.strOpt("note")
+        self.optionKey = dict.strOpt("optionKey")
+        self.category = dict.str("category", "general")
     }
 
     /// Minutes-since-midnight for an `at` entry; nil for non-time entries.
@@ -191,7 +214,7 @@ struct PageInfo {
     init?(_ dict: [String: Any]?) {
         guard let dict, let title = dict["title"] as? String, !title.isEmpty else { return nil }
         self.title = title
-        self.icon = dict["icon"] as? String ?? "doc"
+        self.icon = dict.str("icon", "doc")
     }
 }
 
@@ -218,20 +241,20 @@ struct FeatureInfo: Identifiable {
         guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
         self.id = id
         self.name = name
-        self.description = dict["description"] as? String ?? ""
-        self.category = dict["category"] as? String ?? "general"
-        self.context = dict["context"] as? String ?? "anywhere"
-        self.requires = (dict["requires"] as? [Any])?.compactMap { $0 as? String } ?? []
-        self.recommended = dict["recommended"] as? Bool ?? false
-        self.version = dict["version"] as? String ?? ""
-        self.kind = dict["kind"] as? String ?? "action"
-        self.enabled = dict["enabled"] as? Bool ?? false
-        self.triggerDesc = dict["triggerDesc"] as? String ?? ""
+        self.description = dict.str("description")
+        self.category = dict.str("category", "general")
+        self.context = dict.str("context", "anywhere")
+        self.requires = dict.strArray("requires")
+        self.recommended = dict.bool("recommended")
+        self.version = dict.str("version")
+        self.kind = dict.str("kind", "action")
+        self.enabled = dict.bool("enabled")
+        self.triggerDesc = dict.str("triggerDesc")
         self.options = (dict["options"] as? [Any])?
             .compactMap { $0 as? [String: Any] }
             .compactMap(OptionInfo.init) ?? []
-        self.failed = dict["failed"] as? Bool ?? false
-        self.errorMessage = dict["error"] as? String ?? ""
+        self.failed = dict.bool("failed")
+        self.errorMessage = dict.str("error")
         self.actions = (dict["actions"] as? [Any])?
             .compactMap { $0 as? [String: Any] }
             .compactMap(ActionInfo.init) ?? []
@@ -285,21 +308,21 @@ struct RuleInfo: Identifiable {
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
         self.id = id
-        self.name = dict["name"] as? String ?? ""
-        self.enabled = dict["enabled"] as? Bool ?? true
-        self.sentence = dict["sentence"] as? String ?? ""
-        self.triggerDesc = dict["triggerDesc"] as? String ?? ""
-        self.effectDesc = dict["effectDesc"] as? String ?? ""
+        self.name = dict.str("name")
+        self.enabled = dict.bool("enabled", true)
+        self.sentence = dict.str("sentence")
+        self.triggerDesc = dict.str("triggerDesc")
+        self.effectDesc = dict.str("effectDesc")
         self.on = dict["on"] as? [String: Any] ?? [:]
         self.effect = dict["effect"] as? [String: Any] ?? [:]
-        self.contextBound = dict["contextBound"] as? Bool ?? false
-        self.unavailable = dict["unavailable"] as? Bool ?? false
-        self.unavailableReason = dict["reason"] as? String ?? ""
+        self.contextBound = dict.bool("contextBound")
+        self.unavailable = dict.bool("unavailable")
+        self.unavailableReason = dict.str("reason")
         if let t = dict["lastFired"] as? Double { self.lastFired = Date(timeIntervalSince1970: t) }
         else if let t = dict["lastFired"] as? Int { self.lastFired = Date(timeIntervalSince1970: Double(t)) }
         else { self.lastFired = nil }
-        self.lastFiredTest = dict["lastFiredTest"] as? Bool ?? false
-        self.lastFiredOk = dict["lastFiredOk"] as? Bool ?? true
+        self.lastFiredTest = dict.bool("lastFiredTest")
+        self.lastFiredOk = dict.bool("lastFiredOk", true)
     }
 }
 
@@ -314,9 +337,9 @@ struct RuleEffectOption: Identifiable, Hashable {
     init?(_ dict: [String: Any]) {
         guard let kind = dict["kind"] as? String else { return nil }
         self.kind = kind
-        self.label = dict["label"] as? String ?? kind
-        self.feature = dict["feature"] as? String
-        self.action = dict["action"] as? String
+        self.label = dict.str("label", kind)
+        self.feature = dict.strOpt("feature")
+        self.action = dict.strOpt("action")
     }
 }
 
@@ -355,16 +378,16 @@ struct SignalMeta {
     let goneOnLeave: Bool
 
     init(_ d: [String: Any]) {
-        label = d["label"] as? String ?? ""
-        valueLabel = d["valueLabel"] as? String ?? "Value"
-        enterVerb = d["enterVerb"] as? String ?? "becomes"
-        leaveVerb = d["leaveVerb"] as? String ?? "leaves"
-        example = d["example"] as? String ?? ""
-        provides = d["provides"] as? String
-        enterWhen = d["enterWhen"] as? String
-        leaveWhen = d["leaveWhen"] as? String
-        bundleIdMatch = d["bundleIdMatch"] as? Bool ?? false
-        goneOnLeave = d["goneOnLeave"] as? Bool ?? false
+        label = d.str("label")
+        valueLabel = d.str("valueLabel", "Value")
+        enterVerb = d.str("enterVerb", "becomes")
+        leaveVerb = d.str("leaveVerb", "leaves")
+        example = d.str("example")
+        provides = d.strOpt("provides")
+        enterWhen = d.strOpt("enterWhen")
+        leaveWhen = d.strOpt("leaveWhen")
+        bundleIdMatch = d.bool("bundleIdMatch")
+        goneOnLeave = d.bool("goneOnLeave")
     }
 }
 
@@ -379,7 +402,7 @@ struct RuleFormOptions {
     let layoutPositions: [LayoutPosition]
 
     init(_ dict: [String: Any]) {
-        self.signals = (dict["signals"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.signals = dict.strArray("signals")
         var cand: [String: [String]] = [:]
         if let c = dict["signalCandidates"] as? [String: Any] {
             for (k, v) in c { cand[k] = (v as? [Any])?.compactMap { $0 as? String } ?? [] }
@@ -390,10 +413,10 @@ struct RuleFormOptions {
             for (k, v) in m { if let d = v as? [String: Any] { meta[k] = SignalMeta(d) } }
         }
         self.signalMeta = meta
-        self.events = (dict["events"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.events = dict.strArray("events")
         self.effects = (dict["effects"] as? [Any])?
             .compactMap { $0 as? [String: Any] }.compactMap(RuleEffectOption.init) ?? []
-        self.layoutDisplays = (dict["layoutDisplays"] as? [Any])?.compactMap { $0 as? String } ?? []
+        self.layoutDisplays = dict.strArray("layoutDisplays")
         self.layoutPositions = (dict["layoutPositions"] as? [Any])?
             .compactMap { $0 as? [String: Any] }
             .compactMap { d in (d["id"] as? String).map { LayoutPosition(id: $0, label: d["label"] as? String ?? $0) } } ?? []
@@ -435,12 +458,12 @@ final class SettingsStore: ObservableObject {
     }
 
     func refresh() {
-        guard let raw = try? lua.call("platform.registry", "describe").first ?? nil,
-              let list = raw as? [Any] else {
+        guard let list = callList("platform.registry", "describe",
+                                  decode: { ($0 as? [String: Any]).flatMap(FeatureInfo.init) }) else {
             print("[hammerdeck] settings: failed to read catalog")
             return
         }
-        features = list.compactMap { $0 as? [String: Any] }.compactMap(FeatureInfo.init)
+        features = list
         axTrusted = accessibilityTrusted()
     }
 
@@ -461,11 +484,43 @@ final class SettingsStore: ObservableObject {
     /// orphaned page next to a sidebar that no longer lists it.
     func showsPage(_ id: String) -> Bool { featurePages().contains { $0.id == id } }
 
-    /// Narrow seam a host-side PAGE view uses to pull data from a feature reader
-    /// module (`module.function(args)` -> first result), mirroring how the rest
-    /// of the store reaches the registry. Returns nil on any Lua error.
+    // MARK: - Bridge reader helpers
+    //
+    // Every "read from Lua" in this store funnels through these three, so the
+    // decode shape (`try? lua.call(...).first`, the `as?` cast, the failure
+    // default) lives in ONE place instead of being re-typed at each call site --
+    // killing the per-site `?? default` drift the audit flagged.
+
+    /// The single-result primitive: `module.function(args)` -> first result, or
+    /// nil on any Lua error. Also the seam a host-side PAGE view uses to pull data
+    /// from a feature reader module; callValue/callList are typed wrappers over it.
     func readerCall(_ module: String, _ function: String, _ args: [LuaArg] = []) -> Any? {
         (try? lua.call(module, function, args).first) ?? nil
+    }
+
+    /// Typed single-result reader: readerCall + an `as? T` cast. nil if the call
+    /// failed OR the result wasn't a T -- callers supply their own `?? default`.
+    func callValue<T>(_ module: String, _ function: String, _ args: [LuaArg] = []) -> T? {
+        guard let raw = readerCall(module, function, args) else { return nil }
+        return raw as? T
+    }
+
+    /// Typed array reader: each element decoded through `decode`. nil when the
+    /// call failed or the result wasn't a Lua array -- distinct from an empty
+    /// array, which decodes to [] (so a reader can tell "no data" from "failed").
+    func callList<T>(_ module: String, _ function: String, _ args: [LuaArg] = [],
+                     decode: (Any) -> T?) -> [T]? {
+        guard let raw = readerCall(module, function, args), let list = raw as? [Any] else { return nil }
+        return list.compactMap(decode)
+    }
+
+    /// Two-result reader for the engine's `true` / `false, reason` shape. nil when
+    /// the call itself threw (the caller picks the "could not ..." wording); else
+    /// (ok, reason) where reason is the second result (may be nil/"").
+    func callOkReason(_ module: String, _ function: String,
+                      _ args: [LuaArg] = []) -> (ok: Bool, reason: String?)? {
+        guard let r = try? lua.call(module, function, args, results: 2) else { return nil }
+        return ((r[0] as? Bool) == true, r[1] as? String)
     }
 
     /// Enable the curated "Essentials" set (features marked `recommended`) in one
@@ -525,9 +580,8 @@ final class SettingsStore: ObservableObject {
 
     /// Re-read the rule list from the engine into `rules`.
     func refreshRules() {
-        guard let raw = try? lua.call("platform.rules", "describe").first ?? nil,
-              let list = raw as? [Any] else { rules = []; return }
-        rules = list.compactMap { $0 as? [String: Any] }.compactMap(RuleInfo.init)
+        rules = callList("platform.rules", "describe",
+                         decode: { ($0 as? [String: Any]).flatMap(RuleInfo.init) }) ?? []
     }
 
     /// The plain-language read-back of an in-progress rule spec (JSON), shown live
@@ -535,15 +589,14 @@ final class SettingsStore: ObservableObject {
     /// the engine (one source of truth with the list rows). "" when the spec is too
     /// incomplete to read, so the form shows its placeholder instead.
     func ruleSentence(_ json: String) -> String {
-        guard let raw = try? lua.call("platform.rules", "sentenceJSON", [.string(json)]).first ?? nil,
-              let s = raw as? String else { return "" }
-        return s
+        callValue("platform.rules", "sentenceJSON", [.string(json)]) ?? ""
     }
 
     /// The dropdown source for the Add-rule form (signals, candidates, events, effects).
     func ruleFormOptions() -> RuleFormOptions {
-        guard let raw = try? lua.call("platform.rules", "formOptions").first ?? nil,
-              let dict = raw as? [String: Any] else { return RuleFormOptions([:]) }
+        guard let dict: [String: Any] = callValue("platform.rules", "formOptions") else {
+            return RuleFormOptions([:])
+        }
         return RuleFormOptions(dict)
     }
 
@@ -554,9 +607,8 @@ final class SettingsStore: ObservableObject {
     /// display.
     func captureLayout(onlyDisplay: String = "") -> [[String: Any]] {
         let args: [LuaArg] = onlyDisplay.isEmpty ? [] : [.string(onlyDisplay)]
-        guard let raw = try? lua.call("platform.rules", "captureLayout", args).first ?? nil,
-              let list = raw as? [Any] else { return [] }
-        return list.compactMap { $0 as? [String: Any] }
+        return callList("platform.rules", "captureLayout", args,
+                        decode: { $0 as? [String: Any] }) ?? []
     }
 
     /// Toggle a rule on/off (binds/unbinds in the engine + persists).
@@ -576,21 +628,20 @@ final class SettingsStore: ObservableObject {
     /// condition (plugging in a monitor, switching apps). Returns (ok, message):
     /// message is a partial-success note or a failure reason ("" on a clean fire).
     func fireRule(_ id: String) -> (ok: Bool, message: String) {
-        guard let r = try? lua.call("platform.rules", "fire", [.string(id)], results: 2) else {
+        guard let r = callOkReason("platform.rules", "fire", [.string(id)]) else {
             return (false, "could not run the rule")
         }
-        return ((r[0] as? Bool) == true, (r[1] as? String) ?? "")
+        return (r.ok, r.reason ?? "")
     }
 
     /// Add a rule from a JSON spec string. The engine validates (shape + context
     /// policy); returns nil on success or a human-readable reason on refusal.
     func addRule(_ json: String) -> String? {
         defer { refreshRules() }
-        guard let r = try? lua.call("platform.rules", "addJSON", [.string(json)], results: 2) else {
+        guard let r = callOkReason("platform.rules", "addJSON", [.string(json)]) else {
             return "could not add rule"
         }
-        if (r[0] as? Bool) == true { return nil }
-        return (r[1] as? String) ?? "invalid rule"
+        return r.ok ? nil : (r.reason ?? "invalid rule")
     }
 
     /// One rule's stored spec as pretty-printed JSON (the advanced "Edit as JSON"
@@ -600,8 +651,7 @@ final class SettingsStore: ObservableObject {
     /// the field exists (an unfilled "" is ignored at match time). Returns "" if the
     /// rule is unknown / unencodable.
     func ruleSpecJSON(_ id: String) -> String {
-        guard let raw = try? lua.call("platform.rules", "specJSON", [.string(id)]).first ?? nil,
-              let compact = raw as? String else { return "" }
+        guard let compact: String = callValue("platform.rules", "specJSON", [.string(id)]) else { return "" }
         guard let data = compact.data(using: .utf8),
               var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return Self.prettyJSON(compact) }
@@ -638,12 +688,10 @@ final class SettingsStore: ObservableObject {
     /// changes"). Keeps the id; same validation as add. nil on success / reason on refusal.
     func updateRule(_ id: String, _ json: String) -> String? {
         defer { refreshRules() }
-        guard let r = try? lua.call("platform.rules", "updateJSON",
-                                    [.string(id), .string(json)], results: 2) else {
+        guard let r = callOkReason("platform.rules", "updateJSON", [.string(id), .string(json)]) else {
             return "could not update rule"
         }
-        if (r[0] as? Bool) == true { return nil }
-        return (r[1] as? String) ?? "invalid rule"
+        return r.ok ? nil : (r.reason ?? "invalid rule")
     }
 
     // MARK: - Trigger rebinding (delegates to the tested registry.setTrigger)
@@ -653,12 +701,11 @@ final class SettingsStore: ObservableObject {
     func setTrigger(_ id: String, _ actionId: String, _ spec: TriggerSpec) -> String? {
         defer { refresh() }
         // setTrigger returns `true` or `false, reason` -- read both results.
-        guard let r = try? lua.call("platform.registry", "setTrigger",
-                                    [.string(id), .string(actionId), spec.luaArg], results: 2) else {
+        guard let r = callOkReason("platform.registry", "setTrigger",
+                                   [.string(id), .string(actionId), spec.luaArg]) else {
             return "could not apply trigger"
         }
-        if (r[0] as? Bool) == true { return nil }
-        return (r[1] as? String) ?? "trigger conflict"
+        return r.ok ? nil : (r.reason ?? "trigger conflict")
     }
 
     /// Advisory (soft) conflicts for a candidate hotkey/chord binding: macOS
@@ -667,9 +714,8 @@ final class SettingsStore: ObservableObject {
     /// Empty when clear; the caller still lets the user apply.
     func shortcutAdvisories(_ spec: TriggerSpec) -> [String] {
         guard spec.type == "hotkey" || spec.type == "chord" else { return [] }
-        guard let raw = try? lua.call("platform.triggers", "advisories", [spec.luaArg]).first ?? nil,
-              let list = raw as? [Any] else { return [] }
-        return list.compactMap { $0 as? String }
+        return callList("platform.triggers", "advisories", [spec.luaArg],
+                        decode: { $0 as? String }) ?? []
     }
 
     /// Read-only hard-conflict check: does `spec` collide with another ENABLED
@@ -677,10 +723,8 @@ final class SettingsStore: ObservableObject {
     /// would refuse -- used to render a row's live status WITHOUT mutating
     /// anything (setTrigger persists; this doesn't).
     func triggerConflict(_ id: String, _ actionId: String, _ spec: TriggerSpec) -> String? {
-        guard let raw = try? lua.call("platform.registry", "triggerConflict",
-                                      [.string(id), .string(actionId), spec.luaArg]).first ?? nil,
-              let s = raw as? String else { return nil }
-        return s
+        callValue("platform.registry", "triggerConflict",
+                  [.string(id), .string(actionId), spec.luaArg])
     }
 
     /// Feature ids with at least one shortcut conflict on a currently-bound
@@ -707,7 +751,7 @@ final class SettingsStore: ObservableObject {
     /// seam (native.ax_trusted via adapter.axTrusted), never by calling the OS
     /// API from the UI. Powers the Dashboard's permission status row.
     func accessibilityTrusted() -> Bool {
-        (try? lua.call("platform.adapter", "axTrusted").first ?? nil) as? Bool ?? false
+        callValue("platform.adapter", "axTrusted") ?? false
     }
 
     /// Onboard the Accessibility grant THROUGH THE SEAM (never a direct OS call

@@ -64,8 +64,8 @@ struct UsageReportView: View {
     private func load(reset: Bool = true) {
         if reset { selectedApp = nil }
         let b = range.isoBounds(periodsBack: periodsBack)
-        if let raw = store.readerCall("features.usage_stats.report", "range",
-                                      [.string(b.from), .string(b.to)]) as? [String: Any] {
+        if let raw: [String: Any] = store.callValue("features.usage_stats.report", "range",
+                                                    [.string(b.from), .string(b.to)]) {
             data = UsageReportData(raw)
         } else if reset {
             data = .empty
