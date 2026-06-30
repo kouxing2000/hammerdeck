@@ -96,6 +96,159 @@ local function lookupInDict(ctx, word)
     end
 end
 
+-- Paste `text` back over the current selection (write the clipboard, then cmd+V).
+local function pasteBack(ctx, text)
+    ctx.pasteboardWrite(text)
+    ctx.keyStroke({ "cmd" }, "v")
+end
+
+-- Send `content` to OpenAI with `systemPrompt`; paste the reply back over the
+-- selection. Async (httpPost): the result lands in the completion callback.
+local function askAI(ctx, content, systemPrompt)
+    local key = ctx.secret("openaiKey")
+    if not key or key == "" then
+        ctx.alert(ctx.t("alert.noKey", "Set an OpenAI API key in Settings first"))
+        return
+    end
+    local body = json.encode(json.asObject({
+        model = ctx.opt("model"),
+        messages = json.asArray({
+            json.asObject({ role = "system", content = systemPrompt }),
+            json.asObject({ role = "user",   content = content }),
+        }),
+    }))
+    ctx.httpPost(OPENAI_URL, {
+        ["Content-Type"]  = "application/json",
+        ["Authorization"] = "Bearer " .. key,
+    }, body, function(status, respBody)
+        if status ~= 200 or not respBody then
+            ctx.alert(string.format(ctx.t("alert.aiFailed", "AI request failed (%s)"), tostring(status)))
+            return
+        end
+        local doc = json.decode(respBody)
+        local msg = doc and doc.choices and doc.choices[1] and doc.choices[1].message
+        local result = msg and msg.content
+        if not result then
+            ctx.alert(ctx.t("alert.aiNoResult", "AI returned no result"))
+            return
+        end
+        pasteBack(ctx, (result:gsub("^%s*(.-)%s*$", "%1")))
+    end)
+end
+
+-- Build the picker from the enabled toggles: base transforms, plus AI entries
+-- only once the key is VALIDATED in Settings AND the entry's toggle is on (an
+-- unvalidated key shows no AI noise). Labels are LOCALIZED; the returned
+-- byLabel map lets onChoose dispatch by the stable `id` (display/comparison
+-- decoupled). Returns (actions, byLabel).
+local function buildPicker(ctx)
+    local actions, byLabel = {}, {}
+    local function addEntry(e)
+        local label = ctx.t("action." .. e.id, e.label)
+        actions[#actions + 1] = label
+        byLabel[label] = e
+    end
+    for _, b in ipairs(BASE_ACTIONS) do
+        if ctx.opt(b.opt) then addEntry(b) end
+    end
+    if ctx.getState("openaiKey__validated", false) == true then
+        for _, ai in ipairs(AI_ACTIONS) do
+            if ctx.opt(ai.opt) then addEntry(ai) end
+        end
+    end
+    return actions, byLabel
+end
+
+-- Run the chosen picker `entry` against `content`: base transforms paste back
+-- in place; AI entries (translate/freeAsk prompt for input first) send to
+-- OpenAI. The dispatch the audit called the natural extraction.
+local function runEntry(ctx, content, entry)
+    local id = entry.id
+    if id == "lowercase" then
+        pasteBack(ctx, content:lower())
+    elseif id == "uppercase" then
+        pasteBack(ctx, content:upper())
+    elseif id == "calculate" then
+        -- Evaluate as a Lua expression in a math-only sandbox (the donor used
+        -- the full globals).
+        local fn, loadErr = load("return " .. content, "calc", "t", { math = math })
+        if not fn then
+            ctx.alert(string.format(ctx.t("alert.notExpr", "Not an expression: %s"), tostring(loadErr)))
+            return
+        end
+        local okEval, result = pcall(fn)
+        if not okEval then
+            ctx.alert(string.format(ctx.t("alert.calcFailed", "Calculation failed: %s"), tostring(result)))
+            return
+        end
+        pasteBack(ctx, tostring(result))
+    elseif id == "dictionary" then
+        lookupInDict(ctx, content)
+    elseif entry.translate then
+        ctx.askText {
+            title = ctx.t("prompt.translate.title", "Translate to which language?"),
+            placeholder = ctx.t("prompt.translate.ph", "e.g. French, 日本語"),
+            onSubmit = function(lang)
+                if lang and lang ~= "" then
+                    -- gsub with a function replacement so a "%" in the language
+                    -- can't be read as a capture reference.
+                    local tmpl = ctx.opt(entry.promptOpt)
+                    askAI(ctx, content, (tmpl:gsub("{lang}", function() return lang end)))
+                end
+            end,
+        }
+    elseif entry.freeAsk then
+        ctx.askText {
+            title = ctx.t("prompt.instruct.title", "Instruction for the selected text"),
+            placeholder = ctx.t("prompt.instruct.ph", "e.g. make this more formal"),
+            onSubmit = function(prompt)
+                if prompt and prompt ~= "" then askAI(ctx, content, prompt) end
+            end,
+        }
+    elseif entry.promptOpt then
+        askAI(ctx, content, ctx.opt(entry.promptOpt))
+    end
+end
+
+-- Act on the captured selection `content`: nothing selected -> alert (prompting
+-- for Accessibility if that's why); a URL opens directly; otherwise offer the
+-- transform picker and dispatch the choice.
+local function actOnSelection(ctx, content)
+    if content == "" then
+        if not ctx.axTrusted() then
+            ctx.axPrompt()
+            ctx.alert(ctx.t("alert.axRequired",
+                "Selection Actions needs the Accessibility permission to read the selection -- grant it in System Settings, then try again"))
+        else
+            ctx.alert(ctx.t("alert.nothingSelected", "Nothing selected"))
+        end
+        return
+    end
+
+    -- URL: open it directly, no picker.
+    if content:lower():find("^https?://") then
+        ctx.openURL(content)
+        return
+    end
+
+    local actions, byLabel = buildPicker(ctx)
+    if #actions == 0 then
+        ctx.alert(ctx.t("alert.noneEnabled", "No Text Actions are enabled -- turn some on in Settings"))
+        return
+    end
+
+    local snippet = content:sub(1, 24)
+    ctx.askChoice {
+        title = string.format(ctx.t("dialog.title", "Action for [%s]"), snippet),
+        infos = { snippet },
+        actions = actions,
+        onChoose = function(choice)
+            local entry = choice and byLabel[choice]
+            if entry then runEntry(ctx, content, entry) end
+        end,
+    }
+end
+
 return {
     api         = 1,
     id          = "text_actions",
@@ -178,151 +331,14 @@ return {
             defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "o" },
             mnemonic = "O — act On the selection",
             run = function(ctx)
+                -- Capture the selection (cmd+C), then act on it once it has
+                -- reached the clipboard. The body lives in the module-level
+                -- helpers above (pasteBack / askAI / buildPicker / runEntry /
+                -- actOnSelection) -- this closure is just the copy + handoff.
                 ctx.keyStroke({ "cmd" }, "c")
                 ctx.afterSeconds(COPY_SETTLE_SECONDS, function()
                     local raw = ctx.pasteboardRead()
-                    local content = raw and raw:match("^%s*(.-)%s*$") or ""
-                    if content == "" then
-                        if not ctx.axTrusted() then
-                            ctx.axPrompt()
-                            ctx.alert(ctx.t("alert.axRequired",
-                                "Selection Actions needs the Accessibility permission to read the selection -- grant it in System Settings, then try again"))
-                        else
-                            ctx.alert(ctx.t("alert.nothingSelected", "Nothing selected"))
-                        end
-                        return
-                    end
-
-                    -- URL: open it directly, no picker.
-                    if content:lower():find("^https?://") then
-                        ctx.openURL(content)
-                        return
-                    end
-
-                    local snippet = content:sub(1, 24)
-                    local function pasteBack(text)
-                        ctx.pasteboardWrite(text)
-                        ctx.keyStroke({ "cmd" }, "v")
-                    end
-
-                    -- Send `content` to OpenAI with `systemPrompt`; paste the reply.
-                    local function askAI(systemPrompt)
-                        local key = ctx.secret("openaiKey")
-                        if not key or key == "" then
-                            ctx.alert(ctx.t("alert.noKey", "Set an OpenAI API key in Settings first"))
-                            return
-                        end
-                        local body = json.encode(json.asObject({
-                            model = ctx.opt("model"),
-                            messages = json.asArray({
-                                json.asObject({ role = "system", content = systemPrompt }),
-                                json.asObject({ role = "user",   content = content }),
-                            }),
-                        }))
-                        ctx.httpPost(OPENAI_URL, {
-                            ["Content-Type"]  = "application/json",
-                            ["Authorization"] = "Bearer " .. key,
-                        }, body, function(status, respBody)
-                            if status ~= 200 or not respBody then
-                                ctx.alert(string.format(ctx.t("alert.aiFailed", "AI request failed (%s)"), tostring(status)))
-                                return
-                            end
-                            local doc = json.decode(respBody)
-                            local msg = doc and doc.choices and doc.choices[1]
-                                and doc.choices[1].message
-                            local result = msg and msg.content
-                            if not result then
-                                ctx.alert(ctx.t("alert.aiNoResult", "AI returned no result"))
-                                return
-                            end
-                            pasteBack((result:gsub("^%s*(.-)%s*$", "%1")))
-                        end)
-                    end
-
-                    -- Build the action list from the enabled toggles: base
-                    -- transforms, plus AI entries only once the key has been
-                    -- VALIDATED in Settings (the host sets this flag on a
-                    -- successful Validate; cleared when the key changes) AND the
-                    -- entry's toggle is on. An unvalidated key shows no AI noise.
-                    -- Build the picker with LOCALIZED labels, and a label->entry
-                    -- map so onChoose dispatches by the stable `id` (display and
-                    -- comparison decoupled -- labels can localize freely).
-                    local actions, byLabel = {}, {}
-                    local function addEntry(e)
-                        local label = ctx.t("action." .. e.id, e.label)
-                        actions[#actions + 1] = label
-                        byLabel[label] = e
-                    end
-                    for _, b in ipairs(BASE_ACTIONS) do
-                        if ctx.opt(b.opt) then addEntry(b) end
-                    end
-                    local validated = ctx.getState("openaiKey__validated", false) == true
-                    if validated then
-                        for _, ai in ipairs(AI_ACTIONS) do
-                            if ctx.opt(ai.opt) then addEntry(ai) end
-                        end
-                    end
-                    if #actions == 0 then
-                        ctx.alert(ctx.t("alert.noneEnabled", "No Text Actions are enabled -- turn some on in Settings"))
-                        return
-                    end
-
-                    ctx.askChoice {
-                        title = string.format(ctx.t("dialog.title", "Action for [%s]"), snippet),
-                        infos = { snippet },
-                        actions = actions,
-                        onChoose = function(choice)
-                            local entry = choice and byLabel[choice]
-                            if not entry then return end
-                            local id = entry.id
-                            if id == "lowercase" then
-                                pasteBack(content:lower())
-                            elseif id == "uppercase" then
-                                pasteBack(content:upper())
-                            elseif id == "calculate" then
-                                -- Evaluate as a Lua expression in a math-only
-                                -- sandbox (the donor used the full globals).
-                                local fn, loadErr = load("return " .. content,
-                                    "calc", "t", { math = math })
-                                if not fn then
-                                    ctx.alert(string.format(ctx.t("alert.notExpr", "Not an expression: %s"), tostring(loadErr)))
-                                    return
-                                end
-                                local okEval, result = pcall(fn)
-                                if not okEval then
-                                    ctx.alert(string.format(ctx.t("alert.calcFailed", "Calculation failed: %s"), tostring(result)))
-                                    return
-                                end
-                                pasteBack(tostring(result))
-                            elseif id == "dictionary" then
-                                lookupInDict(ctx, content)
-                            elseif entry.translate then
-                                ctx.askText {
-                                    title = ctx.t("prompt.translate.title", "Translate to which language?"),
-                                    placeholder = ctx.t("prompt.translate.ph", "e.g. French, 日本語"),
-                                    onSubmit = function(lang)
-                                        if lang and lang ~= "" then
-                                            -- gsub with a function replacement so a
-                                            -- "%" in the language can't be read as a
-                                            -- capture reference.
-                                            local tmpl = ctx.opt(entry.promptOpt)
-                                            askAI((tmpl:gsub("{lang}", function() return lang end)))
-                                        end
-                                    end,
-                                }
-                            elseif entry.freeAsk then
-                                ctx.askText {
-                                    title = ctx.t("prompt.instruct.title", "Instruction for the selected text"),
-                                    placeholder = ctx.t("prompt.instruct.ph", "e.g. make this more formal"),
-                                    onSubmit = function(prompt)
-                                        if prompt and prompt ~= "" then askAI(prompt) end
-                                    end,
-                                }
-                            elseif entry.promptOpt then
-                                askAI(ctx.opt(entry.promptOpt))
-                            end
-                        end,
-                    }
+                    actOnSelection(ctx, raw and raw:match("^%s*(.-)%s*$") or "")
                 end)
             end,
         },
