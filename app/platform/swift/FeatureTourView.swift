@@ -117,26 +117,17 @@ struct FeatureTourView: View {
                     if !f.actions.isEmpty {
                         let glyph = shortcutGlyph(f.actions.first?.trigger)
                         if !glyph.isEmpty {
-                            Text(glyph)
-                                .font(.system(.caption, design: .rounded).weight(.medium))
-                                .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color.gray.opacity(0.14)))
+                            ShortcutPill(glyph: glyph)
                         }
                     } else {
                         Label(Strings.t("tour.alwaysOn", default: "always on"), systemImage: "infinity")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     ForEach(unmetRequirements(f), id: \.self) { r in
-                        Button { store.promptAccessibility() } label: {
-                            Label(String(format: Strings.t("tour.grant", default: "%@ — Grant"), requirementLabel(r)), systemImage: "lock.shield")
-                                .font(.caption2)
-                                .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(Capsule().fill(Color.orange.opacity(0.16)))
-                                .foregroundStyle(.orange)
-                        }
-                        .buttonStyle(.plain)
-                        .help(Strings.t("tour.grantHelp", default: "Open System Settings to grant Accessibility, then it works"))
+                        RequirementBadge(
+                            label: String(format: Strings.t("tour.grant", default: "%@ — Grant"), requirementLabel(r)),
+                            help: Strings.t("tour.grantHelp", default: "Open System Settings to grant Accessibility, then it works"),
+                            action: { store.promptAccessibility() })
                     }
                     if f.recommended {
                         Label(Strings.t("tour.recommended", default: "Recommended"), systemImage: "star.fill")

@@ -370,10 +370,7 @@ private struct FeatureCard: View {
             } else if primaryGlyph.isEmpty {
                 Text(Strings.t("gallery.noShortcut", default: "no shortcut")).font(.caption2).foregroundStyle(.tertiary)
             } else {
-                Text(primaryGlyph)
-                    .font(.system(.caption, design: .rounded).weight(.medium))
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.gray.opacity(0.14)))
+                ShortcutPill(glyph: primaryGlyph)
             }
             Spacer()
             // A never-registered (failed) module can't be toggled.
@@ -405,15 +402,10 @@ private struct FeatureCard: View {
     private var requirementBadges: some View {
         HStack(spacing: 6) {
             ForEach(unmetRequirements, id: \.self) { r in
-                Button { store.promptAccessibility() } label: {
-                    Label(String(format: Strings.t("gallery.grant", default: "%@ — Grant"), requirementLabel(r)), systemImage: "lock.shield")
-                        .font(.caption2)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.orange.opacity(0.16)))
-                        .foregroundStyle(.orange)
-                }
-                .buttonStyle(.plain)
-                .help(Strings.t("gallery.grantHelp", default: "Open System Settings to grant Accessibility, then it works"))
+                RequirementBadge(
+                    label: String(format: Strings.t("gallery.grant", default: "%@ — Grant"), requirementLabel(r)),
+                    help: Strings.t("gallery.grantHelp", default: "Open System Settings to grant Accessibility, then it works"),
+                    action: { store.promptAccessibility() })
             }
             Spacer(minLength: 0)
         }

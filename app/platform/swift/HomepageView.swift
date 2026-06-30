@@ -321,10 +321,7 @@ struct DashboardView: View {
             if glyph.isEmpty {
                 Text(Strings.t("home.no_shortcut_bound", default: "no shortcut bound")).font(.caption2).foregroundStyle(.tertiary)
             } else {
-                Text(glyph)
-                    .font(.system(.caption, design: .rounded).weight(.medium))
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.gray.opacity(0.14)))
+                ShortcutPill(glyph: glyph)
             }
         }
     }

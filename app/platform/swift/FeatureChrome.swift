@@ -140,3 +140,42 @@ func shortcutGlyph(_ t: TriggerSpec?) -> String {
     default:         return ""
     }
 }
+
+// MARK: - Shared chrome views
+
+/// The compact shortcut-glyph pill (e.g. ⌃⌥⌘← on a soft gray rounded rect).
+/// Rendered identically wherever a feature's bound shortcut is shown -- the
+/// Dashboard, the Tour, and the Gallery card footer all use this so the pill can
+/// never drift. (The Shortcut Map's draggable swap cell is intentionally NOT
+/// this -- it carries hover/drag/shadow chrome of its own.)
+struct ShortcutPill: View {
+    let glyph: String
+    var body: some View {
+        Text(glyph)
+            .font(.system(.caption, design: .rounded).weight(.medium))
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.gray.opacity(0.14)))
+    }
+}
+
+/// A tappable "<requirement> — Grant" badge for an unmet precondition (e.g.
+/// Accessibility): tapping opens System Settings to grant it. Owns only the
+/// chrome (lock.shield + orange capsule); the caller passes its own surface's
+/// localized `label`/`help` and the grant `action`, so each view keeps its own
+/// i18n keys while the look stays unified.
+struct RequirementBadge: View {
+    let label: String
+    let help: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Label(label, systemImage: "lock.shield")
+                .font(.caption2)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(Capsule().fill(Color.orange.opacity(0.16)))
+                .foregroundStyle(.orange)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
