@@ -9,10 +9,6 @@
 -- Deliberately NOT ported from the donor: browser favicon composites and
 -- URL-domain subtext -- tab-level switching is tab_switcher's job now.
 
--- Closure state shared across invocations and BOTH actions; rebuilt when ctx
--- changes (a disable -> enable cycle invalidated the old handles).
-local st = nil
-
 -- Release-to-pick watches the modifier of the hotkey that fired this action
 -- (shared with tab_switcher; nil when fired without a hotkey -> pick on Enter).
 local cycleModifier = require("platform.hotkeys").cycleModifier
@@ -20,9 +16,8 @@ local cycleModifier = require("platform.hotkeys").cycleModifier
 local cyclingChooser = require("platform.cyclingChooser")
 
 local function jump(ctx, actionId, backward)
-    if not st or st.ctx ~= ctx then
-        st = { ctx = ctx, chooser = nil, altTimer = nil }
-    end
+    -- Per-enable state, memoized on the ctx (shared across both actions).
+    local st = ctx.perEnable(function() return { chooser = nil, altTimer = nil } end)
 
     if not st.chooser then
         st.chooser = ctx.chooser {

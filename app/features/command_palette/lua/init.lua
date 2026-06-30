@@ -14,10 +14,6 @@
 
 local json = require("platform.json")
 
--- Closure state, reused across invocations; rebuilt when ctx changes (a
--- disable -> enable cycle invalidated the old chooser handle).
-local st = nil
-
 -- Frecency: a persisted count of how often each command was run, so the ones
 -- you reach for surface to the top. Keyed by feature + action.
 local function cmdKey(featureId, actionId) return featureId .. "\0" .. actionId end
@@ -87,7 +83,7 @@ local function buildChoices(ctx)
 end
 
 local function openPalette(ctx)
-    if not st or st.ctx ~= ctx then st = { ctx = ctx } end
+    local st = ctx.perEnable(function() return {} end)
     if not st.chooser then
         st.chooser = ctx.chooser {
             searchSubText = true,        -- also match the feature name in the subtitle

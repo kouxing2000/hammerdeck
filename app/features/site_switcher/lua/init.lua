@@ -172,13 +172,12 @@ local function jump(ctx, site)
 end
 
 -- One reusable chooser + favicon cache per enablement (a fresh ctx => fresh
--- state, so a disable/enable cycle never reuses a torn-down handle).
-local cached = nil
+-- state, so a disable/enable cycle never reuses a torn-down handle; ctx.perEnable
+-- memoizes it on the ctx).
 local function state(ctx)
-    if not cached or cached.ctx ~= ctx then
-        cached = { ctx = ctx, chooser = nil, fav = favicons.new(ctx) }
-    end
-    return cached
+    return ctx.perEnable(function(ctx)
+        return { chooser = nil, fav = favicons.new(ctx) }
+    end)
 end
 
 return {

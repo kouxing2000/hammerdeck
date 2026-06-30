@@ -23,15 +23,11 @@ return {
     },
 
     actions = (function()
-        -- Shared closure state across both actions; rebuilt when ctx changes
-        -- (disable -> enable invalidated the old handles).
-        local st = nil
-
+        -- Per-enable state shared across both actions (ctx.perEnable memoizes it
+        -- on the ctx). Keeps `ctx` in the state -- the timer/bar callbacks call
+        -- s.ctx.* long after the action returns.
         local function ensure(ctx)
-            if not st or st.ctx ~= ctx then
-                st = { ctx = ctx }
-            end
-            return st
+            return ctx.perEnable(function(ctx) return { ctx = ctx } end)
         end
 
         local function cancel(s)

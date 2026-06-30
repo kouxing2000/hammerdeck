@@ -86,12 +86,8 @@ local function controllerFor(ctx)
     return st
 end
 
-local cached = nil
 local function with(ctx)
-    if not cached or cached.ctx ~= ctx then
-        cached = { ctx = ctx, st = controllerFor(ctx) }
-    end
-    return cached.st
+    return ctx.perEnable(controllerFor)
 end
 
 return {

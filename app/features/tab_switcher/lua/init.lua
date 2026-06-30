@@ -257,12 +257,8 @@ local function jumperFor(ctx)
     return st
 end
 
-local cached = nil
 local function with(ctx)
-    if not cached or cached.ctx ~= ctx then
-        cached = { ctx = ctx, st = jumperFor(ctx) }
-    end
-    return cached.st
+    return ctx.perEnable(jumperFor)
 end
 
 return {

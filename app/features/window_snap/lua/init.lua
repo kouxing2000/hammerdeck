@@ -97,13 +97,9 @@ local function arranger(ctx)
     return a
 end
 
--- One arranger per enablement (ctx changes on re-enable).
-local cached = nil
+-- One arranger per enablement (ctx changes on re-enable; ctx.perEnable memoizes).
 local function with(ctx)
-    if not cached or cached.ctx ~= ctx then
-        cached = { ctx = ctx, a = arranger(ctx) }
-    end
-    return cached.a
+    return ctx.perEnable(arranger)
 end
 
 local MODS = { "cmd", "alt", "ctrl" }

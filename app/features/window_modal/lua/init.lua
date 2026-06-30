@@ -239,13 +239,9 @@ local function arrangerFor(ctx)
     return st
 end
 
--- One arranger per enablement.
-local cached = nil
+-- One arranger per enablement (ctx.perEnable memoizes per enable).
 local function with(ctx)
-    if not cached or cached.ctx ~= ctx then
-        cached = { ctx = ctx, st = arrangerFor(ctx) }
-    end
-    return cached.st
+    return ctx.perEnable(arrangerFor)
 end
 
 return {

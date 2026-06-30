@@ -90,6 +90,22 @@ function M.make(m, resolveTrigger, extra)
         return resolveTrigger and resolveTrigger(actionId) or nil
     end
 
+    -- per-enable state -------------------------------------------------------
+    -- ctx.perEnable(factory): build the feature's per-enable controller/cache
+    -- ONCE for this ctx (one ctx per enable) and return it on every later call.
+    -- Discarded with the ctx on disable -- its tracked handles are already torn
+    -- down by the scope. Retires the copy-pasted memo each feature carried:
+    -- `local cached; function with(ctx) if not cached or cached.ctx ~= ctx then
+    -- cached = {...} end return cached end`. factory receives ctx.
+    local perEnableBuilt, perEnableMemo = false, nil
+    function ctx.perEnable(factory)
+        if not perEnableBuilt then
+            perEnableMemo = factory(ctx)
+            perEnableBuilt = true
+        end
+        return perEnableMemo
+    end
+
     -- options (typed, user-overridable, manifest default fallback) ----------
     function ctx.opt(key)
         return adapter.getSetting(optKey(m.id, key), manifest.defaultFor(m, key))
