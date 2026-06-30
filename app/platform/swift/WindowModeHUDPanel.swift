@@ -1,5 +1,6 @@
 // Panels.swift split: one self-owned native UI surface (see Panels.swift for
-// the shared base and the rationale for our own panels).
+// the shared FloatingPanel / VibrancyHUDPanel base and the rationale for our
+// own panels).
 
 import AppKit
 
@@ -64,39 +65,18 @@ final class WindowModeHUDPanel {
         }
     }
 
-    private let panel: NSPanel
+    private let hud = VibrancyHUDPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240))
     private let cols: Int
     private let rows: Int
 
     init(spec: Spec) {
         cols = spec.cols
         rows = spec.rows
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = true
 
-        // Real macOS vibrancy, clipped to a rounded rect; the panel casts the shadow.
-        let effect = NSVisualEffectView()
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.appearance = NSAppearance(named: .vibrantDark)
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 16
-        effect.layer?.masksToBounds = true
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
+        let stack = hud.stack
         stack.alignment = .centerX
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 12, right: 18)
-        stack.translatesAutoresizingMaskIntoConstraints = false
 
         stack.addArrangedSubview(titleLabel(spec.title))
         stack.addArrangedSubview(diagramView(spec.cells))
@@ -104,27 +84,10 @@ final class WindowModeHUDPanel {
         if !spec.groups.isEmpty { stack.addArrangedSubview(legendView(spec.groups)) }
         if let footer = spec.footer { stack.addArrangedSubview(captionLabel(footer)) }
 
-        effect.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: effect.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-        ])
-        panel.contentView = effect
-
-        effect.layoutSubtreeIfNeeded()
-        let fit = stack.fittingSize
-        let w = max(300, fit.width)
-        let h = fit.height
-        let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let x = screen.midX - w / 2
-        let y = screen.minY + screen.height * 0.30
-        panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
-        panel.orderFrontRegardless()
+        hud.present(minWidth: 300)
     }
 
-    func close() { panel.orderOut(nil) }
+    func close() { hud.orderOut(nil) }
 
     // MARK: - Pieces
 
@@ -224,31 +187,6 @@ final class WindowModeHUDPanel {
 
     /// A boxed key-cap: the glyph in a faint rounded rect, like a keyboard key.
     private func keyCap(_ raw: String, fontSize: CGFloat = 13) -> NSView {
-        let label = NSTextField(labelWithString: KeyGlyphs.glyph(raw))
-        label.font = .monospacedSystemFont(ofSize: fontSize, weight: .semibold)
-        label.textColor = .labelColor
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        let cap = NSView()
-        cap.wantsLayer = true
-        cap.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        cap.layer?.cornerRadius = 5
-        cap.layer?.borderWidth = 1
-        cap.layer?.borderColor = NSColor.white.withAlphaComponent(0.20).cgColor
-        cap.translatesAutoresizingMaskIntoConstraints = false
-        cap.addSubview(label)
-
-        let h = fontSize + 11
-        NSLayoutConstraint.activate([
-            cap.heightAnchor.constraint(equalToConstant: h),
-            label.centerXAnchor.constraint(equalTo: cap.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: cap.centerYAnchor),
-            cap.widthAnchor.constraint(greaterThanOrEqualToConstant: h),
-        ])
-        let fit = cap.widthAnchor.constraint(equalTo: label.widthAnchor, constant: 14)
-        fit.priority = .defaultHigh
-        fit.isActive = true
-        return cap
+        KeyCap.make(KeyGlyphs.glyph(raw), fontSize: fontSize, height: fontSize + 11)
     }
 }

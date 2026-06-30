@@ -1,5 +1,5 @@
 // Panels.swift split: one self-owned native UI surface (see Panels.swift
-// for the shared KeyablePanel base and the rationale for our own panels).
+// for the shared FloatingPanel base and the rationale for our own panels).
 
 import AppKit
 
@@ -9,7 +9,7 @@ import AppKit
 /// edge -- elapsed portion red, remaining portion green (donor parity).
 @MainActor
 final class ProgressPanel {
-    private let panel: NSPanel
+    private let panel: FloatingPanel
     private let elapsedView = NSView()
     private let remainingView = NSView()
     private static let height: CGFloat = 5
@@ -18,15 +18,8 @@ final class ProgressPanel {
         let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let rect = NSRect(x: screen.minX, y: screen.minY,
                           width: screen.width, height: ProgressPanel.height)
-        panel = NSPanel(contentRect: rect,
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
+        panel = FloatingPanel(contentRect: rect)
         panel.alphaValue = 0.75
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = true
 
         let content = NSView(frame: NSRect(origin: .zero, size: rect.size))
         elapsedView.wantsLayer = true

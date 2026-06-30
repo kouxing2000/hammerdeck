@@ -21,53 +21,23 @@ import QuartzCore
 final class ChordHintPanel {
     struct Row { let key: String; let label: String }
 
-    private let panel: NSPanel
-    private let effect = NSVisualEffectView()
-    private let stack = NSStackView()
+    private let hud = VibrancyHUDPanel(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80))
+    private var effect: NSVisualEffectView { hud.effect }
+    private var stack: NSStackView { hud.stack }
     /// A thin strip along the bottom edge that depletes left-fixed over the
     /// timeout window -- the "press a key before this runs out" cue.
     private let barLayer = CALayer()
 
     init() {
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80),
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = true
-
-        // Real macOS vibrancy, clipped to a rounded rect; the panel casts the shadow.
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.appearance = NSAppearance(named: .vibrantDark)
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 16
-        effect.layer?.masksToBounds = true
-
-        stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 15, right: 18)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        effect.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: effect.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-        ])
 
         // Left-anchored so depleting its width shrinks it toward the left.
         barLayer.anchorPoint = CGPoint(x: 0, y: 0.5)
         barLayer.backgroundColor = NSColor.controlAccentColor.cgColor
         barLayer.cornerRadius = 1.5
         effect.layer?.addSublayer(barLayer)
-
-        panel.contentView = effect
     }
 
     /// Rebuild the card for the given armed prefix + the follow keys at this
@@ -81,16 +51,7 @@ final class ChordHintPanel {
         stack.addArrangedSubview(listView(rows))
         stack.addArrangedSubview(footerView())
 
-        effect.layoutSubtreeIfNeeded()
-        let fit = stack.fittingSize
-        let w = max(220, fit.width)
-        let h = fit.height
-        let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let x = screen.midX - w / 2
-        let y = screen.minY + screen.height * 0.30
-        panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
-        panel.orderFrontRegardless()
-
+        let w = hud.present(minWidth: 220)
         animateBar(width: w, remaining: remaining, total: total)
     }
 
@@ -120,7 +81,7 @@ final class ChordHintPanel {
         barLayer.add(anim, forKey: "deplete")
     }
 
-    func close() { panel.orderOut(nil) }
+    func close() { hud.orderOut(nil) }
 
     // MARK: - Pieces
 
@@ -200,50 +161,6 @@ final class ChordHintPanel {
     /// distinct chip; nil gives the neutral white cap (header/footer).
     private func keyCap(_ glyph: String, fontSize: CGFloat, height: CGFloat,
                         fixedWidth: CGFloat? = nil, tint: NSColor? = nil) -> NSView {
-        let base = tint ?? .white
-        let label = NSTextField(labelWithString: glyph)
-        label.font = .monospacedSystemFont(ofSize: fontSize, weight: .semibold)
-        // A tinted cap brightens its glyph to the color; neutral caps stay label-colored.
-        label.textColor = tint.map { $0.blended(withFraction: 0.35, of: .white) ?? $0 } ?? .labelColor
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        let cap = NSView()
-        cap.wantsLayer = true
-        cap.layer?.cornerRadius = 5
-        cap.layer?.borderWidth = 1
-        // Resolve the (dynamic, catalog) system colors against the HUD's forced
-        // dark appearance, not the ambient drawing appearance -- `.cgColor` is a
-        // one-shot snapshot that would otherwise track whatever's current.
-        let fill = base.withAlphaComponent(tint == nil ? 0.10 : 0.22)
-        let stroke = base.withAlphaComponent(tint == nil ? 0.20 : 0.55)
-        (NSAppearance(named: .vibrantDark) ?? NSAppearance.currentDrawing())
-            .performAsCurrentDrawingAppearance {
-                cap.layer?.backgroundColor = fill.cgColor
-                cap.layer?.borderColor = stroke.cgColor
-            }
-        cap.translatesAutoresizingMaskIntoConstraints = false
-        cap.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            cap.heightAnchor.constraint(equalToConstant: height),
-            label.centerXAnchor.constraint(equalTo: cap.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: cap.centerYAnchor),
-        ])
-        if let fw = fixedWidth {
-            // Pin to fw for column alignment, but let a wide glyph grow rather
-            // than clip (KeyGlyphs can return multi-char glyphs like arrows).
-            cap.widthAnchor.constraint(greaterThanOrEqualToConstant: fw).isActive = true
-            let pin = cap.widthAnchor.constraint(equalToConstant: fw)
-            pin.priority = .defaultHigh
-            pin.isActive = true
-            cap.widthAnchor.constraint(greaterThanOrEqualTo: label.widthAnchor, constant: 14).isActive = true
-        } else {
-            cap.widthAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
-            let fit = cap.widthAnchor.constraint(equalTo: label.widthAnchor, constant: 14)
-            fit.priority = .defaultHigh
-            fit.isActive = true
-        }
-        return cap
+        KeyCap.make(glyph, fontSize: fontSize, height: height, fixedWidth: fixedWidth, tint: tint)
     }
 }

@@ -1,5 +1,5 @@
 // Panels.swift split: one self-owned native UI surface (see Panels.swift
-// for the shared KeyablePanel base and the rationale for our own panels).
+// for the shared FloatingPanel base and the rationale for our own panels).
 
 import AppKit
 
@@ -7,7 +7,7 @@ import AppKit
 
 @MainActor
 final class BannerPanel {
-    private let panel: NSPanel
+    private let panel: FloatingPanel
     private let label: NSTextField
 
     init(text: String) {
@@ -15,14 +15,7 @@ final class BannerPanel {
         let height: CGFloat = 44
         let rect = NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height)
 
-        panel = NSPanel(contentRect: rect,
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = true
+        panel = FloatingPanel(contentRect: rect)
 
         let content = NSView(frame: NSRect(origin: .zero, size: rect.size))
         content.wantsLayer = true

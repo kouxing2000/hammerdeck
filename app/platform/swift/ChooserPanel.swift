@@ -1,5 +1,5 @@
 // Panels.swift split: one self-owned native UI surface (see Panels.swift
-// for the shared KeyablePanel base and the rationale for our own panels).
+// for the shared FloatingPanel base and the rationale for our own panels).
 
 import AppKit
 
@@ -17,7 +17,7 @@ struct ChooserEntry {
 /// 1-based index into the ORIGINAL entries array (nil = dismissed/escape).
 @MainActor
 final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSWindowDelegate {
-    private let panel: KeyablePanel
+    private let panel: FloatingPanel
     private let titleLabel = NSTextField(labelWithString: "")  // real header title (not the search placeholder)
     private let titleIcon = NSImageView()   // optional leading glyph in the header
     private let badgeLabel = NSTextField(labelWithString: "")  // optional right-flush count badge
@@ -66,15 +66,12 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         self.onSelect = onSelect
         self.onHide = onHide
 
-        panel = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: ChooserPanel.width, height: 300),
-                             styleMask: [.borderless, .nonactivatingPanel],
-                             backing: .buffered, defer: false)
+        panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: ChooserPanel.width, height: 300),
+                              level: .floating,
+                              collectionBehavior: [.canJoinAllSpaces, .transient],
+                              keyable: true, mouseTransparent: false)
         super.init()
 
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.collectionBehavior = [.canJoinAllSpaces, .transient]
         panel.hidesOnDeactivate = false
 
         let content = NSVisualEffectView()

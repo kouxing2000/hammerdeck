@@ -1013,7 +1013,7 @@ final class IntegrationTests: XCTestCase {
         // a bundle-less test runner, which macOS won't truly activate). Only
         // type when the system agrees we are the active app AND our panel is
         // key; otherwise the text would land in the user's frontmost window.
-        guard NSRunningApplication.current.isActive, NSApp.keyWindow is KeyablePanel else {
+        guard NSRunningApplication.current.isActive, NSApp.keyWindow is FloatingPanel else {
             eval("_G.itPrompt.stop(); _G.itPrompt = nil; _G.itTyped = nil; return true")
             throw XCTSkip("test runner cannot take system keyboard focus here; "
                 + "refusing to type into another app (covered by "

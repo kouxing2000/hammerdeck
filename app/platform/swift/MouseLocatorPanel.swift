@@ -1,5 +1,5 @@
 // Panels.swift split: one self-owned native UI surface (see Panels.swift
-// for the shared KeyablePanel base and the rationale for our own panels).
+// for the shared FloatingPanel base and the rationale for our own panels).
 
 import AppKit
 
@@ -10,7 +10,7 @@ import AppKit
 /// mouse events entirely -- clicks pass straight through to whatever is below.
 @MainActor
 final class MouseLocatorPanel {
-    private let panel: NSPanel
+    private let panel: FloatingPanel
     private let view: CrosshairView
     private var followTimer: Timer?
     private var closed = false
@@ -23,14 +23,7 @@ final class MouseLocatorPanel {
             ?? NSScreen.main
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        panel = NSPanel(contentRect: frame,
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = true
+        panel = FloatingPanel(contentRect: frame)
 
         view = CrosshairView(frame: NSRect(origin: .zero, size: frame.size))
         panel.contentView = view

@@ -1,5 +1,5 @@
 // Panels.swift split: one self-owned native UI surface (see Panels.swift
-// for the shared KeyablePanel base and the rationale for our own panels).
+// for the shared FloatingPanel base and the rationale for our own panels).
 
 import AppKit
 
@@ -27,15 +27,9 @@ enum Toast {
         let card = buildCard(title: title, text: text, showIcon: !centered)
         let size = card.frame.size
 
-        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
-                            styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered, defer: false)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = true
+        let panel = FloatingPanel(contentRect: NSRect(origin: .zero, size: size),
+                                  collectionBehavior: [.canJoinAllSpaces, .transient, .fullScreenAuxiliary],
+                                  hasShadow: true)
         panel.contentView = card
         panel.alphaValue = 0
 

@@ -1,5 +1,5 @@
 // Panels.swift split: one self-owned native UI surface (see Panels.swift
-// for the shared KeyablePanel base and the rationale for our own panels).
+// for the shared FloatingPanel base and the rationale for our own panels).
 
 import AppKit
 
@@ -9,7 +9,7 @@ import AppKit
 /// (submit nil). Mirrors the chooser's keyable-without-activating behavior.
 @MainActor
 final class AskTextPanel: NSObject, NSTextFieldDelegate {
-    private let panel: KeyablePanel
+    private let panel: FloatingPanel
     private let field = NSTextField()
     private let onSubmit: (String?) -> Void
     private var done = false
@@ -19,15 +19,12 @@ final class AskTextPanel: NSObject, NSTextFieldDelegate {
         self.onSubmit = onSubmit
         let width: CGFloat = 420
         let height: CGFloat = 92
-        panel = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-                             styleMask: [.borderless, .nonactivatingPanel],
-                             backing: .buffered, defer: false)
+        panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+                              level: .floating,
+                              collectionBehavior: [.canJoinAllSpaces, .transient],
+                              keyable: true, mouseTransparent: false)
         super.init()
 
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.collectionBehavior = [.canJoinAllSpaces, .transient]
         panel.hidesOnDeactivate = false
 
         let content = NSVisualEffectView()
