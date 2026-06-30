@@ -162,6 +162,9 @@ final class Native {
             // app focus tracking (NSWorkspace -- no permission required)
             "frontmost_app":    { L in MainActor.assumeIsolated { Native.shared.frontmostApp(L) } },
             "on_app_activated": { L in MainActor.assumeIsolated { Native.shared.onAppActivated(L) } },
+            // bundle-id-carrying twins -- the frontmostApp signal matches by bundle id
+            "frontmost_app_info":    { L in MainActor.assumeIsolated { Native.shared.frontmostAppInfo(L) } },
+            "on_app_activated_info": { L in MainActor.assumeIsolated { Native.shared.onAppActivatedInfo(L) } },
         ]
         let fns4: [String: LuaState.Function] = [
             // data files (feature-owned storage under Application Support)

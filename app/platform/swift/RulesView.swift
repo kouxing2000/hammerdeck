@@ -447,10 +447,12 @@ private struct AddRuleForm: View {
     @State private var minimizeAppBundleId = ""        // minimizeApp/hideApp/quitApp
     @State private var moveAppBundleId = ""            // moveAppToDisplay
     // The frontmostApp TRIGGER value reuses the installed-apps chooser (so a rule can
-    // watch for an app that isn't running yet). That signal matches by NAME, so the
-    // chosen name flows into stateValue and this bundle id is ignored.
+    // watch for an app that isn't running yet). stateValue holds the display NAME (the
+    // sentence reads it); stateValueBundleId is the bundle id stored as `on.bundleId`
+    // -- the signal matches on THAT (stable across locale/rename), the name only as a
+    // free-text fallback. Empty for a typed name or a non-app signal.
     @State private var showFrontmostPicker = false
-    @State private var ignoredAppBundleId = ""
+    @State private var stateValueBundleId = ""
     // The "New rule" landing: a recipe gallery (kills the blank canvas), shown only
     // in add mode. Picking a recipe pre-fills the form below; "Build your own" clears it.
     @State private var showGallery = true
@@ -911,18 +913,25 @@ private struct AddRuleForm: View {
             Divider()
             if isStateTrigger {
                 HStack {
-                    TextField(valuePlaceholder, text: $stateValue)
+                    // Typing a name directly invalidates a bundle id picked earlier (it
+                    // named a different app) -- clear it so the engine matches the typed
+                    // name, not a stale id. The chooser sets stateValue directly, bypassing
+                    // this setter, so its paired bundle id survives.
+                    TextField(valuePlaceholder, text: Binding(
+                        get: { stateValue },
+                        set: { stateValue = $0; stateValueBundleId = "" }))
                     if signal == "frontmostApp" {
                         // The frontmost-app value: pick from ALL installed apps
-                        // (searchable), not just running ones -- so a rule can watch for
-                        // an app that's closed now. Matched by name, so the chosen name
-                        // lands in stateValue (the chooser's bundle id is ignored here).
+                        // (searchable), not just running ones -- so a rule can watch for an
+                        // app that's closed now. The chooser stores the display name in
+                        // stateValue AND the bundle id in stateValueBundleId; the engine
+                        // matches on the bundle id (stable), the name as a free-text fallback.
                         Button { showFrontmostPicker.toggle() } label: { Image(systemName: "list.bullet") }
                             .buttonStyle(.borderless).frame(width: 32)
                             .help(Strings.t("rules.pickInstalledApp", default: "Pick an installed app"))
                             .popover(isPresented: $showFrontmostPicker, arrowEdge: .bottom) {
                                 AppTargetChooser(
-                                    name: $stateValue, bundleId: $ignoredAppBundleId,
+                                    name: $stateValue, bundleId: $stateValueBundleId,
                                     sentinel: "", triggerProvidesApp: false, fromTriggerLabel: "",
                                     warning: nil,
                                     hint: Strings.t("rules.frontmostPickHint", default: "Pick any installed app -- it needn't be running now."))
@@ -930,7 +939,7 @@ private struct AddRuleForm: View {
                             }
                     } else if !candidates.isEmpty {
                         Menu {
-                            ForEach(candidates, id: \.self) { c in Button(c) { stateValue = c } }
+                            ForEach(candidates, id: \.self) { c in Button(c) { stateValue = c; stateValueBundleId = "" } }
                         } label: { Image(systemName: "list.bullet") }
                         .menuStyle(.borderlessButton).frame(width: 32)
                         .help(Strings.t("rules.pickSuggested", default: "Pick a suggested value"))
@@ -1390,6 +1399,10 @@ private struct AddRuleForm: View {
     }
 
     private func demoteOrphanedTriggerParams() {
+        // Switching the trigger SIGNAL away from frontmostApp drops the app's bundle id
+        // -- it named a frontmostApp pick that the new signal can't match on (belt to
+        // the buildSpec/engine gates).
+        if signal != "frontmostApp" { stateValueBundleId = "" }
         if wallpaperKinds.contains(selectedEffect?.kind ?? "")
             && solidDisplay.hasPrefix("@trigger:") && triggerProvides != "display" {
             solidDisplay = "external"
@@ -1618,6 +1631,7 @@ private struct AddRuleForm: View {
         triggerType = "state:" + defSig
         transition = "becomes"
         stateValue = ""
+        stateValueBundleId = ""
         eventName = opts.events.first ?? "wake"
         scheduleMode = "everyMin"
         everyMin = 25
@@ -1666,6 +1680,9 @@ private struct AddRuleForm: View {
             if let b = on["becomes"] as? String { transition = "becomes"; stateValue = b }
             else if let l = on["leaves"] as? String { transition = "leaves"; stateValue = l }
             else { transition = "becomes"; stateValue = "" }
+            // Only the app-identity signal carries a bundle id; ignore a stray one on
+            // any other signal (don't round-trip a corrupted/dead-rule value).
+            stateValueBundleId = (sig == "frontmostApp") ? (on["bundleId"] as? String ?? "") : ""
         } else if type == "event" {
             triggerType = "event"
             eventName = on["event"] as? String ?? "wake"
@@ -1838,6 +1855,12 @@ private struct AddRuleForm: View {
             guard !v.isEmpty, !signal.isEmpty else { return nil }
             on = ["type": "state", "signal": signal]
             on[transition] = v
+            // ONLY the app-identity signal (frontmostApp) matches by bundle id -- never
+            // attach a (possibly stale, left by switching signals) id to a name/enum/set
+            // signal, or the engine would match a bundle id it never satisfies (a silent
+            // dead rule). Mirrors the engine gate (sig.bundleIdMatch in rules.bindOne).
+            let bid = stateValueBundleId.trimmingCharacters(in: .whitespaces)
+            if signal == "frontmostApp", !bid.isEmpty { on["bundleId"] = bid }
         } else if triggerType == "event" {
             on = ["type": "event", "event": eventName]
         } else if triggerType == "schedule" {

@@ -411,6 +411,12 @@ function adapter.frontmostApp()
     return native.frontmost_app()
 end
 
+-- { name, bundleId } of the frontmost app (each "" if none) -- the frontmostApp
+-- signal reads this to match on the stable bundle id, not the locale-sensitive name.
+function adapter.frontmostAppInfo()
+    return native.frontmost_app_info()
+end
+
 -- The user-visible app display name (e.g. "Hammerdeck"). Single source of truth
 -- shared with Swift -- features compose "<app> needs Accessibility" off ctx.appName.
 function adapter.appName()
@@ -429,6 +435,12 @@ end
 -- becomes frontmost. No permission required (NSWorkspace notification).
 function adapter.onAppActivated(fn)
     return handleFor(native.on_app_activated(fn))
+end
+
+-- The { name, bundleId } twin of onAppActivated -- fn({name, bundleId}) on each
+-- activation. Used by the frontmostApp signal so it matches on the bundle id.
+function adapter.onAppActivatedInfo(fn)
+    return handleFor(native.on_app_activated_info(fn))
 end
 
 -- ---------------------------------------------------------------------------

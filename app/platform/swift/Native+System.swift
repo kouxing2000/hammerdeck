@@ -168,6 +168,40 @@ extension Native {
         return 1
     }
 
+    // frontmost_app_info() -> { name, bundleId } for the frontmost app (both "" if
+    // none). The frontmostApp SIGNAL reads this so it can match by the stable bundle
+    // id (the from-trigger / feature path still uses frontmost_app() -> name).
+    func frontmostAppInfo(_ L: OpaquePointer?) -> Int32 {
+        pushAppInfo(L, NSWorkspace.shared.frontmostApplication)
+        return 1
+    }
+
+    // on_app_activated_info(fn): fn({name, bundleId}) on each activation -- the
+    // bundle-id-carrying twin of on_app_activated, used only by the frontmostApp
+    // signal so a rule matches on the bundle id, not the locale-sensitive name.
+    func onAppActivatedInfo(_ L: OpaquePointer?) -> Int32 {
+        let ref = lua.makeRef(at: 1)
+        let center = NSWorkspace.shared.notificationCenter
+        let token = center.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                       object: nil, queue: .main) { note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            MainActor.assumeIsolated {
+                Native.shared.lua.callRef(ref) { L in Native.shared.pushAppInfo(L, app); return 1 }
+            }
+        }
+        let id = registerResource { center.removeObserver(token); Native.shared.lua.releaseRef(ref) }
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    // Push { name = <localizedName>, bundleId = <bundleIdentifier> } (each "" when
+    // absent) -- the shared shape for frontmost_app_info + on_app_activated_info.
+    private func pushAppInfo(_ L: OpaquePointer?, _ app: NSRunningApplication?) {
+        lua_createtable(L, 0, 2)
+        lua_pushstring(L, app?.localizedName ?? "");    lua_setfield(L, -2, "name")
+        lua_pushstring(L, app?.bundleIdentifier ?? ""); lua_setfield(L, -2, "bundleId")
+    }
+
     // appearance() -> "dark" | "light" -- the system interface style. The global
     // AppleInterfaceStyle pref is "Dark" only in dark mode (absent = light). Read
     // via CFPreferences on the global domain (NOT UserDefaults.standard, whose

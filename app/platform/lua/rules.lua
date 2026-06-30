@@ -160,6 +160,15 @@ local function triggerContext(spec)
     if on.becomes ~= nil then value = on.becomes
     elseif on.leaves ~= nil then value = on.leaves end
     if value == nil then return {} end
+    -- For an app-identity signal, publish the STABLE bundle id (not the stored display
+    -- name) so a from-trigger effect (@trigger:app) finds the running app even when its
+    -- localizedName has drifted from the name the rule was authored with -- the case
+    -- bundle-id matching exists for. The native seam dual-matches a bundle id; the name
+    -- stays the value for signals/rules without one.
+    local sig = signals.get(on.signal)
+    if sig and sig.bundleIdMatch and type(on.bundleId) == "string" and #on.bundleId > 0 then
+        value = on.bundleId
+    end
     -- The signal declares which context key it publishes (meta.provides) -- so this
     -- never hardcodes "displaysPresent -> display". A signal with no `provides`
     -- (an enum like appearance) contributes nothing bindable.
@@ -205,9 +214,19 @@ local function bindOne(id, spec)
         -- (e.g. a future "onAC becomes false" rule).
         local target
         if wantEnter then target = spec.on.becomes else target = spec.on.leaves end
-        -- `sig.match` is scalar `==` for frontmostApp, set-membership for
-        -- displaysPresent ("DELL" is IN the connected-displays list). Seed from the
-        -- CURRENT value so we only fire on a real change, never on bind.
+        -- An app signal (frontmostApp) stores the STABLE bundle id beside the display
+        -- name; match on it when present so a locale-renamed app still fires. The
+        -- signal's value carries both id + name, so the name (becomes/leaves) remains
+        -- the fallback for free-typed values. GATED on sig.bundleIdMatch: a stray
+        -- bundleId on a name/enum/set signal (a hand-authored JSON rule, or a stale id
+        -- left by switching signals in the form) would otherwise make the target a
+        -- bundle id the signal never matches -- a silent dead rule.
+        if sig.bundleIdMatch and type(spec.on.bundleId) == "string" and #spec.on.bundleId > 0 then
+            target = spec.on.bundleId
+        end
+        -- `sig.match` is bundle-id/name for frontmostApp, scalar `==` for enum signals,
+        -- set-membership for displaysPresent ("DELL" is IN the connected-displays
+        -- list). Seed from the CURRENT value so we only fire on a real change, never on bind.
         local matched = sig.match(sig.read(), target)
         return sig.subscribe(function(v)
             local now = sig.match(v, target)

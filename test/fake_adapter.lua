@@ -388,8 +388,12 @@ end
 fake.featureNames = {}   -- bare names the fake "filesystem" exposes to discovery
 function adapter.discoverFeatures(dir) return fake.featureNames end
 
-fake.frontmost = nil     -- preset by the test for frontmostApp()
+fake.frontmost = nil     -- preset by the test for frontmostApp() (the name)
+fake.frontmostId = ""    -- bundle id of the frontmost app (for frontmostAppInfo)
 function adapter.frontmostApp() return fake.frontmost end
+function adapter.frontmostAppInfo()
+    return { name = fake.frontmost or "", bundleId = fake.frontmostId or "" }
+end
 
 fake.appName = "Hammerdeck"   -- the simulated app display name
 function adapter.appName() return fake.appName end
@@ -405,19 +409,31 @@ function adapter.appearance()  return fake.appearance end
 function adapter.runningApps()  return fake.runningAppList end
 function adapter.powerSource()  return fake.power end
 
-fake.appWatchers = {}    -- {fn, stopped}
+fake.appWatchers = {}    -- {fn, stopped} for onAppActivated (name)
+fake.appInfoWatchers = {}  -- {fn, stopped} for onAppActivatedInfo ({name, bundleId})
 function adapter.onAppActivated(fn)
     local w = { fn = fn, stopped = false }
     fake.appWatchers[#fake.appWatchers + 1] = w
     alloc()
     return { stop = function() freeOnce(w) end }
 end
+function adapter.onAppActivatedInfo(fn)
+    local w = { fn = fn, stopped = false }
+    fake.appInfoWatchers[#fake.appInfoWatchers + 1] = w
+    alloc()
+    return { stop = function() freeOnce(w) end }
+end
 
--- test-side driver: the user switches to app `name`
-function fake.activateApp(name)
+-- test-side driver: the user switches to app `name` (optional `bundleId` for the
+-- frontmostApp signal's bundle-id match). Fires both watcher flavors.
+function fake.activateApp(name, bundleId)
     fake.frontmost = name
+    fake.frontmostId = bundleId or ""
     for _, w in ipairs(fake.appWatchers) do
         if not w.stopped then w.fn(name) end
+    end
+    for _, w in ipairs(fake.appInfoWatchers) do
+        if not w.stopped then w.fn({ name = name, bundleId = bundleId or "" }) end
     end
 end
 

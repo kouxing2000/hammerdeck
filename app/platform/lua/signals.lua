@@ -47,6 +47,12 @@ local function pushSignal(def)
     sig.meta = def.meta
     sig.candidates = def.candidates
 
+    -- Opt-in: this signal's value carries { name, bundleId } and a rule may store a
+    -- stable `on.bundleId` to match on. The engine (rules.bindOne) honors on.bundleId
+    -- ONLY for such signals -- a stray bundleId on a name/enum/set signal would make
+    -- the target a bundle id the signal's match never satisfies (a silent dead rule).
+    sig.bundleIdMatch = def.bundleIdMatch or false
+
     --- Subscribe to changes. Returns a handle with .stop().
     function sig.subscribe(cb)
         nextTok = nextTok + 1
@@ -103,8 +109,17 @@ end
 -- (the displaysPresent/powerSource/... pattern) keeps every signal one shape.
 local REGISTRY = {
     frontmostApp = pushSignal {
-        read    = function() return adapter.frontmostApp() end,
-        observe = function(emit) return adapter.onAppActivated(emit) end,
+        -- Value is { name, bundleId } of the frontmost app, so a rule matches on the
+        -- STABLE bundle id (the rule stores `on.bundleId`), not the locale-sensitive
+        -- localizedName. The name is still matched too, so a free-typed app name (no
+        -- bundle id) keeps working. (The from-trigger / ctx.frontmostApp path stays
+        -- name-only via adapter.frontmostApp -- features depend on that shape.)
+        read    = function() return adapter.frontmostAppInfo() end,
+        observe = function(emit) return adapter.onAppActivatedInfo(emit) end,
+        bundleIdMatch = true,   -- value is { name, bundleId }; a rule may store on.bundleId
+        match   = function(v, target)
+            return type(v) == "table" and (v.bundleId == target or v.name == target)
+        end,
         -- enterWhen/leaveWhen: the TIMING subtitle the rules editor's verb popover
         -- shows under each edge -- the footgun-killer (focus-gain fires the instant
         -- you open the app; most rules want the click-away edge). DATA, like the

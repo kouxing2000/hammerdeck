@@ -267,11 +267,17 @@ local function applyMoveToDisplay(node, context)
     local wins = adapter.listWindows() or {}
     local moved, failed = 0, 0
     for _, w in ipairs(wins) do
-        -- Bundle id is AUTHORITATIVE when the rule has one (strict, matching the
-        -- effect side + native runningApp) -- so a different app that merely shares
-        -- the display name isn't moved too. Only legacy / from-trigger rules (no
-        -- bundle id) match by the resolved name. listWindows carries both fields.
-        local hit = bid and (w.bundleID == bid) or (not bid and w.appName == app)
+        -- With a stored bundle id (`node.appBundleId`), match STRICTLY on it -- so a
+        -- different app that merely shares the display name isn't moved too. Without
+        -- one, `app` is either a bundle id (the @trigger:app path, which now resolves
+        -- to the frontmost app's id) OR a free-typed name, so match on either field.
+        -- listWindows carries both.
+        local hit
+        if bid then
+            hit = (w.bundleID == bid)
+        else
+            hit = (w.bundleID == app) or (w.appName == app)
+        end
         if hit then
             local cur = windows.screenOfFrame(screens, w)
             local nx = cur and (dest.x + (w.x - cur.x)) or dest.x
