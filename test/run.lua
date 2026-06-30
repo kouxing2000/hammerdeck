@@ -115,6 +115,27 @@ do
     ok(alerted and alerted:find("辅助功能", 1, true) and alerted:find("Hammerdeck", 1, true),
         "platform.windows localizes its Accessibility alert via ctx.t")
 
+    -- P2 localization sweep: every feature that emits runtime user-facing strings
+    -- must carry the zh-Hans key the code requests, or ctx.t silently falls back to
+    -- English in zh (the leak this pass closed). Assert a representative NEW key per
+    -- touched feature resolves to a translation (NOT the English default) -- the
+    -- exact missing-key failure the en-locale tests below cannot see.
+    do
+        local sweep = {
+            { "sleep_schedule",  "banner.countdown",    "System sleep in %s  --  Save your work!" },
+            { "break_reminder",  "action.lock",         "Lock Screen" },
+            { "window_modal",    "hud.footer",          "esc  exit" },
+            { "text_actions",    "action.calculate",    "Calculate" },
+            { "insert_datetime", "error.tableFormat",   "That format produces a table, not text (avoid *t)" },
+            { "window_grid",     "hud.caption",         "press a number to place the window" },
+            { "dark_mode",       "action.toggle.label", "Toggle dark mode" },
+        }
+        for _, e in ipairs(sweep) do
+            ok(i18n.tFeature(e[1], e[2], e[3]) ~= e[3],
+                e[1] .. " localizes runtime key '" .. e[2] .. "' in zh (no English leak)")
+        end
+    end
+
     -- Leaf-util invariant: the leaf utils (platform.windows/hotkeys/json/urls) must
     -- have ZERO `require` -- that require-freedom is exactly what lets a feature
     -- `require` them safely (the layer map's leaf tier). Nothing else guards this

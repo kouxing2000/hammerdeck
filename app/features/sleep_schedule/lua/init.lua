@@ -116,7 +116,8 @@ return {
         end
 
         local function showCountdown(secsLeft)
-            local text = "System sleep in " .. formatCountdown(secsLeft) .. "  --  Save your work!"
+            local text = string.format(ctx.t("banner.countdown", "System sleep in %s  --  Save your work!"),
+                formatCountdown(secsLeft))
             if s.banner then s.banner.setText(text) else s.banner = ctx.banner(text) end
         end
 
@@ -143,27 +144,32 @@ return {
 
         local function showWarning(secsLeft)
             local infos = {
-                "Sleep at " .. formatTime(effectiveSleepSecs())
-                    .. " (" .. math.floor(secsLeft / 60) .. " min left)",
+                string.format(ctx.t("info.sleepAt", "Sleep at %s (%d min left)"),
+                    formatTime(effectiveSleepSecs()), math.floor(secsLeft / 60)),
             }
             if isWeekendNight(ctx.now()) then
-                infos[#infos + 1] = "Weekend schedule (+" .. ctx.opt("weekendShiftMin") .. "min)"
+                infos[#infos + 1] = string.format(ctx.t("info.weekendShift", "Weekend schedule (+%dmin)"),
+                    ctx.opt("weekendShiftMin"))
             end
 
-            local actions = { "OK, I'll wrap up" }
+            -- snoozeLabel held in a local so onChoose compares the chosen label
+            -- against it (not an English "^Snooze" prefix) -- works in any locale.
+            local snoozeLabel
+            local actions = { ctx.t("action.wrapUp", "OK, I'll wrap up") }
             if not s.snoozed then
-                actions[#actions + 1] = "Snooze " .. ctx.opt("snoozeMin")
-                    .. " minutes (until " .. formatTime(snoozeTargetSecs()) .. ")"
+                snoozeLabel = string.format(ctx.t("action.snooze", "Snooze %d minutes (until %s)"),
+                    ctx.opt("snoozeMin"), formatTime(snoozeTargetSecs()))
+                actions[#actions + 1] = snoozeLabel
             end
 
             dismissWarnDialog()
             s.warnDialog = ctx.askChoice {
-                title = "Sleep schedule warning",
+                title = ctx.t("dialog.warnTitle", "Sleep schedule warning"),
                 infos = infos,
                 actions = actions,
                 onChoose = function(choice)
                     s.warnDialog = nil
-                    if choice and choice:find("^Snooze") then doSnooze() end
+                    if snoozeLabel and choice == snoozeLabel then doSnooze() end
                 end,
             }
         end

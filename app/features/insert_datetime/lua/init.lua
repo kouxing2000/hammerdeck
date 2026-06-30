@@ -57,17 +57,17 @@ end
 -- Returns the string, or (nil, human-readable reason). This is the single
 -- validator both the action and the Settings "Preview" button go through, so a
 -- preview can never disagree with what typing actually produces.
-local function formatNow(fmt, when)
+local function formatNow(ctx, fmt, when)
     local ok, res = pcall(os.date, fmt, when)
     if not ok then
         -- Strip a leading "file:line: " prefix if pcall added one, then prefer
         -- the parenthetical reason (e.g. "invalid conversion specifier '%Q'").
         local msg = tostring(res):gsub("^.-:%d+: ", "")
         local detail = msg:match("%((.-)%)") or msg
-        return nil, "Invalid format -- " .. detail
+        return nil, string.format(ctx.t("error.invalidFormat", "Invalid format -- %s"), detail)
     end
     if type(res) ~= "string" then
-        return nil, "That format produces a table, not text (avoid *t)"
+        return nil, ctx.t("error.tableFormat", "That format produces a table, not text (avoid *t)")
     end
     return res
 end
@@ -79,7 +79,7 @@ local function insert(ctx)
             ctx.t("notify.pickPreset", "Pick a preset, or enter a Custom format in Settings"))
         return
     end
-    local text, err = formatNow(fmt, ctx.now())
+    local text, err = formatNow(ctx, fmt, ctx.now())
     if not text then
         ctx.notify(ctx.t("notify.title", "Insert Date/Time"), err)
         return
@@ -112,7 +112,7 @@ return {
                 ctx.alert(ctx.t("alert.needFormat", "Enter a custom format first"))
                 return
             end
-            local text, err = formatNow(fmt, ctx.now())
+            local text, err = formatNow(ctx, fmt, ctx.now())
             ctx.alert(text and string.format(ctx.t("alert.preview", "Preview:  %s"), text) or err)
         end,
     },

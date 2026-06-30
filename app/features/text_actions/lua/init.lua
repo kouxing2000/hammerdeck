@@ -30,13 +30,16 @@ local COPY_SETTLE_SECONDS = 0.15   -- let the copied selection reach the clipboa
 local OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
 -- Base (non-AI) picker entries, each gated by its `opt` toggle so a user can
--- hide the ones they never use (all default on). The label is also the value
--- matched in onChoose below, so keep them in sync.
+-- hide the ones they never use (all default on). `id` is the STABLE dispatch
+-- key (locale-independent); `label` is the English default shown when no
+-- translation exists. The picker is built with localized labels (ctx.t) and a
+-- label->entry map, so onChoose dispatches by `id` -- display and comparison are
+-- decoupled, and the labels can localize without breaking dispatch.
 local BASE_ACTIONS = {
-    { label = "Dictionary", opt = "showDictionary" },
-    { label = "lowercase",  opt = "showLowercase" },
-    { label = "UPPERCASE",  opt = "showUppercase" },
-    { label = "Calculate",  opt = "showCalculate" },
+    { id = "dictionary", label = "Dictionary", opt = "showDictionary" },
+    { id = "lowercase",  label = "lowercase",  opt = "showLowercase" },
+    { id = "uppercase",  label = "UPPERCASE",  opt = "showUppercase" },
+    { id = "calculate",  label = "Calculate",  opt = "showCalculate" },
 }
 
 -- Default system prompts for the AI actions. These seed the per-action prompt
@@ -62,12 +65,12 @@ local PROMPTS = {
 -- user's run-time instruction, so it has no promptOpt. AI entries appear only
 -- when BOTH the key is validated and the entry's toggle is on.
 local AI_ACTIONS = {
-    { label = "AI: Refine",    opt = "showAiRefine",    promptOpt = "aiRefinePrompt" },
-    { label = "AI: Enrich",    opt = "showAiEnrich",    promptOpt = "aiEnrichPrompt" },
-    { label = "AI: Complete",  opt = "showAiComplete",  promptOpt = "aiCompletePrompt" },
-    { label = "AI: Summary",   opt = "showAiSummary",   promptOpt = "aiSummaryPrompt" },
-    { label = "AI: Translate", opt = "showAiTranslate", promptOpt = "aiTranslatePrompt", translate = true },
-    { label = "AI: Free ask",  opt = "showAiFreeAsk",   freeAsk = true },
+    { id = "aiRefine",    label = "AI: Refine",    opt = "showAiRefine",    promptOpt = "aiRefinePrompt" },
+    { id = "aiEnrich",    label = "AI: Enrich",    opt = "showAiEnrich",    promptOpt = "aiEnrichPrompt" },
+    { id = "aiComplete",  label = "AI: Complete",  opt = "showAiComplete",  promptOpt = "aiCompletePrompt" },
+    { id = "aiSummary",   label = "AI: Summary",   opt = "showAiSummary",   promptOpt = "aiSummaryPrompt" },
+    { id = "aiTranslate", label = "AI: Translate", opt = "showAiTranslate", promptOpt = "aiTranslatePrompt", translate = true },
+    { id = "aiFreeAsk",   label = "AI: Free ask",  opt = "showAiFreeAsk",   freeAsk = true },
 }
 
 -- Look `word` up in the dictionary: the user's custom app (launch/focus it --
@@ -241,14 +244,22 @@ return {
                     -- VALIDATED in Settings (the host sets this flag on a
                     -- successful Validate; cleared when the key changes) AND the
                     -- entry's toggle is on. An unvalidated key shows no AI noise.
-                    local actions = {}
+                    -- Build the picker with LOCALIZED labels, and a label->entry
+                    -- map so onChoose dispatches by the stable `id` (display and
+                    -- comparison decoupled -- labels can localize freely).
+                    local actions, byLabel = {}, {}
+                    local function addEntry(e)
+                        local label = ctx.t("action." .. e.id, e.label)
+                        actions[#actions + 1] = label
+                        byLabel[label] = e
+                    end
                     for _, b in ipairs(BASE_ACTIONS) do
-                        if ctx.opt(b.opt) then actions[#actions + 1] = b.label end
+                        if ctx.opt(b.opt) then addEntry(b) end
                     end
                     local validated = ctx.getState("openaiKey__validated", false) == true
                     if validated then
                         for _, ai in ipairs(AI_ACTIONS) do
-                            if ctx.opt(ai.opt) then actions[#actions + 1] = ai.label end
+                            if ctx.opt(ai.opt) then addEntry(ai) end
                         end
                     end
                     if #actions == 0 then
@@ -261,14 +272,14 @@ return {
                         infos = { snippet },
                         actions = actions,
                         onChoose = function(choice)
-                            if not choice then return end
-                            if choice == "lowercase" then
+                            local entry = choice and byLabel[choice]
+                            if not entry then return end
+                            local id = entry.id
+                            if id == "lowercase" then
                                 pasteBack(content:lower())
-                                return
-                            elseif choice == "UPPERCASE" then
+                            elseif id == "uppercase" then
                                 pasteBack(content:upper())
-                                return
-                            elseif choice == "Calculate" then
+                            elseif id == "calculate" then
                                 -- Evaluate as a Lua expression in a math-only
                                 -- sandbox (the donor used the full globals).
                                 local fn, loadErr = load("return " .. content,
@@ -283,42 +294,32 @@ return {
                                     return
                                 end
                                 pasteBack(tostring(result))
-                                return
-                            elseif choice == "Dictionary" then
+                            elseif id == "dictionary" then
                                 lookupInDict(ctx, content)
-                                return
-                            end
-
-                            -- AI entries (present only when a key is set).
-                            for _, ai in ipairs(AI_ACTIONS) do
-                                if choice == ai.label then
-                                    if ai.translate then
-                                        ctx.askText {
-                                            title = ctx.t("prompt.translate.title", "Translate to which language?"),
-                                            placeholder = ctx.t("prompt.translate.ph", "e.g. French, 日本語"),
-                                            onSubmit = function(lang)
-                                                if lang and lang ~= "" then
-                                                    -- gsub with a function replacement so a
-                                                    -- "%" in the language can't be read as a
-                                                    -- capture reference.
-                                                    local tmpl = ctx.opt(ai.promptOpt)
-                                                    askAI((tmpl:gsub("{lang}", function() return lang end)))
-                                                end
-                                            end,
-                                        }
-                                    elseif ai.freeAsk then
-                                        ctx.askText {
-                                            title = ctx.t("prompt.instruct.title", "Instruction for the selected text"),
-                                            placeholder = ctx.t("prompt.instruct.ph", "e.g. make this more formal"),
-                                            onSubmit = function(prompt)
-                                                if prompt and prompt ~= "" then askAI(prompt) end
-                                            end,
-                                        }
-                                    else
-                                        askAI(ctx.opt(ai.promptOpt))
-                                    end
-                                    return
-                                end
+                            elseif entry.translate then
+                                ctx.askText {
+                                    title = ctx.t("prompt.translate.title", "Translate to which language?"),
+                                    placeholder = ctx.t("prompt.translate.ph", "e.g. French, 日本語"),
+                                    onSubmit = function(lang)
+                                        if lang and lang ~= "" then
+                                            -- gsub with a function replacement so a
+                                            -- "%" in the language can't be read as a
+                                            -- capture reference.
+                                            local tmpl = ctx.opt(entry.promptOpt)
+                                            askAI((tmpl:gsub("{lang}", function() return lang end)))
+                                        end
+                                    end,
+                                }
+                            elseif entry.freeAsk then
+                                ctx.askText {
+                                    title = ctx.t("prompt.instruct.title", "Instruction for the selected text"),
+                                    placeholder = ctx.t("prompt.instruct.ph", "e.g. make this more formal"),
+                                    onSubmit = function(prompt)
+                                        if prompt and prompt ~= "" then askAI(prompt) end
+                                    end,
+                                }
+                            elseif entry.promptOpt then
+                                askAI(ctx.opt(entry.promptOpt))
                             end
                         end,
                     }

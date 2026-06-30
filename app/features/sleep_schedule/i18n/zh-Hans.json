@@ -2,6 +2,13 @@
   "name": "睡眠计划",
   "description": "在设定时间强制系统睡眠, 带分级警告, 一次性小睡, 以及周末时移.",
 
+  "banner.countdown": "系统将在 %s 后睡眠  --  请保存你的工作!",
+  "dialog.warnTitle": "睡眠计划警告",
+  "info.sleepAt": "%s 睡眠 (还剩 %d 分钟)",
+  "info.weekendShift": "周末时移 (+%d 分钟)",
+  "action.wrapUp": "好的, 我这就收尾",
+  "action.snooze": "小睡 %d 分钟 (到 %s)",
+
   "option.sleepAt.label": "睡眠时间 (HH:MM)",
   "option.warn1Min.label": "首次警告 (提前分钟数)",
   "option.warn2Min.label": "倒计时浮层 (提前分钟数)",

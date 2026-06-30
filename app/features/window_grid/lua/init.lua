@@ -44,7 +44,7 @@ end
 -- The numbered cheat-sheet for a cols x rows grid: each cell shows its number,
 -- positioned where it lands the window. The HUD renderer sizes its board from
 -- cols/rows, so a 2x2 reads as a 2x2 (not a corner of a 3x3).
-local function hudFor(cols, rows)
+local function hudFor(ctx, cols, rows)
     local cells = {}
     for r = 0, rows - 1 do
         for c = 0, cols - 1 do
@@ -52,12 +52,12 @@ local function hudFor(cols, rows)
         end
     end
     return {
-        title   = cols .. "×" .. rows .. " Grid",
+        title   = string.format(ctx.t("hud.title", "%d×%d Grid"), cols, rows),
         cols    = cols,
         rows    = rows,
         cells   = cells,
-        caption = "press a number to place the window",
-        footer  = "esc  cancel",
+        caption = ctx.t("hud.caption", "press a number to place the window"),
+        footer  = ctx.t("hud.footer", "esc  cancel"),
     }
 end
 
@@ -77,7 +77,7 @@ local function controllerFor(ctx)
             end }
         end
         st.modal = ctx.modal({
-            hud      = hudFor(cols, rows),
+            hud      = hudFor(ctx, cols, rows),
             bindings = bindings,
             onExit   = function() st.modal = nil end,
         })

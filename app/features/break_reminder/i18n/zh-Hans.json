@@ -9,6 +9,12 @@
   "info.workedToday": "今日已工作: %s",
   "info.elapsedToday": "今日已过: %s",
 
+  "action.postpone1": "推迟 1 分钟",
+  "action.postpone5": "推迟 5 分钟",
+  "action.screensaver": "启动屏幕保护",
+  "action.lock": "锁定屏幕",
+  "action.sleep": "系统睡眠",
+
   "option.workMin.label": "工作间隔 (分钟)",
   "option.idleThresholdMin.label": "空闲暂停阈值 (分钟)",
   "option.dialogIdleDismissMin.label": "对话框期间空闲计为休息 (分钟)"

@@ -6,6 +6,8 @@
   "notify.pickPreset": "请选择一个预设, 或在设置中输入自定义格式",
   "alert.needFormat": "请先输入自定义格式",
   "alert.preview": "预览:  %s",
+  "error.invalidFormat": "格式无效 -- %s",
+  "error.tableFormat": "该格式产生的是表而非文本 (请避免使用 *t)",
 
   "option.format.label": "格式",
   "option.format.values.%m/%d/%Y %I:%M:%S %p": "US 12 小时制  (06/23/2026 03:04:05 PM)",

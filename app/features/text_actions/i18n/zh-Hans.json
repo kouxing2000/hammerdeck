@@ -17,6 +17,17 @@
   "prompt.instruct.title": "对选中文本的指令",
   "prompt.instruct.ph": "例如 让它更正式一些",
 
+  "action.dictionary": "词典",
+  "action.lowercase": "小写",
+  "action.uppercase": "大写",
+  "action.calculate": "计算",
+  "action.aiRefine": "AI: 润色",
+  "action.aiEnrich": "AI: 丰富",
+  "action.aiComplete": "AI: 补全",
+  "action.aiSummary": "AI: 摘要",
+  "action.aiTranslate": "AI: 翻译",
+  "action.aiFreeAsk": "AI: 自由提问",
+
   "action.quick_open.label": "对选中文本执行操作",
   "action.quick_open.description": "复制选中内容, 然后提供一个菜单: 打开网址, 改变大小写, 计算, 在词典中查询, 或 (配合密钥) 通过 AI 处理 -- 结果就地粘贴回去.",
   "action.quick_open.mnemonic": "O - 对选区执行操作 (act On)",

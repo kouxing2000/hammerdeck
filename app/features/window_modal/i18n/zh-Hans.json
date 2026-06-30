@@ -8,6 +8,16 @@
 
   "option.stepParts.label": "每屏步数 (移动/调整大小的粒度)",
 
+  "hud.title": "窗口模式",
+  "hud.maxCenter": "最大化 / 居中",
+  "hud.caption": "字母键贴靠半屏与角落",
+  "hud.group.nudge": "微移",
+  "hud.group.resize": "⇧ 调整大小",
+  "hud.group.growShrink": "放大/缩小",
+  "hud.group.toScreen": "移到屏幕",
+  "hud.group.undoRedo": "撤销/重做",
+  "hud.footer": "esc  退出",
+
   "alert.oneScreen": "只有一个屏幕",
   "alert.noScreen": "%s 方向没有屏幕"
 }

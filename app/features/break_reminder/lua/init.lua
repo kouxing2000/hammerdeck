@@ -10,12 +10,6 @@
 -- SERVICE feature: all timers/watchers/dialogs go through ctx (scoped
 -- teardown); stop() is not needed.
 
-local POSTPONE_1     = "postpone 1 minute"
-local POSTPONE_5     = "postpone 5 minutes"
-local SCREENSAVER    = "Start Screensaver"
-local LOCK_SCREEN    = "Lock Screen"
-local SYSTEM_SLEEP   = "System Sleep"
-
 local MAX_SHOW_RETRIES = 10   -- delay the dialog while the user is mid-input
 
 local function round(x) return math.floor(x + 0.5) end
@@ -148,6 +142,18 @@ return {
                 ctx.setState("workSeconds", s.workSeconds)
             end
 
+            -- Localized action labels, computed once. onChoose compares the
+            -- chosen label against these SAME locals (not English literals), so
+            -- dispatch tracks the displayed text in any locale -- the decouple of
+            -- the former display-and-comparison-key constants.
+            local L = {
+                postpone1   = ctx.t("action.postpone1", "postpone 1 minute"),
+                postpone5   = ctx.t("action.postpone5", "postpone 5 minutes"),
+                screensaver = ctx.t("action.screensaver", "Start Screensaver"),
+                lock        = ctx.t("action.lock", "Lock Screen"),
+                sleep       = ctx.t("action.sleep", "System Sleep"),
+            }
+
             s.dialog = ctx.askChoice {
                 title = headline .. ctx.t("dialog.timeToRest", " Time to rest"),
                 infos = {
@@ -155,11 +161,11 @@ return {
                     string.format(ctx.t("info.elapsedToday", "Elapsed today: %s"), durationInfo(now - s.lastStartWorkStamp)),
                 },
                 actions = {
-                    { label = POSTPONE_1,   icon = "symbol:clock" },
-                    { label = POSTPONE_5,   icon = "symbol:clock.arrow.circlepath" },
-                    { label = SCREENSAVER,  icon = "symbol:moon.stars" },
-                    { label = LOCK_SCREEN,  icon = "symbol:lock" },
-                    { label = SYSTEM_SLEEP, icon = "symbol:powersleep" },
+                    { label = L.postpone1,   icon = "symbol:clock" },
+                    { label = L.postpone5,   icon = "symbol:clock.arrow.circlepath" },
+                    { label = L.screensaver, icon = "symbol:moon.stars" },
+                    { label = L.lock,        icon = "symbol:lock" },
+                    { label = L.sleep,       icon = "symbol:powersleep" },
                 },
                 onChoose = function(choice)
                     s.dialog = nil
@@ -175,19 +181,19 @@ return {
                     end
 
                     if choice == nil then
-                        choice = POSTPONE_1
+                        choice = L.postpone1
                         ctx.alert(choice)
                     end
 
-                    if choice == LOCK_SCREEN then
+                    if choice == L.lock then
                         ctx.lockScreen()
-                    elseif choice == SCREENSAVER then
+                    elseif choice == L.screensaver then
                         ctx.startScreensaver()
-                    elseif choice == SYSTEM_SLEEP then
+                    elseif choice == L.sleep then
                         ctx.systemSleep()
-                    elseif choice == POSTPONE_1 then
+                    elseif choice == L.postpone1 then
                         startRestTimer(60, true)
-                    elseif choice == POSTPONE_5 then
+                    elseif choice == L.postpone5 then
                         startRestTimer(5 * 60, true)
                     end
                 end,
