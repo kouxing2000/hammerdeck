@@ -328,14 +328,18 @@ private struct RulePageRow: View {
 /// a position. The position is either a named snap-grid id, or -- when the row
 /// came from "Capture current layout" -- exact ratios (`ratios` non-nil, `pos`
 /// holds the captured sentinel so the picker can show it as "Captured").
-private struct Placement: Identifiable {
+// Internal (not private): RuleFormModel (a separate file) + its tests build these.
+struct Placement: Identifiable {
     let id = UUID()
     var app: String = ""
     var screen: String = ""
     var pos: String = "full"
     var ratios: [String: Double]? = nil
 }
-private let capturedPosId = "__captured__"
+let capturedPosId = "__captured__"
+// The app-target effect kinds (minimize/hide/quit a named app). File-level so
+// both AddRuleForm and RuleFormModel.buildSpec share one source.
+let appTargetKinds: Set<String> = ["minimizeApp", "hideApp", "quitApp"]
 
 /// One tappable token in the rule sentence: a rounded accent pill whose label is
 /// the current value, opening `popover` to change it. Mirrors the timeline marker
@@ -378,7 +382,7 @@ private struct TokenPill<Popover: View>: View {
 /// One step of a `chain` effect in the form editor -- one of the simple
 /// context-free atoms. A chain step that's a layout or command is authored in
 /// JSON, not here (loadForEdit drops such a chain into the JSON editor).
-private struct ChainStep: Identifiable {
+struct ChainStep: Identifiable {
     let id = UUID()
     var kind: String = "notify"
     var notifyTitle: String = AppInfo.displayName
@@ -1436,7 +1440,6 @@ private struct AddRuleForm: View {
 
     // The effect kinds that target an app (share the chooser + the `app`/`appBundleId`
     // params). Named "...ByName" historically; matching is now bundle-id-first.
-    private let appTargetKinds: Set<String> = ["minimizeApp", "hideApp", "quitApp"]
     // The two wallpaper effects share the solidDisplay @State + the display picker.
     private let wallpaperKinds: Set<String> = ["solidWallpaper", "setWallpaperImage"]
 
@@ -1918,143 +1921,28 @@ private struct AddRuleForm: View {
         }
         """
 
-    private func buildSpec() -> [String: Any]? {
-        var on: [String: Any]
-        if isStateTrigger {
-            let v = stateValue.trimmingCharacters(in: .whitespaces)
-            guard !v.isEmpty, !signal.isEmpty else { return nil }
-            on = ["type": "state", "signal": signal]
-            on[transition] = v
-            // ONLY an app-identity signal matches by bundle id -- never attach a
-            // (possibly stale, left by switching signals) id to a name/enum/set signal,
-            // or the engine would match a bundle id it never satisfies (a silent dead
-            // rule). Mirrors the engine gate (sig.bundleIdMatch in rules.bindOne).
-            let bid = stateValueBundleId.trimmingCharacters(in: .whitespaces)
-            if signalUsesBundleId, !bid.isEmpty { on["bundleId"] = bid }
-        } else if triggerType == "event" {
-            on = ["type": "event", "event": eventName]
-        } else if triggerType == "schedule" {
-            on = scheduleMode == "everyMin"
-                ? ["type": "schedule", "everyMin": everyMin]
-                : ["type": "schedule", "at": atTime]
-        } else {
-            return nil
-        }
-        guard let eff = selectedEffect else { return nil }
-        var effect: [String: Any]
-        if eff.kind == "notify" {
-            let t = notifyTitle.trimmingCharacters(in: .whitespaces)
-            guard !t.isEmpty else { return nil }
-            effect = ["kind": "notify", "title": t, "channel": notifyChannel]
-            let body = notifyText.trimmingCharacters(in: .whitespaces)
-            if !body.isEmpty { effect["text"] = body }
-        } else if eff.kind == "layout" {
-            let list: [[String: Any]] = placements.compactMap { p in
-                let app = p.app.trimmingCharacters(in: .whitespaces)
-                let screen = p.screen.trimmingCharacters(in: .whitespaces)
-                guard !app.isEmpty, !screen.isEmpty else { return nil }
-                var entry: [String: Any] = ["app": app, "screen": screen]
-                if p.pos == capturedPosId, let r = p.ratios {
-                    entry["pos"] = r            // exact captured ratios
-                } else {
-                    entry["pos"] = p.pos        // a named snap-grid id
-                }
-                return entry
-            }
-            guard !list.isEmpty else { return nil }
-            effect = ["kind": "layout", "placements": list]
-        } else if eff.kind == "runShortcut" {
-            let n = shortcutName.trimmingCharacters(in: .whitespaces)
-            guard !n.isEmpty else { return nil }
-            effect = ["kind": "runShortcut", "name": n]
-        } else if eff.kind == "openURL" {
-            let u = openURLValue.trimmingCharacters(in: .whitespaces)
-            guard !u.isEmpty else { return nil }
-            effect = ["kind": "openURL", "url": u]
-        } else if eff.kind == "speak" {
-            let t = speakText.trimmingCharacters(in: .whitespaces)
-            guard !t.isEmpty else { return nil }
-            effect = ["kind": "speak", "text": t]
-        } else if eff.kind == "solidWallpaper" {
-            let d = solidDisplay.trimmingCharacters(in: .whitespaces)
-            guard !d.isEmpty else { return nil }
-            effect = ["kind": "solidWallpaper", "color": solidColor, "display": d]
-        } else if eff.kind == "setWallpaperImage" {
-            let img = wallpaperImage.trimmingCharacters(in: .whitespaces)
-            let d = solidDisplay.trimmingCharacters(in: .whitespaces)
-            guard !img.isEmpty, !d.isEmpty else { return nil }
-            effect = ["kind": "setWallpaperImage", "image": img, "display": d]
-        } else if eff.kind == "moveAppToDisplay" {
-            let a = moveApp.trimmingCharacters(in: .whitespaces)
-            let d = moveDisplay.trimmingCharacters(in: .whitespaces)
-            guard !a.isEmpty, !d.isEmpty else { return nil }
-            effect = ["kind": "moveAppToDisplay", "app": a, "display": d]
-            if !moveAppBundleId.isEmpty { effect["appBundleId"] = moveAppBundleId }
-        } else if appTargetKinds.contains(eff.kind) {
-            let a = minimizeAppName.trimmingCharacters(in: .whitespaces)
-            guard !a.isEmpty else { return nil }
-            effect = ["kind": eff.kind, "app": a]
-            if !minimizeAppBundleId.isEmpty { effect["appBundleId"] = minimizeAppBundleId }
-        } else if eff.kind == "launchApp" {
-            // The bundle id is the launch key (required); the name rides along for the
-            // sentence/log. A typed-name-only pick (no id) is blocked by canSubmit.
-            let bid = launchAppBundleId.trimmingCharacters(in: .whitespaces)
-            let a = launchAppName.trimmingCharacters(in: .whitespaces)
-            guard !bid.isEmpty, !a.isEmpty else { return nil }
-            effect = ["kind": "launchApp", "app": a, "appBundleId": bid]
-        } else if eff.kind == "chain" {
-            // Drop incomplete steps (mirrors layout); keep order.
-            let steps: [[String: Any]] = chainSteps.compactMap { s in
-                switch s.kind {
-                case "notify":
-                    let t = s.notifyTitle.trimmingCharacters(in: .whitespaces)
-                    guard !t.isEmpty else { return nil }
-                    var e: [String: Any] = ["kind": "notify", "title": t, "channel": s.notifyChannel]
-                    let body = s.notifyText.trimmingCharacters(in: .whitespaces)
-                    if !body.isEmpty { e["text"] = body }
-                    return e
-                case "speak":
-                    let t = s.speakText.trimmingCharacters(in: .whitespaces)
-                    guard !t.isEmpty else { return nil }
-                    return ["kind": "speak", "text": t]
-                case "runShortcut":
-                    let n = s.shortcutName.trimmingCharacters(in: .whitespaces)
-                    guard !n.isEmpty else { return nil }
-                    return ["kind": "runShortcut", "name": n]
-                case "openURL":
-                    let u = s.url.trimmingCharacters(in: .whitespaces)
-                    guard !u.isEmpty else { return nil }
-                    return ["kind": "openURL", "url": u]
-                case "lockScreen":
-                    return ["kind": "lockScreen"]
-                case "startScreensaver":
-                    return ["kind": "startScreensaver"]
-                case "emptyTrash":
-                    return ["kind": "emptyTrash"]
-                case "eject":
-                    return ["kind": "eject"]
-                default:
-                    return nil
-                }
-            }
-            guard !steps.isEmpty else { return nil }
-            effect = ["kind": "chain", "effects": steps]
-        } else if eff.kind == "lockScreen" {
-            effect = ["kind": "lockScreen"]
-        } else if eff.kind == "startScreensaver" {
-            effect = ["kind": "startScreensaver"]
-        } else if eff.kind == "emptyTrash" {
-            effect = ["kind": "emptyTrash"]
-        } else if eff.kind == "eject" {
-            effect = ["kind": "eject"]
-        } else {
-            effect = ["kind": "command", "feature": eff.feature ?? ""]
-            if let a = eff.action { effect["action"] = a }
-        }
-        var spec: [String: Any] = ["on": on, "effect": effect]
-        let label = name.trimmingCharacters(in: .whitespaces)
-        if !label.isEmpty { spec["name"] = label }
-        return spec
+    // Build the engine rule-spec from the current form state. The serialization
+    // logic lives in RuleFormModel (unit-tested in RuleFormModelTests); this just
+    // bundles the live @State and delegates, so the view owns no untestable logic.
+    private func buildSpec() -> [String: Any]? { formModel.buildSpec() }
+
+    // Snapshot the form's @State into the plain, testable model.
+    private var formModel: RuleFormModel {
+        var m = RuleFormModel()
+        m.name = name; m.triggerType = triggerType; m.transition = transition
+        m.stateValue = stateValue; m.stateValueBundleId = stateValueBundleId
+        m.eventName = eventName; m.scheduleMode = scheduleMode
+        m.everyMin = everyMin; m.atTime = atTime
+        m.effectId = effectId
+        m.notifyTitle = notifyTitle; m.notifyText = notifyText; m.notifyChannel = notifyChannel
+        m.placements = placements; m.chainSteps = chainSteps
+        m.shortcutName = shortcutName; m.openURLValue = openURLValue; m.speakText = speakText
+        m.wallpaperImage = wallpaperImage; m.solidColor = solidColor; m.solidDisplay = solidDisplay
+        m.minimizeAppName = minimizeAppName; m.minimizeAppBundleId = minimizeAppBundleId
+        m.moveApp = moveApp; m.moveAppBundleId = moveAppBundleId; m.moveDisplay = moveDisplay
+        m.launchAppName = launchAppName; m.launchAppBundleId = launchAppBundleId
+        m.opts = opts
+        return m
     }
 }
 
