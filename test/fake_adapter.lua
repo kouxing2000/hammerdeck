@@ -361,6 +361,21 @@ end
 
 function adapter.focusWindow(id)
     fake.focused[#fake.focused + 1] = id
+    -- Real focus ALWAYS activates the target app (SLPS front-process), but the
+    -- echo below fires only under raiseActivates -- a deliberate scoping, not a
+    -- model of reality: only the echo-hostile suites opt in, and there the
+    -- deck's settle-guard is exercised against the hero-reclaim FOCUS too
+    -- (raiseDeck lifts the hero with focus, not a surgical raise, precisely to
+    -- beat such an activation). Default-mode tests see focus with no echo.
+    if fake.raiseActivates then
+        for _, w in ipairs(fake.windows) do
+            if w.id == id then
+                fake.windowTitle = w.title
+                fake.activateApp(w.appName, w.bundleID)
+                break
+            end
+        end
+    end
     return true
 end
 

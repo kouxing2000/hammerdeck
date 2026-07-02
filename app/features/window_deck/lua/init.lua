@@ -28,9 +28,12 @@
 -- re-raise (raising activates some apps, a needless one-frame blink). Focusing a
 -- NON-deck window is a temporary peek -- left alone, on top only while it holds
 -- focus, then sunk behind the deck the moment you focus a deck window again.
--- raiseDeck uses ctx.window.raise (surgical AXRaise); a settle guard absorbs the
--- focus/activation echoes those raises emit so they never re-enter reconcile and
--- make the hero and a peek fight for front. Focus is the only "tell".
+-- raiseDeck raises the non-hero members with ctx.window.raise (surgical AXRaise)
+-- then lifts the HERO on top with ctx.window.focus (a real activation -- a
+-- surgical raise can't beat an app that activated itself when raised, e.g.
+-- VSCode/Chrome, which left the hero stuck behind a member); a settle guard
+-- absorbs the focus/activation echoes those emit so they never re-enter
+-- reconcile and make the hero and a peek fight for front. Focus is the only "tell".
 --
 -- A SERVICE (start builds the idle controller; stop restores if the deck is live
 -- on disable) with one rebindable action (the toggle). Reuses the pure tiling
@@ -350,28 +353,53 @@ local function controllerFor(ctx)
         if st.ghost then st.ghost.stop(); st.ghost = nil end
     end
 
-    -- Keep the deck ABOVE non-deck windows: raise every present member with a
-    -- SURGICAL raise (verified -- doesn't activate the app or drag same-app
-    -- siblings, so no spurious promotion, and it can't beat the currently-active
-    -- window, so a focused hero stays on top of the group on its own). Non-deck
-    -- windows sink behind; a deliberately-focused non-deck window (a "peek") is
-    -- left alone and stays on top only while it holds focus. Called on enter and
-    -- whenever focus returns to a deck window, so the deck self-heals after a
-    -- peek. Re-listed because ids churn every list().
+    local focusedMember   -- forward: defined below (raiseDeck gates on it)
+
+    -- Keep the deck ABOVE non-deck windows: raise every present non-hero member
+    -- with a surgical raise (doesn't drag same-app siblings, so no spurious
+    -- promotion), THEN lift the HERO on top LAST. Non-deck windows sink behind;
+    -- a deliberately-focused non-deck window (a "peek") is left alone and stays
+    -- on top only while it holds focus. Called on enter and whenever focus
+    -- returns to a deck window, so the deck self-heals after a peek. Re-listed
+    -- because ids churn every list().
+    --
+    -- The hero's final lift is a real FOCUS (ctx.window.focus -- SLPS
+    -- activation), NOT another surgical raise. A surgical raise can't beat the
+    -- currently-active window, and some apps (VSCode, Chrome) ACTIVATE the
+    -- window they are asked to raise -- so a member's raise can front its app,
+    -- and the hero's surgical reclaim would then be unable to get back on top:
+    -- the hero sat stranded behind a member (an async activation race, so
+    -- "sometimes"), and on a peek-return the members flashed in front before the
+    -- hero clawed back (the blink). Focusing the hero beats any such member
+    -- activation, so the hero deterministically ends on top; beginSettle() at
+    -- the call sites absorbs the focus/activation echoes so they never re-enter
+    -- reconcile and fight for front.
+    --
+    -- The focus is GATED on the hero actually holding focus as the pass starts
+    -- (captured BEFORE the member raises -- an activating member may have
+    -- stolen frontmost mid-pass, which is exactly the race being beaten). The
+    -- one path where the hero is NOT focused here: the user peeked a non-deck
+    -- window DURING a promote flight, so landHero's reclean runs with the peek
+    -- holding focus -- a real focus would yank it away, breaking the "a peek
+    -- stays on top while it holds focus" contract. There the hero falls back
+    -- to the surgical raise (above the members; the active peek stays in
+    -- front, sunk on the next return like any peek).
     local function raiseDeck()
         if not st.active then return end
         local ids = resolveIds()
-        -- Raise the peeks first, then the HERO last: some apps ACTIVATE the window
-        -- they are asked to raise, so raising the hero last leaves focus ON the
-        -- hero, not on a peek. beginSettle() at the call sites then absorbs the
-        -- focus/activation echoes these raises emit, so they don't re-enter
-        -- reconcile and fight for front (the blink).
+        local f = focusedMember()   -- read BEFORE the raises below can front an app
         for _, m in ipairs(st.group) do
             if m.key ~= st.heroKey and not m.gone and ids[m.key] then
                 ctx.window.raise(ids[m.key])
             end
         end
-        if st.heroKey and ids[st.heroKey] then ctx.window.raise(ids[st.heroKey]) end
+        if st.heroKey and ids[st.heroKey] then
+            if f and f.key == st.heroKey then
+                ctx.window.focus(ids[st.heroKey])
+            else
+                ctx.window.raise(ids[st.heroKey])
+            end
+        end
     end
 
     -- Our own window moves (raise/resize) emit focus/activation notifications a
@@ -671,8 +699,9 @@ local function controllerFor(ctx)
     -- triggers reconcile, so its first row is frequently the PREVIOUS front
     -- window -- which promoted the wrong window and left the one you just
     -- focused sitting in its slot. Returns member (nil = non-deck focus) plus
-    -- the best key for logging.
-    local function focusedMember()
+    -- the best key for logging. (Forward-declared above: raiseDeck gates the
+    -- hero's focus-lift on it.)
+    function focusedMember()
         local info = ctx.frontmostAppInfo() or {}
         local bid = info.bundleId or ""
         local wid = ctx.window.focusedWid()

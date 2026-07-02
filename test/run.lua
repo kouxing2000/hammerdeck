@@ -2578,10 +2578,17 @@ do
         table.insert(fake.windows, 1,
             { id = 77, title = "X", appName = "Other", bundleID = "com.x", x = 5, y = 5, w = 90, h = 90 })
         focusWin(77)                   -- peek a non-deck window (sets peeked)
-        fake.raises = {}
+        fake.raises, fake.focused = {}, {}
         focusWin(2)                    -- return to the hero -> reclean -> raiseDeck -> echoes absorbed
-        ok(#fake.raises == 4,
-            "a peek-return re-raises once; activation echoes never re-promote (no loop)")
+        ok(#fake.raises == 3 and #fake.focused == 1 and fake.focused[1] == 2,
+            "a peek-return re-raises the 3 members and FOCUSES the hero exactly once "
+            .. "(a real activation beats an activating member; echoes never re-promote, no loop)")
+        -- ordering proof: under raiseActivates every raise/focus activates its
+        -- app, so the LAST activation wins -- the hero's app ending frontmost
+        -- shows the hero focus came AFTER the member raises (members raised
+        -- above a hero already reclaimed would regress the very fix)
+        ok(fake.frontmostId == "com.tl",
+            "the hero's own app is frontmost after the reclean (hero lift came last)")
         ok(registry.liveHandleCount() == 11,
             "no stray handle: 5 base + frame watcher + 4 member borders + 1 ghost (FOCUS)")
 
@@ -2589,6 +2596,33 @@ do
         ok(registry.liveHandleCount() == 1, "clean after the blink regression")
         registry.setEnabled("window_deck", false)
         fake.raiseActivates = false
+    end
+
+    -- T-WD-peek-mid-flight: a peek during a promote flight keeps its focus ----
+    -- landHero's reclean then runs while a NON-deck window holds focus. The
+    -- hero's lift must fall back to the surgical raise: a real focus would
+    -- yank focus off the peek, breaking "a peek stays on top while it holds
+    -- focus". raiseDeck gates on focusedMember() captured BEFORE the raises.
+    do
+        fake.windows = quadWindows()
+        registry.setEnabled("window_deck", true)
+        enterDeck()
+        focusWin(2)                    -- promote TL -> hero
+        table.insert(fake.windows, 1,
+            { id = 88, title = "P", appName = "Peek", bundleID = "com.peek", x = 5, y = 5, w = 90, h = 90 })
+        focusWin(88)                   -- peek a non-deck window (sets peeked)
+        focusWin(3, nil, true)         -- back to TR -> swap beat starts, mid-flight
+        focusWin(88, nil, true)        -- user peeks AGAIN during the flight
+        fake.raises, fake.focused = {}, {}
+        fake.fireTimers("after")       -- step 1 lands -> step 2 launches
+        fake.fireTimers("after")       -- step 2 lands -> landHero -> reclean
+        ok(#fake.focused == 0,
+            "reclean under a mid-flight peek never FOCUSES the hero (the peek keeps focus)")
+        ok(#fake.raises == 4 and fake.raises[#fake.raises] == 3,
+            "the hero is still lifted surgically, last, above the members")
+        fake.pressHotkey("k", HYP)     -- exit
+        registry.setEnabled("window_deck", false)
+        ok(registry.liveHandleCount() == 0, "clean after the mid-flight peek regression")
     end
 
     -- T-WD2: focus-driven promotion + swap + escalating Escape ----------------

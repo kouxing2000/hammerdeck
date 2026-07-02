@@ -552,14 +552,17 @@ extension Native {
         return 0
     }
 
-    // Raise a listed window above others WITHOUT activating its app -- a pure
-    // window-level AXRaise. Verified surgical (2026-07-01 z-order probe): it does
-    // NOT drag the app's same-app sibling windows forward (same-screen OR cross-
-    // screen) and does NOT steal app activation, so it can't trip the focus
-    // observer / cause a spurious promotion. A pure raise also can't beat the
-    // currently-active window, so a focused hero stays on top on its own. Window
-    // Deck uses this to keep the deck above non-deck windows. Id from the most
-    // recent listWindows(); returns true on success.
+    // Raise a listed window above others via a window-level AXRaise. For most
+    // apps this is surgical (2026-07-01 z-order probe): it does NOT drag the
+    // app's same-app sibling windows forward (same-screen OR cross-screen) and
+    // does NOT steal app activation, so it can't trip the focus observer / cause
+    // a spurious promotion, and it can't beat the currently-active window. BUT
+    // some apps (VSCode, Chrome) ACTIVATE the window they are asked to raise, so
+    // on those an AXRaise DOES front the app -- which is why Window Deck raises
+    // its non-hero members with this but reclaims the HERO's top slot with
+    // focus_window (a real SLPS activation that beats an activating member),
+    // NOT another surgical raise. Id from the most recent listWindows(); returns
+    // true on success.
     func raiseWindow(_ L: OpaquePointer?) -> Int32 {
         guard let id = LuaState.int(L, 1), let ref = axWindowCache[id] else {
             lua_pushboolean(L, 0); return 1
