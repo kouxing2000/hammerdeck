@@ -23,7 +23,15 @@ extension Native {
     // MARK: - Banner
 
     func bannerShow(_ L: OpaquePointer?) -> Int32 {
-        let banner = BannerPanel(text: LuaState.string(L, 1) ?? "")
+        // Optional screen rect (args 2-5, top-left global points): pin the
+        // banner to that screen's top edge instead of NSScreen.main's.
+        var screen: NSRect?
+        if let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+           let w = LuaState.double(L, 4), let h = LuaState.double(L, 5) {
+            let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+            screen = NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h)
+        }
+        let banner = BannerPanel(text: LuaState.string(L, 1) ?? "", screen: screen)
         let id = registerResource { banner.close() }
         banners[id] = banner
         lua_pushinteger(L, lua_Integer(id))
@@ -237,6 +245,62 @@ extension Native {
         return 0
     }
 
+    // MARK: - askWindows (one-shot multi-select, built on WindowPickerPanel)
+
+    func askWindows(_ L: OpaquePointer?) -> Int32 {
+        let title = LuaState.string(L, 1) ?? ""
+        let items = LuaState.dictArray(L, 2)
+        let minPick = LuaState.int(L, 3) ?? 1
+        let palette = LuaState.stringArray(L, 4)   // color-cycle order; empty = no swatches
+        let ref = lua.makeRef(at: 5)
+
+        let id = allocId()
+        var done = false
+        let entries = items.map { d in
+            WindowPickerEntry(text: d["text"] as? String ?? "",
+                              subText: d["subText"] as? String,
+                              iconToken: d["image"] as? String,
+                              color: d["color"] as? String ?? "")
+        }
+        let panel = WindowPickerPanel(title: title, entries: entries, minPick: minPick,
+                                      palette: palette) { picked, colors in
+            guard !done else { return }
+            done = true
+            Native.shared.lua.callRef(ref) { L in
+                guard let picked else { lua_pushnil(L); return 1 }
+                // 1-based checked indices as a Lua array; the adapter maps them
+                // back to the original choice tables it kept Lua-side.
+                lua_createtable(L, Int32(picked.count), 0)
+                for (i, idx) in picked.enumerated() {
+                    lua_pushinteger(L, lua_Integer(idx))
+                    lua_rawseti(L, -2, lua_Integer(i + 1))
+                }
+                // ...plus the (possibly recolored) per-row colors, aligned 1..n
+                // with ALL entries, so the adapter can update each kept item.
+                lua_createtable(L, Int32(colors.count), 0)
+                for (i, hex) in colors.enumerated() {
+                    lua_pushstring(L, hex)
+                    lua_rawseti(L, -2, lua_Integer(i + 1))
+                }
+                return 2
+            }
+            Native.shared.lua.releaseRef(ref)
+            Native.shared.freeResource(id)
+        }
+        panel.show()
+
+        cancellers[id] = {
+            if !done {
+                done = true
+                Native.shared.lua.releaseRef(ref)
+            }
+            panel.close()
+        }
+        windowPickers[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
     // MARK: - askText (one-shot text prompt)
 
     func askText(_ L: OpaquePointer?) -> Int32 {
@@ -272,6 +336,72 @@ extension Native {
 
     func askTextDismiss(_ L: OpaquePointer?) -> Int32 {
         if let id = LuaState.int(L, 1).map(Int32.init) { askTexts[id]?.dismiss() }
+        return 0
+    }
+
+    // MARK: - Outline (click-through accent border overlays: member/hero/ghost)
+
+    func outlineShow(_ L: OpaquePointer?) -> Int32 {
+        let panel = OutlinePanel(kind: LuaState.string(L, 1) ?? "member",
+                                 colorHex: LuaState.string(L, 2) ?? "")
+        let id = registerResource { panel.close() }
+        outlines[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    func outlineSetColor(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init), let hex = LuaState.string(L, 2) {
+            outlines[id]?.setColor(hex)
+        }
+        return 0
+    }
+
+    func outlineSetFrame(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init),
+              let panel = outlines[id],
+              let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+              let w = LuaState.double(L, 4), let h = LuaState.double(L, 5) else { return 0 }
+        // top-left global points -> AppKit bottom-left (same flip axRect uses).
+        let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+        panel.place(NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h))
+        return 0
+    }
+
+    func outlineSetStyle(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init), let kind = LuaState.string(L, 2) {
+            outlines[id]?.setStyle(kind)
+        }
+        return 0
+    }
+
+    func outlineAnimateFrame(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let panel = outlines[id],
+              let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+              let w = LuaState.double(L, 4), let h = LuaState.double(L, 5) else { return 0 }
+        let dur = LuaState.double(L, 6) ?? 0.15
+        // top-left global points -> AppKit bottom-left (same flip axRect uses).
+        let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+        panel.animateTo(NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h),
+                        duration: dur)
+        return 0
+    }
+
+    func outlineHide(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) { outlines[id]?.hide() }
+        return 0
+    }
+
+    func outlineSetHole(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let panel = outlines[id] else { return 0 }
+        guard let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+              let w = LuaState.double(L, 4), let h = LuaState.double(L, 5) else {
+            panel.setHole(nil)   // no rect args = clear the hole
+            return 0
+        }
+        // top-left global points -> AppKit bottom-left (same flip axRect uses).
+        let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+        panel.setHole(NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h))
         return 0
     }
 

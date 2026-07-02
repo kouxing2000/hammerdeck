@@ -240,10 +240,63 @@ function adapter.askChoice(opts)
     }
 end
 
--- Full-width banner overlay at the top of the main screen.
+-- A one-shot MULTI-SELECT picker: a titled, checkboxed list, every row
+-- pre-checked; the user unchecks the ones to leave out, then confirms. opts:
+--   title   = header text
+--   items   = { { text=, subText=, image=<icon token>, color=<"#RRGGBB">,
+--                 <caller payload...> }, ... } -- color (optional) previews the
+--               window's border color as a trailing dot the user can CLICK to
+--               recolor (cycles `palette`)
+--   min     = minimum rows that must stay checked to confirm (default 1)
+--   palette = { "#RRGGBB", ... } cycle order for recoloring (empty/nil = no dots)
+--   onChoose(kept|nil)  -- kept = array of the CHECKED item tables (the caller's
+--                          payload intact, `color` updated to the user's pick);
+--                          nil = cancelled / clicked away
+-- The bridge passes CHECKED row INDICES + per-row colors; the items table stays
+-- Lua-side (same split as adapter.chooser). The dialog frees itself after
+-- completion.
+function adapter.askWindows(opts)
+    local items = opts.items or {}
+    local display = {}
+    for i, it in ipairs(items) do
+        display[i] = { text = it.text or "", subText = it.subText,
+                       image = it.image, color = it.color }
+    end
+    local id = native.ask_windows(
+        opts.title or "",
+        display,
+        opts.min or 1,
+        opts.palette or {},
+        function(indices, colors)
+            if not opts.onChoose then return end
+            if not indices then return opts.onChoose(nil) end
+            local kept = {}
+            for _, idx in ipairs(indices) do
+                local it = items[idx]
+                if colors and colors[idx] and colors[idx] ~= "" then it.color = colors[idx] end
+                kept[#kept + 1] = it
+            end
+            opts.onChoose(kept)
+        end)
+    return {
+        stop = function() native.stop(id) end,
+    }
+end
+
+-- Full-width banner overlay along a screen's top edge. `screenFrame`
+-- (optional, a {x,y,w,h} top-left-global rect -- e.g. a ctx.screen.frames()
+-- row) pins the banner to THAT screen; without it the banner falls to the
+-- key window's screen, which is wrong whenever the caller acts on a screen
+-- that doesn't hold key focus (Window Deck's picked target screen).
 -- Returns { setText(t), stop() }.
-function adapter.banner(text)
-    local id = native.banner_show(text or "")
+function adapter.banner(text, screenFrame)
+    local id
+    if screenFrame then
+        id = native.banner_show(text or "", screenFrame.x, screenFrame.y,
+                                screenFrame.w, screenFrame.h)
+    else
+        id = native.banner_show(text or "")
+    end
     return {
         setText = function(t) native.banner_set_text(id, t) end,
         stop    = function() native.stop(id) end,
@@ -274,6 +327,38 @@ function adapter.askText(opts)
     }
 end
 
+-- A click-through accent BORDER drawn around a window region (Window Deck's
+-- member/hero/ghost markers). `kind` styles it: "member" (subtle), "hero"
+-- (strong), "ghost" (faint dashed). `f` is a top-left-origin global-points rect
+-- (same coordinate system as setWindowFrame). Returns { setFrame(f),
+-- setStyle(kind), stop() } -- setStyle re-styles in place (member -> hero on
+-- promote) without recreating the panel.
+function adapter.outline(kind, color)
+    local id = native.outline_show(kind or "member", color or "")
+    return {
+        setFrame = function(f) native.outline_set_frame(id, f.x, f.y, f.w, f.h) end,
+        -- Fly the border smoothly to `f` over `dur` seconds (the ring flight);
+        -- real windows can't tween, but this overlay is our own window.
+        animateFrame = function(f, dur)
+            native.outline_animate_frame(id, f.x, f.y, f.w, f.h, dur or 0.15)
+        end,
+        setStyle = function(k) native.outline_set_style(id, k) end,
+        setColor = function(c) native.outline_set_color(id, c) end,
+        -- Hide without destroying; the next setFrame/animateFrame re-shows.
+        -- (Window Deck hides a ring while the user drags its window -- live
+        -- tracking would trail the drag -- and re-shows it once stable.)
+        hide     = function() native.outline_hide(id) end,
+        -- Clip the stroke out of rect `f` (nil clears): the overlays float above
+        -- every normal window, so without this a border whose region runs under
+        -- the hero would draw its lines ACROSS the hero.
+        setHole  = function(f)
+            if f then native.outline_set_hole(id, f.x, f.y, f.w, f.h)
+            else native.outline_set_hole(id) end
+        end,
+        stop     = function() native.stop(id) end,
+    }
+end
+
 -- Thin progress strip along the bottom of the main screen.
 -- Returns { setProgress(fraction 0..1), stop() }.
 function adapter.progressBar()
@@ -300,9 +385,13 @@ end
 -- Windows / apps
 -- ---------------------------------------------------------------------------
 
--- All standard windows, most-recently-focused first: { id, title, appName,
--- bundleID, x, y, w, h, screenName? } rows (frame in top-left-origin global
--- points -- the layout engine snapshots it). Returns {} when the Accessibility
+-- All standard windows, most-recently-focused first: { id, wid, title,
+-- appName, bundleID, x, y, w, h, minimized, fullscreen, screenName? } rows
+-- (frame in top-left-origin global points -- the layout engine snapshots it).
+-- `id` is valid only until the next list; `wid` is the OS-stable CGWindowID
+-- (0 = unresolved), the key for long-lived identity (it survives retitles).
+-- Minimized/fullscreen windows ARE listed (with their normal frames) --
+-- layout features filter them out. Returns {} when the Accessibility
 -- permission is missing -- check axTrusted()/axPrompt() to onboard.
 function adapter.listWindows()
     return native.list_windows()
@@ -311,6 +400,16 @@ end
 -- Focus a window by an id from the MOST RECENT listWindows() call.
 function adapter.focusWindow(id)
     return native.focus_window(id)
+end
+
+-- Raise a listed window above others WITHOUT activating its app -- a pure window-
+-- level AXRaise. Verified surgical (z-order probe): no same-app-sibling drag
+-- (same- or cross-screen), no app activation (so it never trips the focus
+-- observer), and it can't beat the currently-active window (so a focused hero
+-- stays on top). Window Deck keeps the deck above non-deck windows with this.
+-- Id from the MOST RECENT listWindows(). Returns true on success.
+function adapter.raiseWindow(id)
+    return native.raise_window(id) == true
 end
 
 -- Is this process trusted for Accessibility (window listing/focus)?
@@ -443,6 +542,32 @@ end
 -- activation. Used by the frontmostApp signal so it matches on the bundle id.
 function adapter.onAppActivatedInfo(fn)
     return handleFor(native.on_app_activated_info(fn))
+end
+
+-- Subscribe to focused-WINDOW changes: fn() fires (a bare pulse, no payload)
+-- whenever the frontmost app's focused window changes -- the within-app switch
+-- (cmd+`) that onAppActivated (app-level) can't see. The native observer swaps
+-- to the newly-frontmost app on each activation, so subscribing to BOTH covers
+-- every focus move. Needs Accessibility (AXObserver). Window Deck is the caller.
+function adapter.onFocusedWindowChanged(fn)
+    return handleFor(native.on_focused_window_changed(fn))
+end
+
+-- Subscribe to window move/resize for the given apps: fn(info) fires with
+-- { bundleID, title, wid, x, y, w, h } (top-left global points; wid = the
+-- stable CGWindowID, 0 when unresolvable) each time a window of one of
+-- `bundleIds` moves or resizes. Fires for the caller's OWN AX moves too --
+-- callers guard their own echoes. Needs Accessibility (AXObserver).
+-- Window Deck uses it to hide a ring while the user drags/resizes the window.
+function adapter.onWindowFramesChanged(bundleIds, fn)
+    return handleFor(native.on_window_frames_changed(bundleIds or {}, fn))
+end
+
+-- The FOCUSED window's stable CGWindowID (0 = unresolvable). Matches the
+-- `wid` field on listWindows rows, so a caller can key identity on it
+-- without touching the retitle-prone window title. Needs Accessibility.
+function adapter.focusedWindowWid()
+    return native.focused_window_wid()
 end
 
 -- ---------------------------------------------------------------------------

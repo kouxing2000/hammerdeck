@@ -128,6 +128,7 @@ do
             { "text_actions",    "action.calculate",    "Calculate" },
             { "insert_datetime", "error.tableFormat",   "That format produces a table, not text (avoid *t)" },
             { "window_grid",     "hud.caption",         "press a number to place the window" },
+            { "window_deck",     "pick.windows",        "Deck which windows?" },
             { "dark_mode",       "action.toggle.label", "Toggle dark mode" },
         }
         for _, e in ipairs(sweep) do
@@ -2308,6 +2309,756 @@ do
     ok(fake.liveHud() == nil, "disable mid-grid drops the HUD")
     ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
         "clean after window_grid test")
+end
+
+-- T25f: window_deck (grid <-> focus-driven hero over the by-id frame surface) ----
+do
+    local Wd = require("platform.windows")
+    registry.register(require("features.window_deck"))
+    fake.settings["hammerdeck.opt.window_deck.gutter"]        = 8
+    fake.settings["hammerdeck.opt.window_deck.heroPercent"]   = 78
+    fake.settings["hammerdeck.opt.window_deck.restoreOnExit"] = true
+    local HYP = { "cmd", "alt", "ctrl" }
+
+    local function near(a, b) return math.abs(a - b) < 0.5 end
+
+    -- Four windows, one per quadrant of a 1440x900 screen, with the BOTTOM-RIGHT
+    -- window listed FIRST -- so a naive row-major fill would mis-place it and the
+    -- nearest-cell assignment is provable. Fresh copies each enter (placement
+    -- mutates the rows).
+    local function quadWindows()
+        return {
+            { id = 1, title = "BR", appName = "AppBR", bundleID = "com.br", x = 900,  y = 550, w = 300, h = 200 },
+            { id = 2, title = "TL", appName = "AppTL", bundleID = "com.tl", x = 100,  y = 100, w = 300, h = 200 },
+            { id = 3, title = "TR", appName = "AppTR", bundleID = "com.tr", x = 1000, y = 100, w = 300, h = 200 },
+            { id = 4, title = "BL", appName = "AppBL", bundleID = "com.bl", x = 100,  y = 550, w = 300, h = 200 },
+        }
+    end
+    -- The 2x2 slots (gutter 8) in reading order and the hero, from the same math
+    -- the feature uses -- so the test tracks the algorithm, not a magic number.
+    local SCREEN = { x = 0, y = 0, w = 1440, h = 900, name = "Main", index = 1, builtin = true }
+    local slots  = Wd.tileSlots(SCREEN, 4, 8)          -- {TL, TR, BL, BR}
+    local TLslot, TRslot, BLslot, BRslot = slots[1], slots[2], slots[3], slots[4]
+    local HERO   = Wd.centeredRect(SCREEN, 0.78)
+
+    -- simulate the user focusing the window with id `id`: set the AX focused-
+    -- window identity the feature reads (frontmost app bundle id + focused title),
+    -- then fire the matching watcher. `within` = a same-app switch (focus observer
+    -- only, no app activation); otherwise a cross-app activation. NOTE: the feature
+    -- keys off this identity, NOT list order -- the CG z-order lags the real event.
+    local function focusWin(id, within, noFlush)
+        local w
+        for _, r in ipairs(fake.windows) do if r.id == id then w = r end end
+        fake.windowTitle = w.title
+        if within then
+            fake.frontmost, fake.frontmostId = w.appName, w.bundleID
+            fake.focusWindowChanged()
+        else
+            fake.activateApp(w.appName, w.bundleID)
+        end
+        -- `noFlush` leaves the beat mid-flight so the caller can assert the
+        -- dispatch order (the window's move fires at flight START, under the
+        -- ring); the caller flushes the timers itself.
+        if noFlush then return end
+        -- flush twice: the first fire lands the beat's ring flight (the FLIGHT
+        -- timer) + any settle window; the landing may arm a NEW settle, which
+        -- the second fire clears so the next focus event registers.
+        fake.fireTimers("after")
+        fake.fireTimers("after")
+    end
+    local function lastSetFor(id)                        -- most recent by-id move
+        for i = #fake.windowFrameSets, 1, -1 do
+            if fake.windowFrameSets[i].id == id then return fake.windowFrameSets[i] end
+        end
+        return nil
+    end
+
+    -- Enter the deck through the v1.1 pick flow (picker on every toggle): press
+    -- the toggle, take the active screen if a multi-monitor screen chooser opens,
+    -- then confirm the window multi-select with ALL rows checked -- the common
+    -- "deck everything" path. (Sub-tests that exclude/cancel drive the picker by
+    -- hand instead.) Exiting is a plain toggle press -- no picker on the way out.
+    local function enterDeck()
+        fake.pressHotkey("k", HYP)
+        local scr = fake.openDialog()
+        if scr and scr.title == "Deck which screen?" then scr.choose(scr.actions[1]) end
+        local p = fake.openWindowPicker()
+        if p then p.confirm(nil) end
+        fake.fireTimers("after")   -- flush the deck's settle window (see beginSettle)
+    end
+
+    -- placement-math unit checks (pure) ---------------------------------------
+    ok(Wd.gridDims(4).w == 2 and Wd.gridDims(4).h == 2, "gridDims(4) = 2x2")
+    ok(Wd.gridDims(5).w == 3 and Wd.gridDims(5).h == 2, "gridDims(5) = 3x2 (partial last row)")
+    ok(Wd.gridDims(7).w == 4 and Wd.gridDims(7).h == 2, "gridDims(7) = 4x2 override")
+    ok(Wd.gridDims(9).w == 3 and Wd.gridDims(9).h == 3, "gridDims(9) = 3x3")
+    do
+        local s5 = Wd.tileSlots(SCREEN, 5, 8)
+        ok(#s5 == 5, "tileSlots(5) yields 5 slots")
+        ok(near(s5[1].w, 1440 / 3 - 16), "full-row cell is a third wide (minus gutters)")
+        ok(near(s5[4].w, 1440 / 2 - 16) and near(s5[5].w, 1440 / 2 - 16),
+            "partial last row of 2 stretches each to a half (no dead cells)")
+    end
+
+    -- T-WD1: enter -> flat GRID with nearest-cell assignment ------------------
+    fake.focusedWindow = nil            -- pickScreen falls back to the cursor (screen 1)
+    fake.mousePos = { x = 10, y = 10 }
+    fake.screenList = { SCREEN }
+    fake.windows = quadWindows()
+    fake.windowFrameSets = {}
+    registry.setEnabled("window_deck", true)
+    ok(registry.liveHandleCount() == 1, "enabled service binds just the toggle hotkey")
+
+    fake.raises = {}
+    enterDeck()
+    ok(#fake.windowFrameSets == 4, "entering the deck tiles all four windows")
+    do
+        local raised = fake.raisedSet()
+        ok(raised[1] and raised[2] and raised[3] and raised[4],
+            "entering raises every deck window above non-deck windows on the screen")
+    end
+    local brSet = lastSetFor(1)
+    ok(brSet and near(brSet.x, BRslot.x) and near(brSet.y, BRslot.y)
+        and near(brSet.w, BRslot.w) and near(brSet.h, BRslot.h),
+        "the bottom-right window (listed first) lands in the bottom-right slot -- nearest-cell, not row-major")
+    local tlSet = lastSetFor(2)
+    ok(tlSet and near(tlSet.x, TLslot.x) and near(tlSet.y, TLslot.y),
+        "the top-left window lands in the top-left slot")
+    ok(fake.liveBanner() ~= nil, "a status banner shows while the deck is active")
+    do
+        local sf = fake.liveBanner().screenFrame
+        ok(sf and sf.x == SCREEN.x and sf.w == SCREEN.w,
+            "the banner is pinned to the DECK's screen, not the key window's screen")
+    end
+    ok(#fake.liveOutlines("member") == 4, "every deck member gets a subtle border (GRID)")
+    do
+        local seen, n = {}, 0
+        for _, o in ipairs(fake.liveOutlines("member")) do
+            if o.color ~= "" and not seen[o.color] then seen[o.color] = true; n = n + 1 end
+        end
+        ok(n == 4, "each deck member border has a distinct color")
+    end
+    ok(fake.liveOutline("hero") == nil and fake.liveOutline("ghost") == nil,
+        "no hero/ghost border in the flat grid (no hero yet)")
+    ok(registry.liveHandleCount() == 10,
+        "active deck = toggle + 2 watchers + esc + banner (5) + frame watcher + 4 member borders")
+
+    -- toggle off -> restore original frames, banner gone
+    local before = #fake.windowFrameSets
+    fake.pressHotkey("k", HYP)
+    ok(#fake.windowFrameSets == before + 4, "exiting restores every window")
+    local brRestore = lastSetFor(1)
+    ok(brRestore and brRestore.x == 900 and brRestore.y == 550
+        and brRestore.w == 300 and brRestore.h == 200,
+        "the bottom-right window is restored to its original frame")
+    ok(fake.liveBanner() == nil, "the banner is dismissed on exit")
+    ok(registry.liveHandleCount() == 1, "exit drops the deck handles, keeps the toggle")
+
+    -- disable WHILE decked -> stop(ctx) restores, then teardown leaves nothing
+    fake.windows = quadWindows()
+    fake.windowFrameSets = {}
+    enterDeck()                                    -- re-enter
+    ok(registry.liveHandleCount() == 10,
+        "re-entered the deck (5 base + frame watcher + 4 member borders)")
+    registry.setEnabled("window_deck", false)      -- disable mid-deck
+    ok(lastSetFor(1) and lastSetFor(1).w == 300,
+        "disabling mid-deck restores original frames via stop()")
+    ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
+        "clean after disable-while-decked")
+
+    -- T-WD-pick: the entry picker (v1.1) -- exclude, cancel, min-guard --------
+    registry.setEnabled("window_deck", true)
+    -- exclude one: the picker lists all four pre-checked; drop the 4th (BL) row.
+    -- The minimized and fullscreen rows appended below must NOT be offered at
+    -- all -- AX lists them with their normal frames, but a deck slot for an
+    -- invisible window is a ring around empty space.
+    fake.windows = quadWindows()
+    fake.windows[#fake.windows + 1] = { id = 66, title = "Hidden", appName = "AppMin",
+        bundleID = "com.min", x = 150, y = 150, w = 300, h = 200, minimized = true }
+    fake.windows[#fake.windows + 1] = { id = 67, title = "Full", appName = "AppFS",
+        bundleID = "com.fs", x = 0, y = 0, w = 1440, h = 900, fullscreen = true }
+    fake.windowFrameSets = {}
+    fake.pressHotkey("k", HYP)
+    do
+        local p = fake.openWindowPicker()
+        ok(p ~= nil and #p.items == 4,
+            "the picker lists every deckable window -- minimized/fullscreen excluded")
+        ok(p.min == 2, "the picker requires at least two to be kept")
+        p.confirm({ 1, 2, 3 })                     -- keep BR, TL, TR; drop BL (id 4)
+    end
+    fake.fireTimers("after")   -- flush the deck's settle window (see beginSettle)
+    ok(#fake.windowFrameSets == 3, "excluding a window decks only the kept three")
+    ok(lastSetFor(4) == nil, "the excluded window is left untouched")
+    ok(#fake.liveOutlines("member") == 3, "only the kept three windows get member borders")
+    ok(fake.liveBanner() ~= nil and registry.liveHandleCount() == 9,
+        "the deck is live after an exclude (5 base + frame watcher + 3 member borders)")
+    fake.pressHotkey("k", HYP)                      -- exit
+    ok(registry.liveHandleCount() == 1, "clean after the exclude test")
+
+    -- cancel: dismissing the picker enters no deck and drops the picker handle
+    fake.windows = quadWindows()
+    fake.windowFrameSets = {}
+    fake.pressHotkey("k", HYP)
+    do
+        local p = fake.openWindowPicker()
+        ok(p ~= nil, "the picker opens on enter")
+        p.cancel()
+    end
+    ok(#fake.windowFrameSets == 0, "cancelling the picker tiles nothing")
+    ok(fake.liveBanner() == nil and registry.liveHandleCount() == 1,
+        "cancelling leaves no deck and drops the picker handle")
+
+    -- min-guard: confirming with fewer than two checked is refused (panel stays)
+    fake.pressHotkey("k", HYP)
+    do
+        local p = fake.openWindowPicker()
+        ok(p.confirm({ 1 }) == false, "confirming with one window is refused (needs >= 2)")
+        ok(p.open, "the picker stays open after a refused confirm")
+        p.cancel()
+    end
+    ok(registry.liveHandleCount() == 1, "clean after the min-guard test")
+
+    -- recolor + persistence: pick a custom color in the picker -> the border uses
+    -- it; re-open the picker later -> the same app is offered that color again
+    fake.windows = quadWindows()
+    fake.windowFrameSets = {}
+    fake.pressHotkey("k", HYP)
+    do
+        local p = fake.openWindowPicker()
+        ok(p.items[1].color ~= nil and p.items[1].color ~= "",
+            "picker rows carry a border-color preview")
+        ok(type(p.palette) == "table" and #p.palette > 0,
+            "the picker gets the recolor palette (dot-click cycles it)")
+        p.recolor(1, "#123456")                    -- recolor the BR window's app
+        p.confirm(nil)
+    end
+    fake.fireTimers("after")
+    do
+        local found = false
+        for _, o in ipairs(fake.liveOutlines("member")) do
+            if o.color == "#123456" then found = true end
+        end
+        ok(found, "a recolored window's deck border uses the chosen color")
+    end
+    fake.pressHotkey("k", HYP)                      -- exit
+    fake.windows = quadWindows()
+    fake.pressHotkey("k", HYP)                      -- re-open the picker
+    do
+        local p = fake.openWindowPicker()
+        ok(p.items[1].color == "#123456",
+            "the chosen color persists for the app across decks")
+        p.cancel()
+    end
+
+    registry.setEnabled("window_deck", false)
+    ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after the picker tests")
+
+    -- T-WD-blink: apps that ACTIVATE on raise must not make the hero/peek fight --
+    -- Regression for the focus-fight blink: raiseDeck's raises emit activation
+    -- echoes; UNGUARDED, each echo re-enters reconcile and promotes -- forever
+    -- (with raiseActivates on, an unguarded deck recurses until the Lua stack
+    -- overflows). The settle guard keeps every raise pass bounded; and a plain
+    -- promote no longer raises at all (only a peek-return does), so a swap can't
+    -- even start the fight.
+    do
+        fake.windows = quadWindows()
+        fake.raiseActivates = true
+        registry.setEnabled("window_deck", true)
+
+        fake.raises = {}
+        enterDeck()                    -- enter -> raiseDeck -> 4 activation echoes, all absorbed
+        ok(#fake.raises == 4,
+            "enter raises each deck window once even when raising activates the app (no loop)")
+
+        fake.raises = {}
+        focusWin(2)                    -- a plain promote does NOT raise -> no echoes, no fight
+        ok(#fake.raises == 0, "a plain promote does not raise (no activation echoes to fight)")
+
+        -- a peek then a return DOES re-raise; the activation echoes must still not loop
+        table.insert(fake.windows, 1,
+            { id = 77, title = "X", appName = "Other", bundleID = "com.x", x = 5, y = 5, w = 90, h = 90 })
+        focusWin(77)                   -- peek a non-deck window (sets peeked)
+        fake.raises = {}
+        focusWin(2)                    -- return to the hero -> reclean -> raiseDeck -> echoes absorbed
+        ok(#fake.raises == 4,
+            "a peek-return re-raises once; activation echoes never re-promote (no loop)")
+        ok(registry.liveHandleCount() == 11,
+            "no stray handle: 5 base + frame watcher + 4 member borders + 1 ghost (FOCUS)")
+
+        fake.pressHotkey("k", HYP)     -- exit
+        ok(registry.liveHandleCount() == 1, "clean after the blink regression")
+        registry.setEnabled("window_deck", false)
+        fake.raiseActivates = false
+    end
+
+    -- T-WD2: focus-driven promotion + swap + escalating Escape ----------------
+    fake.windows = quadWindows()
+    registry.setEnabled("window_deck", true)
+    enterDeck()                                    -- GRID
+    fake.windowFrameSets = {}
+
+    fake.raises = {}
+    focusWin(2, nil, true)                        -- focus TL (cross-app), mid-flight
+    do
+        -- the polish: the real window's move is DISPATCHED at flight START (the
+        -- ring covers the async AX apply), not when the ring lands -- the ring
+        -- sat alone at the hero rect while the window popped in late otherwise
+        local mid = lastSetFor(2)
+        ok(mid and near(mid.w, HERO.w) and near(mid.h, HERO.h),
+            "the promoted window's move is dispatched at flight start (under the ring)")
+    end
+    fake.fireTimers("after")
+    fake.fireTimers("after")
+    local heroSet = lastSetFor(2)
+    ok(heroSet and near(heroSet.x, HERO.x) and near(heroSet.w, HERO.w)
+        and near(heroSet.h, HERO.h),
+        "focusing a group window promotes it to the centered hero (~78%)")
+    do
+        local hb = fake.liveOutline("hero")
+        ok(hb and near(hb.frame.x, HERO.x) and near(hb.frame.w, HERO.w) and near(hb.frame.h, HERO.h),
+            "a strong hero border marks the hero's bounds at the ~78% rect")
+        local ghost = fake.liveOutline("ghost")
+        ok(ghost and near(ghost.frame.x, TLslot.x) and near(ghost.frame.y, TLslot.y),
+            "a ghost border marks the hero's home slot (where it drops back to)")
+        ok(hb and ghost and hb.color ~= "" and hb.color == ghost.color,
+            "the hero border and its ghost share the hero window's own color")
+        ok(#fake.liveOutlines("member") == 3, "the other three members keep their subtle borders")
+        local holed = 0
+        for _, o in ipairs(fake.liveOutlines("member")) do
+            if o.hole and near(o.hole.x, HERO.x) and near(o.hole.w, HERO.w) then holed = holed + 1 end
+        end
+        ok(holed == 3 and ghost.hole and near(ghost.hole.x, HERO.x),
+            "member + ghost borders clip the hero rect out (no lines drawn across the hero)")
+    end
+    ok(#fake.raises == 0,
+        "a plain promote does NOT re-raise the deck (already on top -- no needless blink)")
+
+    fake.windowFrameSets = {}
+    focusWin(3, nil, true)                        -- focus TR -> swap, step 1 mid-flight
+    ok(lastSetFor(2) ~= nil and lastSetFor(3) == nil,
+        "swap step 1: the old hero steps home first -- the incoming window has not moved yet")
+    fake.fireTimers("after")                      -- step 1 lands -> step 2 launches
+    ok(lastSetFor(3) ~= nil,
+        "swap step 2: the incoming window's move dispatches as its ring lifts off")
+    fake.fireTimers("after")                      -- step 2 lands
+    local demoted = lastSetFor(2)
+    ok(demoted and near(demoted.x, TLslot.x) and near(demoted.y, TLslot.y),
+        "the outgoing hero drops back into its grid slot")
+    local promoted = lastSetFor(3)
+    ok(promoted and near(promoted.x, HERO.x) and near(promoted.w, HERO.w),
+        "the newly-focused window becomes the hero")
+    ok(fake.liveOutline("hero") ~= nil and #fake.liveOutlines("member") == 3,
+        "after a swap: one hero border, three member borders (re-styled, not leaked)")
+    do
+        -- the sequenced beat: the outgoing hero's step-back is recorded BEFORE
+        -- the incoming hero's grow (old back first, then the new steps out)
+        local di, pi
+        for i, s in ipairs(fake.windowFrameSets) do
+            if s.id == 2 and not di then di = i end
+            if s.id == 3 and not pi then pi = i end
+        end
+        ok(di and pi and di < pi,
+            "the swap plays as a beat: the old hero steps back before the new one grows")
+        local hb2 = fake.liveOutline("hero")
+        ok(hb2 and (hb2.flights or 0) >= 1,
+            "the incoming window's ring FLIES to the hero rect (the flight carries the eye)")
+    end
+
+    -- blur = stay: focusing a NON-group window changes nothing (it's a peek --
+    -- left on top, deck NOT re-raised, so the peeked window stays visible)
+    fake.windowFrameSets = {}
+    fake.raises = {}
+    table.insert(fake.windows, 1,
+        { id = 99, title = "Inbox", appName = "Mail", bundleID = "com.mail", x = 200, y = 200, w = 300, h = 200 })
+    focusWin(99)                                   -- focus a NON-group window
+    ok(#fake.windowFrameSets == 0, "focus leaving the group is ignored -- no reshuffle")
+    ok(#fake.raises == 0, "peeking a non-deck window does NOT raise the deck (peek stays on top)")
+
+    -- returning to a deck window after a peek re-cleans (re-raises) the deck, but
+    -- moves no frames (re-focusing the current hero is a frame no-op)
+    fake.windowFrameSets = {}
+    fake.raises = {}
+    focusWin(3)                                   -- return to the current hero after the peek
+    ok(#fake.windowFrameSets == 0, "re-focusing the current hero moves no frames")
+    ok(#fake.raises > 0, "returning after a peek re-raises the deck (re-cleans the overview)")
+
+    -- escalating Escape: first drops the hero to GRID (banner stays), second exits.
+    -- The drop is a reverse ring flight: the window's move home is dispatched at
+    -- flight START (read before the flush proves it), the flush then lands the
+    -- ring and re-renders the borders.
+    fake.windowFrameSets = {}
+    fake.pressHotkey("escape", { "alt" })
+    local dropped = lastSetFor(3)                  -- BEFORE the flight timer fires
+    ok(dropped and near(dropped.x, TRslot.x) and near(dropped.y, TRslot.y),
+        "first ⌥Esc dispatches the hero's move home at flight start (under the ring)")
+    fake.fireTimers("after")
+    fake.fireTimers("after")
+    ok(fake.liveBanner() ~= nil, "first ⌥Esc keeps the deck active (banner still up)")
+    ok(fake.liveOutline("hero") == nil and fake.liveOutline("ghost") == nil
+        and #fake.liveOutlines("member") == 4,
+        "dropping the hero to GRID: hero/ghost borders gone, all four back to member borders")
+    do
+        local anyHole = false
+        for _, o in ipairs(fake.liveOutlines("member")) do
+            if o.hole then anyHole = true end
+        end
+        ok(not anyHole, "back in GRID the borders clear their hero hole (full rings again)")
+    end
+    fake.pressHotkey("escape", { "alt" })
+    ok(fake.liveBanner() == nil, "second ⌥Esc exits the deck")
+    ok(registry.liveHandleCount() == 1, "exit left only the toggle bound")
+
+    -- T-WD2b: a fast second switch mid-flight ---------------------------------
+    -- The beat dispatches the promoted window toward the hero rect at flight
+    -- START, so a beat cancelled mid-air (a newer promotion) must step that
+    -- half-flown window back to its slot -- never strand it at centre.
+    fake.windows = quadWindows()
+    enterDeck()
+    fake.windowFrameSets = {}
+    focusWin(2, nil, true)                        -- TL's beat starts (mid-flight)
+    focusWin(3, nil, true)                        -- TR takes over before the ring lands
+    do
+        local back = lastSetFor(2)
+        ok(back and near(back.x, TLslot.x) and near(back.y, TLslot.y),
+            "a beat cancelled mid-flight steps its half-flown window back to its slot")
+    end
+    fake.fireTimers("after")
+    fake.fireTimers("after")
+    do
+        local hero2 = lastSetFor(3)
+        ok(hero2 and near(hero2.w, HERO.w), "the newer focus wins the hero")
+    end
+    fake.pressHotkey("k", HYP)                     -- exit
+    ok(registry.liveHandleCount() == 1, "clean after the mid-flight cancel test")
+
+    -- T-WD3: within-app promotion via the focus observer (cmd+`) --------------
+    -- Two windows of the SAME app: only the AXObserver path (onFocusChanged) can
+    -- see this switch -- app activation never fires.
+    fake.windows = {
+        { id = 10, title = "Downloads", appName = "Finder", bundleID = "com.apple.finder", x = 100, y = 500, w = 400, h = 300 },
+        { id = 11, title = "Documents", appName = "Finder", bundleID = "com.apple.finder", x = 100, y = 100, w = 400, h = 300 },
+    }
+    enterDeck()                                    -- GRID (2 Finder windows)
+    fake.windowFrameSets = {}
+    focusWin(11, true)                            -- focus the other Finder window (same app)
+    local within = lastSetFor(11)
+    ok(within and near(within.x, HERO.x) and near(within.w, HERO.w),
+        "a within-app focus change (focus observer) promotes the newly-focused window")
+    fake.pressHotkey("k", HYP)                     -- exit
+    ok(registry.liveHandleCount() == 1, "clean after within-app test")
+
+    -- T-WD4: edges -----------------------------------------------------------
+    -- window closes mid-deck: the gone window is never rewritten, no crash
+    fake.windows = quadWindows()
+    enterDeck()
+    focusWin(2)                                   -- TL is hero
+    fake.windowFrameSets = {}
+    do                                             -- BL (id=4) closes
+        local kept = {}
+        for _, w in ipairs(quadWindows()) do if w.id ~= 4 then kept[#kept + 1] = w end end
+        fake.windows = kept
+    end
+    focusWin(3)                                   -- promote TR; BL is gone
+    ok(lastSetFor(4) == nil, "a window that closed mid-deck is never rewritten")
+    ok(lastSetFor(3) ~= nil, "the still-open windows keep working after one closes")
+    fake.pressHotkey("k", HYP)                     -- exit
+
+    -- hero closes -> deck falls back to GRID, so the next ⌥Esc EXITS (not drop)
+    fake.windows = quadWindows()
+    enterDeck()
+    focusWin(2)                                   -- TL is hero
+    do
+        local kept = {}
+        for _, w in ipairs(quadWindows()) do if w.id ~= 2 then kept[#kept + 1] = w end end
+        table.insert(kept, 1,
+            { id = 98, title = "Inbox", appName = "Mail", bundleID = "com.mail", x = 200, y = 200, w = 300, h = 200 })
+        fake.windows = kept
+    end
+    focusWin(98)                                  -- hero gone; focus a non-group window
+    fake.pressHotkey("escape", { "alt" })          -- mode is GRID now -> exits
+    ok(fake.liveBanner() == nil,
+        "when the hero window closes, the deck drops to GRID (one ⌥Esc then exits)")
+    ok(registry.liveHandleCount() == 1, "clean after hero-closes test")
+
+    -- >9 windows: the grid caps at 9
+    do
+        local many = {}
+        for i = 1, 11 do
+            many[i] = { id = 100 + i, title = "W" .. i, appName = "App" .. i,
+                        bundleID = "com.w" .. i, x = (i % 4) * 200 + 20, y = math.floor(i / 4) * 200 + 20,
+                        w = 150, h = 120 }
+        end
+        fake.windows = many
+        fake.windowFrameSets = {}
+        enterDeck()
+        ok(#fake.windowFrameSets == 9, "the deck caps the grid at 9 windows")
+        fake.pressHotkey("k", HYP)                  -- exit
+    end
+
+    -- hero is set to the FULL ~78% and is NOT shrunk by an immediate read-back.
+    -- (Regression: an earlier read-back-recenter ran ctx.window.frame() right
+    -- after the async AX setFrame, saw the stale slot-sized frame, and re-centred
+    -- the hero back down to a grid cell -- the ~25% hero bug. fake.focusedWindow is
+    -- a deliberately tiny stale frame; the hero must still be full-size and no
+    -- focused-window setFrame may fire.)
+    fake.windows = quadWindows()
+    enterDeck()
+    fake.focusedWindow = { x = 0, y = 0, w = 200, h = 150, screenIndex = 1 }  -- stale/small read-back
+    fake.windowFrameSets = {}
+    local framesBefore = #fake.windowFrames
+    focusWin(2)
+    local promo = lastSetFor(2)
+    ok(promo and near(promo.w, HERO.w) and near(promo.h, HERO.h),
+        "the hero is set to the full ~78% size, not shrunk to its slot")
+    ok(#fake.windowFrames == framesBefore,
+        "no read-back re-center fires (it raced AX and shrank the hero to a grid cell)")
+    fake.focusedWindow = nil
+    fake.pressHotkey("k", HYP)                      -- exit
+
+    -- T-WD5: the USER drags/resizes a member -> hide the ring until stable ----
+    -- Live tracking would trail the drag (AX events throttle), so the deck
+    -- hides the ring while frame events flow and re-shows it at the REAL frame
+    -- once they go quiet. Our OWN AX moves echo the same events -- the echo
+    -- guard must keep them from hiding rings mid-beat.
+    fake.windows = quadWindows()
+    enterDeck()
+    do
+        local function hiddenCount()   -- across ALL kinds (a hero ring can hide too)
+            local n = 0
+            for _, o in ipairs(fake.liveOutlines()) do
+                if o.hidden then n = n + 1 end
+            end
+            return n
+        end
+        -- a drag starts: first frame event hides TL's ring
+        fake.fireFrameEvent{ bundleID = "com.tl", title = "TL", x = 400, y = 300, w = 300, h = 200 }
+        ok(hiddenCount() == 1, "a user-dragged member hides its ring while in motion")
+        -- more motion, then quiet: the stable timer re-shows at the REAL frame
+        fake.fireFrameEvent{ bundleID = "com.tl", title = "TL", x = 500, y = 320, w = 300, h = 200 }
+        fake.fireTimers("after")                    -- the stable timer fires
+        local shown
+        for _, o in ipairs(fake.liveOutlines("member")) do
+            if o.frame and near(o.frame.x, 500) and near(o.frame.y, 320) then shown = o end
+        end
+        ok(shown ~= nil and not shown.hidden,
+            "once stable, the ring re-shows at the window's REAL frame (not the stale slot)")
+        -- our own beat moves must NOT hide rings: promote TL, then replay the
+        -- move/resize echo the AX observer would deliver for our own setFrame
+        focusWin(2, nil, true)                      -- beat dispatched, mid-flight
+        fake.fireFrameEvent{ bundleID = "com.tl", title = "TL",
+                             x = HERO.x, y = HERO.y, w = HERO.w, h = HERO.h }
+        ok(hiddenCount() == 0, "our own AX move's echo does not hide the ring (echo guard)")
+        -- ...but a frame that DIVERGES from what we dispatched, even under an
+        -- armed guard, is the user grabbing the window (promote-then-drag) --
+        -- it must still be detected as motion
+        fake.fireFrameEvent{ bundleID = "com.tl", title = "TL", x = 30, y = 700, w = 300, h = 200 }
+        ok(hiddenCount() == 1,
+            "a diverging frame under an armed echo guard is a USER drag -- ring hides")
+        fake.fireTimers("after")
+        fake.fireTimers("after")                    -- land the beat + settle the drag
+        ok(hiddenCount() == 0, "all rings shown again after the beat and the drag settle")
+        -- a render mid-drag must not un-hide a hidden ring: drag BL, then land
+        -- a full swap beat with SELECTIVE flushes (flight timers only, 0.15s)
+        -- while BL's stable timer (0.35s) is still pending -- the landing
+        -- renderBorders must skip the dragged member
+        fake.fireFrameEvent{ bundleID = "com.bl", title = "BL", x = 40, y = 40, w = 300, h = 200 }
+        ok(hiddenCount() == 1, "BL's ring hides as its drag starts")
+        focusWin(3, nil, true)                      -- swap toward TR, mid-drag
+        fake.fireTimers("after", 0.15)              -- step 1 lands -> step 2 launches
+        fake.fireTimers("after", 0.15)              -- step 2 lands -> renderBorders
+        ok(hiddenCount() == 1,
+            "a beat landing mid-drag does not re-show the dragged member's ring")
+        fake.fireTimers("after")                    -- BL's stable timer fires
+        ok(hiddenCount() == 0, "the dragged ring re-shows once its window settles")
+    end
+    fake.pressHotkey("k", HYP)                      -- exit
+    ok(registry.liveHandleCount() == 1, "clean after the hide-until-stable test")
+
+    -- T-WD6: retitling windows keep their deck identity (adoption) ------------
+    -- Regression for the stranded-hero bug: members are keyed bundleID+title,
+    -- so a retitle (browser tab switch, editor file switch -- sometimes caused
+    -- by our own resize) used to break every later by-key lookup: the old hero
+    -- could not be stepped home (it stayed at the hero rect UNDER the new
+    -- hero) and exit could not restore the window. resolveIds adopts the
+    -- renamed window (same app, unclaimed, at the member's last-known frame).
+    fake.windows = quadWindows()
+    enterDeck()
+    focusWin(2)                                    -- TL is hero
+    do
+        for _, w in ipairs(fake.windows) do        -- the hero window RETITLES
+            if w.id == 2 then w.title = "TL - now renamed" end
+        end
+        fake.windowFrameSets = {}
+        focusWin(3)                                -- swap: the retitled old hero must step home
+        local back = lastSetFor(2)
+        ok(back and near(back.x, TLslot.x) and near(back.y, TLslot.y),
+            "a RETITLED old hero is adopted and steps home -- never stranded under the new hero")
+        local promoted = lastSetFor(3)
+        ok(promoted and near(promoted.w, HERO.w),
+            "the swap still promotes the newly-focused window after an adoption")
+    end
+    do                                             -- retitle a plain member, then exit
+        for _, w in ipairs(fake.windows) do
+            if w.id == 4 then w.title = "BL - renamed" end
+        end
+        fake.windowFrameSets = {}
+        fake.pressHotkey("k", HYP)                 -- exit -> restore
+        local restored = lastSetFor(4)
+        ok(restored and restored.x == 100 and restored.y == 550,
+            "a retitled member is adopted on exit and restored to its ORIGINAL frame")
+    end
+    ok(registry.liveHandleCount() == 1, "clean after the retitle-adoption test")
+
+    -- T-WD7: wid-based identity (the hybrid) ----------------------------------
+    -- Rows that carry the bridge-resolved CGWindowID are keyed by it, so a
+    -- retitle never even needs the adoption fallback, and focus matching works
+    -- through the wid ladder regardless of what the title says.
+    fake.windows = quadWindows()
+    for _, w in ipairs(fake.windows) do w.wid = 9000 + w.id end   -- stable OS ids
+    enterDeck()
+    fake.windowFrameSets = {}
+    do
+        -- promote via the focused WID while the reported title is nonsense --
+        -- the ladder must match on wid, never looking at the title
+        fake.windowTitle = "totally unrelated title"
+        fake.frontmost, fake.frontmostId = "AppTL", "com.tl"
+        fake.focusedWid = 9002
+        fake.activateApp("AppTL", "com.tl")
+        fake.fireTimers("after")
+        fake.fireTimers("after")
+        local promo = lastSetFor(2)
+        ok(promo and near(promo.w, HERO.w),
+            "promotion matches the focused window by its stable wid, not the title")
+        -- the hero retitles: identity survives WITHOUT adoption (key = wid)
+        for _, w in ipairs(fake.windows) do
+            if w.id == 2 then w.title = "renamed again" end
+        end
+        fake.windowFrameSets = {}
+        fake.focusedWid = 9003
+        focusWin(3)                                -- swap (focusWin sets title too)
+        local back = lastSetFor(2)
+        ok(back and near(back.x, TLslot.x) and near(back.y, TLslot.y),
+            "a retitled wid-keyed hero steps home -- identity held by the wid itself")
+    end
+    fake.pressHotkey("k", HYP)                      -- exit
+    fake.focusedWid = nil
+    ok(registry.liveHandleCount() == 1, "clean after the wid-identity test")
+
+    -- multi-monitor: only the focused screen's windows are decked
+    fake.screenList = {
+        { x = 0,    y = 0, w = 1440, h = 900, name = "Left",  index = 1, builtin = true },
+        { x = 1440, y = 0, w = 1440, h = 900, name = "Right", index = 2, builtin = false },
+    }
+    fake.windows = {
+        { id = 201, title = "L1", appName = "AppL1", bundleID = "com.l1", x = 100,  y = 100, w = 300, h = 200 },
+        { id = 202, title = "L2", appName = "AppL2", bundleID = "com.l2", x = 100,  y = 500, w = 300, h = 200 },
+        { id = 203, title = "R1", appName = "AppR1", bundleID = "com.r1", x = 1600, y = 100, w = 300, h = 200 },
+        { id = 204, title = "R2", appName = "AppR2", bundleID = "com.r2", x = 1600, y = 500, w = 300, h = 200 },
+    }
+    fake.focusedWindow = { x = 1600, y = 100, w = 300, h = 200, screenIndex = 2 }  -- focus on the right screen
+    fake.windowFrameSets = {}
+    fake.pressHotkey("k", HYP)
+    -- multi-monitor: a screen chooser opens first, with the ACTIVE screen offered
+    -- first so a single Enter takes it.
+    local scr = fake.openDialog()
+    ok(scr and scr.title == "Deck which screen?"
+        and scr.actions[1]:find("Right", 1, true)
+        and scr.actions[1]:find("(current)", 1, true),
+        "multi-monitor picker offers the CURRENT display first, marked so Enter takes it")
+    ok(scr.actions[2] and not scr.actions[2]:find("(current)", 1, true),
+        "the non-current display is listed after, unmarked")
+    scr.choose(scr.actions[1])   -- 'press Enter' on the pre-selected current display
+    local wp = fake.openWindowPicker()
+    ok(wp ~= nil and #wp.items == 2,
+        "picking a screen leads to a window multi-select of only that screen's windows")
+    wp.confirm(nil)
+    ok(#fake.windowFrameSets == 2, "only the focused screen's two windows are decked")
+    ok((lastSetFor(203) and lastSetFor(203).x >= 1440)
+        and (lastSetFor(204) and lastSetFor(204).x >= 1440),
+        "the decked windows are tiled onto the right screen")
+    ok(lastSetFor(201) == nil and lastSetFor(202) == nil,
+        "windows on the other screen are left untouched")
+    fake.pressHotkey("k", HYP)                      -- exit
+
+    registry.setEnabled("window_deck", false)
+    ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_deck test")
+
+    -- restore the shared fake globals this block mutated, so downstream tests
+    -- (which assume an empty windowFrameSets and the default single screen) are
+    -- not disturbed.
+    fake.focusedWindow  = nil
+    fake.windows        = {}
+    fake.windowFrameSets = {}
+    fake.raises         = {}
+    fake.raiseActivates = false
+    fake.mousePos       = { x = 0, y = 0 }
+    fake.windowTitle    = nil
+    fake.frontmost      = nil
+    fake.frontmostId    = ""
+    fake.focusedWid     = nil
+    fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1, builtin = true } }
+end
+
+-- T25g: no two shipped features declare COLLIDING default shortcuts ------------
+-- There is no single registry of default triggers -- each feature declares its
+-- own defaultTrigger in init.lua. Nothing bound them into one namespace, so a new
+-- feature could silently reuse a shortcut another feature already defaults to; the
+-- only check was interactive (the "already bound to X" wall a USER hits when
+-- rebinding in Settings). This scans the WHOLE on-disk catalog and fails loudly on
+-- any default-vs-default conflict, catching it at authoring time / CI instead.
+-- (window_deck once shipped Hyper+D, already Insert Date/Time's default -- exactly
+-- the class of bug this guards.) Runs on both engines (lua run.lua + test-lua.sh).
+do
+    local appdir = require("loader").appdir
+
+    -- enumerate every feature dir that has a lua/init.lua (the shipped catalog)
+    local ids = {}
+    local pipe = io.popen('ls "' .. appdir .. '/features" 2>/dev/null')
+    if pipe then
+        for name in pipe:lines() do
+            local fh = io.open(appdir .. "/features/" .. name .. "/lua/init.lua", "r")
+            if fh then fh:close(); ids[#ids + 1] = name end
+        end
+        pipe:close()
+    end
+    ok(#ids >= 20, "default-trigger scan enumerated the on-disk catalog (" .. #ids .. " features)")
+
+    -- collect every declared default hotkey/chord straight from init.lua (raw,
+    -- not validated: feature.json -- the source of `name` -- is overlaid only at
+    -- register time, and defaults live in init.lua regardless). Handle both the
+    -- actions[] shape and the single-action sugar (top-level action+defaultTrigger).
+    local defaults = {}
+    local function record(id, action, t)
+        if t and (t.type == "hotkey" or t.type == "chord") then
+            defaults[#defaults + 1] = { feature = id, action = action, spec = t }
+        end
+    end
+    for _, id in ipairs(ids) do
+        local mod = require("features." .. id)
+        if type(mod.actions) == "table" then
+            for _, a in ipairs(mod.actions) do record(id, a.id or "?", a.defaultTrigger) end
+        else
+            record(id, "main", mod.defaultTrigger)   -- single-action sugar
+        end
+    end
+
+    -- pairwise: two DIFFERENT features must not default to conflicting shortcuts
+    -- (triggers.conflicts encodes the hotkey/chord-prefix rules; same-prefix chords
+    -- with different follow keys are legitimately NOT a conflict).
+    local clashes = {}
+    for i = 1, #defaults do
+        for j = i + 1, #defaults do
+            local A, B = defaults[i], defaults[j]
+            if A.feature ~= B.feature and triggers.conflicts(A.spec, B.spec) then
+                clashes[#clashes + 1] = A.feature .. "." .. A.action
+                    .. " vs " .. B.feature .. "." .. B.action
+                    .. " (" .. triggers.describe(A.spec) .. ")"
+            end
+        end
+    end
+    ok(#clashes == 0,
+        "no two features ship colliding default shortcuts"
+        .. (#clashes > 0 and (" -- " .. table.concat(clashes, "; ")) or ""))
 end
 
 -- T26: tab_switcher (cross-browser tab switcher, MRU-first) ----------------------

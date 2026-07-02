@@ -10,8 +10,12 @@ final class BannerPanel {
     private let panel: FloatingPanel
     private let label: NSTextField
 
-    init(text: String) {
-        let frame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+    /// `screen` (AppKit coords) pins the banner to THAT screen's top edge.
+    /// Without it, NSScreen.main -- the key window's screen -- which is wrong
+    /// whenever the caller acts on a screen that doesn't hold key focus
+    /// (Window Deck's target screen is picked, not focused).
+    init(text: String, screen: NSRect? = nil) {
+        let frame = screen ?? NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let height: CGFloat = 44
         let rect = NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height)
 

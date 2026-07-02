@@ -5,6 +5,29 @@
 import AppKit
 import CLua
 
+// The donor's identity primitive (Hammerspoon HSuicore.m:657): the private AX
+// call `_AXUIElementGetWindow` resolves an AXUIElement DIRECTLY to its stable
+// CGWindowID -- exact even for minimized or mid-flight windows, where the
+// public CG-bounds matching below can fail. Private API, so it is looked up
+// via dlsym rather than linked: if a future macOS removes the symbol, the
+// lookup returns nil and everything degrades to the public bounds-match
+// fallback instead of failing at load. (Owner-approved hybrid, 2026-07-01.)
+private let axUIElementGetWindow: (@convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError)? = {
+    let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
+    guard let sym = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") else { return nil }
+    return unsafeBitCast(sym, to: (@convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError).self)
+}()
+
+/// The stable CGWindowID for an AX window via the private call; 0 when the
+/// symbol is unavailable or the element can't be resolved (callers fall back
+/// to CG bounds-matching, then to title-based identity in Lua).
+func axStableWindowID(_ element: AXUIElement) -> CGWindowID {
+    guard let fn = axUIElementGetWindow else { return 0 }
+    var wid: CGWindowID = 0
+    guard fn(element, &wid) == .success else { return 0 }
+    return wid
+}
+
 extension Native {
     // MARK: - Windows / apps (AXUIElement)
 
@@ -43,9 +66,10 @@ extension Native {
         }
 
         struct Row {
-            let z: Int; let id: Int; let app: String; let title: String
-            let bundleID: String; let screenName: String?; let iconToken: String
-            let frame: CGRect; let tabCount: Int?
+            let z: Int; let id: Int; let wid: CGWindowID; let app: String
+            let title: String; let bundleID: String; let screenName: String?
+            let iconToken: String; let frame: CGRect; let tabCount: Int?
+            let minimized: Bool; let fullscreen: Bool
         }
         var rows: [Row] = []
         // Screen names only matter (and only render) on multi-display setups.
@@ -73,20 +97,35 @@ extension Native {
                 AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
                 let title = (titleRef as? String) ?? ""
 
-                // Match this AX window to its CG z-position by frame (both are
-                // top-left-origin screen coordinates; small tolerance for the
-                // odd subpixel disagreement).
+                // Visibility state: callers that lay windows out (Window Deck)
+                // must be able to exclude minimized/fullscreen windows -- the
+                // AX enumeration returns them with their normal frames.
+                var minRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef)
+                let minimized = (minRef as? Bool) ?? false
+                var fsRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &fsRef)
+                let fullscreen = (fsRef as? Bool) ?? false
+
                 var pos = CGPoint.zero, size = CGSize.zero
                 if let v = axValue(win, kAXPositionAttribute as CFString) { AXValueGetValue(v, .cgPoint, &pos) }
                 if let v = axValue(win, kAXSizeAttribute as CFString) { AXValueGetValue(v, .cgSize, &size) }
-                let cgMatch = cgRows.first { r in
-                    r.pid == pid
-                        && abs(r.bounds.minX - pos.x) < 2 && abs(r.bounds.minY - pos.y) < 2
-                        && abs(r.bounds.width - size.width) < 2
-                        && abs(r.bounds.height - size.height) < 2
-                }
+                // Match this AX window to its CG row (z-position + stable wid).
+                // Primary: the exact CGWindowID from the private call (see
+                // axStableWindowID). Fallback: match by frame (both top-left-
+                // origin; small tolerance for subpixel disagreement) -- which
+                // can miss for minimized or mid-move windows.
+                let exactWid = axStableWindowID(win)
+                let cgMatch = exactWid != 0
+                    ? cgRows.first { $0.wid == exactWid }
+                    : cgRows.first { r in
+                        r.pid == pid
+                            && abs(r.bounds.minX - pos.x) < 2 && abs(r.bounds.minY - pos.y) < 2
+                            && abs(r.bounds.width - size.width) < 2
+                            && abs(r.bounds.height - size.height) < 2
+                    }
                 let z = cgMatch?.z ?? Int.max   // unmatched (e.g. minimized): list last
-                let wid = cgMatch?.wid ?? 0      // 0 -> focus targets the app, not this window
+                let wid = exactWid != 0 ? exactWid : (cgMatch?.wid ?? 0)   // 0 -> unresolved
 
                 let frame = CGRect(origin: pos, size: size)
                 let screenName = namedScreens.first {
@@ -103,18 +142,24 @@ extension Native {
                 // AXTabGroup never yields a misleading badge); nil otherwise.
                 let tabCount = Self.browserBundleIDs.contains(bundleID)
                     ? browserTabCount(win) : nil
-                rows.append(Row(z: z, id: id, app: appName,
+                rows.append(Row(z: z, id: id, wid: wid, app: appName,
                                 title: title.isEmpty ? appName : title,
                                 bundleID: bundleID, screenName: screenName,
-                                iconToken: iconToken, frame: frame, tabCount: tabCount))
+                                iconToken: iconToken, frame: frame, tabCount: tabCount,
+                                minimized: minimized, fullscreen: fullscreen))
             }
         }
         rows.sort { $0.z < $1.z }
 
         lua_createtable(L, Int32(rows.count), 0)
         for (i, r) in rows.enumerated() {
-            lua_createtable(L, 0, 11)
+            lua_createtable(L, 0, 14)
             lua_pushinteger(L, lua_Integer(r.id)); lua_setfield(L, -2, "id")
+            lua_pushboolean(L, r.minimized ? 1 : 0);  lua_setfield(L, -2, "minimized")
+            lua_pushboolean(L, r.fullscreen ? 1 : 0); lua_setfield(L, -2, "fullscreen")
+            // The OS-stable CGWindowID (0 = unresolved): survives retitles, so
+            // callers key long-lived identity on it (Window Deck's members).
+            lua_pushinteger(L, lua_Integer(r.wid)); lua_setfield(L, -2, "wid")
             lua_pushstring(L, r.title);            lua_setfield(L, -2, "title")
             lua_pushstring(L, r.app);              lua_setfield(L, -2, "appName")
             lua_pushstring(L, r.bundleID);         lua_setfield(L, -2, "bundleID")
@@ -507,6 +552,23 @@ extension Native {
         return 0
     }
 
+    // Raise a listed window above others WITHOUT activating its app -- a pure
+    // window-level AXRaise. Verified surgical (2026-07-01 z-order probe): it does
+    // NOT drag the app's same-app sibling windows forward (same-screen OR cross-
+    // screen) and does NOT steal app activation, so it can't trip the focus
+    // observer / cause a spurious promotion. A pure raise also can't beat the
+    // currently-active window, so a focused hero stays on top on its own. Window
+    // Deck uses this to keep the deck above non-deck windows. Id from the most
+    // recent listWindows(); returns true on success.
+    func raiseWindow(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1), let ref = axWindowCache[id] else {
+            lua_pushboolean(L, 0); return 1
+        }
+        let ok = AXUIElementPerformAction(ref.element, kAXRaiseAction as CFString) == .success
+        lua_pushboolean(L, ok ? 1 : 0)
+        return 1
+    }
+
     func focusWindow(_ L: OpaquePointer?) -> Int32 {
         guard let id = LuaState.int(L, 1), let ref = axWindowCache[id] else {
             lua_pushboolean(L, 0)
@@ -543,4 +605,216 @@ extension Native {
         return 1
     }
 
+    // on_focused_window_changed(fn): fn() (a bare pulse, no args) fires whenever
+    // the frontmost app's focused window changes -- the within-app switch (cmd+`)
+    // that on_app_activated (app-level) cannot see. The observer re-targets to the
+    // newly-frontmost app on each activation, so a caller subscribing to BOTH
+    // sees every focus move. Needs Accessibility (AXObserver). Window Deck uses it
+    // to drive focus-driven hero promotion.
+    func onFocusedWindowChanged(_ L: OpaquePointer?) -> Int32 {
+        let ref = lua.makeRef(at: 1)
+        let obs = FocusObserver(ref: ref)
+        let id = registerResource { MainActor.assumeIsolated { obs.stop() } }
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    // focused_window_wid() -> the FOCUSED window's stable CGWindowID (0 =
+    // unresolvable). Primary: the same private call the listing uses; fallback:
+    // CFEqual against the last listing's cached AX elements (AX elements
+    // compare reliably with CFEqual -- it is hs.window's __eq). Lets callers
+    // match "who is focused" against wid-keyed identity without titles.
+    func focusedWindowWid(_ L: OpaquePointer?) -> Int32 {
+        guard let win = focusedAXWindow() else {
+            lua_pushinteger(L, 0)
+            return 1
+        }
+        var wid = axStableWindowID(win)
+        if wid == 0 {
+            for (_, ref) in axWindowCache where CFEqual(ref.element, win) {
+                wid = ref.wid
+                break
+            }
+        }
+        lua_pushinteger(L, lua_Integer(wid))
+        return 1
+    }
+
+    // on_window_frames_changed(bundleIds, fn): fn({bundleID, title, wid, x, y, w, h})
+    // fires whenever a window of one of the given apps moves or resizes -- the
+    // frame in top-left global points (the seam's one coordinate system).
+    // Fires for OUR OWN AX moves too; callers guard their own echoes. Window
+    // Deck uses it to hide a member's ring while the user drags/resizes the
+    // window, re-showing it at the real frame once stable.
+    func onWindowFramesChanged(_ L: OpaquePointer?) -> Int32 {
+        let bundleIDs = LuaState.stringArray(L, 1)
+        let ref = lua.makeRef(at: 2)
+        let obs = FrameObserverSet(bundleIDs: bundleIDs, ref: ref)
+        let id = registerResource { MainActor.assumeIsolated { obs.stop() } }
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+}
+
+/// Watches `kAXFocusedWindowChangedNotification` on the frontmost app, swapping
+/// the AXObserver to whichever app becomes frontmost (an app's observer only sees
+/// ITS OWN focus changes). Fires a bare Lua pulse on each change; the caller
+/// re-lists to learn who is focused now. All on main (AX run-loop source on the
+/// main loop, NSWorkspace queue = .main) -- matching Native's whole-app invariant.
+@MainActor
+final class FocusObserver {
+    private let ref: Int32
+    private var axObserver: AXObserver?
+    private var observedPid: pid_t = 0
+    private var activationToken: NSObjectProtocol?
+
+    init(ref: Int32) {
+        self.ref = ref
+        let center = NSWorkspace.shared.notificationCenter
+        activationToken = center.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            MainActor.assumeIsolated { self?.retarget(to: app) }
+        }
+        retarget(to: NSWorkspace.shared.frontmostApplication)
+    }
+
+    // Point the AX observer at `app`'s focused-window-changed notification,
+    // tearing down any previous one. No-op if it is already watching this pid.
+    private func retarget(to app: NSRunningApplication?) {
+        let pid = app?.processIdentifier ?? 0
+        if pid == observedPid, axObserver != nil { return }
+        teardownAX()
+        guard let app, pid > 0, !app.isTerminated else { return }
+        // A non-capturing C callback: route back to `self` via the refcon.
+        let cb: AXObserverCallback = { _, _, _, refcon in
+            guard let refcon else { return }
+            let me = Unmanaged<FocusObserver>.fromOpaque(refcon).takeUnretainedValue()
+            MainActor.assumeIsolated { me.fire() }
+        }
+        var obs: AXObserver?
+        guard AXObserverCreate(pid, cb, &obs) == .success, let obs else { return }
+        let appEl = AXUIElementCreateApplication(pid)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        AXObserverAddNotification(obs, appEl,
+                                  kAXFocusedWindowChangedNotification as CFString, refcon)
+        CFRunLoopAddSource(CFRunLoopGetMain(),
+                           AXObserverGetRunLoopSource(obs), .defaultMode)
+        axObserver = obs
+        observedPid = pid
+    }
+
+    private func teardownAX() {
+        if let obs = axObserver {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(),
+                                  AXObserverGetRunLoopSource(obs), .defaultMode)
+            // No explicit destroy: dropping the last reference tears the observer
+            // (and its remaining notification registrations) down.
+        }
+        axObserver = nil
+        observedPid = 0
+    }
+
+    private func fire() {
+        Native.shared.lua.callRef(ref) { _ in 0 }   // bare pulse, zero args
+    }
+
+    func stop() {
+        if let token = activationToken {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+            activationToken = nil
+        }
+        teardownAX()
+        Native.shared.lua.releaseRef(ref)
+    }
+}
+
+/// Watches `kAXWindowMovedNotification` + `kAXWindowResizedNotification` on a
+/// FIXED set of apps (e.g. the deck's member apps) and fires a Lua callback
+/// with the moved window's identity and real frame. Unlike FocusObserver
+/// (frontmost app only, retargeting), this holds one AXObserver per app for
+/// the subscription's whole lifetime -- a background window can move too. The
+/// app-level registration also covers windows the app creates later. All on
+/// main (AX run-loop source on the main loop) -- Native's whole-app invariant.
+@MainActor
+final class FrameObserverSet {
+    private let ref: Int32
+    private var observers: [AXObserver] = []
+
+    init(bundleIDs: [String], ref: Int32) {
+        self.ref = ref
+        let wanted = Set(bundleIDs)
+        for app in NSWorkspace.shared.runningApplications
+        where app.bundleIdentifier.map(wanted.contains) == true && !app.isTerminated {
+            attach(app.processIdentifier)
+        }
+    }
+
+    private func attach(_ pid: pid_t) {
+        guard pid > 0 else { return }
+        // A non-capturing C callback: route back to `self` via the refcon.
+        let cb: AXObserverCallback = { _, element, _, refcon in
+            guard let refcon else { return }
+            let me = Unmanaged<FrameObserverSet>.fromOpaque(refcon).takeUnretainedValue()
+            MainActor.assumeIsolated { me.fire(element) }
+        }
+        var obs: AXObserver?
+        guard AXObserverCreate(pid, cb, &obs) == .success, let obs else { return }
+        let appEl = AXUIElementCreateApplication(pid)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        AXObserverAddNotification(obs, appEl, kAXWindowMovedNotification as CFString, refcon)
+        AXObserverAddNotification(obs, appEl, kAXWindowResizedNotification as CFString, refcon)
+        CFRunLoopAddSource(CFRunLoopGetMain(),
+                           AXObserverGetRunLoopSource(obs), .defaultMode)
+        observers.append(obs)
+    }
+
+    // The callback's element IS the moved window: read its identity + frame
+    // (AX position/size are already top-left global points) and hand them to
+    // Lua as one info table.
+    private func fire(_ element: AXUIElement) {
+        var pid: pid_t = 0
+        AXUIElementGetPid(element, &pid)
+        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleRef)
+        let title = (titleRef as? String) ?? ""
+        var pos = CGPoint.zero, size = CGSize.zero
+        if let v = Self.axValue(element, kAXPositionAttribute as CFString) {
+            AXValueGetValue(v, .cgPoint, &pos)
+        }
+        if let v = Self.axValue(element, kAXSizeAttribute as CFString) {
+            AXValueGetValue(v, .cgSize, &size)
+        }
+        let wid = axStableWindowID(element)   // 0 when unresolvable -> title fallback
+        Native.shared.lua.callRef(ref) { L in
+            lua_createtable(L, 0, 7)
+            lua_pushstring(L, bundleID);    lua_setfield(L, -2, "bundleID")
+            lua_pushstring(L, title);       lua_setfield(L, -2, "title")
+            lua_pushinteger(L, lua_Integer(wid)); lua_setfield(L, -2, "wid")
+            lua_pushnumber(L, pos.x);       lua_setfield(L, -2, "x")
+            lua_pushnumber(L, pos.y);       lua_setfield(L, -2, "y")
+            lua_pushnumber(L, size.width);  lua_setfield(L, -2, "w")
+            lua_pushnumber(L, size.height); lua_setfield(L, -2, "h")
+            return 1
+        }
+    }
+
+    private static func axValue(_ element: AXUIElement, _ attr: CFString) -> AXValue? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attr, &ref) == .success,
+              let ref, CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+        return (ref as! AXValue)
+    }
+
+    func stop() {
+        for obs in observers {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(),
+                                  AXObserverGetRunLoopSource(obs), .defaultMode)
+        }
+        observers.removeAll()
+        Native.shared.lua.releaseRef(ref)
+    }
 }

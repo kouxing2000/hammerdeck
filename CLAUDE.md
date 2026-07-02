@@ -73,7 +73,7 @@ itself (so it stays OFF the leaf-guard list). **LEAF UTILS** =
 `require`, NOT purity -- they may call native, but only via a `ctx` passed in, e.g.
 `windows.focusedOrAlert`; the only ZERO-`require` platform modules a feature may
 `require` -- `favicons` above is the one require-ful module also allowed; a
-test-suite guard fails if any of the five grows a `require`). The `ctx` surface is
+test-suite guard fails if any of them grows a `require`). The `ctx` surface is
 namespaced into domain sub-tables (`ctx.window.*` / `ctx.screen.*` /
 `ctx.mouse.*`) -- Phase 1 of `docs/specs/CTX_DOMAIN_NAMESPACES_SPEC.md`, landed
 2026-06-29. The remaining Phase 2 (porting Hammerspoon's pure-Lua tiling/grid
@@ -172,16 +172,35 @@ scripts/test-lua.sh  # SAME suite on the vendored 5.4.7 (exact embedded engine) 
 swift test           # integration tests on the REAL bridge (run after Swift/seam changes)
 ```
 
-`swift test` is QUIET by default: the 6 tests that show real panels or
-synthesize system keystrokes are SKIPPED -- otherwise they flash dialogs and
-type into whatever app the user has focused. Run the full set ONLY when the user
-is away from the keyboard: `HAMMERDECK_UI_TESTS=1 swift test` (the
-CGEvent-synthesis ones additionally need Accessibility on the terminal). All
-other integration tests run anywhere.
+`swift test` is QUIET by default: the tests that show real panels, synthesize
+system keystrokes, or touch the login Keychain are SKIPPED (all gated behind the
+`requireUITests()` opt-in) -- otherwise they flash dialogs, type into whatever
+app the user has focused, or pop a Keychain prompt. Run the full set ONLY when
+the user is away from the keyboard: `HAMMERDECK_UI_TESTS=1 swift test` (the
+CGEvent-synthesis ones additionally need Accessibility on the terminal). Some of
+those also carry a capability gate (Accessibility trust, an unlocked session, a
+Chrome profile) and skip-not-fail when the environment can't support them, so
+the exact skip count varies by machine -- that's adaptive, not flaky. All other
+integration tests run anywhere.
 
 Smoke test without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 swift run`.
 Settings live in the `Hammerdeck` defaults domain (`defaults read Hammerdeck`;
 `defaults delete Hammerdeck` resets to first-run).
+
+**Logging / auditability.** `ctx.log(...)` (features) and the seam's `log` go to
+stdout AND a rotating daily file under
+`~/Library/Application Support/Hammerdeck/logs/YYYY-MM-DD.log` (14-day retention;
+"Open Logs" in the menubar; `scripts/app.sh logs` tails the launcher stdout).
+A feature MUST keep PERMANENT, terse `ctx.log` traces of its meaningful runtime
+DECISIONS and state transitions -- enable/disable, and each branch a stateful
+loop takes (e.g. window_deck logs on/off, promote, drop, peek-stay, and a
+suppressed settling-echo). These are the audit trail for "what did the logic
+actually decide and do", so a live bug (a focus fight, a wrong promotion) is
+diagnosable from the log ALONE, without re-instrumenting and re-reproducing --
+which is dear when a run needs real windows / an unlocked screen. Keep them in;
+do NOT strip them as "debug noise" once a fix lands (that is the global rule's
+temporary `THROWAWAY` debug prints, a different thing). Log the decision + the
+key identity (a window key, a mode), never a tight per-frame spam.
 
 Visual check (real pixels -- the one thing tests can't do): `scripts/app.sh
 start` opens a debug Lua control channel; `scripts/control.sh '<lua>'` drives

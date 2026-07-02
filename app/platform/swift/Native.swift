@@ -24,6 +24,8 @@ final class Native {
     var banners: [Int32: BannerPanel] = [:]
     var windowModeHUDs: [Int32: WindowModeHUDPanel] = [:]
     var choosers: [Int32: ChooserPanel] = [:]
+    var windowPickers: [Int32: WindowPickerPanel] = [:]
+    var outlines: [Int32: OutlinePanel] = [:]
     var progresses: [Int32: ProgressPanel] = [:]
     var askTexts: [Int32: AskTextPanel] = [:]
     var widgets: [Int32: UsageWidgetPanel] = [:]
@@ -56,6 +58,8 @@ final class Native {
         banners[id] = nil
         windowModeHUDs[id] = nil
         choosers[id] = nil
+        windowPickers[id] = nil
+        outlines[id] = nil
         progresses[id] = nil
         askTexts[id] = nil
         widgets[id] = nil
@@ -112,8 +116,16 @@ final class Native {
             "chooser_set_selected_row": { L in MainActor.assumeIsolated { Native.shared.chooserSetSelectedRow(L) } },
             "chooser_select": { L in MainActor.assumeIsolated { Native.shared.chooserSelect(L) } },
             "ask_choice":   { L in MainActor.assumeIsolated { Native.shared.askChoice(L) } },
+            "ask_windows":  { L in MainActor.assumeIsolated { Native.shared.askWindows(L) } },
             "ask_text":     { L in MainActor.assumeIsolated { Native.shared.askText(L) } },
             "ask_text_dismiss": { L in MainActor.assumeIsolated { Native.shared.askTextDismiss(L) } },
+            "outline_show":      { L in MainActor.assumeIsolated { Native.shared.outlineShow(L) } },
+            "outline_set_frame": { L in MainActor.assumeIsolated { Native.shared.outlineSetFrame(L) } },
+            "outline_set_style": { L in MainActor.assumeIsolated { Native.shared.outlineSetStyle(L) } },
+            "outline_set_color": { L in MainActor.assumeIsolated { Native.shared.outlineSetColor(L) } },
+            "outline_set_hole":  { L in MainActor.assumeIsolated { Native.shared.outlineSetHole(L) } },
+            "outline_animate_frame": { L in MainActor.assumeIsolated { Native.shared.outlineAnimateFrame(L) } },
+            "outline_hide":      { L in MainActor.assumeIsolated { Native.shared.outlineHide(L) } },
             "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
             "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
             "usage_widget_show": { L in MainActor.assumeIsolated { Native.shared.usageWidgetShow(L) } },
@@ -132,6 +144,10 @@ final class Native {
             // windows / apps (AXUIElement -- needs the Accessibility permission)
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
             "focus_window": { L in MainActor.assumeIsolated { Native.shared.focusWindow(L) } },
+            "raise_window": { L in MainActor.assumeIsolated { Native.shared.raiseWindow(L) } },
+            "on_focused_window_changed": { L in MainActor.assumeIsolated { Native.shared.onFocusedWindowChanged(L) } },
+            "on_window_frames_changed": { L in MainActor.assumeIsolated { Native.shared.onWindowFramesChanged(L) } },
+            "focused_window_wid": { L in MainActor.assumeIsolated { Native.shared.focusedWindowWid(L) } },
             "ax_trusted":   { L in MainActor.assumeIsolated { Native.shared.axTrusted(L) } },
             "ax_prompt":    { L in MainActor.assumeIsolated { Native.shared.axPrompt(L) } },
             "ax_open_settings": { L in MainActor.assumeIsolated { Native.shared.openAccessibilitySettings(L) } },

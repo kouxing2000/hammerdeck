@@ -105,6 +105,161 @@ function M.gridCellToFrame(s, dims, cell, margin)
 end
 
 -- ---------------------------------------------------------------------------
+-- Deck tiling (Window Deck): a uniform grid over the whole screen + a
+-- minimise-travel assignment of windows to cells. Pure rect math, same tier as
+-- gridCellToFrame -- the "grid Phase 2" this module's header invites.
+-- ---------------------------------------------------------------------------
+
+-- Grid shape for `n` windows: {w=cols, h=rows}, wide-screen biased, minimising
+-- empty cells. A 1..9 table (the deck caps at 9) with the aesthetic overrides
+-- baked in (3 -> 3x1, 7/8 -> 4x2); n > 9 falls back to the ceil(sqrt) formula so
+-- the function stays total. Every entry satisfies rows == ceil(n/cols), which is
+-- what keeps `tileSlots`' partial-last-row math (lastCount >= 1) valid.
+local GRID_DIMS = {
+    [1] = { w = 1, h = 1 },
+    [2] = { w = 2, h = 1 },
+    [3] = { w = 3, h = 1 },
+    [4] = { w = 2, h = 2 },
+    [5] = { w = 3, h = 2 },
+    [6] = { w = 3, h = 2 },
+    [7] = { w = 4, h = 2 },
+    [8] = { w = 4, h = 2 },
+    [9] = { w = 3, h = 3 },
+}
+
+--- The grid dimensions for `n` windows.
+---@param n integer window count (>= 1)
+---@return {w:integer,h:integer} columns x rows
+function M.gridDims(n)
+    assert(n and n >= 1, "gridDims: n must be >= 1")
+    local d = GRID_DIMS[n]
+    if d then return { w = d.w, h = d.h } end
+    local cols = math.ceil(math.sqrt(n))
+    return { w = cols, h = math.ceil(n / cols) }
+end
+
+--- N uniform pixel slots tiling the screen in READING ORDER (1 = top-left,
+--- left-to-right then top-to-bottom). Full rows carry `cols` cells; a partial
+--- LAST row stretches its `k` windows to full width (no dead cells) by tiling
+--- that row as a k-column grid. Each cell is inset by `gutter` on every side.
+--- Reuses gridCellToFrame -- no new pixel math, just a per-row column count.
+---@param screen {x:number,y:number,w:number,h:number} screen visible frame
+---@param n integer window count (1..9)
+---@param gutter number|nil per-window inset (px); default 0
+---@return {x:number,y:number,w:number,h:number}[] slot frames, reading order
+function M.tileSlots(screen, n, gutter)
+    local dims = M.gridDims(n)
+    local cols, rows = dims.w, dims.h
+    local margin = { x = gutter or 0, y = gutter or 0 }
+    local fullRows = rows - 1
+    local lastCount = n - cols * fullRows   -- windows in the final row (1..cols)
+    local slots = {}
+    for row = 0, fullRows - 1 do
+        for col = 0, cols - 1 do
+            slots[#slots + 1] = M.gridCellToFrame(
+                screen, { w = cols, h = rows },
+                { x = col, y = row, w = 1, h = 1 }, margin)
+        end
+    end
+    for col = 0, lastCount - 1 do
+        slots[#slots + 1] = M.gridCellToFrame(
+            screen, { w = lastCount, h = rows },
+            { x = col, y = fullRows, w = 1, h = 1 }, margin)
+    end
+    return slots
+end
+
+--- The centre point of a rect.
+---@param r {x:number,y:number,w:number,h:number}
+---@return {x:number,y:number}
+function M.center(r)
+    return { x = r.x + r.w / 2, y = r.y + r.h / 2 }
+end
+
+local function sqdist(a, b)
+    local dx, dy = a.x - b.x, a.y - b.y
+    return dx * dx + dy * dy
+end
+
+-- Exact minimum-total-travel bijection by pruned depth-first search over all
+-- permutations. n <= 7 -> at most 5040 leaves, sub-millisecond, run once per
+-- deck entry. The prune (abandon a branch once its partial cost meets the best
+-- full cost) keeps the typical case far under the worst case.
+local function bruteAssign(winCenters, slotCenters, n)
+    local used, current = {}, {}
+    local best = { cost = math.huge, perm = nil }
+    local function recurse(i, cost)
+        if cost >= best.cost then return end
+        if i > n then
+            local p = {}
+            for k = 1, n do p[k] = current[k] end
+            best.cost, best.perm = cost, p
+            return
+        end
+        for j = 1, n do
+            if not used[j] then
+                used[j] = true
+                current[i] = j
+                recurse(i + 1, cost + sqdist(winCenters[i], slotCenters[j]))
+                used[j] = false
+            end
+        end
+    end
+    recurse(1, 0)
+    return best.perm
+end
+
+-- Greedy near-optimal bijection for n = 8..9 (brute force's 40k+ leaves get
+-- slow): take the globally shortest window->slot pair, commit it, repeat over
+-- the remaining. O(n^2 log n). Hungarian is the exact upgrade if a pathological
+-- layout ever surfaces.
+local function greedyAssign(winCenters, slotCenters, n)
+    local cand = {}
+    for i = 1, n do
+        for j = 1, n do
+            cand[#cand + 1] = { i = i, j = j, d = sqdist(winCenters[i], slotCenters[j]) }
+        end
+    end
+    table.sort(cand, function(a, b) return a.d < b.d end)
+    local perm, usedWin, usedSlot, done = {}, {}, {}, 0
+    for _, c in ipairs(cand) do
+        if not usedWin[c.i] and not usedSlot[c.j] then
+            perm[c.i] = c.j
+            usedWin[c.i], usedSlot[c.j] = true, true
+            done = done + 1
+            if done == n then break end
+        end
+    end
+    return perm
+end
+
+--- Assign each window to a distinct slot minimising total (squared) travel, so
+--- a window keeps its spatial place instead of being flung across the screen.
+--- Returns `perm` where `perm[i]` is the slot index window `i` takes. Exact for
+--- n <= 7, greedy (near-optimal) for 8..9.
+---@param winCenters {x:number,y:number}[] window centres, index-aligned to the caller's window list
+---@param slotCenters {x:number,y:number}[] slot centres (from tileSlots via center)
+---@return integer[] perm  window index -> slot index
+function M.assignNearest(winCenters, slotCenters)
+    assert(#winCenters == #slotCenters,
+        "assignNearest: window/slot counts differ")
+    local n = #winCenters
+    if n == 0 then return {} end
+    if n <= 7 then return bruteAssign(winCenters, slotCenters, n) end
+    return greedyAssign(winCenters, slotCenters, n)
+end
+
+--- A centred rect covering `pct` (0..1) of the screen on each axis -- the deck's
+--- hero frame.
+---@param s {x:number,y:number,w:number,h:number} screen visible frame
+---@param pct number fraction of the screen per axis (e.g. 0.78)
+---@return {x:number,y:number,w:number,h:number}
+function M.centeredRect(s, pct)
+    local w, h = s.w * pct, s.h * pct
+    return { x = s.x + (s.w - w) / 2, y = s.y + (s.h - h) / 2, w = w, h = h }
+end
+
+-- ---------------------------------------------------------------------------
 -- Window-layout helpers (the rules engine's `layout` effect). All pure: given
 -- a window list + screen list (from the adapter), decide what goes where.
 -- ---------------------------------------------------------------------------

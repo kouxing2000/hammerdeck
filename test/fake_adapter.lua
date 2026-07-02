@@ -198,14 +198,99 @@ function adapter.askChoice(opts)
     }
 end
 
-function adapter.banner(text)
-    local b = { text = text, stopped = false }
+fake.windowPickers = {}   -- see adapter.askWindows
+
+-- One-shot multi-select picker (Window Deck's entry). Records the items + min +
+-- palette, and exposes drivers: confirm(indices|nil) keeps those 1-based rows
+-- (nil = all, the pre-checked default), refusing below `min` like the real
+-- panel's Enter guard; cancel() dismisses (onChoose(nil)); recolor(i, hex)
+-- recolors row i as a dot-click would (kept items carry the updated color).
+function adapter.askWindows(opts)
+    local d = {
+        title = opts.title, items = opts.items or {}, min = opts.min or 1,
+        palette = opts.palette or {},
+        onChoose = opts.onChoose, open = true, stopped = false,
+    }
+    fake.windowPickers[#fake.windowPickers + 1] = d
+    alloc()
+    local function finish(kept)
+        if not d.open then return end
+        d.open = false
+        freeOnce(d)
+        if d.onChoose then d.onChoose(kept) end
+    end
+    function d.confirm(indices)
+        if indices == nil then
+            indices = {}
+            for i = 1, #d.items do indices[i] = i end
+        end
+        if #indices < d.min then return false end   -- panel refuses below min
+        local kept = {}
+        for _, i in ipairs(indices) do kept[#kept + 1] = d.items[i] end
+        finish(kept)
+        return true
+    end
+    function d.cancel() finish(nil) end
+    -- recolor row i as a dot-click would (the real panel returns colors on
+    -- confirm; the fake mutates the item, which the adapter would do anyway)
+    function d.recolor(i, hex)
+        if d.items[i] then d.items[i].color = hex end
+    end
+    return {
+        stop = function() d.open = false; freeOnce(d) end,
+    }
+end
+
+function adapter.banner(text, screenFrame)
+    local b = { text = text, screenFrame = screenFrame, stopped = false }
     fake.banners[#fake.banners + 1] = b
     alloc()
     return {
         setText = function(t) b.text = t end,
         stop    = function() freeOnce(b) end,
     }
+end
+
+fake.outlines = {}   -- {frame, kind, color, hidden, stopped} for adapter.outline
+function adapter.outline(kind, color)
+    local o = { frame = nil, kind = kind or "member", color = color or "",
+                hidden = false, stopped = false }
+    fake.outlines[#fake.outlines + 1] = o
+    alloc()
+    return {
+        setFrame = function(f) o.frame = f; o.hidden = false end,
+        -- ring flight: lands at f; `flights` counts them for assertions
+        animateFrame = function(f, dur)
+            o.frame = f
+            o.hidden = false
+            o.flights = (o.flights or 0) + 1
+        end,
+        setStyle = function(k) o.kind = k end,
+        setColor = function(c) o.color = c end,
+        setHole  = function(f) o.hole = f end,
+        -- hide without destroying; setFrame/animateFrame re-show (matches the
+        -- real panel: orderOut vs the next place/animate's orderFront)
+        hide     = function() o.hidden = true end,
+        stop     = function() freeOnce(o) end,
+    }
+end
+
+-- All live outlines (optionally filtered by kind).
+function fake.liveOutlines(kind)
+    local out = {}
+    for _, o in ipairs(fake.outlines) do
+        if not o.stopped and (kind == nil or o.kind == kind) then out[#out + 1] = o end
+    end
+    return out
+end
+
+-- The most-recent live outline of a kind (hero/ghost are singletons).
+function fake.liveOutline(kind)
+    for i = #fake.outlines, 1, -1 do
+        local o = fake.outlines[i]
+        if not o.stopped and (kind == nil or o.kind == kind) then return o end
+    end
+    return nil
 end
 
 function adapter.hud(spec)
@@ -276,6 +361,32 @@ end
 function adapter.focusWindow(id)
     fake.focused[#fake.focused + 1] = id
     return true
+end
+
+fake.raises = {}   -- recorded raiseWindow(id) calls, in order (Window Deck's deck-on-top)
+-- Some real apps ACTIVATE the window they're asked to raise (unlike Finder/TextEdit).
+-- With this true, a raise fires an activation echo -- exactly the feedback that made
+-- the hero and a peek fight for front. The deck's settle-guard must absorb it.
+fake.raiseActivates = false
+function adapter.raiseWindow(id)
+    fake.raises[#fake.raises + 1] = id
+    if fake.raiseActivates then
+        for _, w in ipairs(fake.windows) do
+            if w.id == id then
+                fake.windowTitle = w.title
+                fake.activateApp(w.appName, w.bundleID)   -- fires the watchers -> reconcile echo
+                break
+            end
+        end
+    end
+    return true
+end
+
+-- set of ids raised so far -- lets a test assert the whole deck was raised
+function fake.raisedSet()
+    local s = {}
+    for _, id in ipairs(fake.raises) do s[id] = true end
+    return s
 end
 
 function adapter.appIcon(bundleID)
@@ -435,6 +546,48 @@ function fake.activateApp(name, bundleId)
     for _, w in ipairs(fake.appInfoWatchers) do
         if not w.stopped then w.fn({ name = name, bundleId = bundleId or "" }) end
     end
+end
+
+fake.windowFocusWatchers = {}   -- {fn, stopped} for onFocusedWindowChanged
+-- Subscribe to focused-WINDOW changes (Window Deck's within-app promotion). The
+-- real binding fires a bare pulse; the fake mirrors that (no payload).
+function adapter.onFocusedWindowChanged(fn)
+    local w = { fn = fn, stopped = false }
+    fake.windowFocusWatchers[#fake.windowFocusWatchers + 1] = w
+    alloc()
+    return { stop = function() freeOnce(w) end }
+end
+
+-- test-side driver: the focused window changed WITHIN the frontmost app (cmd+`),
+-- which onAppActivated cannot see. Reorder fake.windows first so row 1 is the
+-- newly-focused window, then call this to pulse the window-focus watchers.
+function fake.focusWindowChanged()
+    for _, w in ipairs(fake.windowFocusWatchers) do
+        if not w.stopped then w.fn() end
+    end
+end
+
+fake.frameWatchers = {}   -- {bundleIds, fn, stopped} for onWindowFramesChanged
+-- Subscribe to window move/resize for the given apps (Window Deck's
+-- hide-while-dragging). The real binding fires {bundleID,title,x,y,w,h}.
+function adapter.onWindowFramesChanged(bundleIds, fn)
+    local w = { bundleIds = bundleIds, fn = fn, stopped = false }
+    fake.frameWatchers[#fake.frameWatchers + 1] = w
+    alloc()
+    return { stop = function() freeOnce(w) end }
+end
+
+-- test-side driver: a window moved/resized (as the AX observer would report).
+-- `info` = { bundleID, title, wid?, x, y, w, h } in top-left global points.
+function fake.fireFrameEvent(info)
+    for _, w in ipairs(fake.frameWatchers) do
+        if not w.stopped then w.fn(info) end
+    end
+end
+
+fake.focusedWid = nil   -- the focused window's stable CGWindowID (nil/0 = unresolved)
+function adapter.focusedWindowWid()
+    return fake.focusedWid or 0
 end
 
 -- Data files (in-memory filesystem) ----------------------------------------------
@@ -868,6 +1021,13 @@ end
 function fake.openDialog()
     for i = #fake.dialogs, 1, -1 do
         if fake.dialogs[i].open then return fake.dialogs[i] end
+    end
+    return nil
+end
+
+function fake.openWindowPicker()
+    for i = #fake.windowPickers, 1, -1 do
+        if fake.windowPickers[i].open then return fake.windowPickers[i] end
     end
     return nil
 end

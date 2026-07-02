@@ -1,0 +1,8 @@
+{
+  "name": "Window Deck",
+  "version": "1.0.0",
+  "description": "Tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.",
+  "category": "productivity",
+  "context": "window",
+  "requires": ["accessibility"]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "窗口甲板",
+  "description": "把一块屏幕上的窗口平铺成网格; 聚焦其中任意一个, 它就变成居中放大的主窗口, 其余在其后露边. ⌥Esc 收回主窗口, 再按一次退出.",
+
+  "alert.axRequired": "%s 需要辅助功能权限来排布窗口 -- 请在系统设置中授权后再试.",
+  "alert.needTwo": "窗口甲板需要这块屏幕上至少有两个窗口.",
+  "banner.active": "窗口甲板  --  ⌥Esc 退出",
+
+  "pick.screen": "在哪块屏幕上开甲板?",
+  "pick.screenN": "显示器 %d",
+  "pick.current": "(当前)",
+  "pick.windows": "把哪些窗口放进甲板?",
+  "pick.untitled": "无标题窗口",
+
+  "action.toggle.label": "切换窗口甲板",
+  "option.heroPercent.label": "主窗口尺寸 (占屏幕百分比)",
+  "option.gutter.label": "网格间隙 (像素)",
+  "option.restoreOnExit.label": "退出时还原原始布局"
+}

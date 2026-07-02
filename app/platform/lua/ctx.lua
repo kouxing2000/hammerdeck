@@ -150,8 +150,21 @@ function M.make(m, resolveTrigger, extra)
     -- UI (scope-tracked) -------------------------------------------------------
     function ctx.chooser(opts)   return track(adapter.chooser(opts)) end
     function ctx.askChoice(opts) return track(adapter.askChoice(opts)) end
+    -- One-shot multi-select picker (all pre-checked; uncheck to exclude). The
+    -- one-shot frees itself on completion, so a well-behaved caller stops the
+    -- returned handle in its onChoose to drop it from the scope immediately.
+    function ctx.askWindows(opts) return track(adapter.askWindows(opts)) end
     function ctx.askText(opts)   return track(adapter.askText(opts)) end
-    function ctx.banner(text)    return track(adapter.banner(text)) end
+    -- `screenFrame` (optional, a ctx.screen.frames() row) pins the banner to
+    -- that screen's top edge (else: the key window's screen).
+    function ctx.banner(text, screenFrame)
+        return track(adapter.banner(text, screenFrame))
+    end
+    -- Click-through accent BORDER around a window region (Window Deck's member/
+    -- hero/ghost markers); { setFrame(f), setStyle(kind), setColor(hex), stop() },
+    -- f in top-left global points. kind: "member" | "hero" | "ghost"; color is a
+    -- "#RRGGBB" hex (empty = the system accent).
+    function ctx.outline(kind, color) return track(adapter.outline(kind, color)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end
     -- enter a modal hotkey group (see platform/modal.lua); stop() exits
@@ -160,6 +173,9 @@ function M.make(m, resolveTrigger, extra)
     -- apps (Phase 3 will namespace these into ctx.app.*) -----------------------
     function ctx.appIcon(bundleID)  return adapter.appIcon(bundleID) end
     function ctx.frontmostApp()     return adapter.frontmostApp() end
+    -- { name, bundleId } of the frontmost app -- the stable bundle id lets a
+    -- feature identify the focused window without the locale-sensitive name.
+    function ctx.frontmostAppInfo() return adapter.frontmostAppInfo() end
     function ctx.onAppActivated(fn) return track(adapter.onAppActivated(fn)) end
     -- Accessibility permission gate -- stays TOP-LEVEL (a gate, not a domain).
     function ctx.axTrusted()        return adapter.axTrusted() end
@@ -177,6 +193,30 @@ function M.make(m, resolveTrigger, extra)
     function ctx.window.title()          return adapter.focusedWindowTitle() end
     function ctx.window.setFrame(f)      return window_ops.setFrame(f) end
     function ctx.window.setFullscreen(b) return adapter.setFocusedWindowFullscreen(b) end
+    -- Place a SPECIFIC listed window by id (batch layout, e.g. Window Deck).
+    -- Bypasses window_ops on purpose: a multi-window layout must NOT yank the
+    -- pointer to follow one of them (the rules engine's layout effect follows
+    -- the same rule). Ids are only valid until the next list() -- re-list right
+    -- before a placement batch. Returns true on success.
+    function ctx.window.setFrameFor(id, f) return adapter.setWindowFrame(id, f) end
+    -- Raise a listed window above others WITHOUT activating its app or moving the
+    -- pointer -- a surgical AXRaise (no same-app-sibling drag, no app activation,
+    -- so no spurious focus events; see adapter.raiseWindow). Window Deck keeps the
+    -- deck above non-deck windows with this. Ids valid only until the next list().
+    function ctx.window.raise(id) return adapter.raiseWindow(id) end
+    -- Subscribe to focused-window changes (within-app switches app activation
+    -- can't see). Scope-tracked; fn() is a bare pulse -- re-list to see who's
+    -- focused now. Needs Accessibility.
+    function ctx.window.onFocusChanged(fn) return track(adapter.onFocusedWindowChanged(fn)) end
+    -- Subscribe to window move/resize events for the given apps: fn(info) gets
+    -- { bundleID, title, wid, x, y, w, h } (top-left global). Fires for the
+    -- caller's own AX moves too -- guard your own echoes. Needs Accessibility.
+    function ctx.window.onFramesChanged(bundleIds, fn)
+        return track(adapter.onWindowFramesChanged(bundleIds, fn))
+    end
+    -- The focused window's stable CGWindowID (0/nil = unresolvable) -- same
+    -- identity as the `wid` field on ctx.window.list() rows.
+    function ctx.window.focusedWid() return adapter.focusedWindowWid() end
 
     ctx.screen = {}
     function ctx.screen.frames()         return adapter.screenFrames() end
