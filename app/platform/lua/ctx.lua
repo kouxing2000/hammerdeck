@@ -174,10 +174,11 @@ function M.make(m, resolveTrigger, extra)
     end
     -- Window Deck control card: a small draggable card floating above the scrim
     -- (title + Hero toggle + Exit + mini-map switcher + Rearrange). `opts`:
-    -- { title, hint, name, switchHint, pos = {x,y}, screen = {x,y,w,h},
-    -- switcher = { cols, colors, hero, onSwitch(i) }, hero, onToggleHero(bool),
-    -- onRearrange(), onMove(x,y), onExit() }. Returns { reanchor(pos, screen),
-    -- setHero(i), setDirty(bool), hide, show, stop }.
+    -- { title, hint, name, switchHint, heroLabel, exitLabel, rearrangeLabel
+    -- (button text, i18n), pos = {x,y}, screen = {x,y,w,h}, switcher = { cols,
+    -- colors, hero, onSwitch(i) }, hero, onToggleHero(bool), onRearrange(),
+    -- onMove(x,y), onExit() }. Returns { reanchor(pos, screen), setHero(i),
+    -- setDirty(bool), setSwitchHint(t), hide, show, stop }.
     function ctx.deckWidget(opts) return track(adapter.deckWidget(opts)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end

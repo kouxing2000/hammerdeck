@@ -336,10 +336,11 @@ function adapter.deckWidget(opts)
     fake.deckWidgets[#fake.deckWidgets + 1] = w
     alloc()
     return {
-        -- drive w.onMove/onExit/onSwitch/onRearrange from a test
+        -- drive w.onMove/onExit/onSwitch/onToggleHero/onRearrange from a test
         reanchor = function(p, s) w.pos, w.screen = p, s end,
         setHero = function(i) w.hero = i or 0 end,
         setDirty = function(d) w.dirty = d and true or false end,
+        setSwitchHint = function(t) w.switchHint = t end,
         hide = function() w.hidden = true end,
         show = function() w.hidden = false end,
         stop = function() freeOnce(w) end,

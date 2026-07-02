@@ -921,6 +921,45 @@ final class IntegrationTests: XCTestCase {
         // created, mutated, and torn down through the bridge.
     }
 
+    #if DEBUG
+    // Regression for two leaks the reviewer caught: freeResource forgot to clear
+    // the scrims/deckWidgets dicts (stranded an NSPanel per deck cycle) and the
+    // deck-widget canceller never released its 5 pinned Lua callback refs. Both
+    // are invisible to the fake-adapter suite -- only the REAL bridge dicts +
+    // pinnedRefCount catch them. Create + stop repeatedly: the pinned-ref count
+    // and both panel dicts must return exactly to baseline every cycle.
+    func testDeckChromeReleasesRefsAndPanels() throws {
+        try requireUITests()   // both create real always-front NSPanels
+        let lua = host.lua
+        let baseRefs = lua.pinnedRefCount
+        let baseWidgets = Native.shared.deckWidgets.count
+        let baseScrims = Native.shared.scrims.count
+        for _ in 0..<3 {
+            eval("""
+            _G.itW = require('platform.adapter').deckWidget({
+                title='T', name='n', switchHint='s',
+                pos={x=100,y=100}, screen={x=0,y=0,w=1440,h=900},
+                switcher={cols=2, colors={'#ff0000','#00ff00'}, onSwitch=function() end},
+                onMove=function() end, onExit=function() end,
+                onToggleHero=function() end, onRearrange=function() end,
+            }); return true
+            """)
+            XCTAssertEqual(lua.pinnedRefCount, baseRefs + 5, "the deck widget pins its 5 callbacks")
+            XCTAssertEqual(Native.shared.deckWidgets.count, baseWidgets + 1, "and registers one panel")
+            eval("_G.itW.stop(); _G.itW = nil; return true")
+            XCTAssertEqual(lua.pinnedRefCount, baseRefs, "stopping the widget releases all 5 refs")
+            XCTAssertEqual(Native.shared.deckWidgets.count, baseWidgets, "and clears its dict entry")
+
+            // The scrim pins no refs but its dict entry must still be freed.
+            eval("_G.itS = require('platform.adapter').scrim({x=0,y=0,w=1440,h=900}, 0.5); return true")
+            XCTAssertEqual(Native.shared.scrims.count, baseScrims + 1, "the scrim registers a panel")
+            eval("_G.itS.stop(); _G.itS = nil; return true")
+            XCTAssertEqual(Native.shared.scrims.count, baseScrims, "the scrim dict entry is freed on stop")
+        }
+        XCTAssertEqual(lua.pinnedRefCount, baseRefs, "no pinned ref leaks across deck-chrome cycles")
+    }
+    #endif
+
     func testDataDirAndAppTrackingBridge() {
         let dir = eval("return require('platform.adapter').dataDir()") as? String
         XCTAssertEqual(dir?.hasSuffix("Application Support/Hammerdeck"), true)

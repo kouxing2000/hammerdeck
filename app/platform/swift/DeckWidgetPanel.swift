@@ -25,8 +25,10 @@ final class DeckWidgetPanel {
     private var clamp: NSRect
     private var cells: [MiniCellView] = []
     private let rearrangeButton: RearrangeButtonView
+    private let hintLabel = NSTextField(labelWithString: "")
 
     init(title: String, hint: String, displayName: String, switchHint: String,
+         heroLabel: String, exitLabel: String, rearrangeLabel: String,
          gridCols: Int, heroIndex: Int, cellColors: [String], heroOn: Bool,
          topLeft: CGPoint, screen: NSRect,
          onMove: @escaping (Double, Double) -> Void, onExit: @escaping () -> Void,
@@ -34,7 +36,7 @@ final class DeckWidgetPanel {
          onRearrange: @escaping () -> Void) {
         self.onMove = onMove
         self.clamp = screen
-        rearrangeButton = RearrangeButtonView()
+        rearrangeButton = RearrangeButtonView(label: rearrangeLabel)
         rearrangeButton.onClick = onRearrange
         card = DraggableCardView()
         panel = FloatingPanel(
@@ -80,18 +82,18 @@ final class DeckWidgetPanel {
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         spacer.translatesAutoresizingMaskIntoConstraints = false
 
-        // Hero toggle: "Hero" label + a switch. Off = pure grid tiler.
-        let heroLabel = NSTextField(labelWithString: "Hero")
-        heroLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        heroLabel.textColor = .white
+        // Hero toggle: label + a switch. Off = pure grid tiler.
+        let heroLabelField = NSTextField(labelWithString: heroLabel)
+        heroLabelField.font = .systemFont(ofSize: 13, weight: .semibold)
+        heroLabelField.textColor = .white
         let heroToggle = ToggleView(on: heroOn)
         heroToggle.onToggle = onToggleHero
-        let heroGroup = NSStackView(views: [heroLabel, heroToggle])
+        let heroGroup = NSStackView(views: [heroLabelField, heroToggle])
         heroGroup.orientation = .horizontal
         heroGroup.alignment = .centerY
         heroGroup.spacing = 7
 
-        let exit = ExitButtonView(accent: accent)
+        let exit = ExitButtonView(accent: accent, label: exitLabel)
         exit.onClick = onExit
 
         let topRow = NSStackView(views: [titleStack, spacer, heroGroup, exit])
@@ -102,7 +104,7 @@ final class DeckWidgetPanel {
         // --- Bottom row: mini-map + hint -------------------------------------
         let map = Self.buildMiniMap(gridCols: gridCols, colors: cellColors,
                                     onSwitch: onSwitch, into: &cells)
-        let hintLabel = NSTextField(labelWithString: switchHint)
+        hintLabel.stringValue = switchHint
         hintLabel.font = .systemFont(ofSize: 12, weight: .regular)
         hintLabel.textColor = NSColor.white.withAlphaComponent(0.5)
         let bottomSpacer = NSView()
@@ -182,6 +184,9 @@ final class DeckWidgetPanel {
 
     /// Enable the Rearrange button only when a window is off its grid slot.
     func setDirty(_ dirty: Bool) { rearrangeButton.setEnabled(dirty) }
+
+    /// Update the mini-map hint (the deck swaps it with the Hero mode).
+    func setSwitchHint(_ text: String) { hintLabel.stringValue = text }
 
     private func clamped(_ o: NSPoint) -> NSPoint {
         let sz = panel.frame.size
@@ -312,7 +317,7 @@ private final class ExitButtonView: NSView {
     var onClick: (() -> Void)?
     private var pressed = false
 
-    init(accent: NSColor) {
+    init(accent: NSColor, label labelText: String) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 8
@@ -321,7 +326,7 @@ private final class ExitButtonView: NSView {
         layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
         translatesAutoresizingMaskIntoConstraints = false
         let cap = KeyCapView(text: "⌥esc")
-        let label = NSTextField(labelWithString: "Exit")
+        let label = NSTextField(labelWithString: labelText)
         label.font = .systemFont(ofSize: 14, weight: .semibold)
         label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -354,7 +359,7 @@ private final class RearrangeButtonView: NSView {
     private var pressed = false
     private var enabled = false
 
-    init() {
+    init(label labelText: String) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 8
@@ -362,10 +367,9 @@ private final class RearrangeButtonView: NSView {
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
         translatesAutoresizingMaskIntoConstraints = false
-        toolTip = "Rearrange windows to the grid"
         let glyph = GridGlyphView(color: .white)
         glyph.translatesAutoresizingMaskIntoConstraints = false
-        let label = NSTextField(labelWithString: "Rearrange")
+        let label = NSTextField(labelWithString: labelText)
         label.font = .systemFont(ofSize: 14, weight: .semibold)
         label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false

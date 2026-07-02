@@ -2442,8 +2442,8 @@ do
     ok(fake.liveOutline("hero") == nil and fake.liveOutline("ghost") == nil,
         "no hero/ghost border in the flat grid (no hero yet)")
     ok(fake.liveWidget() ~= nil, "the draggable indicator widget shows while the deck is active")
-    ok(registry.liveHandleCount() == 12,
-        "active deck = toggle + 2 watchers + esc + scrim + widget + screenWatcher (7) + frame watcher + 4 member borders")
+    ok(registry.liveHandleCount() == 16,
+        "active deck = 7 base + frame watcher + 4 member borders + 4 ⌥number hotkeys")
 
     -- toggle off -> restore original frames, scrim gone
     local before = #fake.windowFrameSets
@@ -2460,8 +2460,8 @@ do
     fake.windows = quadWindows()
     fake.windowFrameSets = {}
     enterDeck()                                    -- re-enter
-    ok(registry.liveHandleCount() == 12,
-        "re-entered the deck (7 base + frame watcher + 4 member borders)")
+    ok(registry.liveHandleCount() == 16,
+        "re-entered the deck (7 base + frame watcher + 4 member borders + 4 ⌥number hotkeys)")
     registry.setEnabled("window_deck", false)      -- disable mid-deck
     ok(lastSetFor(1) and lastSetFor(1).w == 300,
         "disabling mid-deck restores original frames via stop()")
@@ -2492,8 +2492,8 @@ do
     ok(#fake.windowFrameSets == 3, "excluding a window decks only the kept three")
     ok(lastSetFor(4) == nil, "the excluded window is left untouched")
     ok(#fake.liveOutlines("member") == 3, "only the kept three windows get member borders")
-    ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 11,
-        "the deck is live after an exclude (7 base + frame watcher + 3 member borders)")
+    ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 14,
+        "the deck is live after an exclude (7 base + frame watcher + 3 member borders + 3 ⌥number hotkeys)")
     fake.pressHotkey("k", HYP)                      -- exit
     ok(registry.liveHandleCount() == 1, "clean after the exclude test")
 
@@ -2599,8 +2599,8 @@ do
         ok(fake.frontmostId == "com.tr",
             "the hero's own app is frontmost after the reclean (hero lift came last)")
         fake.fireTimers("after")       -- clear the reclean's settle window
-        ok(registry.liveHandleCount() == 13,
-            "no stray handle: 7 base + frame watcher + 4 member borders + 1 ghost (FOCUS)")
+        ok(registry.liveHandleCount() == 17,
+            "no stray handle: 7 base + frame watcher + 4 member borders + 1 ghost + 4 ⌥number hotkeys (FOCUS)")
 
         fake.pressHotkey("k", HYP)     -- exit
         ok(registry.liveHandleCount() == 1, "clean after the blink regression")
@@ -2705,7 +2705,7 @@ do
         local w = fake.liveWidget()
         ok(w and w.name == SCREEN.name, "the widget shows the deck screen's display name")
         ok(w.screen and w.screen.w == SCREEN.w, "the widget gets the deck screen as its drag clamp")
-        ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 12, "deck live before the Exit click")
+        ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 16, "deck live before the Exit click")
         w.onExit()                                  -- click the Exit button
         ok(fake.liveScrim() == nil and registry.liveHandleCount() == 1,
             "the widget Exit button exits the deck (chrome gone, only the toggle left)")
@@ -2743,6 +2743,28 @@ do
         registry.setEnabled("window_deck", false)
     end
 
+    -- T-WD-numkeys: ⌥1-9 switch the hero to that mini-map cell (shares
+    -- switchToCell with the mini-map clicks).
+    do
+        fake.windows = quadWindows()
+        fake.screenList = { SCREEN }
+        registry.setEnabled("window_deck", true)
+        enterDeck()
+        local w = fake.liveWidget()
+        fake.focused = {}
+        fake.pressHotkey("4", { "alt" })   -- ⌥4 -> cell 4 = bottom-right = id 1
+        ok(fake.focused[#fake.focused] == 1,
+            "⌥4 focuses the bottom-right window (same as clicking mini-map cell 4)")
+        focusWin(2)                        -- TL -> hero at cell 1
+        ok(w.hero == 1, "TL promoted to hero (cell 1)")
+        fake.pressHotkey("1", { "alt" })   -- ⌥1 on the hero's own cell
+        fake.fireTimers("after")
+        ok(w.hero == 0 and fake.liveOutline("hero") == nil,
+            "⌥ on the hero's own cell drops back to the flat grid")
+        fake.pressHotkey("k", HYP)
+        registry.setEnabled("window_deck", false)
+    end
+
     -- T-WD-hero-toggle: the widget's Hero switch gates promotion -- off = a pure
     -- grid tiler (focusing a window does not zoom it) -- and the choice persists.
     do
@@ -2752,6 +2774,7 @@ do
         enterDeck()
         local w = fake.liveWidget()
         ok(w.heroMode == true, "Hero starts ON by default")
+        local hintOn = w.switchHint
         focusWin(2)
         ok(w.hero == 1 and fake.liveOutline("hero") ~= nil,
             "with Hero on, focusing a window zooms it into a hero")
@@ -2759,10 +2782,12 @@ do
         fake.fireTimers("after")       -- land the drop beat
         ok(w.hero == 0 and fake.liveOutline("hero") == nil,
             "flipping Hero off drops the current hero back to the grid")
+        ok(w.switchHint ~= hintOn, "the mini-map hint rewords for grid-only mode when Hero is off")
         focusWin(3)                    -- focus another window
         ok(fake.liveOutline("hero") == nil,
             "with Hero off, focusing a window does not zoom it (pure grid tiler)")
         w.onToggleHero(true)           -- flip Hero back ON
+        ok(w.switchHint == hintOn, "the hint reverts when Hero is toggled back on")
         focusWin(3)
         ok(fake.liveOutline("hero") ~= nil and w.hero ~= 0,
             "flipping Hero on restores focus-to-hero")

@@ -492,42 +492,52 @@ extension Native {
 
     // MARK: - Deck widget (draggable control card: title + Exit + mini-map)
 
-    // deck_widget_show(title, hint, name, switchHint, x, y, sx, sy, sw, sh,
-    //   gridCols, heroIndex, colors[], onMove, onExit, onSwitch, heroOn,
-    //   onToggleHero): x,y = top-left global corner; sx..sh = deck screen (the
-    //   drag clamp); gridCols/colors[] build the mini-map (row-major, 1-based),
-    //   heroIndex lights a cell (0 = none); heroOn = initial Hero toggle state;
-    //   onMove/onExit/onSwitch as before; onToggleHero(bool) on the Hero switch.
+    // deck_widget_show(opts) -- opts is a single table (safer than ~20 positional
+    // args). Fields: title, hint, name, switchHint, heroLabel, exitLabel,
+    // rearrangeLabel (all strings); x, y (top-left global corner); sx, sy, sw, sh
+    // (deck screen, the drag clamp); gridCols + colors[] build the mini-map
+    // (row-major, 1-based); heroIndex lights a cell (0 = none); heroOn = initial
+    // Hero toggle state; onMove(x,y) / onExit() / onSwitch(i) / onToggleHero(bool)
+    // / onRearrange() callbacks.
     func deckWidgetShow(_ L: OpaquePointer?) -> Int32 {
-        let title = LuaState.string(L, 1) ?? ""
-        let hint  = LuaState.string(L, 2) ?? ""
-        let name  = LuaState.string(L, 3) ?? ""
-        let switchHint = LuaState.string(L, 4) ?? ""
-        let x = LuaState.double(L, 5) ?? 20
-        let y = LuaState.double(L, 6) ?? 20
-        let sx = LuaState.double(L, 7) ?? 0, sy = LuaState.double(L, 8) ?? 0
-        let sw = LuaState.double(L, 9) ?? 1440, sh = LuaState.double(L, 10) ?? 900
-        let gridCols = Int(LuaState.int(L, 11) ?? 2)
-        let heroIndex = Int(LuaState.int(L, 12) ?? 0)
+        // Field readers over the opts table at stack index 1. makeRef is
+        // stack-neutral (it pushes a copy then luaL_refs it), so getfield ->
+        // makeRef(at:-1) -> pop reads a callback cleanly.
+        func str(_ k: String) -> String {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.string(L, -1) ?? ""
+        }
+        func dbl(_ k: String, _ d: Double) -> Double {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.double(L, -1) ?? d
+        }
+        func i32(_ k: String, _ d: Int) -> Int {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.int(L, -1).map { Int($0) } ?? d
+        }
+        func flag(_ k: String, _ d: Bool) -> Bool {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.bool(L, -1) ?? d
+        }
+        func ref(_ k: String) -> Int32 {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return lua.makeRef(at: -1)
+        }
         var colors: [String] = []
-        if lua_type(L, 13) == LUA_TTABLE {
-            let n = lua_rawlen(L, 13)
+        lua_getfield(L, 1, "colors")
+        if lua_type(L, -1) == LUA_TTABLE {
+            let n = lua_rawlen(L, -1)
             if n > 0 { for i in 1...n {
-                lua_rawgeti(L, 13, lua_Integer(i))
-                colors.append(LuaState.string(L, -1) ?? "")
-                lua_settop(L, -2)
+                lua_rawgeti(L, -1, lua_Integer(i)); colors.append(LuaState.string(L, -1) ?? ""); lua_settop(L, -2)
             } }
         }
-        let moveRef = lua.makeRef(at: 14)
-        let exitRef = lua.makeRef(at: 15)
-        let switchRef = lua.makeRef(at: 16)
-        let heroOn = LuaState.bool(L, 17) ?? true
-        let toggleRef = lua.makeRef(at: 18)
-        let rearrangeRef = lua.makeRef(at: 19)
+        lua_settop(L, -2)
+
+        let moveRef = ref("onMove"), exitRef = ref("onExit"), switchRef = ref("onSwitch")
+        let toggleRef = ref("onToggleHero"), rearrangeRef = ref("onRearrange")
         let widget = DeckWidgetPanel(
-            title: title, hint: hint, displayName: name, switchHint: switchHint,
-            gridCols: gridCols, heroIndex: heroIndex, cellColors: colors, heroOn: heroOn,
-            topLeft: CGPoint(x: x, y: y), screen: flipToAppKit(sx, sy, sw, sh),
+            title: str("title"), hint: str("hint"), displayName: str("name"),
+            switchHint: str("switchHint"), heroLabel: str("heroLabel"),
+            exitLabel: str("exitLabel"), rearrangeLabel: str("rearrangeLabel"),
+            gridCols: i32("gridCols", 2), heroIndex: i32("heroIndex", 0),
+            cellColors: colors, heroOn: flag("heroOn", true),
+            topLeft: CGPoint(x: dbl("x", 20), y: dbl("y", 20)),
+            screen: flipToAppKit(dbl("sx", 0), dbl("sy", 0), dbl("sw", 1440), dbl("sh", 900)),
             onMove: { nx, ny in
                 Native.shared.lua.callRef(moveRef) { L in
                     lua_pushnumber(L, nx); lua_pushnumber(L, ny); return 2
@@ -564,6 +574,13 @@ extension Native {
     func deckWidgetSetHero(_ L: OpaquePointer?) -> Int32 {
         if let id = LuaState.int(L, 1).map(Int32.init), let idx = LuaState.int(L, 2) {
             deckWidgets[id]?.setHero(Int(idx))
+        }
+        return 0
+    }
+
+    func deckWidgetSetSwitchHint(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) {
+            deckWidgets[id]?.setSwitchHint(LuaState.string(L, 2) ?? "")
         }
         return 0
     }

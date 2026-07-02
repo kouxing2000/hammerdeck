@@ -139,6 +139,7 @@ final class Native {
             "deck_widget_show":       { L in MainActor.assumeIsolated { Native.shared.deckWidgetShow(L) } },
             "deck_widget_set_hero":   { L in MainActor.assumeIsolated { Native.shared.deckWidgetSetHero(L) } },
             "deck_widget_set_dirty":  { L in MainActor.assumeIsolated { Native.shared.deckWidgetSetDirty(L) } },
+            "deck_widget_set_switch_hint": { L in MainActor.assumeIsolated { Native.shared.deckWidgetSetSwitchHint(L) } },
             "deck_widget_reanchor":   { L in MainActor.assumeIsolated { Native.shared.deckWidgetReanchor(L) } },
             "deck_widget_hide":       { L in MainActor.assumeIsolated { Native.shared.deckWidgetHide(L) } },
             "deck_widget_show_again": { L in MainActor.assumeIsolated { Native.shared.deckWidgetShowAgain(L) } },

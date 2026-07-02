@@ -356,6 +356,35 @@ local function controllerFor(ctx)
         return false
     end
 
+    -- Promote the window in mini-map cell `i` (1-based) to hero -- or, if it is
+    -- already the hero, drop back to the grid. Shared by the widget's mini-map
+    -- clicks and the ⌥1-9 hotkeys. In Hero-off mode reconcile won't promote, so
+    -- a focus here just brings the window forward (a plain focus launcher).
+    local function switchToCell(i)
+        if not st.active then return end
+        local key = st.widgetOrder and st.widgetOrder[i]
+        if not key then return end
+        if key == st.heroKey then
+            ctx.log("deck switch: cell", i, "(hero) -> drop to grid")
+            st.dropHero()
+        else
+            local ids = resolveIds()
+            if ids[key] then
+                ctx.log("deck switch: cell", i, "-> focus", key)
+                ctx.window.focus(ids[key])
+            end
+        end
+    end
+
+    -- The mini-map hint, worded for the current mode (in Hero-off mode a cell
+    -- click just focuses, so "make it the hero" would mislead).
+    local function switchHintFor()
+        if st.heroMode then
+            return ctx.t("deck.switchHint", "click or ⌥1-9 to set the hero")
+        end
+        return ctx.t("deck.switchHintGrid", "click or ⌥1-9 to focus")
+    end
+
     -- Border overlays (click-through). Every deck member gets a subtle "member"
     -- border at its current frame so you can see which windows are in the deck; the
     -- hero's border is re-styled "hero" (strong) and moved to the hero frame; and a
@@ -785,6 +814,15 @@ local function controllerFor(ctx)
         st.appWatcher   = ctx.onAppActivated(function() st.reconcile() end)
         st.focusWatcher = ctx.window.onFocusChanged(function() st.reconcile() end)
         st.escHotkey    = ctx.bindHotkey({ "alt" }, "escape", function() st.onEsc() end)
+        -- ⌥1-9 switch the hero to that mini-map cell (⌥ matches ⌥Esc; bare
+        -- numbers would hijack typing in a focused deck window). One per window.
+        -- Append only real handles (no nil holes), so the ipairs teardown in
+        -- exitDeck can't stop short and strand a hotkey still hijacking ⌥N.
+        st.numHotkeys = {}
+        for i = 1, math.min(#group, 9) do
+            local hk = ctx.bindHotkey({ "alt" }, tostring(i), function() switchToCell(i) end)
+            if hk then st.numHotkeys[#st.numHotkeys + 1] = hk end
+        end
         -- The container scrim pins to the DECK's screen (a picked screen, not
         -- necessarily the key one). It (and the widget below) re-anchor on
         -- screenChanged, so they can't be orphaned onto another display the way
@@ -800,7 +838,10 @@ local function controllerFor(ctx)
             title  = ctx.t("deck.title", "Window Deck"),
             hint   = ctx.t("deck.hint", "to exit"),
             name   = screen.name or "",
-            switchHint = ctx.t("deck.switchHint", "click a window to make it the hero"),
+            switchHint     = switchHintFor(),
+            heroLabel      = ctx.t("deck.hero", "Hero"),
+            exitLabel      = ctx.t("deck.exit", "Exit"),
+            rearrangeLabel = ctx.t("deck.rearrange", "Rearrange"),
             pos    = { x = screen.x + st.widgetDx, y = screen.y + st.widgetDy },
             screen = screen,
             hero   = st.heroMode,
@@ -812,6 +853,7 @@ local function controllerFor(ctx)
                 saveHeroMode(on)
                 ctx.log("hero mode", on and "on" or "off")
                 if not on and st.mode == "focus" then st.dropHero() end
+                if st.widget then st.widget.setSwitchHint(switchHintFor()) end
             end,
             switcher = {
                 cols   = st.widgetCols,
@@ -819,22 +861,8 @@ local function controllerFor(ctx)
                 hero   = 0,   -- flat grid on enter; renderBorders lights the hero
                 -- Click cell i: the current hero drops back to grid; any other
                 -- window is FOCUSED, which fires the existing promote beat (no
-                -- new promotion path). Reuses the same machinery as a real click.
-                onSwitch = function(i)
-                    if not st.active then return end
-                    local key = st.widgetOrder and st.widgetOrder[i]
-                    if not key then return end
-                    if key == st.heroKey then
-                        ctx.log("deck switch: cell", i, "(hero) -> drop to grid")
-                        st.dropHero()
-                    else
-                        local ids = resolveIds()
-                        if ids[key] then
-                            ctx.log("deck switch: cell", i, "-> focus", key)
-                            ctx.window.focus(ids[key])
-                        end
-                    end
-                end,
+                -- new promotion path). Same as a real click; shared with ⌥1-9.
+                onSwitch = switchToCell,
             },
             onMove = function(x, y)
                 if not st.active or not st.screen then return end
@@ -1167,6 +1195,8 @@ local function controllerFor(ctx)
         if st.appWatcher   then st.appWatcher.stop() end
         if st.focusWatcher then st.focusWatcher.stop() end
         if st.escHotkey    then st.escHotkey.stop() end
+        for _, hk in ipairs(st.numHotkeys or {}) do hk.stop() end
+        st.numHotkeys = nil
         if st.scrim        then st.scrim.stop() end
         if st.widget       then st.widget.stop() end
         st.active = false
