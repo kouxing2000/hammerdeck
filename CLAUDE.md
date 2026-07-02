@@ -236,6 +236,16 @@ a menubar/panel pixel fix misses, read the layout model or run ONE throwaway
 `scripts/shot.sh` probe to learn what the mechanism physically can/can't do,
 pick it once, then implement -- don't trial-and-error.
 
+Z-order (a second hard constraint, learned via window_deck's "return blink",
+2026-07-02): other apps' windows CANNOT be reordered atomically -- AXRaise is
+top-of-stack only (no insert-below), and some apps (VSCode, Chrome) ACTIVATE
+the window they're asked to raise, so any multi-window raise pass flashes
+whichever member applies mid-pass over the intended top window. Never raise
+more than one window in a user-visible moment: bring at most ONE window
+forward (the one the user focused -- their own click already fronts it), and
+defer multi-window z-repair to beat landings, where ring flights + window
+motion cover the churn (window_deck's recleanIfPeeked is the worked example).
+
 Lua syntax check: `luac -p app/**/*.lua`. Version skew: `lua test/run.lua` runs
 on Homebrew Lua (currently 5.5) while the embedded engine is vendored 5.4.7 --
 keep all Lua code 5.4-compatible. `scripts/test-lua.sh` closes the gap: it

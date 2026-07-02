@@ -2557,9 +2557,9 @@ do
     -- Regression for the focus-fight blink: raiseDeck's raises emit activation
     -- echoes; UNGUARDED, each echo re-enters reconcile and promotes -- forever
     -- (with raiseActivates on, an unguarded deck recurses until the Lua stack
-    -- overflows). The settle guard keeps every raise pass bounded; and a plain
-    -- promote no longer raises at all (only a peek-return does), so a swap can't
-    -- even start the fight.
+    -- overflows). The settle guard keeps every raise pass bounded; a plain
+    -- promote never raises, and a bare peek-return raises NOTHING either (the
+    -- "return blink" fix) -- only enter and a post-peek beat landing raise.
     do
         fake.windows = quadWindows()
         fake.raiseActivates = true
@@ -2574,21 +2574,29 @@ do
         focusWin(2)                    -- a plain promote does NOT raise -> no echoes, no fight
         ok(#fake.raises == 0, "a plain promote does not raise (no activation echoes to fight)")
 
-        -- a peek then a return DOES re-raise; the activation echoes must still not loop
+        -- a peek then a bare return must raise NOTHING: any raise to an
+        -- activating app fronts a member over the hero for a beat -- the
+        -- "return blink". The user's own click already fronted the hero.
         table.insert(fake.windows, 1,
             { id = 77, title = "X", appName = "Other", bundleID = "com.x", x = 5, y = 5, w = 90, h = 90 })
         focusWin(77)                   -- peek a non-deck window (sets peeked)
         fake.raises, fake.focused = {}, {}
-        focusWin(2)                    -- return to the hero -> reclean -> raiseDeck -> echoes absorbed
-        ok(#fake.raises == 3 and #fake.focused == 1 and fake.focused[1] == 2,
-            "a peek-return re-raises the 3 members and FOCUSES the hero exactly once "
-            .. "(a real activation beats an activating member; echoes never re-promote, no loop)")
-        -- ordering proof: under raiseActivates every raise/focus activates its
-        -- app, so the LAST activation wins -- the hero's app ending frontmost
-        -- shows the hero focus came AFTER the member raises (members raised
-        -- above a hero already reclaimed would regress the very fix)
-        ok(fake.frontmostId == "com.tl",
+        focusWin(2)                    -- return to the hero: NO raises, NO focus
+        ok(#fake.raises == 0 and #fake.focused == 0,
+            "a peek-return raises and focuses NOTHING (the no-blink guarantee)")
+        -- the deferred reclean lands on the NEXT beat (a swap), under motion
+        -- cover: members re-raised, then the hero lifted LAST via a real FOCUS
+        -- (beats an activating member). Ordering proof: under raiseActivates
+        -- the LAST activation wins, so the hero's app ending frontmost shows
+        -- the hero lift came after the member raises.
+        fake.raises, fake.focused = {}, {}
+        focusWin(3)                    -- swap -> beat -> landHero -> reclean
+        ok(#fake.raises == 3 and #fake.focused == 1 and fake.focused[1] == 3,
+            "the next beat recleans: 3 member raises + exactly one hero FOCUS "
+            .. "(activation echoes never re-promote, no loop)")
+        ok(fake.frontmostId == "com.tr",
             "the hero's own app is frontmost after the reclean (hero lift came last)")
+        fake.fireTimers("after")       -- clear the reclean's settle window
         ok(registry.liveHandleCount() == 11,
             "no stray handle: 5 base + frame watcher + 4 member borders + 1 ghost (FOCUS)")
 
@@ -2708,19 +2716,24 @@ do
     ok(#fake.windowFrameSets == 0, "focus leaving the group is ignored -- no reshuffle")
     ok(#fake.raises == 0, "peeking a non-deck window does NOT raise the deck (peek stays on top)")
 
-    -- returning to a deck window after a peek re-cleans (re-raises) the deck, but
-    -- moves no frames (re-focusing the current hero is a frame no-op)
+    -- returning to the hero after a peek moves no frames AND raises nothing --
+    -- the user's own click already fronted the hero; raising here is what
+    -- flashed members over the hero (the "return blink"). The reclean that
+    -- sinks the ex-peek waits for the next beat's motion cover.
     fake.windowFrameSets = {}
-    fake.raises = {}
+    fake.raises, fake.focused = {}, {}
     focusWin(3)                                   -- return to the current hero after the peek
     ok(#fake.windowFrameSets == 0, "re-focusing the current hero moves no frames")
-    ok(#fake.raises > 0, "returning after a peek re-raises the deck (re-cleans the overview)")
+    ok(#fake.raises == 0 and #fake.focused == 0,
+        "the bare return raises nothing (no-blink); the reclean is deferred to the next beat")
 
     -- escalating Escape: first drops the hero to GRID (banner stays), second exits.
     -- The drop is a reverse ring flight: the window's move home is dispatched at
     -- flight START (read before the flush proves it), the flush then lands the
-    -- ring and re-renders the borders.
+    -- ring and re-renders the borders. The drop is also a beat: the reclean the
+    -- peek above deferred lands HERE, under the drop's motion cover.
     fake.windowFrameSets = {}
+    fake.raises, fake.focused = {}, {}
     fake.pressHotkey("escape", { "alt" })
     local dropped = lastSetFor(3)                  -- BEFORE the flight timer fires
     ok(dropped and near(dropped.x, TRslot.x) and near(dropped.y, TRslot.y),
@@ -2728,6 +2741,9 @@ do
     fake.fireTimers("after")
     fake.fireTimers("after")
     ok(fake.liveBanner() ~= nil, "first ⌥Esc keeps the deck active (banner still up)")
+    ok(#fake.raises == 4 and #fake.focused == 0,
+        "the deferred reclean lands on the drop beat: all four members re-raised "
+        .. "above the ex-peek (no hero left, so no focus lift)")
     ok(fake.liveOutline("hero") == nil and fake.liveOutline("ghost") == nil
         and #fake.liveOutlines("member") == 4,
         "dropping the hero to GRID: hero/ghost borders gone, all four back to member borders")

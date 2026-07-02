@@ -22,18 +22,21 @@
 -- (ctx.askWindows -- all pre-checked, uncheck to leave one out), then commit to
 -- the grid. Exiting stays instant (no picker on the way out).
 --
--- The deck stays ABOVE non-deck windows on the screen: it is raised on enter and
--- re-raised ONLY when a "peek" (focusing a non-deck window) may have left one on
--- top -- a plain hero swap keeps the deck on top on its own, so it does NOT
--- re-raise (raising activates some apps, a needless one-frame blink). Focusing a
--- NON-deck window is a temporary peek -- left alone, on top only while it holds
--- focus, then sunk behind the deck the moment you focus a deck window again.
--- raiseDeck raises the non-hero members with ctx.window.raise (surgical AXRaise)
--- then lifts the HERO on top with ctx.window.focus (a real activation -- a
--- surgical raise can't beat an app that activated itself when raised, e.g.
--- VSCode/Chrome, which left the hero stuck behind a member); a settle guard
--- absorbs the focus/activation echoes those emit so they never re-enter
--- reconcile and make the hero and a peek fight for front. Focus is the only "tell".
+-- The deck stays ABOVE non-deck windows on the screen: it is raised on enter,
+-- and after a "peek" (focusing a non-deck window) the reclean that sinks the
+-- peeked window runs DEFERRED, at the next beat (a promote or an ⌥Esc drop),
+-- whose ring flights + window motion cover the raise churn. The bare return to
+-- the hero raises NOTHING: the user's own click/cmd-tab already fronted the
+-- hero, and any AXRaise to an app that activates-on-raise (VSCode, Chrome) can
+-- front a member over the hero for a beat -- the "return blink". Until that
+-- next beat the ex-peek may overlap the member margins -- the same visual
+-- state as during the peek itself, just a little longer. When the reclean does
+-- run, raiseDeck raises the non-hero members with ctx.window.raise (surgical
+-- AXRaise) then lifts the HERO on top with ctx.window.focus (a real activation
+-- -- a surgical raise can't beat an app that activated itself when raised),
+-- gated on the hero actually holding focus; a settle guard absorbs the
+-- raise/activation echoes so they never re-enter reconcile and make the hero
+-- and a peek fight for front. Focus is the only "tell".
 --
 -- A SERVICE (start builds the idle controller; stop restores if the deck is live
 -- on disable) with one rebindable action (the toggle). Reuses the pure tiling
@@ -359,9 +362,9 @@ local function controllerFor(ctx)
     -- with a surgical raise (doesn't drag same-app siblings, so no spurious
     -- promotion), THEN lift the HERO on top LAST. Non-deck windows sink behind;
     -- a deliberately-focused non-deck window (a "peek") is left alone and stays
-    -- on top only while it holds focus. Called on enter and whenever focus
-    -- returns to a deck window, so the deck self-heals after a peek. Re-listed
-    -- because ids churn every list().
+    -- on top only while it holds focus. Called on enter and from beat landings
+    -- (via recleanIfPeeked) -- NEVER from the bare return-to-hero, which must
+    -- not raise (see recleanIfPeeked). Re-listed because ids churn every list().
     --
     -- The hero's final lift is a real FOCUS (ctx.window.focus -- SLPS
     -- activation), NOT another surgical raise. A surgical raise can't beat the
@@ -417,10 +420,13 @@ local function controllerFor(ctx)
         end)
     end
 
-    -- Re-lift the deck ONLY if a peek (a non-deck window taking focus) may have put
-    -- a non-deck window on top since we last cleaned. A plain hero swap keeps the
-    -- deck on top on its own, so it must NOT re-raise -- raising activates some apps,
-    -- which flashes a one-frame blink for nothing. beginSettle absorbs the echoes.
+    -- Sink an ex-peek behind the deck -- called ONLY from beat landings
+    -- (landHero / dropHero), where ring flights + window motion cover the raise
+    -- churn. NEVER from the bare return-to-hero: an AXRaise to an app that
+    -- activates-on-raise fronts that member over the hero for a beat (the
+    -- "return blink"), and the return needs no raises anyway -- the user's own
+    -- click/cmd-tab already fronted the hero. A no-peek beat keeps the deck on
+    -- top on its own, so this stays a no-op then. beginSettle absorbs the echoes.
     local function recleanIfPeeked()
         if not st.peeked then return end
         st.peeked = false
@@ -737,13 +743,18 @@ local function controllerFor(ctx)
 
         local member, focusKey = focusedMember()
         if not member then                     -- blur = stay: a peek, leave the deck behind
-            st.peeked = true                   -- a non-deck window took front; re-clean on return
+            st.peeked = true                   -- a non-deck window took front; sunk at the next beat
             ctx.log("reconcile: peek (non-deck focus)", focusKey, "-- stay")
             return
         end
         if member.key == st.heroKey then
-            ctx.log("reconcile: return to hero", member.key)
-            recleanIfPeeked()                  -- re-raise only if a peek left non-deck on top
+            -- Raise NOTHING here. The user's own click/cmd-tab already fronted
+            -- the hero (system click-to-front), and any AXRaise to an
+            -- activating app would flash a member over the hero -- the "return
+            -- blink". st.peeked stays set: the ex-peek sinks at the next beat
+            -- (landHero/dropHero), under motion cover.
+            ctx.log("reconcile: return to hero", member.key,
+                st.peeked and "(reclean deferred to next beat)" or "")
             return
         end
         if not ids[member.key] then return end -- focused window not listed yet
