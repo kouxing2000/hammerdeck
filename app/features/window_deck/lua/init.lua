@@ -240,6 +240,33 @@ local function controllerFor(ctx)
         ctx.setState("colors", json.encode(json.asObject(map)))
     end
 
+    -- The draggable widget's position, persisted as an OFFSET (dx, dy) from the
+    -- deck screen's top-left so it survives a screen move/reconfig. Default: a
+    -- small top-left inset.
+    local function readWidgetPos()
+        local raw = ctx.getState("widgetPos")
+        if type(raw) == "string" and raw ~= "" then
+            local p = json.decode(raw)
+            if type(p) == "table" and type(p.dx) == "number" and type(p.dy) == "number" then
+                return p.dx, p.dy
+            end
+        end
+        return 20, 20
+    end
+    local function saveWidgetPos(dx, dy)
+        ctx.setState("widgetPos", json.encode(json.asObject({ dx = dx, dy = dy })))
+    end
+
+    -- Hero mode: whether focusing a deck window ZOOMS it into a centered hero
+    -- (on, default) or leaves the deck a flat grid tiler (off). Persisted so the
+    -- last choice is remembered; set from both the picker and the widget toggle.
+    local function readHeroMode()
+        return ctx.getState("heroMode") ~= "off"   -- default on
+    end
+    local function saveHeroMode(on)
+        ctx.setState("heroMode", on and "on" or "off")
+    end
+
     -- Preview colors for the pick list: an app the user has recolored keeps its
     -- stored color (its first window), everyone else takes the next free palette
     -- color positionally, skipping colors already in use.
@@ -277,6 +304,56 @@ local function controllerFor(ctx)
             end
         end
         return out
+    end
+
+    -- The rects the container scrim punches holes for = every present member at
+    -- its last-known frame (the hero at the hero frame). Same rects the rings
+    -- bound, so the bright cutouts track the windows. Includes members hidden
+    -- mid-drag (st.stable) at their last frame -- a hole is just a reveal, it
+    -- has no ring to trail the drag.
+    local function deckHoles()
+        local holes = {}
+        for _, m in ipairs(st.group or {}) do
+            if not m.gone then
+                local f = m.cur
+                    or (m.key == st.heroKey and heroFrame() or m.slot)
+                if f then holes[#holes + 1] = { x = f.x, y = f.y, w = f.w, h = f.h } end
+            end
+        end
+        return holes
+    end
+    local function syncScrim()
+        if st.scrim then st.scrim.setHoles(deckHoles()) end
+    end
+
+    -- The mini-map cell (1-based) currently the hero, or 0 in the flat grid.
+    local function heroCellIndex()
+        if not st.heroKey or not st.widgetOrder then return 0 end
+        for i, key in ipairs(st.widgetOrder) do
+            if key == st.heroKey then return i end
+        end
+        return 0
+    end
+
+    -- Is any deck window off its home frame (its slot, or the hero frame for the
+    -- hero)? Drives the widget's Rearrange button -- enabled only when re-tiling
+    -- would actually move something. m.cur is our last dispatched target for our
+    -- own moves and the reported frame after a USER drag, so a drag makes it far.
+    local function frameFar(a, b)
+        if not a or not b then return false end
+        return math.abs((a.x or 0) - (b.x or 0)) > 6
+            or math.abs((a.y or 0) - (b.y or 0)) > 6
+            or math.abs((a.w or 0) - (b.w or 0)) > 6
+            or math.abs((a.h or 0) - (b.h or 0)) > 6
+    end
+    local function isDirty()
+        for _, m in ipairs(st.group or {}) do
+            if not m.gone and m.cur then
+                local target = (m.key == st.heroKey) and heroFrame() or m.slot
+                if frameFar(m.cur, target) then return true end
+            end
+        end
+        return false
     end
 
     -- Border overlays (click-through). Every deck member gets a subtle "member"
@@ -326,6 +403,29 @@ local function controllerFor(ctx)
         elseif st.ghost then
             st.ghost.stop(); st.ghost = nil
         end
+        syncScrim()   -- keep the container holes on the same frames the rings bound
+        if st.widget then
+            st.widget.setHero(heroCellIndex())   -- light the hero's cell
+            st.widget.setDirty(isDirty())        -- enable Rearrange only when off-grid
+        end
+    end
+
+    -- Hide / show all deck chrome (rings + ghost + container scrim) as a unit.
+    -- The chrome belongs to the deck's FRONT context: when a non-deck window is
+    -- focused (a peek) it must not float over that window (rings sit above normal
+    -- windows; the scrim would dim it), so hide it; returning to a deck window
+    -- re-shows it. Showing is pure OVERLAY ordering -- it never raises an app
+    -- window, so it cannot reintroduce the return blink (see recleanIfPeeked).
+    local function hideChrome()
+        for _, b in pairs(st.borders or {}) do b.hide() end
+        if st.ghost then st.ghost.hide() end
+        if st.scrim then st.scrim.hide() end
+        if st.widget then st.widget.hide() end
+    end
+    local function showChrome()
+        if st.scrim then st.scrim.show() end
+        if st.widget then st.widget.show() end
+        renderBorders()   -- re-places (re-shows) every ring + ghost, re-syncs holes
     end
 
     -- Cancel any in-flight beat. A promote flight dispatches its window toward
@@ -573,11 +673,16 @@ local function controllerFor(ctx)
             items   = items,
             palette = PALETTE,
             screen  = screen,   -- center the picker on the PICKED display
+            -- opt in to the picker's Hero switch (its initial state = persisted)
+            heroLabel = ctx.t("pick.hero", "Enlarge focused window (hero)"),
+            hero    = readHeroMode(),
 
-            onChoose = function(kept)
+            onChoose = function(kept, heroOn)
                 if h then h.stop() end   -- drop the one-shot from the scope
                 st.picking = false
                 if not kept then return end          -- cancelled
+                -- Persist the picker's Hero switch (on() below reads it back).
+                if heroOn ~= nil then saveHeroMode(heroOn) end
                 if #kept < 2 then
                     ctx.alert(ctx.t("alert.needTwo",
                         "Window Deck needs at least two windows on this screen."))
@@ -646,6 +751,22 @@ local function controllerFor(ctx)
         local perm = W.assignNearest(winCenters, slotCenters)
         for i, m in ipairs(group) do m.slot = slots[perm[i]] end
 
+        -- Mini-map cell order: members read ROW-MAJOR by slot (top row L->R,
+        -- then the next). Cell i (1-based) maps to widgetOrder[i]; the switcher
+        -- highlights the hero's cell and clicking a cell promotes that window.
+        local ordered = {}
+        for _, m in ipairs(group) do ordered[#ordered + 1] = m end
+        table.sort(ordered, function(a, b)
+            local ay, by = math.floor((a.slot.y or 0) / 10), math.floor((b.slot.y or 0) / 10)
+            if ay ~= by then return ay < by end
+            return (a.slot.x or 0) < (b.slot.x or 0)
+        end)
+        st.widgetOrder, st.widgetColors = {}, {}
+        for i, m in ipairs(ordered) do
+            st.widgetOrder[i], st.widgetColors[i] = m.key, m.color
+        end
+        st.widgetCols = W.gridDims(#group).w
+
         -- place immediately: the ids from the re-list above are still valid.
         -- (moveWin records m.cur and arms the echo guard the frame watcher
         -- below relies on.)
@@ -664,11 +785,74 @@ local function controllerFor(ctx)
         st.appWatcher   = ctx.onAppActivated(function() st.reconcile() end)
         st.focusWatcher = ctx.window.onFocusChanged(function() st.reconcile() end)
         st.escHotkey    = ctx.bindHotkey({ "alt" }, "escape", function() st.onEsc() end)
-        -- the banner pins to the DECK's screen -- NSScreen.main (the key
-        -- window's screen) is wrong here: the target screen is picked, and by
-        -- commit time key focus may sit on any display
-        st.banner       = ctx.banner(
-            ctx.t("banner.active", "Window Deck  --  ⌥Esc to exit"), screen)
+        -- The container scrim pins to the DECK's screen (a picked screen, not
+        -- necessarily the key one). It (and the widget below) re-anchor on
+        -- screenChanged, so they can't be orphaned onto another display the way
+        -- the old fixed-rect banner was.
+        st.scrim        = ctx.scrim(screen, ctx.opt("dim") / 100)
+        -- The draggable indicator card floats above the scrim. Its position is
+        -- persisted as an OFFSET from the deck screen's top-left (so it survives
+        -- a screen move); the native drag is CLAMPED to the deck screen, so the
+        -- reported (and saved) offset is always on-screen. onExit exits the deck.
+        st.widgetDx, st.widgetDy = readWidgetPos()
+        st.heroMode     = readHeroMode()
+        st.widget       = ctx.deckWidget({
+            title  = ctx.t("deck.title", "Window Deck"),
+            hint   = ctx.t("deck.hint", "to exit"),
+            name   = screen.name or "",
+            switchHint = ctx.t("deck.switchHint", "click a window to make it the hero"),
+            pos    = { x = screen.x + st.widgetDx, y = screen.y + st.widgetDy },
+            screen = screen,
+            hero   = st.heroMode,
+            -- Flip the Hero toggle live: off drops any current hero back to the
+            -- grid and stops zooming on focus; on re-enables it. Persisted.
+            onToggleHero = function(on)
+                if not st.active then return end
+                st.heroMode = on
+                saveHeroMode(on)
+                ctx.log("hero mode", on and "on" or "off")
+                if not on and st.mode == "focus" then st.dropHero() end
+            end,
+            switcher = {
+                cols   = st.widgetCols,
+                colors = st.widgetColors,
+                hero   = 0,   -- flat grid on enter; renderBorders lights the hero
+                -- Click cell i: the current hero drops back to grid; any other
+                -- window is FOCUSED, which fires the existing promote beat (no
+                -- new promotion path). Reuses the same machinery as a real click.
+                onSwitch = function(i)
+                    if not st.active then return end
+                    local key = st.widgetOrder and st.widgetOrder[i]
+                    if not key then return end
+                    if key == st.heroKey then
+                        ctx.log("deck switch: cell", i, "(hero) -> drop to grid")
+                        st.dropHero()
+                    else
+                        local ids = resolveIds()
+                        if ids[key] then
+                            ctx.log("deck switch: cell", i, "-> focus", key)
+                            ctx.window.focus(ids[key])
+                        end
+                    end
+                end,
+            },
+            onMove = function(x, y)
+                if not st.active or not st.screen then return end
+                st.widgetDx = x - st.screen.x
+                st.widgetDy = y - st.screen.y
+                saveWidgetPos(st.widgetDx, st.widgetDy)
+                ctx.log("deck widget moved", math.floor(st.widgetDx), math.floor(st.widgetDy))
+            end,
+            onExit = function() if st.active then st.exitDeck() end end,
+            onRearrange = function() if st.active then st.rearrange() end end,
+        })
+        -- Display reconfig (a screen powered off/on, resolution or arrangement
+        -- change): if the deck's screen is gone, its whole world is gone -- exit
+        -- cleanly instead of stranding the tiled windows + chrome on a surviving
+        -- display. If the screen merely moved/resized, re-anchor the scrim.
+        st.screenWatcher = ctx.onSystemEvent("screenChanged", function()
+            st.onScreenChanged()
+        end)
         -- hide-until-stable for USER moves: watch the member apps' move/resize
         -- events (our own AX moves are echo-guarded -- see onMemberFrameEvent)
         local bids, seenBid = {}, {}
@@ -692,6 +876,7 @@ local function controllerFor(ctx)
             b.animateFrame(m.slot, FLIGHT)
             st.borders[m.key] = b
         end
+        syncScrim()     -- punch the container holes at the members' slots
         beginSettle()   -- absorb the echoes of the enter raise
         raiseDeck()     -- lift the deck above any non-deck windows on this screen
     end
@@ -744,7 +929,8 @@ local function controllerFor(ctx)
         local member, focusKey = focusedMember()
         if not member then                     -- blur = stay: a peek, leave the deck behind
             st.peeked = true                   -- a non-deck window took front; sunk at the next beat
-            ctx.log("reconcile: peek (non-deck focus)", focusKey, "-- stay")
+            hideChrome()                       -- deck chrome must not float over the peeked window
+            ctx.log("reconcile: peek (non-deck focus)", focusKey, "-- stay (chrome hidden)")
             return
         end
         if member.key == st.heroKey then
@@ -752,12 +938,29 @@ local function controllerFor(ctx)
             -- the hero (system click-to-front), and any AXRaise to an
             -- activating app would flash a member over the hero -- the "return
             -- blink". st.peeked stays set: the ex-peek sinks at the next beat
-            -- (landHero/dropHero), under motion cover.
+            -- (landHero/dropHero), under motion cover. But DO re-show the chrome
+            -- (a peek hid it): pure overlay ordering, no window raise, no blink.
+            showChrome()
             ctx.log("reconcile: return to hero", member.key,
                 st.peeked and "(reclean deferred to next beat)" or "")
             return
         end
         if not ids[member.key] then return end -- focused window not listed yet
+
+        if not st.heroMode then
+            -- Grid-only mode (Hero off): focusing a deck window does NOT zoom it
+            -- into a hero. Just re-show the chrome (a peek may have hidden it)
+            -- and stay flat -- the deck is a pure tiler here.
+            showChrome()
+            ctx.log("reconcile: focus", member.key, "-- grid-only (hero off), no promote")
+            return
+        end
+
+        -- A deck member (not the current hero) regained front: re-show the
+        -- container chrome if a peek hid it, before the promote beat plays. The
+        -- rings re-show themselves via renderBorders at the beat's landing.
+        if st.scrim then st.scrim.show() end
+        if st.widget then st.widget.show() end
 
         -- a cross-app switch double-fires (app-activated + focus-changed); if the
         -- beat is already playing toward this window, let it finish undisturbed
@@ -906,9 +1109,38 @@ local function controllerFor(ctx)
         end)
     end
 
+    -- Display reconfig handler (see the screenChanged watcher in on()). Match the
+    -- deck's screen across the reconfig by name (localizedName is the stable-ish
+    -- key; the index can shuffle). Gone -> exit the deck, and SKIP restore: the
+    -- windows' original frames were on the vanished display, so re-applying them
+    -- would fling the windows off-screen -- leave them where macOS relocated
+    -- them. Merely moved/resized -> re-anchor the scrim and re-cover the rings.
+    function st.onScreenChanged()
+        if not st.active or not st.screen then return end
+        local want = st.screen.name
+        local cur
+        for _, f in ipairs(ctx.screen.frames()) do
+            if f.name == want then cur = f; break end
+        end
+        if not cur then
+            ctx.log("screenChanged: deck screen gone", tostring(want), "-- exiting (no restore)")
+            st.exitDeck(true)
+            return
+        end
+        st.screen = cur
+        if st.scrim then st.scrim.reanchor(cur) end
+        if st.widget then
+            st.widget.reanchor({ x = cur.x + st.widgetDx, y = cur.y + st.widgetDy }, cur)
+        end
+        renderBorders()   -- re-cover the rings + holes onto the (moved) screen
+        ctx.log("screenChanged: re-anchored deck to", tostring(cur.name))
+    end
+
     -- Grid -> Idle: restore original frames (a setting), drop watchers/hotkey/
-    -- banner. Also the disable path (via forceExit) and the toggle-off path.
-    function st.exitDeck()
+    -- scrim. Also the disable path (via forceExit) and the toggle-off path.
+    -- `skipRestore` forces the restore off (the deck's screen vanished -- see
+    -- onScreenChanged -- so the original frames no longer make sense).
+    function st.exitDeck(skipRestore)
         if not st.active then return end
         ctx.log("off")
         if st.settleTimer then st.settleTimer.stop(); st.settleTimer = nil end
@@ -917,10 +1149,11 @@ local function controllerFor(ctx)
         st.peeked = false
         clearBorders()
         if st.frameWatcher then st.frameWatcher.stop(); st.frameWatcher = nil end
+        if st.screenWatcher then st.screenWatcher.stop(); st.screenWatcher = nil end
         for _, t in pairs(st.echo or {}) do t.stop() end
         for _, t in pairs(st.stable or {}) do t.stop() end
         st.echo, st.stable = nil, nil
-        if ctx.opt("restoreOnExit") then
+        if ctx.opt("restoreOnExit") and not skipRestore then
             -- resolveIds adopts retitled members, so a window that renamed
             -- itself mid-deck (a browser does on every tab switch) is still
             -- restored instead of being left wherever the deck put it.
@@ -934,10 +1167,33 @@ local function controllerFor(ctx)
         if st.appWatcher   then st.appWatcher.stop() end
         if st.focusWatcher then st.focusWatcher.stop() end
         if st.escHotkey    then st.escHotkey.stop() end
-        if st.banner       then st.banner.stop() end
+        if st.scrim        then st.scrim.stop() end
+        if st.widget       then st.widget.stop() end
         st.active = false
         st.group, st.screen, st.heroKey, st.mode = nil, nil, nil, nil
-        st.appWatcher, st.focusWatcher, st.escHotkey, st.banner = nil, nil, nil, nil
+        st.appWatcher, st.focusWatcher, st.escHotkey = nil, nil, nil
+        st.scrim, st.widget = nil, nil
+    end
+
+    -- Rearrange (widget button): snap every window back to its home -- its slot,
+    -- or the hero frame for the hero -- after the user has dragged/resized some.
+    -- Re-dispatches the moves under the echo guard and re-syncs the rings/holes;
+    -- renderBorders then recomputes the dirty state (now clean).
+    function st.rearrange()
+        if not st.active then return end
+        ctx.log("rearrange -> re-tile" .. (st.heroKey and " (hero re-centered)" or ""))
+        settlePending()
+        local ids = resolveIds()
+        for _, m in ipairs(st.group) do
+            if not m.gone and ids[m.key] then
+                if st.stable and st.stable[m.key] then
+                    st.stable[m.key].stop(); st.stable[m.key] = nil
+                end
+                local target = (m.key == st.heroKey) and heroFrame() or m.slot
+                moveWin(ids[m.key], m, target)
+            end
+        end
+        renderBorders()
     end
 
     -- Escalating Escape: first press drops the hero, second leaves the deck.
@@ -970,6 +1226,8 @@ return {
           label = "Hero size (% of screen)" },
         { key = "gutter", type = "int", default = 8, min = 0, max = 40,
           label = "Grid gap (px)" },
+        { key = "dim", type = "int", default = 50, min = 0, max = 85,
+          label = "Container dim (% -- how much the rest of the screen darkens)" },
         { key = "restoreOnExit", type = "bool", default = true,
           label = "Restore original layout on exit" },
     },

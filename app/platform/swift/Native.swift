@@ -26,6 +26,8 @@ final class Native {
     var choosers: [Int32: ChooserPanel] = [:]
     var windowPickers: [Int32: WindowPickerPanel] = [:]
     var outlines: [Int32: OutlinePanel] = [:]
+    var scrims: [Int32: ScrimPanel] = [:]
+    var deckWidgets: [Int32: DeckWidgetPanel] = [:]
     var progresses: [Int32: ProgressPanel] = [:]
     var askTexts: [Int32: AskTextPanel] = [:]
     var widgets: [Int32: UsageWidgetPanel] = [:]
@@ -60,6 +62,8 @@ final class Native {
         choosers[id] = nil
         windowPickers[id] = nil
         outlines[id] = nil
+        scrims[id] = nil
+        deckWidgets[id] = nil
         progresses[id] = nil
         askTexts[id] = nil
         widgets[id] = nil
@@ -126,6 +130,18 @@ final class Native {
             "outline_set_hole":  { L in MainActor.assumeIsolated { Native.shared.outlineSetHole(L) } },
             "outline_animate_frame": { L in MainActor.assumeIsolated { Native.shared.outlineAnimateFrame(L) } },
             "outline_hide":      { L in MainActor.assumeIsolated { Native.shared.outlineHide(L) } },
+            "scrim_show":      { L in MainActor.assumeIsolated { Native.shared.scrimShow(L) } },
+            "scrim_set_holes": { L in MainActor.assumeIsolated { Native.shared.scrimSetHoles(L) } },
+            "scrim_set_dim":   { L in MainActor.assumeIsolated { Native.shared.scrimSetDim(L) } },
+            "scrim_reanchor":  { L in MainActor.assumeIsolated { Native.shared.scrimReanchor(L) } },
+            "scrim_hide":      { L in MainActor.assumeIsolated { Native.shared.scrimHide(L) } },
+            "scrim_show_again":{ L in MainActor.assumeIsolated { Native.shared.scrimShowAgain(L) } },
+            "deck_widget_show":       { L in MainActor.assumeIsolated { Native.shared.deckWidgetShow(L) } },
+            "deck_widget_set_hero":   { L in MainActor.assumeIsolated { Native.shared.deckWidgetSetHero(L) } },
+            "deck_widget_set_dirty":  { L in MainActor.assumeIsolated { Native.shared.deckWidgetSetDirty(L) } },
+            "deck_widget_reanchor":   { L in MainActor.assumeIsolated { Native.shared.deckWidgetReanchor(L) } },
+            "deck_widget_hide":       { L in MainActor.assumeIsolated { Native.shared.deckWidgetHide(L) } },
+            "deck_widget_show_again": { L in MainActor.assumeIsolated { Native.shared.deckWidgetShowAgain(L) } },
             "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
             "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
             "usage_widget_show": { L in MainActor.assumeIsolated { Native.shared.usageWidgetShow(L) } },

@@ -262,28 +262,33 @@ function adapter.askWindows(opts)
         display[i] = { text = it.text or "", subText = it.subText,
                        image = it.image, color = it.color }
     end
-    local function onPick(indices, colors)
+    local function onPick(indices, colors, heroOn)
         if not opts.onChoose then return end
-        if not indices then return opts.onChoose(nil) end
+        if not indices then return opts.onChoose(nil, heroOn) end
         local kept = {}
         for _, idx in ipairs(indices) do
             local it = items[idx]
             if colors and colors[idx] and colors[idx] ~= "" then it.color = colors[idx] end
             kept[#kept + 1] = it
         end
-        opts.onChoose(kept)
+        opts.onChoose(kept, heroOn)
     end
-    -- opts.screen ({x,y,w,h} top-left global, e.g. a ctx.screen.frames() row)
-    -- centers the picker on THAT display -- the caller may be acting on a
-    -- screen that doesn't hold key focus (Window Deck's picked target).
+    -- `opts.heroLabel` (a non-empty string) OPTS IN to a switch row (Window
+    -- Deck's Hero mode); omit it for a plain picker. `opts.hero` (default true)
+    -- is that switch's initial state; the bridge returns its final state as the
+    -- 3rd onPick arg. `opts.screen` ({x,y,w,h} top-left global, e.g. a
+    -- ctx.screen.frames() row) centers the picker on THAT display -- the caller
+    -- may be acting on a screen that doesn't hold key focus (the deck's target).
     local id
+    local heroLabel = opts.heroLabel or ""
+    local hero = opts.hero ~= false
     if opts.screen then
         id = native.ask_windows(opts.title or "", display, opts.min or 1,
-            opts.palette or {}, onPick,
+            opts.palette or {}, onPick, heroLabel, hero,
             opts.screen.x, opts.screen.y, opts.screen.w, opts.screen.h)
     else
         id = native.ask_windows(opts.title or "", display, opts.min or 1,
-            opts.palette or {}, onPick)
+            opts.palette or {}, onPick, heroLabel, hero)
     end
     return {
         stop = function() native.stop(id) end,
@@ -363,6 +368,67 @@ function adapter.outline(kind, color)
             else native.outline_set_hole(id) end
         end,
         stop     = function() native.stop(id) end,
+    }
+end
+
+-- The Window Deck "container" surface: a full-screen DIM scrim on `screenFrame`
+-- (a {x,y,w,h} top-left-global rect, e.g. a ctx.screen.frames() row) with a HOLE
+-- punched for each deck window. The deck windows show through their holes; every
+-- other window is dimmed behind it. `dim` is 0..1 (scrim alpha). `holes` is an
+-- array of {x,y,w,h} top-left-global rects. The deck's title/exit affordance is
+-- a SEPARATE draggable card (adapter.deckWidget). Replaces adapter.banner for
+-- the deck; both re-anchor on display change so neither can be orphaned to
+-- another screen. Returns { setHoles, setDim, reanchor, hide, show, stop }.
+function adapter.scrim(screenFrame, dim)
+    local id
+    if screenFrame then
+        id = native.scrim_show(screenFrame.x, screenFrame.y,
+                               screenFrame.w, screenFrame.h, dim or 0.5)
+    else
+        id = native.scrim_show(nil, nil, nil, nil, dim or 0.5)
+    end
+    return {
+        setHoles  = function(rects) native.scrim_set_holes(id, rects or {}) end,
+        setDim    = function(d) native.scrim_set_dim(id, d) end,
+        reanchor  = function(f) native.scrim_reanchor(id, f.x, f.y, f.w, f.h) end,
+        hide      = function() native.scrim_hide(id) end,
+        show      = function() native.scrim_show_again(id) end,
+        stop      = function() native.stop(id) end,
+    }
+end
+
+-- The Window Deck control card: a small DRAGGABLE floating card (grid glyph +
+-- `title` + optional `· name` + a clickable "⌥esc Exit" button, and a mini-map
+-- switcher row) floating above the scrim. `opts`: { title, hint, name,
+-- switchHint, pos = {x,y} top-left-global corner, screen = {x,y,w,h} deck
+-- screen (drag clamp), switcher = { cols, colors = {"#..",...} in row-major
+-- order, hero = 1-based lit cell or 0, onSwitch(i) }, hero = initial Hero toggle
+-- state (true default), onToggleHero(bool) when the Hero switch flips,
+-- onRearrange() when the Rearrange button is clicked, onMove(x,y) after a drag,
+-- onExit() on Exit }. Returns { reanchor(pos, screen), setHero(i), setDirty(bool),
+-- hide, show, stop }.
+function adapter.deckWidget(opts)
+    opts = opts or {}
+    local pos, scr = opts.pos or {}, opts.screen or {}
+    local sw = opts.switcher or {}
+    local id = native.deck_widget_show(
+        opts.title or "", opts.hint or "", opts.name or "", opts.switchHint or "",
+        pos.x or 20, pos.y or 20,
+        scr.x or 0, scr.y or 0, scr.w or 1440, scr.h or 900,
+        sw.cols or 2, sw.hero or 0, sw.colors or {},
+        opts.onMove or function() end, opts.onExit or function() end,
+        sw.onSwitch or function() end,
+        opts.hero ~= false, opts.onToggleHero or function() end,
+        opts.onRearrange or function() end)
+    return {
+        reanchor = function(p, s)
+            native.deck_widget_reanchor(id, p.x, p.y, s.x, s.y, s.w, s.h)
+        end,
+        setHero = function(i) native.deck_widget_set_hero(id, i or 0) end,
+        setDirty = function(d) native.deck_widget_set_dirty(id, d and true or false) end,
+        hide = function() native.deck_widget_hide(id) end,
+        show = function() native.deck_widget_show_again(id) end,
+        stop = function() native.stop(id) end,
     }
 end
 

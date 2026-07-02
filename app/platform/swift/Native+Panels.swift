@@ -257,12 +257,16 @@ extension Native {
         let minPick = LuaState.int(L, 3) ?? 1
         let palette = LuaState.stringArray(L, 4)   // color-cycle order; empty = no swatches
         let ref = lua.makeRef(at: 5)
-        // Optional screen rect (args 6-9, top-left global points): center the
+        // Opt-in hero row: a non-empty label adds a switch (the deck's Hero mode);
+        // empty = a plain picker. `heroOn` is its initial state.
+        let heroLabel = LuaState.string(L, 6) ?? ""
+        let heroOn = LuaState.bool(L, 7) ?? true
+        // Optional screen rect (args 8-11, top-left global points): center the
         // picker on that screen (the deck's picked display) instead of the
         // key window's screen.
         var screen: NSRect?
-        if let x = LuaState.double(L, 6), let y = LuaState.double(L, 7),
-           let w = LuaState.double(L, 8), let h = LuaState.double(L, 9) {
+        if let x = LuaState.double(L, 8), let y = LuaState.double(L, 9),
+           let w = LuaState.double(L, 10), let h = LuaState.double(L, 11) {
             let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
             screen = NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h)
         }
@@ -276,7 +280,7 @@ extension Native {
                               color: d["color"] as? String ?? "")
         }
         let panel = WindowPickerPanel(title: title, entries: entries, minPick: minPick,
-                                      palette: palette) { picked, colors in
+                                      palette: palette, heroLabel: heroLabel, heroOn: heroOn) { picked, colors, hero in
             guard !done else { return }
             done = true
             Native.shared.lua.callRef(ref) { L in
@@ -295,7 +299,8 @@ extension Native {
                     lua_pushstring(L, hex)
                     lua_rawseti(L, -2, lua_Integer(i + 1))
                 }
-                return 2
+                lua_pushboolean(L, hero ? 1 : 0)   // the Hero switch state
+                return 3
             }
             Native.shared.lua.releaseRef(ref)
             Native.shared.freeResource(id)
@@ -423,6 +428,172 @@ extension Native {
         // top-left global points -> AppKit bottom-left (same flip axRect uses).
         let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
         panel.setHole(NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h))
+        return 0
+    }
+
+    // MARK: - Scrim (Window Deck dim + hole-punched container; replaces the banner)
+
+    // Flip a top-left global rect to AppKit bottom-left (same flip axRect uses).
+    private func flipToAppKit(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> NSRect {
+        let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+        return NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h)
+    }
+
+    func scrimShow(_ L: OpaquePointer?) -> Int32 {
+        var screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        if let x = LuaState.double(L, 1), let y = LuaState.double(L, 2),
+           let w = LuaState.double(L, 3), let h = LuaState.double(L, 4) {
+            screen = flipToAppKit(x, y, w, h)
+        }
+        let dim = CGFloat(LuaState.double(L, 5) ?? 0.5)
+        let scrim = ScrimPanel(screen: screen, dim: dim)
+        let id = registerResource { scrim.close() }
+        scrims[id] = scrim
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    // scrim_set_holes(id, {{x,y,w,h}, ...}) -- top-left global rects.
+    func scrimSetHoles(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let scrim = scrims[id] else { return 0 }
+        let rects = LuaState.dictArray(L, 2).compactMap { d -> NSRect? in
+            guard let x = d["x"] as? Double, let y = d["y"] as? Double,
+                  let w = d["w"] as? Double, let h = d["h"] as? Double else { return nil }
+            return flipToAppKit(x, y, w, h)
+        }
+        scrim.setHoles(rects)
+        return 0
+    }
+
+    func scrimSetDim(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init), let d = LuaState.double(L, 2) {
+            scrims[id]?.setDim(CGFloat(d))
+        }
+        return 0
+    }
+
+    func scrimReanchor(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let scrim = scrims[id],
+              let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+              let w = LuaState.double(L, 4), let h = LuaState.double(L, 5) else { return 0 }
+        scrim.reanchor(flipToAppKit(x, y, w, h))
+        return 0
+    }
+
+    func scrimHide(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) { scrims[id]?.hide() }
+        return 0
+    }
+
+    func scrimShowAgain(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) { scrims[id]?.show() }
+        return 0
+    }
+
+    // MARK: - Deck widget (draggable control card: title + Exit + mini-map)
+
+    // deck_widget_show(title, hint, name, switchHint, x, y, sx, sy, sw, sh,
+    //   gridCols, heroIndex, colors[], onMove, onExit, onSwitch, heroOn,
+    //   onToggleHero): x,y = top-left global corner; sx..sh = deck screen (the
+    //   drag clamp); gridCols/colors[] build the mini-map (row-major, 1-based),
+    //   heroIndex lights a cell (0 = none); heroOn = initial Hero toggle state;
+    //   onMove/onExit/onSwitch as before; onToggleHero(bool) on the Hero switch.
+    func deckWidgetShow(_ L: OpaquePointer?) -> Int32 {
+        let title = LuaState.string(L, 1) ?? ""
+        let hint  = LuaState.string(L, 2) ?? ""
+        let name  = LuaState.string(L, 3) ?? ""
+        let switchHint = LuaState.string(L, 4) ?? ""
+        let x = LuaState.double(L, 5) ?? 20
+        let y = LuaState.double(L, 6) ?? 20
+        let sx = LuaState.double(L, 7) ?? 0, sy = LuaState.double(L, 8) ?? 0
+        let sw = LuaState.double(L, 9) ?? 1440, sh = LuaState.double(L, 10) ?? 900
+        let gridCols = Int(LuaState.int(L, 11) ?? 2)
+        let heroIndex = Int(LuaState.int(L, 12) ?? 0)
+        var colors: [String] = []
+        if lua_type(L, 13) == LUA_TTABLE {
+            let n = lua_rawlen(L, 13)
+            if n > 0 { for i in 1...n {
+                lua_rawgeti(L, 13, lua_Integer(i))
+                colors.append(LuaState.string(L, -1) ?? "")
+                lua_settop(L, -2)
+            } }
+        }
+        let moveRef = lua.makeRef(at: 14)
+        let exitRef = lua.makeRef(at: 15)
+        let switchRef = lua.makeRef(at: 16)
+        let heroOn = LuaState.bool(L, 17) ?? true
+        let toggleRef = lua.makeRef(at: 18)
+        let rearrangeRef = lua.makeRef(at: 19)
+        let widget = DeckWidgetPanel(
+            title: title, hint: hint, displayName: name, switchHint: switchHint,
+            gridCols: gridCols, heroIndex: heroIndex, cellColors: colors, heroOn: heroOn,
+            topLeft: CGPoint(x: x, y: y), screen: flipToAppKit(sx, sy, sw, sh),
+            onMove: { nx, ny in
+                Native.shared.lua.callRef(moveRef) { L in
+                    lua_pushnumber(L, nx); lua_pushnumber(L, ny); return 2
+                }
+            },
+            onExit: { Native.shared.lua.callRef(exitRef) },
+            onSwitch: { idx in
+                Native.shared.lua.callRef(switchRef) { L in
+                    lua_pushinteger(L, lua_Integer(idx)); return 1
+                }
+            },
+            onToggleHero: { on in
+                Native.shared.lua.callRef(toggleRef) { L in
+                    lua_pushboolean(L, on ? 1 : 0); return 1
+                }
+            },
+            onRearrange: { Native.shared.lua.callRef(rearrangeRef) })
+        // Release all five pinned Lua callbacks on teardown, then close -- same
+        // as askWindows/askText/chooser cancellers (a bare widget.close() would
+        // strand the refs in the Lua registry every deck cycle).
+        let id = registerResource {
+            Native.shared.lua.releaseRef(moveRef)
+            Native.shared.lua.releaseRef(exitRef)
+            Native.shared.lua.releaseRef(switchRef)
+            Native.shared.lua.releaseRef(toggleRef)
+            Native.shared.lua.releaseRef(rearrangeRef)
+            widget.close()
+        }
+        deckWidgets[id] = widget
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    func deckWidgetSetHero(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init), let idx = LuaState.int(L, 2) {
+            deckWidgets[id]?.setHero(Int(idx))
+        }
+        return 0
+    }
+
+    func deckWidgetSetDirty(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) {
+            deckWidgets[id]?.setDirty(LuaState.bool(L, 2) ?? false)
+        }
+        return 0
+    }
+
+    // deck_widget_reanchor(id, x, y, sx, sy, sw, sh) -- reposition + re-clamp.
+    func deckWidgetReanchor(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init),
+           let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+           let sx = LuaState.double(L, 4), let sy = LuaState.double(L, 5),
+           let sw = LuaState.double(L, 6), let sh = LuaState.double(L, 7) {
+            deckWidgets[id]?.reanchor(topLeft: CGPoint(x: x, y: y),
+                                      screen: flipToAppKit(sx, sy, sw, sh))
+        }
+        return 0
+    }
+
+    func deckWidgetHide(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) { deckWidgets[id]?.hide() }
+        return 0
+    }
+
+    func deckWidgetShowAgain(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) { deckWidgets[id]?.show() }
         return 0
     }
 

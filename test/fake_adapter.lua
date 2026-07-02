@@ -210,6 +210,8 @@ function adapter.askWindows(opts)
         title = opts.title, items = opts.items or {}, min = opts.min or 1,
         palette = opts.palette or {},
         screenFrame = opts.screen,   -- the display the picker centers on (nil = key screen)
+        heroLabel = opts.heroLabel or "",   -- non-empty opts in to the Hero switch
+        hero = opts.hero ~= false,   -- the picker's Hero switch initial (default on)
         onChoose = opts.onChoose, open = true, stopped = false,
     }
     fake.windowPickers[#fake.windowPickers + 1] = d
@@ -218,8 +220,9 @@ function adapter.askWindows(opts)
         if not d.open then return end
         d.open = false
         freeOnce(d)
-        if d.onChoose then d.onChoose(kept) end
+        if d.onChoose then d.onChoose(kept, d.hero) end
     end
+    function d.setHero(on) d.hero = on end   -- drive the Hero switch from a test
     function d.confirm(indices)
         if indices == nil then
             indices = {}
@@ -290,6 +293,63 @@ function fake.liveOutline(kind)
     for i = #fake.outlines, 1, -1 do
         local o = fake.outlines[i]
         if not o.stopped and (kind == nil or o.kind == kind) then return o end
+    end
+    return nil
+end
+
+fake.scrims = {}   -- {screenFrame, dim, holes, hidden, stopped}
+function adapter.scrim(screenFrame, dim)
+    local s = { screenFrame = screenFrame, dim = dim,
+                holes = {}, hidden = false, stopped = false }
+    fake.scrims[#fake.scrims + 1] = s
+    alloc()
+    return {
+        setHoles  = function(rects) s.holes = rects or {} end,
+        setDim    = function(d) s.dim = d end,
+        reanchor  = function(f) s.screenFrame = f end,
+        hide      = function() s.hidden = true end,
+        show      = function() s.hidden = false end,
+        stop      = function() freeOnce(s) end,
+    }
+end
+
+-- The most-recent live (non-stopped) scrim, nil if none.
+function fake.liveScrim()
+    for i = #fake.scrims, 1, -1 do
+        if not fake.scrims[i].stopped then return fake.scrims[i] end
+    end
+    return nil
+end
+
+fake.deckWidgets = {}   -- {title, name, switcher, hero, onMove, onExit, hidden, stopped}
+function adapter.deckWidget(opts)
+    opts = opts or {}
+    local sw = opts.switcher or {}
+    local w = { title = opts.title, hint = opts.hint, name = opts.name,
+                switchHint = opts.switchHint, pos = opts.pos, screen = opts.screen,
+                cols = sw.cols, colors = sw.colors, hero = sw.hero or 0,
+                onSwitch = sw.onSwitch,
+                heroMode = opts.hero ~= false, onToggleHero = opts.onToggleHero,
+                onRearrange = opts.onRearrange, dirty = false,
+                onMove = opts.onMove, onExit = opts.onExit,
+                hidden = false, stopped = false }
+    fake.deckWidgets[#fake.deckWidgets + 1] = w
+    alloc()
+    return {
+        -- drive w.onMove/onExit/onSwitch/onRearrange from a test
+        reanchor = function(p, s) w.pos, w.screen = p, s end,
+        setHero = function(i) w.hero = i or 0 end,
+        setDirty = function(d) w.dirty = d and true or false end,
+        hide = function() w.hidden = true end,
+        show = function() w.hidden = false end,
+        stop = function() freeOnce(w) end,
+    }
+end
+
+-- The most-recent live (non-stopped) deck widget, nil if none.
+function fake.liveWidget()
+    for i = #fake.deckWidgets, 1, -1 do
+        if not fake.deckWidgets[i].stopped then return fake.deckWidgets[i] end
     end
     return nil
 end

@@ -165,6 +165,20 @@ function M.make(m, resolveTrigger, extra)
     -- f in top-left global points. kind: "member" | "hero" | "ghost"; color is a
     -- "#RRGGBB" hex (empty = the system accent).
     function ctx.outline(kind, color) return track(adapter.outline(kind, color)) end
+    -- Window Deck "container" surface: a full-screen dim scrim on `screenFrame`
+    -- (a ctx.screen.frames() row) with a hole per deck window. `dim` is 0..1.
+    -- { setHoles(rects), setDim, reanchor, hide, show, stop }; holes/reanchor
+    -- take top-left global rects.
+    function ctx.scrim(screenFrame, dim)
+        return track(adapter.scrim(screenFrame, dim))
+    end
+    -- Window Deck control card: a small draggable card floating above the scrim
+    -- (title + Hero toggle + Exit + mini-map switcher + Rearrange). `opts`:
+    -- { title, hint, name, switchHint, pos = {x,y}, screen = {x,y,w,h},
+    -- switcher = { cols, colors, hero, onSwitch(i) }, hero, onToggleHero(bool),
+    -- onRearrange(), onMove(x,y), onExit() }. Returns { reanchor(pos, screen),
+    -- setHero(i), setDirty(bool), hide, show, stop }.
+    function ctx.deckWidget(opts) return track(adapter.deckWidget(opts)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end
     -- enter a modal hotkey group (see platform/modal.lua); stop() exits

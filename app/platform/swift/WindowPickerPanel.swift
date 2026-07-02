@@ -49,7 +49,11 @@ final class WindowPickerPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private var colors: [String]      // live per-row color (click the dot to cycle)
     private let palette: [String]     // cycle order for recoloring; empty = no swatches
     private let minPick: Int
-    private let onDone: ([Int]?, [String]) -> Void
+    private let onDone: ([Int]?, [String], Bool) -> Void
+    private let heroLabel = NSTextField(labelWithString: "")   // caller-supplied text
+    private let heroSwitch = NSSwitch()
+    private var heroOn: Bool
+    private let hasHeroRow: Bool   // opt-in: only shown when the caller passes a label
 
     private var keyMonitor: Any?
     private var isClosing = false
@@ -64,13 +68,15 @@ final class WindowPickerPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private static let swatchSize: CGFloat = 16     // trailing color-dot diameter
 
     init(title: String, entries: [WindowPickerEntry], minPick: Int, palette: [String],
-         onDone: @escaping ([Int]?, [String]) -> Void) {
+         heroLabel: String, heroOn: Bool, onDone: @escaping ([Int]?, [String], Bool) -> Void) {
         self.titleText = title
         self.entries = entries
         self.checked = Array(repeating: true, count: entries.count)   // all pre-checked
         self.colors = entries.map { $0.color }
         self.palette = palette
         self.minPick = max(0, minPick)
+        self.heroOn = heroOn
+        self.hasHeroRow = !heroLabel.isEmpty
         self.onDone = onDone
 
         panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: WindowPickerPanel.width, height: 300),
@@ -171,9 +177,25 @@ final class WindowPickerPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
         submitButton.action = #selector(submitClicked)
         content.addSubview(submitButton)
 
+        // Opt-in row above the footer: the caller's label + a switch (Window
+        // Deck uses it for its Hero mode). Omitted entirely when no label is
+        // passed, so askWindows stays a feature-agnostic picker.
+        if hasHeroRow {
+            self.heroLabel.font = .systemFont(ofSize: 13)
+            self.heroLabel.textColor = .labelColor
+            self.heroLabel.stringValue = heroLabel
+            content.addSubview(self.heroLabel)
+            heroSwitch.state = heroOn ? .on : .off
+            heroSwitch.target = self
+            heroSwitch.action = #selector(heroChanged)
+            content.addSubview(heroSwitch)
+        }
+
         panel.contentView = content
         panel.delegate = self
     }
+
+    @objc private func heroChanged() { heroOn = (heroSwitch.state == .on) }
 
     // MARK: public API
 
@@ -284,7 +306,7 @@ final class WindowPickerPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
         isClosing = true
         removeKeys()
         if panel.isVisible { panel.orderOut(nil) }
-        onDone(result, colors)
+        onDone(result, colors, heroOn)
     }
 
     // MARK: NSWindowDelegate -- click-away dismiss (Spotlight convention)
@@ -333,10 +355,12 @@ final class WindowPickerPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
                               WindowPickerPanel.maxListHeight)
         }
         let listHeight = listContent + 8
+        let heroBand: CGFloat = hasHeroRow ? 38 : 0   // opt-in hero row
 
         let total = topPad
             + WindowPickerPanel.titleHeight + titleGap
             + listHeight
+            + heroBand
             + WindowPickerPanel.footerHeight + footerPad
             + bottomPad
 
@@ -360,6 +384,18 @@ final class WindowPickerPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
         scrollView.frame = NSRect(x: 0, y: y - listHeight, width: W, height: listHeight)
         tableView.sizeLastColumnToFit()
         y -= listHeight
+
+        // Hero row (opt-in): label on the left, switch flush right.
+        if hasHeroRow {
+            heroLabel.sizeToFit()
+            heroLabel.frame = NSRect(x: E, y: y - heroBand + (heroBand - 17) / 2,
+                                     width: 300, height: 17)
+            let swSize = heroSwitch.intrinsicContentSize
+            heroSwitch.frame = NSRect(x: W - E - swSize.width,
+                                      y: y - heroBand + (heroBand - swSize.height) / 2,
+                                      width: swSize.width, height: swSize.height)
+        }
+        y -= heroBand
 
         footerDivider.frame = NSRect(x: E, y: y, width: W - 2 * E, height: 1)
         footerRegionY = y
