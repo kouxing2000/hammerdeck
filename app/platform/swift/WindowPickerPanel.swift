@@ -179,14 +179,18 @@ final class WindowPickerPanel: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     var isVisible: Bool { panel.isVisible }
 
-    func show() {
+    /// `screen` (AppKit coords) centers the picker on THAT screen -- the deck
+    /// passes the display the user just picked, which need not be the one
+    /// holding key focus (NSScreen.main). Without it: the main screen.
+    func show(on screen: NSRect? = nil) {
         isClosing = false
         refreshHeaderAndFooter()
         layout()
         panel.center()
-        if let screen = NSScreen.main {
+        if let target = screen ?? NSScreen.main?.visibleFrame {
             var f = panel.frame
-            f.origin.y = screen.visibleFrame.midY + 60
+            f.origin.x = target.midX - f.width / 2
+            f.origin.y = target.midY + 60
             panel.setFrame(f, display: true)
         }
         panel.makeKeyAndOrderFront(nil)

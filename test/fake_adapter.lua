@@ -209,6 +209,7 @@ function adapter.askWindows(opts)
     local d = {
         title = opts.title, items = opts.items or {}, min = opts.min or 1,
         palette = opts.palette or {},
+        screenFrame = opts.screen,   -- the display the picker centers on (nil = key screen)
         onChoose = opts.onChoose, open = true, stopped = false,
     }
     fake.windowPickers[#fake.windowPickers + 1] = d

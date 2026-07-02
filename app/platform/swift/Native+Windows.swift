@@ -738,6 +738,12 @@ final class FocusObserver {
 /// the subscription's whole lifetime -- a background window can move too. The
 /// app-level registration also covers windows the app creates later. All on
 /// main (AX run-loop source on the main loop) -- Native's whole-app invariant.
+/// ACCEPTED LIMITATION (owner call, 2026-07-01): attaches only to apps alive
+/// at subscribe time and does not re-attach if a member app quits and
+/// relaunches mid-subscription -- by then its windows are NEW windows (a deck
+/// marks the old member gone), so move/resize tracking for the relaunched app
+/// is simply absent until the next subscription. AXObserverAddNotification
+/// results are likewise unchecked; a failed attach degrades the same way.
 @MainActor
 final class FrameObserverSet {
     private let ref: Int32

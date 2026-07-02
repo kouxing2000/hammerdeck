@@ -233,7 +233,11 @@ extension Native {
                 done = true
                 Native.shared.lua.releaseRef(ref)
             }
-            panel.close()
+            // Deferred for the same reason as askWindows' canceller below: a
+            // one-shot caller's h.stop() inside its own onChoose runs this
+            // while the panel's finish frame is still on the stack -- the
+            // async block keeps the last strong reference alive past it.
+            DispatchQueue.main.async { panel.close() }
         }
         choosers[id] = panel
         lua_pushinteger(L, lua_Integer(id))
@@ -253,6 +257,15 @@ extension Native {
         let minPick = LuaState.int(L, 3) ?? 1
         let palette = LuaState.stringArray(L, 4)   // color-cycle order; empty = no swatches
         let ref = lua.makeRef(at: 5)
+        // Optional screen rect (args 6-9, top-left global points): center the
+        // picker on that screen (the deck's picked display) instead of the
+        // key window's screen.
+        var screen: NSRect?
+        if let x = LuaState.double(L, 6), let y = LuaState.double(L, 7),
+           let w = LuaState.double(L, 8), let h = LuaState.double(L, 9) {
+            let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+            screen = NSRect(x: x, y: primaryMaxY - (y + h), width: w, height: h)
+        }
 
         let id = allocId()
         var done = false
@@ -287,14 +300,20 @@ extension Native {
             Native.shared.lua.releaseRef(ref)
             Native.shared.freeResource(id)
         }
-        panel.show()
+        panel.show(on: screen)
 
         cancellers[id] = {
             if !done {
                 done = true
                 Native.shared.lua.releaseRef(ref)
             }
-            panel.close()
+            // This canceller commonly runs FROM the panel's own completion
+            // (Lua's onChoose calls h.stop() -- the documented one-shot
+            // pattern), i.e. while the panel's finish() frame is still on the
+            // stack. Deferring the close one runloop turn keeps the closure's
+            // strong reference alive past that frame, so the self-free can
+            // never deallocate an object that is still executing.
+            DispatchQueue.main.async { panel.close() }
         }
         windowPickers[id] = panel
         lua_pushinteger(L, lua_Integer(id))
@@ -327,7 +346,9 @@ extension Native {
                 done = true
                 Native.shared.lua.releaseRef(ref)
             }
-            panel.close()
+            // Deferred close: see the askWindows canceller (self-free while
+            // the panel's own finish frame is still on the stack).
+            DispatchQueue.main.async { panel.close() }
         }
         askTexts[id] = panel
         lua_pushinteger(L, lua_Integer(id))

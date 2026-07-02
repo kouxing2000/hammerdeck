@@ -245,15 +245,29 @@ local function controllerFor(ctx)
                 out[i], used[stored[bid]], seenApp[bid] = stored[bid], true, true
             end
         end
-        local pi = 1
+        -- Positional dealing scans the WHOLE palette (cyclically from the
+        -- last deal) for a FREE color; only when every color is taken does it
+        -- knowingly reuse one, cyclically. DEFENSIVE, not a bug fix: with
+        -- today's numbers (deck cap 9 == #PALETTE) exhaustion is provably
+        -- unreachable and the simpler forward-only walk dealt identically --
+        -- this shape just stays correct if the palette shrinks or the cap
+        -- ever lifts.
+        local pi = 0
         for i in ipairs(wins) do
             if not out[i] then
-                while pi < #PALETTE and used[PALETTE[((pi - 1) % #PALETTE) + 1]] do
-                    pi = pi + 1
+                local c
+                for step = 1, #PALETTE do
+                    local cand = PALETTE[((pi + step - 1) % #PALETTE) + 1]
+                    if not used[cand] then
+                        c, pi = cand, pi + step
+                        break
+                    end
                 end
-                local c = PALETTE[((pi - 1) % #PALETTE) + 1]
+                if not c then
+                    pi = pi + 1
+                    c = PALETTE[((pi - 1) % #PALETTE) + 1]
+                end
                 out[i], used[c] = c, true
-                pi = pi + 1
             end
         end
         return out
@@ -524,6 +538,8 @@ local function controllerFor(ctx)
             min     = 2,
             items   = items,
             palette = PALETTE,
+            screen  = screen,   -- center the picker on the PICKED display
+
             onChoose = function(kept)
                 if h then h.stop() end   -- drop the one-shot from the scope
                 st.picking = false
@@ -792,6 +808,12 @@ local function controllerFor(ctx)
 
         st.pendingSnapKey = member.key   -- guards the cross-app double-fire across the whole beat
         if st.heroKey then
+            -- INVARIANT this branch's `ids` lookups lean on: a hero can only
+            -- exist when no flight is mid-air (every beat nils heroKey until
+            -- it lands), so pendingHome was nil and the settlePending() above
+            -- did NOT re-list -- reconcile's `ids` are still the freshest
+            -- listing here. If a future edit lets pendingHome coexist with a
+            -- live heroKey, re-list before using `ids` below.
             local old = memberByKey(st.heroKey)
             st.mode, st.heroKey = "grid", nil
             if old and ids[old.key] then

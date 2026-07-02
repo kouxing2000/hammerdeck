@@ -262,22 +262,29 @@ function adapter.askWindows(opts)
         display[i] = { text = it.text or "", subText = it.subText,
                        image = it.image, color = it.color }
     end
-    local id = native.ask_windows(
-        opts.title or "",
-        display,
-        opts.min or 1,
-        opts.palette or {},
-        function(indices, colors)
-            if not opts.onChoose then return end
-            if not indices then return opts.onChoose(nil) end
-            local kept = {}
-            for _, idx in ipairs(indices) do
-                local it = items[idx]
-                if colors and colors[idx] and colors[idx] ~= "" then it.color = colors[idx] end
-                kept[#kept + 1] = it
-            end
-            opts.onChoose(kept)
-        end)
+    local function onPick(indices, colors)
+        if not opts.onChoose then return end
+        if not indices then return opts.onChoose(nil) end
+        local kept = {}
+        for _, idx in ipairs(indices) do
+            local it = items[idx]
+            if colors and colors[idx] and colors[idx] ~= "" then it.color = colors[idx] end
+            kept[#kept + 1] = it
+        end
+        opts.onChoose(kept)
+    end
+    -- opts.screen ({x,y,w,h} top-left global, e.g. a ctx.screen.frames() row)
+    -- centers the picker on THAT display -- the caller may be acting on a
+    -- screen that doesn't hold key focus (Window Deck's picked target).
+    local id
+    if opts.screen then
+        id = native.ask_windows(opts.title or "", display, opts.min or 1,
+            opts.palette or {}, onPick,
+            opts.screen.x, opts.screen.y, opts.screen.w, opts.screen.h)
+    else
+        id = native.ask_windows(opts.title or "", display, opts.min or 1,
+            opts.palette or {}, onPick)
+    end
     return {
         stop = function() native.stop(id) end,
     }

@@ -2795,6 +2795,35 @@ do
         fake.pressHotkey("k", HYP)                  -- exit
     end
 
+    -- colors: CHARACTERIZATION, not a regression test -- stored per-app
+    -- colors load from state into the picker preview, and a full deck's
+    -- colors stay distinct around them. (No 9-window input can force the
+    -- dealer to duplicate -- cap == #PALETTE -- so distinctness here pins the
+    -- property, it does not discriminate dealer implementations.)
+    fake.settings["hammerdeck.state.window_deck.colors"] =
+        '{"com.w2":"#30D158","com.w4":"#123456"}'   -- the LAST palette slot + a custom hex
+    do
+        local many = {}
+        for i = 1, 9 do
+            many[i] = { id = 300 + i, title = "C" .. i, appName = "App" .. i,
+                        bundleID = "com.w" .. i, x = (i % 3) * 300 + 20,
+                        y = (i % 3) * 200 + 20, w = 150, h = 120 }
+        end
+        fake.windows = many
+        fake.pressHotkey("k", HYP)
+        local p = fake.openWindowPicker()
+        ok(p ~= nil and #p.items == 9 and p.items[2].color == "#30D158",
+            "stored per-app colors load into the picker preview")
+        local seen, dup = {}, false
+        for _, it in ipairs(p.items) do
+            if it.color and seen[it.color] then dup = true end
+            seen[it.color] = true
+        end
+        ok(not dup, "a 9-window deck deals DISTINCT border colors even with stored colors in play")
+        p.cancel()
+    end
+    fake.settings["hammerdeck.state.window_deck.colors"] = nil
+
     -- hero is set to the FULL ~78% and is NOT shrunk by an immediate read-back.
     -- (Regression: an earlier read-back-recenter ran ctx.window.frame() right
     -- after the async AX setFrame, saw the stale slot-sized frame, and re-centred
@@ -2971,6 +3000,8 @@ do
     local wp = fake.openWindowPicker()
     ok(wp ~= nil and #wp.items == 2,
         "picking a screen leads to a window multi-select of only that screen's windows")
+    ok(wp.screenFrame and wp.screenFrame.x == 1440,
+        "the window picker opens centered on the PICKED display, not the key screen")
     wp.confirm(nil)
     ok(#fake.windowFrameSets == 2, "only the focused screen's two windows are decked")
     ok((lastSetFor(203) and lastSetFor(203).x >= 1440)

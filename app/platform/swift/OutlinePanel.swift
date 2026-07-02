@@ -33,9 +33,14 @@ final class OutlinePanel {
     init(kind: String, colorHex: String) {
         style = OutlineStyle.forKind(kind)
         baseColor = NSColor(hexRGB: colorHex) ?? .controlAccentColor
+        // Deliberately NOT .canJoinAllSpaces/.transient: a ring marks a window
+        // that lives on ONE Space, so the ring must stay behind on a Space
+        // switch exactly like the window does -- all-Spaces rings floated over
+        // unrelated desktops. Default (managed) behavior binds the panel to
+        // the Space it was shown on; NSPanels stay out of Mission Control.
         panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
                               level: .floating,
-                              collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .transient],
+                              collectionBehavior: [.fullScreenAuxiliary],
                               keyable: false, mouseTransparent: true, hasShadow: false)
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -115,6 +120,12 @@ final class OutlinePanel {
     /// Deck hides a ring while the USER drags/resizes its window (live AX
     /// tracking would visibly trail the drag), then re-shows it at the real
     /// frame once the window has settled.
+    /// ACCEPTED LIMITATION (owner call, 2026-07-01): without .canJoinAllSpaces
+    /// an ordered-out panel joins the ACTIVE Space on its next order-front, so
+    /// hide -> switch Space -> settle re-show can place a ring over the wrong
+    /// desktop until its next hide/show cycle. Rare (needs a Space switch
+    /// inside the ~0.35s settle window) and self-limiting; revisit with an
+    /// isOnActiveSpace guard if it ever bites in practice.
     func hide() { panel.orderOut(nil) }
 
     func close() { panel.orderOut(nil) }
