@@ -498,7 +498,7 @@ extension Native {
     // (deck screen, the drag clamp); gridCols + colors[] build the mini-map
     // (row-major, 1-based); heroIndex lights a cell (0 = none); heroOn = initial
     // Hero toggle state; onMove(x,y) / onExit() / onSwitch(i) / onToggleHero(bool)
-    // / onRearrange() callbacks.
+    // / onRearrange() / onReorder(from,to) [mini-map cell drag-swap] callbacks.
     func deckWidgetShow(_ L: OpaquePointer?) -> Int32 {
         // Field readers over the opts table at stack index 1. makeRef is
         // stack-neutral (it pushes a copy then luaL_refs it), so getfield ->
@@ -530,6 +530,7 @@ extension Native {
 
         let moveRef = ref("onMove"), exitRef = ref("onExit"), switchRef = ref("onSwitch")
         let toggleRef = ref("onToggleHero"), rearrangeRef = ref("onRearrange")
+        let reorderRef = ref("onReorder")
         let widget = DeckWidgetPanel(
             title: str("title"), hint: str("hint"), displayName: str("name"),
             switchHint: str("switchHint"), heroLabel: str("heroLabel"),
@@ -554,8 +555,13 @@ extension Native {
                     lua_pushboolean(L, on ? 1 : 0); return 1
                 }
             },
-            onRearrange: { Native.shared.lua.callRef(rearrangeRef) })
-        // Release all five pinned Lua callbacks on teardown, then close -- same
+            onRearrange: { Native.shared.lua.callRef(rearrangeRef) },
+            onReorder: { from, to in
+                Native.shared.lua.callRef(reorderRef) { L in
+                    lua_pushinteger(L, lua_Integer(from)); lua_pushinteger(L, lua_Integer(to)); return 2
+                }
+            })
+        // Release all six pinned Lua callbacks on teardown, then close -- same
         // as askWindows/askText/chooser cancellers (a bare widget.close() would
         // strand the refs in the Lua registry every deck cycle).
         let id = registerResource {
@@ -564,6 +570,7 @@ extension Native {
             Native.shared.lua.releaseRef(switchRef)
             Native.shared.lua.releaseRef(toggleRef)
             Native.shared.lua.releaseRef(rearrangeRef)
+            Native.shared.lua.releaseRef(reorderRef)
             widget.close()
         }
         deckWidgets[id] = widget
@@ -582,6 +589,20 @@ extension Native {
         if let id = LuaState.int(L, 1).map(Int32.init) {
             deckWidgets[id]?.setSwitchHint(LuaState.string(L, 2) ?? "")
         }
+        return 0
+    }
+
+    // deck_widget_set_cells(id, colors[]) -- recolor the mini-map after a swap.
+    func deckWidgetSetCells(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let w = deckWidgets[id] else { return 0 }
+        var colors: [String] = []
+        if lua_type(L, 2) == LUA_TTABLE {
+            let n = lua_rawlen(L, 2)
+            if n > 0 { for i in 1...n {
+                lua_rawgeti(L, 2, lua_Integer(i)); colors.append(LuaState.string(L, -1) ?? ""); lua_settop(L, -2)
+            } }
+        }
+        w.setCellColors(colors)
         return 0
     }
 

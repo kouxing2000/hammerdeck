@@ -385,13 +385,59 @@ local function controllerFor(ctx)
         return ctx.t("deck.switchHintGrid", "click or ⌥1-9 to focus")
     end
 
+    local renderBorders   -- forward: defined below (swapCells re-renders after a swap)
+
+    -- (Re)build the mini-map cell order from the current slot layout: cell i
+    -- (row-major reading order) -> the window now in that slot, and its color.
+    -- Run at enter and after a drag-swap so the mini-map stays spatially true.
+    local function rebuildWidgetOrder(grp)
+        grp = grp or st.group or {}
+        local ordered = {}
+        for _, m in ipairs(grp) do ordered[#ordered + 1] = m end
+        table.sort(ordered, function(a, b)
+            local ay, by = math.floor((a.slot.y or 0) / 10), math.floor((b.slot.y or 0) / 10)
+            if ay ~= by then return ay < by end
+            return (a.slot.x or 0) < (b.slot.x or 0)
+        end)
+        st.widgetOrder, st.widgetColors = {}, {}
+        for i, m in ipairs(ordered) do
+            st.widgetOrder[i], st.widgetColors[i] = m.key, m.color
+        end
+    end
+
+    -- Drag one mini-map cell onto another (in the widget) to SWAP the two
+    -- windows' slots. `from`/`to` are 1-based cell indices. Swaps the slot
+    -- assignments and moves each window to its new slot -- EXCEPT a window that
+    -- is the current hero (it stays centred; only its drop-back home slot
+    -- changes, which the ghost then reflects). Re-colors the mini-map to match.
+    local function swapCells(from, to)
+        if not st.active or from == to then return end
+        local kf = st.widgetOrder and st.widgetOrder[from]
+        local kt = st.widgetOrder and st.widgetOrder[to]
+        if not kf or not kt then return end
+        local mf, mt = memberByKey(kf), memberByKey(kt)
+        if not mf or not mt then return end
+        mf.slot, mt.slot = mt.slot, mf.slot
+        local ids = resolveIds()
+        for _, m in ipairs({ mf, mt }) do
+            if m.key ~= st.heroKey and ids[m.key] then moveWin(ids[m.key], m, m.slot) end
+        end
+        ctx.log("mini-map reorder: cell", from, "<-> cell", to)
+        rebuildWidgetOrder()
+        if st.widget then
+            st.widget.setCells(st.widgetColors)
+            st.widget.setHero(heroCellIndex())
+        end
+        renderBorders()
+    end
+
     -- Border overlays (click-through). Every deck member gets a subtle "member"
     -- border at its current frame so you can see which windows are in the deck; the
     -- hero's border is re-styled "hero" (strong) and moved to the hero frame; and a
     -- faint dashed "ghost" marks the hero's home SLOT (where it drops back to).
     -- Persistent per member -- re-styled/moved on each transition, not recreated,
     -- so nothing flickers. renderBorders() syncs them to the current state.
-    local function renderBorders()
+    function renderBorders()   -- (forward-declared above)
         if not st.active then return end
         st.borders = st.borders or {}
         -- Rings are placed at each window's LAST-KNOWN frame (m.cur -- kept by
@@ -780,20 +826,9 @@ local function controllerFor(ctx)
         local perm = W.assignNearest(winCenters, slotCenters)
         for i, m in ipairs(group) do m.slot = slots[perm[i]] end
 
-        -- Mini-map cell order: members read ROW-MAJOR by slot (top row L->R,
-        -- then the next). Cell i (1-based) maps to widgetOrder[i]; the switcher
-        -- highlights the hero's cell and clicking a cell promotes that window.
-        local ordered = {}
-        for _, m in ipairs(group) do ordered[#ordered + 1] = m end
-        table.sort(ordered, function(a, b)
-            local ay, by = math.floor((a.slot.y or 0) / 10), math.floor((b.slot.y or 0) / 10)
-            if ay ~= by then return ay < by end
-            return (a.slot.x or 0) < (b.slot.x or 0)
-        end)
-        st.widgetOrder, st.widgetColors = {}, {}
-        for i, m in ipairs(ordered) do
-            st.widgetOrder[i], st.widgetColors[i] = m.key, m.color
-        end
+        -- Mini-map cell order (cell i, row-major reading order, -> the window in
+        -- that slot). A drag-swap re-runs rebuildWidgetOrder to keep it truthful.
+        rebuildWidgetOrder(group)
         st.widgetCols = W.gridDims(#group).w
 
         -- place immediately: the ids from the re-list above are still valid.
@@ -863,6 +898,9 @@ local function controllerFor(ctx)
                 -- window is FOCUSED, which fires the existing promote beat (no
                 -- new promotion path). Same as a real click; shared with ⌥1-9.
                 onSwitch = switchToCell,
+                -- Drag cell `from` onto cell `to` in the widget: swap the two
+                -- windows' slots (drag-and-drop rearrange, mini-map only).
+                onReorder = swapCells,
             },
             onMove = function(x, y)
                 if not st.active or not st.screen then return end

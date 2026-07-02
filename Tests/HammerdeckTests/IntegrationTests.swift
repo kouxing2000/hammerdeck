@@ -939,15 +939,16 @@ final class IntegrationTests: XCTestCase {
             _G.itW = require('platform.adapter').deckWidget({
                 title='T', name='n', switchHint='s',
                 pos={x=100,y=100}, screen={x=0,y=0,w=1440,h=900},
-                switcher={cols=2, colors={'#ff0000','#00ff00'}, onSwitch=function() end},
+                switcher={cols=2, colors={'#ff0000','#00ff00'},
+                          onSwitch=function() end, onReorder=function() end},
                 onMove=function() end, onExit=function() end,
                 onToggleHero=function() end, onRearrange=function() end,
             }); return true
             """)
-            XCTAssertEqual(lua.pinnedRefCount, baseRefs + 5, "the deck widget pins its 5 callbacks")
+            XCTAssertEqual(lua.pinnedRefCount, baseRefs + 6, "the deck widget pins its 6 callbacks")
             XCTAssertEqual(Native.shared.deckWidgets.count, baseWidgets + 1, "and registers one panel")
             eval("_G.itW.stop(); _G.itW = nil; return true")
-            XCTAssertEqual(lua.pinnedRefCount, baseRefs, "stopping the widget releases all 5 refs")
+            XCTAssertEqual(lua.pinnedRefCount, baseRefs, "stopping the widget releases all 6 refs")
             XCTAssertEqual(Native.shared.deckWidgets.count, baseWidgets, "and clears its dict entry")
 
             // The scrim pins no refs but its dict entry must still be freed.

@@ -2849,6 +2849,27 @@ do
         registry.setEnabled("window_deck", false)
     end
 
+    -- T-WD-reorder: dragging one mini-map CELL onto another (in the widget)
+    -- swaps the two windows' slots and re-colors the mini-map to match.
+    do
+        fake.windows = quadWindows()
+        fake.screenList = { SCREEN }
+        registry.setEnabled("window_deck", true)
+        enterDeck()
+        local w = fake.liveWidget()
+        local c1, c3 = w.colors[1], w.colors[3]   -- TL cell + BL cell colors
+        fake.windowFrameSets = {}
+        w.onReorder(1, 3)              -- drag mini-map cell 1 (TL) onto cell 3 (BL)
+        local moved = lastSetFor(2)    -- TL window (id 2) -> BL slot
+        ok(moved and near(moved.x, BLslot.x) and near(moved.y, BLslot.y),
+            "reordering cell 1 onto cell 3 moves the TL window into the BL slot")
+        ok(w.colors[1] == c3 and w.colors[3] == c1,
+            "the mini-map cell colors swap to match the new arrangement")
+        ok(w.dirty == false, "after a cell-swap every window sits on a slot (not dirty)")
+        fake.pressHotkey("k", HYP)
+        registry.setEnabled("window_deck", false)
+    end
+
     -- T-WD-screenchange: the deck's screen is powered off / reconfigured. The
     -- old fixed-rect banner got orphaned onto a surviving display; the scrim's
     -- title rides a full-screen element the deck RE-ANCHORS -- or, if the deck's

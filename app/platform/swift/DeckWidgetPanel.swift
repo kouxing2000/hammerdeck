@@ -22,6 +22,7 @@ final class DeckWidgetPanel {
     private let panel: FloatingPanel
     private let card: DraggableCardView
     private let onMove: (Double, Double) -> Void
+    private let onReorder: (Int, Int) -> Void
     private var clamp: NSRect
     private var cells: [MiniCellView] = []
     private let rearrangeButton: RearrangeButtonView
@@ -33,8 +34,9 @@ final class DeckWidgetPanel {
          topLeft: CGPoint, screen: NSRect,
          onMove: @escaping (Double, Double) -> Void, onExit: @escaping () -> Void,
          onSwitch: @escaping (Int) -> Void, onToggleHero: @escaping (Bool) -> Void,
-         onRearrange: @escaping () -> Void) {
+         onRearrange: @escaping () -> Void, onReorder: @escaping (Int, Int) -> Void) {
         self.onMove = onMove
+        self.onReorder = onReorder
         self.clamp = screen
         rearrangeButton = RearrangeButtonView(label: rearrangeLabel)
         rearrangeButton.onClick = onRearrange
@@ -143,10 +145,91 @@ final class DeckWidgetPanel {
         card.clampOrigin = { [weak self] o in self?.clamped(o) ?? o }
         setHero(heroIndex)
 
+        // Wire mini-map cell drag-and-drop now that self is fully initialized:
+        // a floating ghost follows the cursor, the cell under it highlights, and
+        // dropping swaps.
+        for c in cells {
+            c.onDragBegan = { [weak self, weak c] img, p in
+                self?.beginCellDrag(from: c?.index ?? 0, image: img, at: p) }
+            c.onDragMoved = { [weak self] p in self?.updateCellDrag(at: p) }
+            c.onDragEnded = { [weak self, weak c] p in
+                guard let c else { return }; self?.finishCellDrag(from: c.index, at: p) }
+        }
+
         card.layoutSubtreeIfNeeded()
         panel.setContentSize(card.fittingSize)
         place(topLeft: topLeft)
         panel.orderFrontRegardless()
+    }
+
+    // MARK: - Mini-map cell drag-and-drop (reorder within the widget)
+
+    private var ghostWin: NSWindow?
+    private var dragSource: Int?   // 1-based faded source cell
+    private var dragActive = false
+
+    /// The cell whose on-screen rect contains screen point `p` (0-based), or nil.
+    private func cellIndex(atScreenPoint p: NSPoint) -> Int? {
+        for (i, c) in cells.enumerated() {
+            let inWindow = c.convert(c.bounds, to: nil)
+            if let sr = c.window?.convertToScreen(inWindow), sr.contains(p) { return i }
+        }
+        return nil
+    }
+
+    /// Lift a floating snapshot of the dragged cell into its own window (so it
+    /// follows the cursor un-clipped, above everything) and fade the source.
+    private func beginCellDrag(from: Int, image: NSImage?, at p: NSPoint) {
+        dragActive = true
+        dragSource = from
+        NSCursor.closedHand.push()   // popped in cancelCellDrag (drop OR teardown)
+        if from >= 1, from <= cells.count { cells[from - 1].alphaValue = 0.25 }
+        guard let image else { return }
+        let win = NSWindow(contentRect: NSRect(origin: .zero, size: image.size),
+                           styleMask: .borderless, backing: .buffered, defer: false)
+        win.isOpaque = false
+        win.backgroundColor = .clear
+        win.hasShadow = true
+        win.ignoresMouseEvents = true
+        win.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        let iv = NSImageView(image: image)
+        iv.frame = NSRect(origin: .zero, size: image.size)
+        win.contentView = iv
+        ghostWin = win
+        moveGhost(to: p)
+        win.orderFrontRegardless()
+    }
+
+    private func moveGhost(to p: NSPoint) {
+        guard let win = ghostWin else { return }
+        let s = win.frame.size
+        win.setFrameOrigin(NSPoint(x: p.x - s.width / 2, y: p.y - s.height / 2))
+    }
+
+    private func updateCellDrag(at p: NSPoint) {
+        moveGhost(to: p)
+        let t = cellIndex(atScreenPoint: p)
+        // Don't draw a drop-target ring on the faded source cell itself.
+        for (i, c) in cells.enumerated() { c.setDropTarget(i == t && i + 1 != dragSource) }
+    }
+
+    /// Tear down any in-flight cell drag: remove the ghost, pop the cursor,
+    /// restore the source cell, clear highlights. Called on drop AND on panel
+    /// teardown (close) so a deck exit mid-drag can't strand a ghost / cursor.
+    private func cancelCellDrag() {
+        guard dragActive else { return }
+        dragActive = false
+        NSCursor.pop()
+        ghostWin?.orderOut(nil); ghostWin = nil
+        if let s = dragSource, s >= 1, s <= cells.count { cells[s - 1].alphaValue = 1 }
+        dragSource = nil
+        for c in cells { c.setDropTarget(false) }
+    }
+
+    private func finishCellDrag(from: Int, at p: NSPoint) {
+        let to = cellIndex(atScreenPoint: p)
+        cancelCellDrag()
+        if let to, to + 1 != from { onReorder(from, to + 1) }
     }
 
     /// Build a `gridCols`-wide, row-major grid of numbered/colored cells.
@@ -157,7 +240,7 @@ final class DeckWidgetPanel {
         var rows: [NSStackView] = []
         var row: [NSView] = []
         for (i, hex) in colors.enumerated() {
-            let cell = MiniCellView(number: i + 1, colorHex: hex)
+            let cell = MiniCellView(number: i + 1, index: i + 1, colorHex: hex)
             cell.onClick = { onSwitch(i + 1) }   // 1-based, matches Lua order
             cells.append(cell)
             row.append(cell)
@@ -184,6 +267,12 @@ final class DeckWidgetPanel {
 
     /// Enable the Rearrange button only when a window is off its grid slot.
     func setDirty(_ dirty: Bool) { rearrangeButton.setEnabled(dirty) }
+
+    /// Recolor the mini-map cells (row-major) after a drag-swap rearranges which
+    /// window sits in which slot.
+    func setCellColors(_ colors: [String]) {
+        for (i, c) in cells.enumerated() where i < colors.count { c.setColor(colors[i]) }
+    }
 
     /// Update the mini-map hint (the deck swaps it with the Hero mode).
     func setSwitchHint(_ text: String) { hintLabel.stringValue = text }
@@ -213,7 +302,7 @@ final class DeckWidgetPanel {
 
     func hide() { panel.orderOut(nil) }
     func show() { panel.orderFrontRegardless() }
-    func close() { panel.orderOut(nil) }
+    func close() { cancelCellDrag(); panel.orderOut(nil) }
 }
 
 /// The card body; drags the panel (clamped) by any empty point on it.
@@ -246,12 +335,19 @@ private final class DraggableCardView: NSView {
 /// otherwise a faint tint with a colored outline.
 private final class MiniCellView: NSView {
     var onClick: (() -> Void)?
-    private let color: NSColor
+    var onDragBegan: ((NSImage?, NSPoint) -> Void)?   // threshold crossed: (ghost image, point)
+    var onDragMoved: ((NSPoint) -> Void)?   // during a drag: global cursor point
+    var onDragEnded: ((NSPoint) -> Void)?   // on mouse-up after a drag
+    let index: Int                          // 1-based cell index
+    private var color: NSColor
     private let label = NSTextField(labelWithString: "")
     private var pressed = false
+    private var dragging = false
+    private var downPoint: NSPoint?
     private var hero = false
 
-    init(number: Int, colorHex: String) {
+    init(number: Int, index: Int, colorHex: String) {
+        self.index = index
         color = NSColor(hexRGB: colorHex) ?? .controlAccentColor
         super.init(frame: .zero)
         wantsLayer = true
@@ -282,12 +378,53 @@ private final class MiniCellView: NSView {
         label.textColor = .white
     }
 
+    /// Recolor (after a swap re-homes windows); keeps the hero / drop styling.
+    func setColor(_ hex: String) {
+        color = NSColor(hexRGB: hex) ?? .controlAccentColor
+        setHero(hero)
+    }
+
+    /// Highlight this cell as the drop target during a mini-map drag.
+    func setDropTarget(_ on: Bool) {
+        if on {
+            layer?.borderColor = NSColor.white.cgColor
+            layer?.borderWidth = 2
+        } else {
+            layer?.borderWidth = 1
+            setHero(hero)   // restore the normal / hero border
+        }
+    }
+
+    /// A bitmap of the cell's current look -- the floating drag ghost renders it.
+    private func snapshot() -> NSImage? {
+        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
+        cacheDisplay(in: bounds, to: rep)
+        let img = NSImage(size: bounds.size)
+        img.addRepresentation(rep)
+        return img
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseDown(with e: NSEvent) { pressed = true }
+    override func mouseDown(with e: NSEvent) {
+        pressed = true; dragging = false; downPoint = NSEvent.mouseLocation
+    }
+    override func mouseDragged(with e: NSEvent) {
+        guard let d = downPoint else { return }
+        let now = NSEvent.mouseLocation
+        if !dragging && (abs(now.x - d.x) > 4 || abs(now.y - d.y) > 4) {
+            dragging = true                       // crossed the threshold: pick up
+            onDragBegan?(snapshot(), now)         // panel manages the ghost + cursor
+        }
+        if dragging { onDragMoved?(now) }
+    }
     override func mouseUp(with e: NSEvent) {
-        guard pressed else { return }
-        pressed = false
-        if bounds.contains(convert(e.locationInWindow, from: nil)) { onClick?() }
+        let wasDragging = dragging
+        pressed = false; dragging = false; downPoint = nil
+        if wasDragging {
+            onDragEnded?(NSEvent.mouseLocation)   // a drag: swap on drop
+        } else if bounds.contains(convert(e.locationInWindow, from: nil)) {
+            onClick?()                            // a plain click: switch hero
+        }
     }
 }
 

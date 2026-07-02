@@ -178,7 +178,7 @@ function M.make(m, resolveTrigger, extra)
     -- (button text, i18n), pos = {x,y}, screen = {x,y,w,h}, switcher = { cols,
     -- colors, hero, onSwitch(i) }, hero, onToggleHero(bool), onRearrange(),
     -- onMove(x,y), onExit() }. Returns { reanchor(pos, screen), setHero(i),
-    -- setDirty(bool), setSwitchHint(t), hide, show, stop }.
+    -- setDirty(bool), setSwitchHint(t), setCells(colors), hide, show, stop }.
     function ctx.deckWidget(opts) return track(adapter.deckWidget(opts)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end
