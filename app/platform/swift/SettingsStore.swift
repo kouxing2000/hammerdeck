@@ -257,6 +257,7 @@ struct FeatureInfo: Identifiable {
     let context: String         // WHEN it applies -- the primary grouping axis (FeatureContext)
     let requires: [String]      // OS preconditions, e.g. ["accessibility"]
     let recommended: Bool       // part of the curated "Essentials" starter set
+    let preference: Bool        // a global behavior toggle -> shown in General > Behavior, hidden from the catalog
     let version: String
     let kind: String        // action | service
     var enabled: Bool
@@ -277,6 +278,7 @@ struct FeatureInfo: Identifiable {
         self.context = dict.str("context", "anywhere")
         self.requires = dict.strArray("requires")
         self.recommended = dict.bool("recommended")
+        self.preference = dict.bool("preference")
         self.version = dict.str("version")
         self.kind = dict.str("kind", "action")
         self.enabled = dict.bool("enabled")

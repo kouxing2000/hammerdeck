@@ -275,6 +275,15 @@ function manifest.validate(m)
     end
     m.recommended = (m.recommended == true)
 
+    -- preference: a global BEHAVIOR PREFERENCE surfaced in Settings > General,
+    -- not a catalog feature (the host filters it out of the feature list).
+    -- Optional boolean, default false.
+    if m.preference ~= nil then
+        assert(type(m.preference) == "boolean",
+            "feature '" .. m.id .. "': preference must be true/false")
+    end
+    m.preference = (m.preference == true)
+
     m.options = m.options or {}
     -- Index options by key so cross-references (gatedBy / valuesFrom) can be
     -- checked against real, validate-able options below.

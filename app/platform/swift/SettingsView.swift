@@ -33,7 +33,11 @@ struct SettingsPane: View {
                 }
                 ForEach(groupedCategories, id: \.self) { category in
                     Section(categoryLabel(category)) {
-                        ForEach(store.features.filter { $0.category == category }) { feature in
+                        // Global behavior preferences live in General > Behavior,
+                        // not the catalog -- filter them out here. Exception: a FAILED
+                        // preference stays so its red "failed to load" row still shows
+                        // (the Behavior section renders only healthy ones).
+                        ForEach(store.features.filter { $0.category == category && (!$0.preference || $0.failed) }) { feature in
                             FeatureRow(store: store, feature: feature)
                                 .tag(feature.id)
                         }
@@ -44,7 +48,7 @@ struct SettingsPane: View {
 
             Group {
                 if store.selectedFeatureId == Self.generalId {
-                    GeneralSettingsDetail()
+                    GeneralSettingsDetail(store: store)
                 } else if let id = store.selectedFeatureId,
                    let feature = store.features.first(where: { $0.id == id }) {
                     FeatureDetail(store: store, feature: feature)
@@ -64,7 +68,10 @@ struct SettingsPane: View {
 
     private var groupedCategories: [String] {
         var seen: [String] = []
-        for f in store.features where !seen.contains(f.category) {
+        // Skip healthy preference features (they render in General, not the catalog)
+        // so a category holding only preferences never shows as an empty section; a
+        // FAILED preference stays, since its red row belongs in the catalog.
+        for f in store.features where (!f.preference || f.failed) && !seen.contains(f.category) {
             seen.append(f.category)
         }
         return seen
@@ -109,10 +116,18 @@ private struct FeatureRow: View {
 /// same `Hammerdeck` defaults keys, so a change here or there stays in sync on
 /// the next render. @State seeds from the live prefs on appear.
 private struct GeneralSettingsDetail: View {
+    @ObservedObject var store: SettingsStore
     @State private var capsHyper = CapsHyperPreference.enabled
     @State private var showInDock = DockPreference.showInDock
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
+
+    // Global behavior toggles (feature.json "preference": true) surfaced here
+    // instead of the feature catalog. Data-driven: any preference-flagged feature
+    // appears automatically, no per-feature Swift.
+    private var behaviorPreferences: [FeatureInfo] {
+        store.features.filter { $0.preference && !$0.failed }
+    }
 
     var body: some View {
         Form {
@@ -122,6 +137,19 @@ private struct GeneralSettingsDetail: View {
                 Text(Strings.t("settings.caps_hyper_caption", default: "Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper shortcuts are a one-key press. Double-tap Caps Lock for its normal lock. Remaps Caps Lock and needs Accessibility."))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if !behaviorPreferences.isEmpty {
+                Section(Strings.t("settings.behavior", default: "Behavior")) {
+                    ForEach(behaviorPreferences) { pref in
+                        Toggle(pref.name, isOn: Binding(
+                            get: { pref.enabled },
+                            set: { store.requestSetEnabled(pref.id, $0) }
+                        ))
+                        Text(pref.description)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             Section(Strings.t("settings.app", default: "App")) {
                 Toggle(Strings.t("settings.show_in_dock", default: "Show in Dock"), isOn: $showInDock)

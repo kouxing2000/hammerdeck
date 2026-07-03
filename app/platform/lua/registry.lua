@@ -95,7 +95,7 @@ end
 -- as the structural anchor + `api` + the behavioral surface). The JSON wins.
 local META_FIELDS = {
     "name", "version", "description", "category", "context",
-    "requires", "recommended", "page",
+    "requires", "recommended", "page", "preference",
 }
 
 -- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
@@ -835,6 +835,11 @@ function registry.describe()
             context = m.context or "anywhere",
             requires = json.asArray(m.requires or {}),
             recommended = m.recommended == true,
+            -- A global BEHAVIOR PREFERENCE (feature.json "preference": true), not a
+            -- catalog capability: the Settings UI surfaces it in General > Behavior
+            -- and filters it OUT of the feature list. Still a normal registered,
+            -- enable/disable-able feature -- only its presentation differs.
+            preference = m.preference == true,
             kind = m.start and "service" or "action",
             enabled = registry.isEnabled(m.id),
             triggerDesc = describeTrigger(m),

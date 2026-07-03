@@ -2067,6 +2067,17 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after windo
 -- to {0,0,500,800}.
 registry.register(require("features.pointer_follows_window"))
 registry.setEnabled("window_snap", true)
+
+-- pointer_follows_window declares itself a global PREFERENCE (feature.json
+-- "preference": true), so the host surfaces it in Settings > General > Behavior
+-- and filters it OUT of the feature catalog -- describe() must carry the flag.
+do
+    local pfw
+    for _, e in ipairs(registry.describe()) do
+        if e.id == "pointer_follows_window" then pfw = e end
+    end
+    ok(pfw ~= nil and pfw.preference == true, "describe() flags pointer_follows_window as a preference")
+end
 fake.screenList = {
     { x = 0, y = 0, w = 1000, h = 800 },
     { x = 1000, y = 0, w = 2000, h = 1200 },
