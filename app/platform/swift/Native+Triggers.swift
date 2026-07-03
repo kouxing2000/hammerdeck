@@ -27,15 +27,27 @@ extension Native {
         let releaseRef = hasRelease ? lua.makeRef(at: 4) : 0
         let onRelease: (() -> Void)? = hasRelease
             ? { Native.shared.lua.callRef(releaseRef) } : nil
+        // Optional 5th arg: shadow. When true, SHADOW any standalone hotkey on
+        // this combo for the binding's lifetime -- park the incumbent before
+        // registering, hand it back on stop. Lets a transient bare-key layer
+        // (a modal's cell keys) accept the leader's modifiers still held (the
+        // Hyper-leader "sticky key" motion) without the global on that combo
+        // stealing it. Two live registrations of one combo dispatch ambiguously,
+        // so the incumbent MUST be cleared first (mirrors ChordCenter's sticky
+        // follows). No-op when nothing is registered on the combo.
+        let restore: (() -> Void)? = LuaState.bool(L, 5)
+            ? HotkeyCenter.shared.park(key: key, mods: mods) : nil
         guard let unbind = HotkeyCenter.shared.bind(mods: mods, key: key, handler: {
             Native.shared.lua.callRef(ref)
         }, onRelease: onRelease) else {
+            restore?()
             lua.releaseRef(ref)
             if hasRelease { lua.releaseRef(releaseRef) }
             return luaError(L, "bind_hotkey: could not register '\(mods.joined(separator: "+"))+\(key)'")
         }
         let id = registerResource {
             unbind()
+            restore?()
             Native.shared.lua.releaseRef(ref)
             if hasRelease { Native.shared.lua.releaseRef(releaseRef) }
         }

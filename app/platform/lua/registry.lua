@@ -278,9 +278,23 @@ end
 -- wraps the whole action loop in one pcall; setTrigger/swapTriggers wrap per
 -- action; clearTrigger trusts its own default trigger and wraps nothing).
 local function bindAction(b, m, a, spec)
+    -- The hotkey combo that fires this action, so a modal the action enters can
+    -- accept its bare keys with those modifiers STILL held (the Hyper-leader
+    -- "sticky key" motion -- ctx.modal reads these). ONLY a plain hotkey qualifies:
+    -- a chord RELEASES its prefix before the follow keys (nothing is held), and an
+    -- automated trigger (schedule/event) has nobody at the keys; a menubar/palette
+    -- run goes through registry.runAction (not this path) and leaves them nil.
+    -- `leaderKey` lets the modal skip a sticky twin on the entry combo itself --
+    -- which would otherwise shadow this very hotkey (e.g. break Window Mode's
+    -- Hyper+w toggle-off).
+    local leaderMods = spec.type == "hotkey" and spec.mods or nil
+    local leaderKey  = spec.type == "hotkey" and spec.key or nil
     b.actionHandles[a.id] =
-        b.scope.adopt(triggers.bind(spec, function() runActionGuarded(m, a, b.ctx) end,
-            a.label or a.id))
+        b.scope.adopt(triggers.bind(spec, function()
+            b.ctx._leaderMods, b.ctx._leaderKey = leaderMods, leaderKey
+            runActionGuarded(m, a, b.ctx)
+            b.ctx._leaderMods, b.ctx._leaderKey = nil, nil
+        end, a.label or a.id))
 end
 
 -- Find an action by id; with actionId == nil, resolve the feature's sole

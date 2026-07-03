@@ -42,6 +42,16 @@ local function freeOnce(obj)
     end
 end
 
+-- Order-independent modifier-set equality (matches HotkeyCenter.park's combo
+-- comparison, which is a bitmask and so order-independent).
+local function sameMods(a, b)
+    local ca, cb = {}, {}
+    for _, m in ipairs(a or {}) do ca[#ca + 1] = m end
+    for _, m in ipairs(b or {}) do cb[#cb + 1] = m end
+    table.sort(ca); table.sort(cb)
+    return table.concat(ca, ",") == table.concat(cb, ",")
+end
+
 -- Triggers / bindings ---------------------------------------------------------
 
 local function makeTimer(kind, n, fn)
@@ -51,11 +61,30 @@ local function makeTimer(kind, n, fn)
     return t, { stop = function() freeOnce(t) end }
 end
 
-function adapter.bindHotkey(mods, key, fn, onRelease)
-    local h = { mods = mods, key = key, fn = fn, onRelease = onRelease, stopped = false }
+function adapter.bindHotkey(mods, key, fn, onRelease, shadow)
+    local h = { mods = mods, key = key, fn = fn, onRelease = onRelease,
+                stopped = false, parked = false }
+    -- Model HotkeyCenter.park: when `shadow`, temporarily deactivate every LIVE
+    -- hotkey on this exact combo for this binding's lifetime (restored on stop).
+    -- `parked` is distinct from `stopped` (unbound) -- the incumbent's handle
+    -- stays alive, only its dispatch is suppressed, exactly like the real park.
+    local shadowed = {}
+    if shadow then
+        for _, o in ipairs(fake.hotkeys) do
+            if not o.stopped and not o.parked and o.key == key and sameMods(o.mods, mods) then
+                o.parked = true
+                shadowed[#shadowed + 1] = o
+            end
+        end
+    end
     fake.hotkeys[#fake.hotkeys + 1] = h
     alloc()
-    return { stop = function() freeOnce(h) end }
+    return { stop = function()
+        freeOnce(h)
+        for _, o in ipairs(shadowed) do
+            if not o.stopped then o.parked = false end   -- skip any unbound while parked
+        end
+    end }
 end
 
 function adapter.bindChord(mods, key, follows, fn)
@@ -1020,8 +1049,14 @@ function fake.pressHotkey(key, mods)
         table.sort(want)
         want = table.concat(want, ",")
     end
-    for _, h in ipairs(fake.hotkeys) do
-        if not h.stopped and h.key == key then
+    -- Snapshot before firing: real Carbon dispatches a key event only to the
+    -- hotkeys registered AT event time, never to ones a handler registers mid-
+    -- dispatch (e.g. entering a modal binds its keys -- including a "sticky" twin
+    -- on the entry combo -- which must NOT be triggered by the same press).
+    local live = {}
+    for _, h in ipairs(fake.hotkeys) do live[#live + 1] = h end
+    for _, h in ipairs(live) do
+        if not h.stopped and not h.parked and h.key == key then
             local fire = true
             if want then
                 local have = {}
@@ -1044,8 +1079,10 @@ function fake.releaseHotkey(key, mods)
         table.sort(want)
         want = table.concat(want, ",")
     end
-    for _, h in ipairs(fake.hotkeys) do
-        if not h.stopped and h.key == key and h.onRelease then
+    local live = {}
+    for _, h in ipairs(fake.hotkeys) do live[#live + 1] = h end
+    for _, h in ipairs(live) do
+        if not h.stopped and not h.parked and h.key == key and h.onRelease then
             local fire = true
             if want then
                 local have = {}

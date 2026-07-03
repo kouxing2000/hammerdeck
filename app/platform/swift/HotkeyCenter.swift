@@ -59,16 +59,7 @@ final class HotkeyCenter {
         guard let keyCode = HotkeyCenter.keyCodes[key.lowercased()] else { return nil }
         installHandlerIfNeeded()
 
-        var carbonMods: UInt32 = 0
-        for m in mods {
-            switch m.lowercased() {
-            case "cmd", "command": carbonMods |= UInt32(cmdKey)
-            case "alt", "option":  carbonMods |= UInt32(optionKey)
-            case "ctrl", "control": carbonMods |= UInt32(controlKey)
-            case "shift":          carbonMods |= UInt32(shiftKey)
-            default: break
-            }
-        }
+        let carbonMods = Self.carbonMods(mods)
 
         let id = nextId
         nextId += 1
@@ -128,6 +119,61 @@ final class HotkeyCenter {
             }
         }
         suspendedIds.removeAll()
+    }
+
+    /// Temporarily unregister every LIVE hotkey whose combo equals (key, mods),
+    /// returning a closure that re-registers them. Lets a modal's "sticky" key
+    /// SHADOW a standalone hotkey (or a feature's entry hotkey) that reuses the
+    /// same combo -- e.g. window_grid's 2×2 mode, whose sticky "Hyper+1" cell key
+    /// must win over a standalone "Hyper+1" while the mode is live, then hand it
+    /// back on exit (driven from Native.bindHotkey's `shadow` flag). Combo-based,
+    /// so it covers plain hotkeys AND other modes' entry hotkeys alike (both ride
+    /// HotkeyCenter). Two live Carbon registrations of one combo dispatch
+    /// ambiguously (and the OS may refuse the duplicate outright), so the caller
+    /// MUST clear the incumbent before registering its own. The restore is
+    /// idempotent, skips anything unbound while parked, and honors an in-flight
+    /// suspend() (re-parks rather than double-registering).
+    func park(key: String, mods: [String]) -> () -> Void {
+        guard let keyCode = HotkeyCenter.keyCodes[key.lowercased()] else { return {} }
+        let carbonMods = Self.carbonMods(mods)
+        var parked: [UInt32] = []
+        for (id, spec) in carbonSpecs where spec.keyCode == UInt32(keyCode) && spec.mods == carbonMods {
+            guard let ref = refs[id] else { continue }
+            UnregisterEventHotKey(ref)
+            refs[id] = nil
+            parked.append(id)
+        }
+        return { [weak self] in
+            guard let self else { return }
+            for id in parked where self.refs[id] == nil {
+                guard let spec = self.carbonSpecs[id] else { continue }   // unbound while parked
+                if self.suspendDepth == 0 {
+                    var ref: EventHotKeyRef?
+                    let hkID = EventHotKeyID(signature: OSType(0x48_44_4B_59), id: id)
+                    if RegisterEventHotKey(spec.keyCode, spec.mods, hkID,
+                                           GetEventDispatcherTarget(), 0, &ref) == noErr, let ref {
+                        self.refs[id] = ref
+                    }
+                } else {
+                    self.suspendedIds.insert(id)
+                }
+            }
+        }
+    }
+
+    /// Bitmask of Carbon modifier flags for the given modifier names.
+    static func carbonMods(_ mods: [String]) -> UInt32 {
+        var m: UInt32 = 0
+        for name in mods {
+            switch name.lowercased() {
+            case "cmd", "command":  m |= UInt32(cmdKey)
+            case "alt", "option":   m |= UInt32(optionKey)
+            case "ctrl", "control": m |= UInt32(controlKey)
+            case "shift":           m |= UInt32(shiftKey)
+            default: break
+            }
+        }
+        return m
     }
 
     /// Carbon virtual key codes, keyed by the lowercase names features use.

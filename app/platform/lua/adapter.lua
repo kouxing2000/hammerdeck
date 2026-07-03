@@ -28,8 +28,12 @@ end
 -- mods: table like {"cmd","alt"}; key: string like "h"; fn: function fired on
 -- press. onRelease (optional): fired on the key-up edge -- the basis for
 -- hold/auto-repeat (Carbon delivers no repeats while a key is held).
-function adapter.bindHotkey(mods, key, fn, onRelease)
-    return handleFor(native.bind_hotkey(mods or {}, key, fn, onRelease))
+-- `shadow` (optional): when true, this binding SHADOWS any standalone hotkey on
+-- the same combo for its lifetime (parked on bind, restored on stop) -- used by a
+-- modal's "sticky" keys so the leader's modifiers held through a bare key win over
+-- the global on that combo. See Native+Triggers.bindHotkey / ChordCenter.
+function adapter.bindHotkey(mods, key, fn, onRelease, shadow)
+    return handleFor(native.bind_hotkey(mods or {}, key, fn, onRelease, shadow))
 end
 
 -- A chord: mods+key is the PREFIX hotkey; `follows` is the ordered sequence of

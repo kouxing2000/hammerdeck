@@ -182,8 +182,18 @@ function M.make(m, resolveTrigger, extra)
     function ctx.deckWidget(opts) return track(adapter.deckWidget(opts)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end
-    -- enter a modal hotkey group (see platform/modal.lua); stop() exits
-    function ctx.modal(spec)     return track(modal.enter(spec)) end
+    -- enter a modal hotkey group (see platform/modal.lua); stop() exits.
+    -- Default the mode's sticky modifiers to the ones the entering hotkey held
+    -- (registry records ctx._leaderMods/_leaderKey around a manual hotkey fire), so
+    -- a bare modal key ALSO matches with the leader (e.g. Hyper) still held -- the
+    -- user need not release Caps before the key. stickyExceptKey is the entry key,
+    -- excluded from twinning so the entry hotkey itself stays reachable (its own
+    -- re-press, e.g. a toggle-off). A feature may set either field to override.
+    function ctx.modal(spec)
+        if spec.stickyMods == nil then spec.stickyMods = ctx._leaderMods end
+        if spec.stickyExceptKey == nil then spec.stickyExceptKey = ctx._leaderKey end
+        return track(modal.enter(spec))
+    end
 
     -- apps (Phase 3 will namespace these into ctx.app.*) -----------------------
     function ctx.appIcon(bundleID)  return adapter.appIcon(bundleID) end

@@ -2299,6 +2299,27 @@ do
     ok(gf.x == 0 and gf.y == 450 and gf.w == 600 and gf.h == 450,
         "2x2 cell 3 -> bottom-left (col0,row1)")
 
+    -- STICKY MODIFIER + SHADOW: the leader (Hyper) held THROUGH the cell digit
+    -- still places it -- the user need not release Caps between Hyper+4 and the
+    -- number. ctx.modal binds each bare cell key ALSO under the entering trigger's
+    -- mods (Hyper), and that sticky twin SHADOWS any standalone on the combo for
+    -- the mode's life -- the exact "leaked to a global Hyper+1 (window_deck)" bug.
+    -- A stand-in global Hyper+1 proves it: silent while the grid is live, fires
+    -- again after exit.
+    local stickyGlobalFires = 0
+    local stickyGlobal = fake.adapter.bindHotkey(HYP, "1", function() stickyGlobalFires = stickyGlobalFires + 1 end)
+    fake.pressHotkey("4", HYP)
+    ok(fake.liveHud() ~= nil, "re-enter 2x2 for the sticky-modifier check")
+    fake.pressHotkey("1", HYP)   -- Hyper still held through the cell key
+    gf = fake.windowFrames[#fake.windowFrames]
+    ok(gf.x == 0 and gf.y == 0 and gf.w == 600 and gf.h == 450,
+        "2x2 cell 1 places with the leader (Hyper) held through the digit")
+    ok(stickyGlobalFires == 0, "the standalone Hyper+1 is shadowed while the grid is live")
+    ok(fake.liveHud() == nil, "sticky placement exits the grid too")
+    fake.pressHotkey("1", HYP)
+    ok(stickyGlobalFires == 1, "the shadowed Hyper+1 fires again once the grid exits")
+    stickyGlobal.stop()
+
     -- esc cancels with no placement.
     local nBefore = #fake.windowFrames
     fake.pressHotkey("9", HYP)

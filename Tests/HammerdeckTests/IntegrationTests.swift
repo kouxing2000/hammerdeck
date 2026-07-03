@@ -81,6 +81,15 @@ final class TestHost {
 final class IntegrationTests: XCTestCase {
     var host: TestHost { TestHost.shared }
 
+    /// Force the process-global boot before every test body. Most tests reach
+    /// `host` on their own, but the synthesis probe `canDeliverSynthesizedHotkeys`
+    /// pumps the app event queue (NSApp.nextEvent) FIRST -- and `NSApp` only
+    /// exists once `TestHost.init` has called `NSApplication.shared`. In a full
+    /// run some earlier Tier-1 test boots it incidentally; under `--filter` a
+    /// synthesis test can run first and crash on a nil NSApp. Booting here makes
+    /// every test order-independent.
+    override func setUp() async throws { _ = host }
+
     @discardableResult
     private func eval(_ code: String) -> Any? {
         do { return try host.lua.eval(code) } catch {
@@ -1320,5 +1329,44 @@ final class IntegrationTests: XCTestCase {
         host.store.setEnabled("plain_paste", false)
         XCTAssertTrue(landed,
                       "the synthesized chord (⌘⇧A then B) should run the action end to end")
+    }
+
+    /// The park/restore primitive a modal's "sticky" keys use to SHADOW a
+    /// standalone hotkey on their combo (e.g. window_grid's 2×2 mode shadowing a
+    /// standalone "Hyper+1" while the mode is live, so a leader-held "1" lands the
+    /// cell instead of firing the global). While parked the combo must not reach
+    /// its handler; after restore it must fire again. Proves the mechanism the
+    /// sticky-modifier fix leans on, independent of the modal/feature stack --
+    /// this is the half that was red before the fix (the key leaked to the global).
+    func testHotkeyParkShadowsAndRestores() throws {
+        try requireUITests()
+        try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
+            "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
+
+        var fires = 0
+        guard let unbind = HotkeyCenter.shared.bind(mods: ["cmd", "shift"], key: "b",
+                                                    handler: { fires += 1 }) else {
+            return XCTFail("could not register the standalone ⌘⇧B")
+        }
+        defer { unbind() }
+
+        let src = CGEventSource(stateID: .hidSystemState)
+        func key(_ down: Bool) {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_ANSI_B), keyDown: down)
+            e?.flags = [.maskCommand, .maskShift]
+            e?.post(tap: .cghidEventTap)
+        }
+        func pressCmdShiftB() { key(true); key(false); pumpAppEvents(0.3) }
+
+        pressCmdShiftB()
+        XCTAssertEqual(fires, 1, "the standalone ⌘⇧B should fire before parking")
+
+        let restore = HotkeyCenter.shared.park(key: "b", mods: ["cmd", "shift"])
+        pressCmdShiftB()
+        XCTAssertEqual(fires, 1, "a parked combo must be shadowed -- its handler must not fire")
+
+        restore()
+        pressCmdShiftB()
+        XCTAssertEqual(fires, 2, "restore must re-register the shadowed hotkey so it fires again")
     }
 }
