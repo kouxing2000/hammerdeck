@@ -1,7 +1,0 @@
-{
-  "name": "Volume",
-  "version": "1.0.0",
-  "description": "Nudge the system output volume up or down, or toggle mute -- bind each to a hotkey, chord, or schedule.",
-  "category": "productivity",
-  "context": "anywhere"
-}

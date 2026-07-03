@@ -16,6 +16,9 @@
 --   speak        -- speak a line aloud:      { kind="speak", text=<str> }
 --   emptyTrash   -- empty the home Trash:    { kind="emptyTrash" }
 --   eject        -- eject external disks:    { kind="eject" }
+--   setAppearance -- system dark/light:      { kind="setAppearance", mode="dark"|"light"|"toggle" }
+--   volume       -- nudge / mute output:     { kind="volume", op="up"|"down"|"mute" }
+--   mediaKey     -- transport control:       { kind="mediaKey", key="playpause"|"next"|"previous" }
 --   solidWallpaper -- paint a solid color:  { kind="solidWallpaper", color="#RRGGBB",
 --                   display=<name|"all"|"external"|"primary"|"@trigger:display"> }
 --   setWallpaperImage -- set a wallpaper photo: { kind="setWallpaperImage", image=<path>,
@@ -627,6 +630,79 @@ EFFECT_KINDS = {
         contextFree = true,
         label = "Eject external disks",
     },
+    -- The three system state-changers demoted from thin standalone features to
+    -- rules atoms: appearance, volume, media transport. Each carries one enum
+    -- param (the sub-choice the guided form's picker sets); the adapter already
+    -- exposes the native call. All context-free -- safe on a schedule/event.
+    setAppearance = {
+        validate = function(node)
+            assert(node.mode == "dark" or node.mode == "light" or node.mode == "toggle",
+                "setAppearance effect mode must be 'dark', 'light', or 'toggle'")
+        end,
+        run = function(node)
+            -- setAppearance returns whether it applied; a false means the Automation
+            -- grant is missing -- surface it, don't lie green (parity with wallpaper).
+            local ok, res = pcall(adapter.setAppearance, node.mode)
+            if not ok then return false, tostring(res) end
+            if not res then
+                return false, "couldn't set appearance -- grant Automation control of System Events"
+            end
+            return true
+        end,
+        describe = function(node)
+            if node.mode == "dark" then return "Switch to dark" end
+            if node.mode == "light" then return "Switch to light" end
+            return "Toggle dark mode"
+        end,
+        contextFree = true,
+        label = "Set appearance",
+    },
+    volume = {
+        validate = function(node)
+            assert(node.op == "up" or node.op == "down" or node.op == "mute",
+                "volume effect op must be 'up', 'down', or 'mute'")
+        end,
+        run = function(node)
+            if node.op == "mute" then
+                local ok, err = pcall(adapter.toggleMute)
+                if not ok then return false, tostring(err) end
+                return true
+            end
+            -- adjustVolume returns the new level, or -1 on an AppleScript error --
+            -- surface that as a real failure, don't lie green (parity with the rest).
+            local ok, res = pcall(adapter.adjustVolume, node.op == "up" and 10 or -10)
+            if not ok then return false, tostring(res) end
+            if type(res) == "number" and res < 0 then
+                return false, "couldn't change the volume"
+            end
+            return true
+        end,
+        describe = function(node)
+            if node.op == "up" then return "Volume up" end
+            if node.op == "down" then return "Volume down" end
+            return "Toggle mute"
+        end,
+        contextFree = true,
+        label = "Volume",
+    },
+    mediaKey = {
+        validate = function(node)
+            assert(node.key == "playpause" or node.key == "next" or node.key == "previous",
+                "mediaKey effect key must be 'playpause', 'next', or 'previous'")
+        end,
+        run = function(node)
+            local ok, err = pcall(adapter.mediaKey, node.key)
+            if not ok then return false, tostring(err) end
+            return true
+        end,
+        describe = function(node)
+            if node.key == "next" then return "Next track" end
+            if node.key == "previous" then return "Previous track" end
+            return "Play / Pause"
+        end,
+        contextFree = true,
+        label = "Media key",
+    },
     chain = {
         validate = function(node)
             assert(type(node.effects) == "table" and #node.effects > 0,
@@ -679,7 +755,8 @@ EFFECT_KINDS = {
 -- lives here). `command` is appended per-action by catalog(), not listed here.
 local CATALOG_ORDER = {
     "notify", "layout", "runShortcut", "openURL", "lockScreen", "startScreensaver",
-    "speak", "emptyTrash", "eject", "solidWallpaper", "setWallpaperImage",
+    "speak", "emptyTrash", "eject", "setAppearance", "volume", "mediaKey",
+    "solidWallpaper", "setWallpaperImage",
     "moveAppToDisplay", "launchApp", "minimizeApp", "hideApp", "quitApp", "chain",
 }
 

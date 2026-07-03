@@ -1,8 +1,0 @@
-{
-  "name": "深色模式",
-  "description": "切换或设置 macOS 深色 / 浅色外观 -- 可绑定到日落计划或某个快捷键.",
-
-  "action.toggle.label": "切换深色模式",
-  "action.dark.label": "切换到深色",
-  "action.light.label": "切换到浅色"
-}

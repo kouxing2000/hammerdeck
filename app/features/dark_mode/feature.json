@@ -1,7 +1,0 @@
-{
-  "name": "Dark Mode",
-  "version": "1.0.0",
-  "description": "Toggle or set macOS Dark / Light appearance -- bind it to a sunset schedule or a hotkey.",
-  "category": "appearance",
-  "context": "anywhere"
-}

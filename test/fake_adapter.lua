@@ -779,8 +779,10 @@ end
 
 fake.volume = 50         -- system output volume 0-100
 fake.muted = false       -- system output mute state
+fake.volumeReturn = nil  -- override adjustVolume's return (nil = real clamp; -1 = AppleScript error)
 function adapter.adjustVolume(delta)
     fake.volume = math.max(0, math.min(100, fake.volume + (delta or 0)))
+    if fake.volumeReturn ~= nil then return fake.volumeReturn end
     return fake.volume
 end
 function adapter.toggleMute()

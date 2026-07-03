@@ -456,6 +456,11 @@ private struct AddRuleForm: View {
     // meaningfully launch the app a trigger reacts to), so it needs its own state.
     @State private var launchAppName = ""              // launchApp: display name
     @State private var launchAppBundleId = ""          // launchApp: the launch key (required)
+    // The three system state-changers demoted from thin features to rules atoms.
+    // Each is a single enum the sub-picker sets; always valid, so no canSubmit gate.
+    @State private var appearanceMode = "dark"         // setAppearance: dark | light | toggle
+    @State private var volumeOp = "up"                 // volume: up | down | mute
+    @State private var mediaKeyName = "playpause"      // mediaKey: playpause | next | previous
     // The frontmostApp TRIGGER value reuses the installed-apps chooser (so a rule can
     // watch for an app that isn't running yet). stateValue holds the display NAME (the
     // sentence reads it); stateValueBundleId is the bundle id stored as `on.bundleId`
@@ -908,6 +913,12 @@ private struct AddRuleForm: View {
             // No "@trigger:" form -- launch always targets a literal installed app.
             TokenPill(text: launchAppName.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : launchAppName,
                       muted: launchAppName.isEmpty) { launchAppEditor.frame(minWidth: 300) }
+        case "setAppearance":
+            TokenPill(text: appearanceModeLabel(appearanceMode)) { appearanceEditor.frame(minWidth: 200) }
+        case "volume":
+            TokenPill(text: volumeOpLabel(volumeOp)) { volumeEditor.frame(minWidth: 200) }
+        case "mediaKey":
+            TokenPill(text: mediaKeyLabel(mediaKeyName)) { mediaKeyEditor.frame(minWidth: 200) }
         case "layout", "chain":
             // "stem + block": the effect-verb pill ("arrange windows" / "do several
             // things") is the stem; the existing layoutEditor/chainEditor block
@@ -1077,6 +1088,9 @@ private struct AddRuleForm: View {
         case "startScreensaver": return Strings.t("rules.verb.screensaver", default: "start the screensaver")
         case "emptyTrash":     return Strings.t("rules.verb.emptyTrash", default: "empty the Trash")
         case "eject":          return Strings.t("rules.verb.eject", default: "eject external disks")
+        case "setAppearance":  return Strings.t("rules.verb.appearance", default: "set appearance")
+        case "volume":         return Strings.t("rules.verb.volume", default: "volume")
+        case "mediaKey":       return Strings.t("rules.verb.media", default: "media")
         case "solidWallpaper", "setWallpaperImage": return Strings.t("rules.verb.wallpaper", default: "set wallpaper")
         case "moveAppToDisplay": return Strings.t("rules.verb.move", default: "move")
         case "minimizeApp":    return Strings.t("rules.verb.minimize", default: "minimize")
@@ -1300,6 +1314,52 @@ private struct AddRuleForm: View {
         default:
             break
         }
+    }
+
+    // --- appearance / volume / media sub-pickers (grouped rules atoms) ---------
+    // Each hosts one inline enum picker in the token pill's popover; the pill text
+    // echoes the current choice. Labels are shared by the pill and the picker rows.
+    private func appearanceModeLabel(_ m: String) -> String {
+        switch m {
+        case "light":  return Strings.t("rules.appearance.light", default: "Light")
+        case "toggle": return Strings.t("rules.appearance.toggle", default: "Toggle")
+        default:       return Strings.t("rules.appearance.dark", default: "Dark")
+        }
+    }
+    private func volumeOpLabel(_ op: String) -> String {
+        switch op {
+        case "down": return Strings.t("rules.volume.down", default: "Down")
+        case "mute": return Strings.t("rules.volume.mute", default: "Mute")
+        default:     return Strings.t("rules.volume.up", default: "Up")
+        }
+    }
+    private func mediaKeyLabel(_ k: String) -> String {
+        switch k {
+        case "next":     return Strings.t("rules.media.next", default: "Next track")
+        case "previous": return Strings.t("rules.media.previous", default: "Previous track")
+        default:         return Strings.t("rules.media.playpause", default: "Play / Pause")
+        }
+    }
+    @ViewBuilder private var appearanceEditor: some View {
+        Picker(Strings.t("rules.appearance.label", default: "Appearance"), selection: $appearanceMode) {
+            Text(appearanceModeLabel("dark")).tag("dark")
+            Text(appearanceModeLabel("light")).tag("light")
+            Text(appearanceModeLabel("toggle")).tag("toggle")
+        }.pickerStyle(.inline).labelsHidden()
+    }
+    @ViewBuilder private var volumeEditor: some View {
+        Picker(Strings.t("rules.volume.label", default: "Volume"), selection: $volumeOp) {
+            Text(volumeOpLabel("up")).tag("up")
+            Text(volumeOpLabel("down")).tag("down")
+            Text(volumeOpLabel("mute")).tag("mute")
+        }.pickerStyle(.inline).labelsHidden()
+    }
+    @ViewBuilder private var mediaKeyEditor: some View {
+        Picker(Strings.t("rules.media.label", default: "Media"), selection: $mediaKeyName) {
+            Text(mediaKeyLabel("playpause")).tag("playpause")
+            Text(mediaKeyLabel("next")).tag("next")
+            Text(mediaKeyLabel("previous")).tag("previous")
+        }.pickerStyle(.inline).labelsHidden()
     }
 
     // The color + display editor (shown when the effect is "solidWallpaper").
@@ -1717,6 +1777,7 @@ private struct AddRuleForm: View {
         minimizeAppName = ""
         minimizeAppBundleId = ""; moveAppBundleId = ""
         launchAppName = ""; launchAppBundleId = ""
+        appearanceMode = "dark"; volumeOp = "up"; mediaKeyName = "playpause"
         formError = nil
         advanced = false
         jsonText = ""
@@ -1771,6 +1832,7 @@ private struct AddRuleForm: View {
         moveApp = ""; moveDisplay = ""
         minimizeAppBundleId = ""; moveAppBundleId = ""
         launchAppName = ""; launchAppBundleId = ""
+        appearanceMode = "dark"; volumeOp = "up"; mediaKeyName = "playpause"
         notifyTitle = AppInfo.displayName; notifyText = ""
         let effect = rule.effect
         let kind = effect["kind"] as? String
@@ -1815,6 +1877,15 @@ private struct AddRuleForm: View {
             effectId = "launchApp"
             launchAppName = effect["app"] as? String ?? ""
             launchAppBundleId = effect["appBundleId"] as? String ?? ""
+        } else if kind == "setAppearance" {
+            effectId = "setAppearance"
+            appearanceMode = effect["mode"] as? String ?? "dark"
+        } else if kind == "volume" {
+            effectId = "volume"
+            volumeOp = effect["op"] as? String ?? "up"
+        } else if kind == "mediaKey" {
+            effectId = "mediaKey"
+            mediaKeyName = effect["key"] as? String ?? "playpause"
         } else if kind == "lockScreen" {
             effectId = "lockScreen"
         } else if kind == "startScreensaver" {
@@ -1941,6 +2012,7 @@ private struct AddRuleForm: View {
         m.minimizeAppName = minimizeAppName; m.minimizeAppBundleId = minimizeAppBundleId
         m.moveApp = moveApp; m.moveAppBundleId = moveAppBundleId; m.moveDisplay = moveDisplay
         m.launchAppName = launchAppName; m.launchAppBundleId = launchAppBundleId
+        m.appearanceMode = appearanceMode; m.volumeOp = volumeOp; m.mediaKeyName = mediaKeyName
         m.opts = opts
         return m
     }

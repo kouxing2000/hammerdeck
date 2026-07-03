@@ -129,7 +129,6 @@ do
             { "insert_datetime", "error.tableFormat",   "That format produces a table, not text (avoid *t)" },
             { "window_grid",     "hud.caption",         "press a number to place the window" },
             { "window_deck",     "pick.windows",        "Deck which windows?" },
-            { "dark_mode",       "action.toggle.label", "Toggle dark mode" },
         }
         for _, e in ipairs(sweep) do
             ok(i18n.tFeature(e[1], e[2], e[3]) ~= e[3],
@@ -929,44 +928,8 @@ ok(#fake.notifications == pwNotes + 1, "no character set enabled: guidance notif
 registry.setEnabled("password_generator", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after password_generator test")
 
--- volume feature: up/down nudge the system volume by the step option (clamped to
--- 0-100); mute toggles. No defaultTrigger -- fired directly via registry.runAction.
-registry.register(require("features.volume"))
-registry.setEnabled("volume", true)
-fake.settings["hammerdeck.opt.volume.step"] = 10
-fake.volume = 50; fake.muted = false
-registry.runAction("volume", "up")
-ok(fake.volume == 60, "volume up adds the step")
-registry.runAction("volume", "down")
-registry.runAction("volume", "down")
-ok(fake.volume == 40, "volume down subtracts the step")
-fake.volume = 95
-registry.runAction("volume", "up")
-ok(fake.volume == 100, "volume up clamps at 100")
-fake.volume = 5
-registry.runAction("volume", "down")
-ok(fake.volume == 0, "volume down clamps at 0")
-registry.runAction("volume", "mute")
-ok(fake.muted == true, "mute toggles on")
-registry.runAction("volume", "mute")
-ok(fake.muted == false, "mute toggles off")
-registry.setEnabled("volume", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after volume test")
-
--- media_keys feature: each action posts its transport key (no defaultTrigger).
-registry.register(require("features.media_keys"))
-registry.setEnabled("media_keys", true)
-fake.mediaKeys = {}
-registry.runAction("media_keys", "playpause")
-registry.runAction("media_keys", "next")
-registry.runAction("media_keys", "previous")
-ok(#fake.mediaKeys == 3
-    and fake.mediaKeys[1] == "playpause"
-    and fake.mediaKeys[2] == "next"
-    and fake.mediaKeys[3] == "previous",
-    "media_keys actions post play/next/previous")
-registry.setEnabled("media_keys", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after media_keys test")
+-- (volume + media_keys were demoted from features to rules effect kinds; their
+-- behavior is now covered by the effect-dispatch tests in T39.)
 
 -- T13c2: describe() localizes feature metadata via per-feature catalogs --------
 -- describe() applies i18n at CALL time: switch the locale, re-describe, and the
@@ -1337,24 +1300,8 @@ ok(#fake.wallpapers == wallCount, "bing: failed request changes nothing")
 registry.setEnabled("bing_daily", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after bing_daily test")
 
--- dark_mode: context-free appearance actions (toggle/dark/light), all automatable
--- so they can ride a schedule ("at sunset -> dark").
-registry.register(require("features.dark_mode"))
-registry.setEnabled("dark_mode", true)
-ok(registry.runAction("dark_mode", "toggle") == true, "dark_mode toggle runs")
-ok(fake.appearanceSet[#fake.appearanceSet] == "toggle", "dark_mode toggle -> setAppearance('toggle')")
-registry.runAction("dark_mode", "dark")
-ok(fake.appearanceSet[#fake.appearanceSet] == "dark", "dark_mode 'dark' -> setAppearance('dark')")
-registry.runAction("dark_mode", "light")
-ok(fake.appearanceSet[#fake.appearanceSet] == "light", "dark_mode 'light' -> setAppearance('light')")
-do
-    local row
-    for _, d in ipairs(registry.describe()) do if d.id == "dark_mode" then row = d end end
-    ok(row and #row.actions == 3 and row.actions[1].automatable == true,
-        "dark_mode exposes 3 automatable actions")
-end
-registry.setEnabled("dark_mode", false)
-ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after dark_mode test")
+-- (dark_mode was demoted from a feature to the `setAppearance` rules effect kind;
+-- its behavior is now covered by the effect-dispatch tests in T39.)
 
 -- T19: chord triggers -- prefix hotkey arms a follow-key sequence -------------
 -- (`triggers` is the file-scope local from T10.)
@@ -5034,6 +4981,46 @@ do
     ok(okEf == false and noteEf:find("busy"), "eject -1 surfaces a real failure")
     fake.ejectReturn = 1   -- restore default
 
+    -- setAppearance / volume / mediaKey: the three system state-changers demoted
+    -- from thin standalone features to grouped rules atoms. Each carries one enum
+    -- param the guided form's sub-picker sets; all context-free.
+    ok(effects.requiresContext({ kind = "setAppearance", mode = "dark" }) == false, "setAppearance is context-free")
+    ok(pcall(effects.validate, { kind = "setAppearance", mode = "dark" }) == true, "setAppearance validates a mode")
+    ok(pcall(effects.validate, { kind = "setAppearance" }) == false, "setAppearance requires a mode")
+    ok(pcall(effects.validate, { kind = "setAppearance", mode = "sepia" }) == false, "setAppearance rejects a bad mode")
+    ok(effects.describe({ kind = "setAppearance", mode = "dark" }) == "Switch to dark", "describe labels setAppearance dark")
+    ok(effects.describe({ kind = "setAppearance", mode = "toggle" }) == "Toggle dark mode", "describe labels setAppearance toggle")
+    local nA = #fake.appearanceSet
+    effects.dispatch({ kind = "setAppearance", mode = "light" })
+    ok(#fake.appearanceSet == nA + 1 and fake.appearanceSet[#fake.appearanceSet] == "light",
+        "setAppearance dispatch sets the appearance")
+
+    ok(effects.requiresContext({ kind = "volume", op = "up" }) == false, "volume is context-free")
+    ok(pcall(effects.validate, { kind = "volume", op = "mute" }) == true, "volume validates an op")
+    ok(pcall(effects.validate, { kind = "volume" }) == false, "volume requires an op")
+    ok(pcall(effects.validate, { kind = "volume", op = "max" }) == false, "volume rejects a bad op")
+    ok(effects.describe({ kind = "volume", op = "mute" }) == "Toggle mute", "describe labels volume mute")
+    fake.volume = 50; fake.muted = false
+    effects.dispatch({ kind = "volume", op = "up" })
+    ok(fake.volume == 60, "volume up nudges +10")
+    effects.dispatch({ kind = "volume", op = "down" })
+    ok(fake.volume == 50, "volume down nudges -10")
+    effects.dispatch({ kind = "volume", op = "mute" })
+    ok(fake.muted == true, "volume mute toggles mute")
+    fake.volumeReturn = -1   -- AppleScript error: adjustVolume returns -1
+    local okVf, noteVf = effects.dispatch({ kind = "volume", op = "up" })
+    ok(okVf == false and noteVf ~= nil, "volume -1 surfaces a real failure, not a lying green")
+    fake.volumeReturn = nil   -- restore
+
+    ok(effects.requiresContext({ kind = "mediaKey", key = "playpause" }) == false, "mediaKey is context-free")
+    ok(pcall(effects.validate, { kind = "mediaKey", key = "next" }) == true, "mediaKey validates a key")
+    ok(pcall(effects.validate, { kind = "mediaKey" }) == false, "mediaKey requires a key")
+    ok(pcall(effects.validate, { kind = "mediaKey", key = "rewind" }) == false, "mediaKey rejects a bad key")
+    ok(effects.describe({ kind = "mediaKey", key = "previous" }) == "Previous track", "describe labels mediaKey previous")
+    fake.mediaKeys = {}
+    effects.dispatch({ kind = "mediaKey", key = "playpause" })
+    ok(#fake.mediaKeys == 1 and fake.mediaKeys[1] == "playpause", "mediaKey dispatch posts the transport key")
+
     -- end-to-end on an automated trigger: on wake -> run a Shortcut
     rules.add({ on = { type = "event", event = "wake" },
                 effect = { kind = "runShortcut", name = "Morning" } })
@@ -5047,6 +5034,8 @@ do
     for _, e in ipairs(effects.catalog(true)) do seen[e.kind] = true end
     ok(seen.runShortcut and seen.openURL and seen.lockScreen,
         "catalog offers runShortcut + openURL + lockScreen on automated triggers")
+    ok(seen.setAppearance and seen.volume and seen.mediaKey,
+        "catalog offers the appearance / volume / media atoms on automated triggers")
 
     rules.load({}); fake.settings["hammerdeck.rules"] = nil
     ok(fake.liveHandles == 0, "no native handle leaked across the effect tests")

@@ -42,6 +42,9 @@ struct RuleFormModel {
     var moveDisplay = ""
     var launchAppName = ""
     var launchAppBundleId = ""
+    var appearanceMode = "dark"     // setAppearance: dark | light | toggle
+    var volumeOp = "up"             // volume: up | down | mute
+    var mediaKeyName = "playpause"  // mediaKey: playpause | next | previous
 
     var opts = RuleFormOptions([:])
 
@@ -176,6 +179,12 @@ struct RuleFormModel {
             }
             guard !steps.isEmpty else { return nil }
             effect = ["kind": "chain", "effects": steps]
+        } else if eff.kind == "setAppearance" {
+            effect = ["kind": "setAppearance", "mode": appearanceMode]
+        } else if eff.kind == "volume" {
+            effect = ["kind": "volume", "op": volumeOp]
+        } else if eff.kind == "mediaKey" {
+            effect = ["kind": "mediaKey", "key": mediaKeyName]
         } else if eff.kind == "lockScreen" {
             effect = ["kind": "lockScreen"]
         } else if eff.kind == "startScreensaver" {

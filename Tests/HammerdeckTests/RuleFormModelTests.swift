@@ -18,6 +18,9 @@ final class RuleFormModelTests: XCTestCase {
                 ["kind": "launchApp", "label": "Open an app"],
                 ["kind": "minimizeApp", "label": "Minimize an app"],
                 ["kind": "chain", "label": "Do several things"],
+                ["kind": "setAppearance", "label": "Set appearance"],
+                ["kind": "volume", "label": "Volume"],
+                ["kind": "mediaKey", "label": "Media key"],
                 ["kind": "command", "label": "Run Foo", "feature": "foo", "action": "go"],
             ],
             "signalMeta": [
@@ -113,6 +116,27 @@ final class RuleFormModelTests: XCTestCase {
         XCTAssertEqual(steps?.count, 2, "the incomplete openURL step is dropped, order kept")
         XCTAssertEqual(steps?.first?["kind"] as? String, "speak")
         XCTAssertEqual(steps?.last?["kind"] as? String, "lockScreen")
+    }
+
+    func testSystemAtomEffectsCarryTheirEnumParam() {
+        // The three demoted-feature atoms each serialize their single enum param.
+        var appearance = model("setAppearance")
+        appearance.triggerType = "event"; appearance.eventName = "wake"
+        appearance.appearanceMode = "light"
+        XCTAssertEqual(effect(appearance.buildSpec())?["kind"] as? String, "setAppearance")
+        XCTAssertEqual(effect(appearance.buildSpec())?["mode"] as? String, "light")
+
+        var volume = model("volume")
+        volume.triggerType = "event"; volume.eventName = "wake"
+        volume.volumeOp = "mute"
+        XCTAssertEqual(effect(volume.buildSpec())?["kind"] as? String, "volume")
+        XCTAssertEqual(effect(volume.buildSpec())?["op"] as? String, "mute")
+
+        var media = model("mediaKey")
+        media.triggerType = "event"; media.eventName = "wake"
+        media.mediaKeyName = "next"
+        XCTAssertEqual(effect(media.buildSpec())?["kind"] as? String, "mediaKey")
+        XCTAssertEqual(effect(media.buildSpec())?["key"] as? String, "next")
     }
 
     func testCommandEffectAndRuleName() {

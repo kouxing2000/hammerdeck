@@ -546,8 +546,8 @@ function adapter.quitApp(name)
     return native.quit_app(name) == true
 end
 
--- Set the SYSTEM appearance. `mode` is "dark" | "light" | "toggle". Drives the
--- dark_mode feature; uses System Events (first run prompts for Automation).
+-- Set the SYSTEM appearance. `mode` is "dark" | "light" | "toggle". Backs the
+-- `setAppearance` rules effect; uses System Events (first run prompts for Automation).
 function adapter.setAppearance(mode)
     return native.set_appearance(mode) == true
 end
