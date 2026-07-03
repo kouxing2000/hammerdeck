@@ -2328,6 +2328,85 @@ do
         { ["com.a"] = pal[1] })
     ok(sameApp[1] == pal[1], "assign gives the stored app's first window its stored color")
     ok(sameApp[2] ~= pal[1], "a second same-app window deals a fresh positional color")
+
+    -- matchMembers: rebuild a saved deck from the live windows (drives "restore
+    -- last deck"). wid matches within a session (survives a retitle); title
+    -- matches across an app restart (new wid, same title); each live window is
+    -- claimed once; a missing member simply drops (a partial restore).
+    local saved = {
+        { bundleID = "com.a", title = "A1", wid = 11 },
+        { bundleID = "com.a", title = "A2", wid = 12 },
+        { bundleID = "com.b", title = "B",  wid = 21 },
+    }
+    -- same session: A1 retitled to "A1*" but its wid still matches
+    local inSession = ident.matchMembers(saved, {
+        { id = 1, bundleID = "com.a", title = "A1*", wid = 11 },
+        { id = 2, bundleID = "com.a", title = "A2",  wid = 12 },
+        { id = 3, bundleID = "com.b", title = "B",   wid = 21 },
+    })
+    ok(#inSession == 3, "matchMembers: all three match in-session (wid survives a retitle)")
+    -- after a restart: fresh wids, titles carry the match; B is closed -> 2 of 3
+    local crossRestart = ident.matchMembers(saved, {
+        { id = 1, bundleID = "com.a", title = "A1", wid = 91 },
+        { id = 2, bundleID = "com.a", title = "A2", wid = 92 },
+    })
+    ok(#crossRestart == 2 and crossRestart[1].title == "A1" and crossRestart[2].title == "A2",
+        "matchMembers: cross-restart title match; a closed window drops (2 of 3)")
+    -- two same-app saved members must not both collapse onto one live window
+    ok(#ident.matchMembers(
+        { { bundleID = "com.a", title = "A1", wid = 0 }, { bundleID = "com.a", title = "A1", wid = 0 } },
+        { { id = 1, bundleID = "com.a", title = "A1", wid = 0 } }) == 1,
+        "matchMembers claims each live window once (no collapse)")
+    -- wid BEATS title: two same-app windows share a title in one session, listed
+    -- wid-descending. A single greedy (wid OR title) pass would bind the first
+    -- saved member to the wrong window through the title; the wid-first split
+    -- binds each to its own wid regardless of list order.
+    local mt = ident.matchMembers(
+        { { bundleID = "com.a", title = "T", wid = 100 },
+          { bundleID = "com.a", title = "T", wid = 200 } },
+        { { id = 200, bundleID = "com.a", title = "T", wid = 200 },   -- B's window first
+          { id = 100, bundleID = "com.a", title = "T", wid = 100 } })
+    ok(#mt == 2 and mt[1].id == 100 and mt[2].id == 200,
+        "matchMembers: wid wins over title (each twin binds to its own wid, not the title-first hit)")
+    -- a member with neither a real wid nor a title can't be identified
+    ok(#ident.matchMembers(
+        { { bundleID = "com.a", title = "", wid = 0 } },
+        { { id = 1, bundleID = "com.a", title = "", wid = 0 } }) == 0,
+        "matchMembers: an unidentifiable (no wid, no title) member never matches")
+end
+
+-- T25e-store: the last-deck round-trip -- PROVE the PRIMARY wid identity flows
+-- through save -> json -> read -> PASS 1. (The T-WD-restore integration below
+-- uses quadWindows(), which carry no wid, so it exercises only the title path;
+-- this closes that gap: a regression in the wid encode/read chain would slip
+-- past a title-only test.)
+do
+    local store = require("features.window_deck.store")
+    local ident = require("features.window_deck.identity")
+    local mem = {}
+    local persist = store.new({ getState = function(k) return mem[k] end,
+                                setState = function(k, v) mem[k] = v end })
+    ok(persist.readLastDeck() == nil, "readLastDeck: nil when nothing is stored")
+    persist.saveLastDeck("Main", {
+        { bundleID = "com.a", title = "Doc A", wid = 4242 },
+        { bundleID = "com.b", title = "Doc B", wid = 4243 },
+    })
+    local last = persist.readLastDeck()
+    ok(last and last.screen == "Main" and #last.members == 2,
+        "saveLastDeck/readLastDeck round-trips the screen + membership")
+    ok(last.members[1].wid == 4242 and last.members[1].title == "Doc A",
+        "a member's wid + title survive the json round-trip")
+    -- PASS 1 binds by the round-tripped wid even after a RETITLE -- only wid
+    -- (not title) could carry this match, so it proves the primary path E2E.
+    local matched = ident.matchMembers(last.members, {
+        { id = 1, bundleID = "com.a", title = "Doc A -- edited", wid = 4242 },  -- retitled
+        { id = 2, bundleID = "com.b", title = "Doc B",          wid = 4243 },
+    })
+    ok(#matched == 2 and matched[1].id == 1,
+        "restored wid matches through save/read despite a retitle (PASS 1 proven end-to-end)")
+    -- a one-member store is rejected (a deck needs two)
+    persist.saveLastDeck("Main", { { bundleID = "com.a", title = "solo", wid = 7 } })
+    ok(persist.readLastDeck() == nil, "readLastDeck rejects a < 2 member record")
 end
 
 -- T25f: window_deck (grid <-> focus-driven hero over the by-id frame surface) ----
@@ -2569,6 +2648,106 @@ do
         ok(p.items[1].color == "#123456",
             "the chosen color persists for the app across decks")
         p.cancel()
+    end
+
+    -- T-WD-restore: the screen-selector "restore last deck" row (multi-monitor).
+    -- A FRESH pick saves its membership as a template; a later trigger offers
+    -- "Restore last deck" FIRST and rebuilds the SAME set with no window multi-
+    -- select. Availability is smart: a closed member drops, the label reads
+    -- "N of M", and the template is NOT eroded by a partial restore.
+    do
+        local S2 = { x = 1440, y = 0, w = 1440, h = 900, name = "Ext", index = 2 }
+        fake.screenList = { SCREEN, S2 }              -- 2 screens -> the selector opens
+        fake.focusedWindow = nil
+        fake.mousePos = { x = 10, y = 10 }            -- active screen = 1 (SCREEN)
+        fake.settings["hammerdeck.state.window_deck.lastDeck"] = nil   -- no template yet
+
+        -- 1) fresh pick on screen 1, keep BR+TL+TR (drop BL) -> saves a 3-member template
+        fake.windows = quadWindows()
+        fake.windowFrameSets = {}
+        fake.pressHotkey("k", HYP)
+        do
+            local scr = fake.openDialog()
+            ok(scr and scr.title == "Deck which screen?", "multi-monitor opens the screen selector")
+            ok(#scr.actions == 2, "no last deck yet -> the selector lists only the two screens")
+            scr.choose(scr.actions[1])                -- screen 1 (current)
+        end
+        do
+            local p = fake.openWindowPicker()
+            ok(p ~= nil, "choosing a screen opens the window multi-select")
+            p.confirm({ 1, 2, 3 })                    -- keep BR, TL, TR; drop BL (id 4)
+        end
+        fake.fireTimers("after")
+        ok(#fake.liveOutlines("member") == 3, "fresh pick decked the chosen three")
+        fake.pressHotkey("k", HYP)                    -- exit
+
+        -- 2) trigger again with everything open: the selector now leads with restore
+        fake.windows = quadWindows()
+        fake.windowFrameSets = {}
+        fake.pressHotkey("k", HYP)
+        do
+            local scr = fake.openDialog()
+            ok(scr and #scr.actions == 3, "the selector now carries a restore row + two screens")
+            ok(scr.actions[1] == "Main (current)",
+                "the current screen stays the default first row (restore does not hijack Enter)")
+            ok(scr.actions[3] == "Restore last deck (3 windows)",
+                "restore is the LAST row, labelling the full available count")
+            scr.choose(scr.actions[3])                -- restore
+        end
+        fake.fireTimers("after")
+        ok(fake.openWindowPicker() == nil, "restore skips the window multi-select")
+        ok(#fake.liveOutlines("member") == 3, "restore rebuilt the three-window deck")
+        ok(lastSetFor(4) == nil, "the window dropped from the template (BL) is not restored")
+        fake.pressHotkey("k", HYP)                    -- exit
+
+        -- 3) smart availability: close a template member (TR, id 3). Restore is
+        -- still offered around the gap and reads "2 of 3 available".
+        local q = quadWindows()
+        fake.windows = { q[1], q[2], q[4] }           -- BR, TL, BL  (TR closed)
+        fake.windowFrameSets = {}
+        fake.pressHotkey("k", HYP)
+        do
+            local scr = fake.openDialog()
+            ok(scr.actions[3] == "Restore last deck (2 of 3 available)",
+                "a closed member drops from the count without blocking restore")
+            scr.choose(scr.actions[3])                -- restore around the missing one
+        end
+        fake.fireTimers("after")
+        ok(#fake.liveOutlines("member") == 2, "a partial restore decks the survivors (2 of 3)")
+        fake.pressHotkey("k", HYP)                    -- exit
+
+        -- the template was NOT overwritten by the partial restore: with TR open
+        -- again, restore offers the full three once more.
+        fake.windows = quadWindows()
+        fake.pressHotkey("k", HYP)
+        do
+            local scr = fake.openDialog()
+            ok(scr.actions[3] == "Restore last deck (3 windows)",
+                "a partial restore did not erode the saved template")
+            scr.choose(nil)                           -- cancel out
+        end
+
+        -- 4) beyond the 9-cap: with many windows open, template members sitting
+        -- PAST the MRU top-9 must still be found -- restore matches an UNCAPPED
+        -- list, else an open member would read as "missing" (regression guard).
+        local q2 = quadWindows()
+        local many = {}
+        for i = 1, 9 do
+            many[i] = { id = 100 + i, title = "Decoy" .. i, appName = "Decoy" .. i,
+                bundleID = "com.decoy" .. i, x = 50, y = 50, w = 200, h = 150 }
+        end
+        many[10], many[11], many[12] = q2[1], q2[2], q2[3]   -- BR, TL, TR after 9 decoys
+        fake.windows = many
+        fake.pressHotkey("k", HYP)
+        do
+            local scr = fake.openDialog()
+            ok(scr.actions[#scr.actions] == "Restore last deck (3 windows)",
+                "template members past the MRU top-9 are still found (uncapped restore match)")
+            scr.choose(nil)                           -- cancel out
+        end
+
+        fake.screenList = { SCREEN }                  -- back to single-screen for later tests
+        fake.windows = quadWindows()
     end
 
     registry.setEnabled("window_deck", false)

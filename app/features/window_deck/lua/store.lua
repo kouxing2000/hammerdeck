@@ -64,6 +64,41 @@ function M.new(ctx)
         ctx.setState("heroMode", on and "on" or "off")
     end
 
+    -- The "last deck": the membership of the most recently COMMITTED FRESH pick,
+    -- so the entry screen-selector can offer a one-tap "restore last deck". Each
+    -- member is a re-matchable descriptor {bundleID, title, wid} (matched by
+    -- identity.matchMembers -- wid within a session, title across an app restart)
+    -- plus the screen NAME the deck was on. Only a fresh pick writes this; a
+    -- restore reuses it WITHOUT overwriting (see init.commit), so the curated
+    -- template survives a session where some of its windows are closed. Object-
+    -- tagged (outer record + each member) so it round-trips as {} not [].
+    ---@return table|nil {screen=string, members=table[]}, or nil if none / < 2 members
+    function s.readLastDeck()
+        local raw = ctx.getState("lastDeck")
+        if type(raw) ~= "string" or raw == "" then return nil end
+        local d = json.decode(raw)
+        if type(d) ~= "table" or type(d.members) ~= "table" or #d.members < 2 then
+            return nil
+        end
+        return d
+    end
+    ---@param screenName string|nil the deck screen's name (matched on restore)
+    ---@param members table[] descriptors ({bundleID, title, wid})
+    function s.saveLastDeck(screenName, members)
+        local ms = {}
+        for i, m in ipairs(members) do
+            ms[i] = json.asObject({
+                bundleID = m.bundleID or "",
+                title    = m.title or "",
+                wid      = m.wid or 0,
+            })
+        end
+        ctx.setState("lastDeck", json.encode(json.asObject({
+            screen  = screenName or "",
+            members = json.asArray(ms),
+        })))
+    end
+
     return s
 end
 

@@ -22,6 +22,18 @@
 -- (ctx.askWindows -- all pre-checked, uncheck to leave one out), then commit to
 -- the grid. Exiting stays instant (no picker on the way out).
 --
+-- A FRESH pick records its membership as the "last deck" (store.saveLastDeck --
+-- {bundleID, title, wid} per window + the screen name). When one is available,
+-- the multi-monitor screen-selector offers a "restore last deck" row LAST (a
+-- deliberate pick -- Enter still defaults to a fresh deck on the current screen);
+-- choosing it rebuilds the deck with no window multi-select. Restore is SMART
+-- about availability: it re-matches the saved members against the live windows
+-- (identity.matchMembers -- wid within a session, title across an app restart),
+-- restores around any that are now closed (as long as >= 2 survive, labelled
+-- "N of M available"), and does NOT rewrite the template, so it survives a lean
+-- session intact. Single-monitor keeps its one-tap fast path (no selector step),
+-- so restore rides the selector rather than forcing a chooser onto it.
+--
 -- The deck stays ABOVE non-deck windows on the screen: it is raised on enter,
 -- and after a "peek" (focusing a non-deck window) the reclean that sinks the
 -- peeked window runs DEFERRED, at the next beat (a promote or an ⌥Esc drop),
@@ -91,17 +103,22 @@ local function controllerFor(ctx)
         return s and s.index or nil
     end
 
-    -- The deckable windows on `screen`, MRU order, capped at 9: visible, sized,
-    -- not fullscreen. A single list() call -- its ids stay valid for the
-    -- immediately-following placement batch (no intervening list()).
-    local function groupWindows(screen)
+    -- The deckable windows on `screen`, MRU order: visible, sized, not
+    -- fullscreen. Capped at `limit` (default 9 -- the deck size cap for the
+    -- PICK path). Restore matching passes a bigger limit: the saved template is
+    -- already <= 9, but its members may sit PAST the top-9 in MRU order among
+    -- many open windows, and truncating the candidate set there would report an
+    -- open member as "missing". A single list() call -- its ids stay valid for
+    -- the immediately-following placement batch (no intervening list()).
+    local function groupWindows(screen, limit)
+        limit = limit or 9
         local out = {}
         for _, w in ipairs(ctx.window.list()) do
             local sized = w.w and w.h and w.w > 0 and w.h > 0
             if sized and not w.minimized and not w.fullscreen
                 and onScreen(w, screen) then
                 out[#out + 1] = w
-                if #out >= 9 then break end
+                if #out >= limit then break end
             end
         end
         return out
@@ -202,6 +219,7 @@ local function controllerFor(ctx)
     local readColors, saveColors = persist.readColors, persist.saveColors
     local readWidgetPos, saveWidgetPos = persist.readWidgetPos, persist.saveWidgetPos
     local readHeroMode, saveHeroMode = persist.readHeroMode, persist.saveHeroMode
+    local readLastDeck, saveLastDeck = persist.readLastDeck, persist.saveLastDeck
 
     -- The ONLY two mutators of the (mode, heroKey) pair -- the machine's core
     -- state. The invariant "heroKey == nil  <=>  mode == 'grid'" is enforced by
@@ -558,12 +576,47 @@ local function controllerFor(ctx)
         end)
     end
 
+    -- Resolve the "restore last deck" option for the entry screen-selector, or
+    -- nil when nothing is restorable right now. Reads the saved membership,
+    -- resolves its target screen (the saved screen if still connected, else the
+    -- active/current one), and matches the saved members against that screen's
+    -- live windows (identity.matchMembers -- wid within a session, title across a
+    -- restart). Restorable only if >= 2 members are available NOW (a deck needs
+    -- two), so a last deck whose windows are all closed is silently NOT offered.
+    -- `total` (vs #matched) lets the label say "N of M available" -- the "some
+    -- are missing, restore around them" case the design calls for.
+    local function restoreOption(screens)
+        local last = readLastDeck()
+        if not last then return nil end
+        local screen
+        for _, s in ipairs(screens) do
+            if s.name == last.screen then screen = s; break end
+        end
+        if not screen then
+            local idx = activeScreenIndex()
+            for _, s in ipairs(screens) do
+                if s.index == idx then screen = s; break end
+            end
+            screen = screen or screens[1]
+        end
+        -- match against ALL on-screen windows (uncapped) so a member past the
+        -- top-9 in MRU order isn't wrongly seen as closed (see groupWindows).
+        local matched = identity.matchMembers(last.members, groupWindows(screen, math.huge))
+        if #matched < 2 then return nil end
+        return { screen = screen, matched = matched, total = #last.members }
+    end
+
     -- Idle -> pick -> Grid. Per the "picker on every toggle" decision, entering
     -- always runs the pick flow first: choose a screen (multi-monitor only), then
     -- a multi-select of that screen's windows (all pre-checked, uncheck to leave
     -- out), then commit to the flat GRID (overview first, no hero). Exiting stays
     -- instant -- no picker on the way out. `picking` guards a re-trigger while a
     -- panel is open (the toggle hotkey stays live).
+    --
+    -- The screen-selector also carries a "restore last deck" row when one is
+    -- available (multi-monitor -- that step exists only here; single-monitor
+    -- keeps its one-tap fast path to the window picker, so restore rides the
+    -- selector rather than forcing a chooser onto the single-screen flow).
     function st.enter()
         if st.active or st.picking then return end
         if not ctx.axTrusted() then
@@ -581,7 +634,7 @@ local function controllerFor(ctx)
         if #screens < 2 then
             st.pickWindows(screens[1])
         else
-            st.pickScreen(screens)
+            st.pickScreen(screens, restoreOption(screens))
         end
     end
 
@@ -592,7 +645,7 @@ local function controllerFor(ctx)
     -- window and the cursor is off every screen -- the first-listed / primary is
     -- the default: still a one-Enter pick, just unmarked.) Cancel backs all the
     -- way out.
-    function st.pickScreen(screens)
+    function st.pickScreen(screens, restore)
         local activeIdx = activeScreenIndex()
         local ordered, labels = {}, {}
         for _, s in ipairs(screens) do
@@ -610,13 +663,37 @@ local function controllerFor(ctx)
             end
             labels[#labels + 1] = name
         end
+        -- With a restorable last deck, offer it as the LAST row -- a deliberate
+        -- pick that does NOT hijack the default (Enter still takes the current
+        -- screen for a fresh deck). The label states availability, so a deck with
+        -- some windows now closed reads "N of M available" and still restores
+        -- around the missing ones (>= 2 survive -- restoreOption's gate).
+        local restoreLabel
+        if restore then
+            if #restore.matched >= restore.total then
+                restoreLabel = string.format(
+                    ctx.t("pick.restoreAll", "Restore last deck (%d windows)"),
+                    restore.total)
+            else
+                restoreLabel = string.format(
+                    ctx.t("pick.restoreSome", "Restore last deck (%d of %d available)"),
+                    #restore.matched, restore.total)
+            end
+        end
+        local actions = {}
+        for _, l in ipairs(labels) do actions[#actions + 1] = l end
+        if restoreLabel then actions[#actions + 1] = restoreLabel end
         local h
         h = ctx.askChoice {
             title   = ctx.t("pick.screen", "Deck which screen?"),
-            actions = labels,
+            actions = actions,
             onChoose = function(label)
                 if h then h.stop() end   -- drop the one-shot from the scope
                 if not label then st.picking = false; return end
+                if restoreLabel and label == restoreLabel then
+                    st.restoreLast(restore)
+                    return
+                end
                 -- Map the chosen label back to its screen (first match; duplicate
                 -- display names are rare and only cost a wrong-of-two pick).
                 local chosen
@@ -626,6 +703,34 @@ local function controllerFor(ctx)
                 if chosen then st.pickWindows(chosen) else st.picking = false end
             end,
         }
+    end
+
+    -- Commit the saved "last deck" directly (chosen from the screen-selector),
+    -- skipping the window multi-select. Re-matches the saved members against a
+    -- FRESH window list (the user spent time in the chooser; row ids churn and a
+    -- window may have closed since restoreOption ran), colors them from the same
+    -- per-app memory a fresh pick uses, and commits WITHOUT rewriting the saved
+    -- template (isRestore -- so a partial restore doesn't erode it). If fewer
+    -- than two survive by now, alert rather than enter a one-window "deck".
+    function st.restoreLast(restore)
+        st.picking = false
+        local last = readLastDeck()
+        if not last then return end
+        local screen = restore.screen
+        -- match against ALL on-screen windows (uncapped) so a member past the
+        -- top-9 in MRU order isn't wrongly seen as closed (see groupWindows).
+        local matched = identity.matchMembers(last.members, groupWindows(screen, math.huge))
+        if #matched < 2 then
+            ctx.alert(ctx.t("alert.restoreGone",
+                "The last deck's windows are no longer open on this screen."))
+            return
+        end
+        local cellColors = colors.assign(matched, readColors())
+        local chosen = {}
+        for i, w in ipairs(matched) do chosen[keyOf(w)] = cellColors[i] or true end
+        ctx.log("restore last deck:", #matched, "of", #last.members,
+            "on screen", tostring(screen.index))
+        st.commit(screen, chosen, true)
     end
 
     -- Show the multi-select of a screen's deckable windows (all pre-checked;
@@ -682,7 +787,7 @@ local function controllerFor(ctx)
     -- Grid: re-list (ids churn between the pick and now), keep only the chosen
     -- keys still present on `screen`, tile with nearest-cell assignment, arm the
     -- focus watchers + ⌥Esc + banner. Stays flat (overview first, no hero).
-    function st.commit(screen, chosenKeys)
+    function st.commit(screen, chosenKeys, isRestore)
         if st.active then return end
         local wins = {}
         for _, w in ipairs(ctx.window.list()) do
@@ -724,6 +829,19 @@ local function controllerFor(ctx)
                 end
             end
             saveColors(stored)
+        end
+
+        -- Remember this membership as the "last deck" for one-tap restore -- but
+        -- ONLY on a fresh pick. A restore reuses the saved template as-is, so it
+        -- must not overwrite it with the (possibly smaller) set that survived a
+        -- session with some windows closed, else the curated deck erodes over
+        -- time. Descriptors carry wid + title so restore re-matches either way.
+        if not isRestore then
+            local members = {}
+            for i, w in ipairs(wins) do
+                members[i] = { bundleID = w.bundleID, title = w.title, wid = w.wid }
+            end
+            saveLastDeck(screen.name, members)
         end
 
         -- uniform slots + minimise-travel assignment (keep windows near home)
