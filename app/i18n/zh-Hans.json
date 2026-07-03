@@ -153,6 +153,8 @@
   "rules.recipe.darkBattery.sub": "拔下电源时切换到黑色壁纸。",
   "rules.recipe.lockSchedule.title": "定时锁屏",
   "rules.recipe.lockSchedule.sub": "每天定点锁定屏幕。",
+  "rules.recipe.darkEvening.title": "夜间深色模式",
+  "rules.recipe.darkEvening.sub": "每天傍晚定点切换到深色外观。",
   "rules.dailyAt": "每天于",
   "rules.daysAgo": "%d 天前",
   "rules.deleteHelp": "删除此规则",

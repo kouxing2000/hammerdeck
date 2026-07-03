@@ -1235,6 +1235,10 @@ private struct AddRuleForm: View {
                        title: Strings.t("rules.recipe.lockSchedule.title", default: "Lock on a schedule"),
                        subtitle: Strings.t("rules.recipe.lockSchedule.sub", default: "Lock the screen every day at a set time."),
                        signalNeeded: nil),
+            RuleRecipe(id: "dark_evening", icon: "moon.fill", tint: .purple,
+                       title: Strings.t("rules.recipe.darkEvening.title", default: "Dark mode at night"),
+                       subtitle: Strings.t("rules.recipe.darkEvening.sub", default: "Switch to Dark appearance every evening at a set time."),
+                       signalNeeded: nil),
         ].filter { $0.signalNeeded == nil || opts.signals.contains($0.signalNeeded!) }
     }
 
@@ -1311,6 +1315,9 @@ private struct AddRuleForm: View {
         case "lock_schedule":
             triggerType = "schedule"; scheduleMode = "at"; atTime = "18:00"
             effectId = "lockScreen"
+        case "dark_evening":
+            triggerType = "schedule"; scheduleMode = "at"; atTime = "20:00"
+            effectId = "setAppearance"; appearanceMode = "dark"
         default:
             break
         }
