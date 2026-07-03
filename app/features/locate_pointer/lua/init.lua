@@ -20,25 +20,12 @@
 -- picker -- were authoring aids with no place here). They live alongside the
 -- window-center action because all three end in a locate ripple.
 
+local W = require("platform.windows")
+
 -- warp the pointer to the center of a frame {x,y,w,h}, then flash the locator
 local function centerOn(ctx, f)
     ctx.mouse.setPosition(f.x + f.w / 2, f.y + f.h / 2)
     ctx.mouse.locate(1)
-end
-
--- the frame after the one currently under the pointer, wrapping around (so on a
--- single-monitor setup it just re-centers on the same screen)
-local function nextScreenFrame(frames, pos)
-    if #frames == 0 then return nil end
-    local cur = 1
-    for i, f in ipairs(frames) do
-        if pos.x >= f.x and pos.x < f.x + f.w
-            and pos.y >= f.y and pos.y < f.y + f.h then
-            cur = i
-            break
-        end
-    end
-    return frames[(cur % #frames) + 1]
 end
 
 return {
@@ -83,7 +70,11 @@ return {
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "n" } },
           mnemonic = "N for Next screen (same Hyper+M prefix)",
           run = function(ctx)
-              local f = nextScreenFrame(ctx.screen.frames(), ctx.mouse.position())
+              -- the screen physically to the right of the pointer's screen
+              -- (wraps), per the display arrangement -- see windows.adjacentScreen.
+              local frames = ctx.screen.frames()
+              local pos = ctx.mouse.position()
+              local f = W.adjacentScreen(frames, W.screenIndexAt(frames, pos.x, pos.y), "next")
               if f then centerOn(ctx, f) end
           end },
     },

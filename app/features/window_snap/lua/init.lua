@@ -79,18 +79,26 @@ local function arranger(ctx)
             ctx.alert(ctx.t("alert.oneScreen", "Only one screen"))
             return
         end
-        local i = f.screenIndex
-        local j = (dir == "next") and (i % #screens) + 1 or ((i - 2) % #screens) + 1
-        local s, t = f.screen, screens[j]
+        -- "next/prev" follow the PHYSICAL display arrangement (left-to-right),
+        -- not NSScreen.screens' registration order (see windows.adjacentScreen).
+        local s, t = f.screen, W.adjacentScreen(screens, f.screenIndex, dir)
+        local nf = W.moveToScreen(f, s, t)
 
-        -- least-distortion rescale + clamp (shared geometry; see windows.lua).
-        ctx.window.setFrame(W.moveToScreen(f, s, t))
-
-        -- Carry the pointer at the same offset on the new screen, clamped.
+        -- Capture the pointer's spot INSIDE the window (as a ratio) BEFORE moving,
+        -- then map it onto the NEW frame so the cursor tracks the WINDOW across the
+        -- hop. Two fixes over the old carry: (1) window-relative, not the raw
+        -- SCREEN offset -- moveToScreen rescales the window, so a screen offset
+        -- drifted the pointer clean off it; (2) read BEFORE ctx.window.setFrame,
+        -- which may ITSELF carry the pointer (the pointer_follows_window policy in
+        -- window_ops) -- reading after compounded the two carries and flung the
+        -- pointer away. Ratio clamped so a pointer outside the window lands on its
+        -- edge, not off-screen.
         local m = ctx.mouse.position()
-        ctx.mouse.setPosition(
-            t.x + math.min(math.max(m.x - s.x, 0), t.w),
-            t.y + math.min(math.max(m.y - s.y, 0), t.h))
+        local rx = (f.w > 0) and math.min(math.max((m.x - f.x) / f.w, 0), 1) or 0.5
+        local ry = (f.h > 0) and math.min(math.max((m.y - f.y) / f.h, 0), 1) or 0.5
+
+        ctx.window.setFrame(nf)   -- least-distortion rescale + clamp (windows.lua)
+        ctx.mouse.setPosition(nf.x + rx * nf.w, nf.y + ry * nf.h)
         ctx.mouse.locate(2)
     end
 

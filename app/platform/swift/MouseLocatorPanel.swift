@@ -18,10 +18,19 @@ final class MouseLocatorPanel {
 
     init(seconds: TimeInterval, onClose: @escaping () -> Void) {
         self.onClose = onClose
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
-            ?? NSScreen.main
-        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        // Span the FULL desktop (union of every screen), not just the one screen
+        // the pointer sits on at construction. A warp that hops the pointer to
+        // another display -- locate_pointer's "center on next screen",
+        // window_snap's move-to-next/prev-screen -- has NOT yet updated
+        // NSEvent.mouseLocation when locate fires (CGWarpMouseCursorPosition is
+        // not reflected instantly), so a single-screen panel would pin to the OLD
+        // screen and draw the crosshair outside its bounds -- invisible on the
+        // screen the pointer actually landed on. A desktop-spanning panel tracks
+        // the pointer wherever it ends up, including a mid-flash screen hop.
+        let union = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
+        let frame = union.isNull
+            ? (NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900))
+            : union
 
         panel = FloatingPanel(contentRect: frame)
 

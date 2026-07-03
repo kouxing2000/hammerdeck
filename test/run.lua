@@ -2010,7 +2010,11 @@ fake.pressHotkey("]", AC)
 lf = lastFrame()
 ok(lf.w == 600 and lf.h == 450, "frame scales by the axis ratio closer to 1 (1.5)")
 ok(lf.x == 1200 and lf.y == 150, "position scales per axis onto the target screen")
-ok(fake.mousePos.x == 1150 and fake.mousePos.y == 200, "pointer carried at its offset")
+-- pointer tracks the WINDOW, not the raw screen offset: it was 12.5% across /
+-- 33% down the old window {100,100,400,300}, so on the new frame {1200,150,600,450}
+-- it lands at 1200+0.125*600, 150+(1/3)*450 = 1275, 300 -- INSIDE the window (the
+-- old screen-relative carry gave 1150, left of the window's x=1200 edge).
+ok(fake.mousePos.x == 1275 and fake.mousePos.y == 300, "pointer carried to its spot inside the window")
 ok(fake.mouseLocates[#fake.mouseLocates] == 2, "pointer flashed after the throw")
 
 -- and back, wrapping
@@ -2092,6 +2096,18 @@ fake.mousePos      = { x = 5, y = 5 }
 fake.pressHotkey("left", AC)
 ok(fake.mousePos.x == 5 and fake.mousePos.y == 5,
     "pointer_follows_window: a pointer outside the window is left alone")
+
+-- moveScreen + pointer_follows_window ON: the mover reads the pointer BEFORE
+-- ctx.window.setFrame (which itself carries it), so the two window-relative
+-- carries AGREE instead of compounding. Throw {100,100,400,300} on screen 1 to
+-- the bigger screen 2 (new frame {1200,150,600,450}); the pointer at 12.5%/33%
+-- lands at 1275,300 -- NOT the 2275 the old read-after-move carry produced.
+registry.setEnabled("pointer_follows_window", true)
+fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+fake.mousePos      = { x = 150, y = 200 }
+fake.pressHotkey("]", AC)
+ok(fake.mousePos.x == 1275 and fake.mousePos.y == 300,
+    "moveScreen + follow ON: pointer tracks the window, no double-carry drift")
 
 registry.setEnabled("pointer_follows_window", false)
 registry.setEnabled("window_snap", false)
@@ -2187,6 +2203,43 @@ frameEq(W.moveToScreen({ x = 0, y = 0, w = 1000, h = 800 }, s1, { x = 1000, y = 
 frameEq(W.moveToScreen({ x = 100, y = 100, w = 1500, h = 1000 }, s1, { x = 1000, y = 0, w = 800, h = 600 },
     { keepSize = true }),
     1000, 0, 800, 600, "moveToScreen keepSize: shrinks to fit and clamps inside")
+
+-- T25c-2: windows.adjacentScreen / screenIndexAt -- "next/prev screen" must
+-- follow the PHYSICAL arrangement (left-to-right), NOT adapter.screenFrames'
+-- array order (NSScreen.screens = primary first, then OS registration order).
+-- Three monitors registered OUT of spatial order proves it: array is A,C,B but
+-- physically A(left) B(middle) C(right). The old (i % n)+1 cycle would step
+-- A -> C (skipping the middle); the spatial helper steps A -> B -> C.
+do
+    local scr = {
+        { x = -1000, y = 0, w = 1000, h = 800, name = "A" },  -- index 1, leftmost
+        { x = 1000,  y = 0, w = 1000, h = 800, name = "C" },  -- index 2, rightmost
+        { x = 0,     y = 0, w = 1000, h = 800, name = "B" },  -- index 3, middle
+    }
+    local f, i = W.adjacentScreen(scr, 1, "next")
+    ok(f.name == "B" and i == 3, "adjacentScreen next follows spatial L-to-R, not array order")
+    f, i = W.adjacentScreen(scr, 1, "prev")
+    ok(f.name == "C" and i == 2, "adjacentScreen prev from leftmost wraps to rightmost")
+    ok(W.adjacentScreen(scr, 3, "next").name == "C", "adjacentScreen next from middle -> right")
+    ok(W.adjacentScreen(scr, 2, "next").name == "A", "adjacentScreen next from rightmost wraps to leftmost")
+
+    -- vertical stack: tie-break top-to-bottom by y (top-left origin, so y asc = top).
+    local stack = {
+        { x = 0, y = 800, w = 1000, h = 800, name = "bottom" },  -- index 1
+        { x = 0, y = 0,   w = 1000, h = 800, name = "top" },     -- index 2
+    }
+    ok(W.adjacentScreen(stack, 2, "next").name == "bottom", "adjacentScreen tie-breaks top-to-bottom by y")
+
+    -- degenerate arities: single screen re-centers on itself; none -> nil.
+    local solo = W.adjacentScreen({ { x = 0, y = 0, w = 1, h = 1, name = "solo" } }, 1, "next")
+    ok(solo and solo.name == "solo", "adjacentScreen on one screen re-centers on itself")
+    ok(W.adjacentScreen({}, 1, "next") == nil, "adjacentScreen on no screens returns nil")
+
+    -- screenIndexAt: the frame containing the point, defaulting to 1 off-screen.
+    ok(W.screenIndexAt(scr, 500, 400) == 3, "screenIndexAt returns the frame under the point (middle)")
+    ok(W.screenIndexAt(scr, -500, 400) == 1, "screenIndexAt returns the leftmost frame")
+    ok(W.screenIndexAt(scr, 99999, 400) == 1, "screenIndexAt defaults to 1 when the point is off every screen")
+end
 
 -- T25d: windows.gridCellToFrame -- the ported grid cell-placement algorithm ------
 -- A 3x1 grid on a 1200x900 screen -> 400-wide full-height columns. `do`-scoped

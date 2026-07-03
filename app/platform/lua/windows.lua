@@ -361,6 +361,56 @@ function M.screenOfFrame(screens, f)
     return screens and screens[1] or nil
 end
 
+--- 1-based index of the screen (in `frames`) whose visible frame contains the
+--- point (x,y), else 1. The index space matches adapter.screenFrames /
+--- f.screenIndex, so the result feeds straight into `adjacentScreen`.
+---@param frames table[] screen rows { x,y,w,h }
+---@param x number
+---@param y number
+---@return integer
+function M.screenIndexAt(frames, x, y)
+    for i, s in ipairs(frames or {}) do
+        if x >= s.x and x < s.x + s.w and y >= s.y and y < s.y + s.h then
+            return i
+        end
+    end
+    return 1
+end
+
+--- The screen spatially adjacent to `frames[curIndex]` in direction `dir`,
+--- cycling. Screens are ordered by their PHYSICAL arrangement -- left-to-right
+--- by x, tie-broken top-to-bottom by y -- which each frame origin already
+--- encodes (that IS what dragging the displays in System Settings > Displays
+--- sets). "next" steps rightward/down, "prev" leftward/up. This is what a user
+--- means by "next screen", unlike adapter.screenFrames' raw NSScreen.screens
+--- order (primary first, then OS registration order -- non-spatial, which
+--- surprises on 3+ monitors). `curIndex` is 1-based into `frames` (e.g.
+--- f.screenIndex). Returns the target frame AND its 1-based index in `frames`
+--- (the original index, NOT the spatial slot).
+---@param frames table[] rows from adapter.screenFrames()
+---@param curIndex integer
+---@param dir "next"|"prev"
+---@return table|nil frame, integer|nil index
+function M.adjacentScreen(frames, curIndex, dir)
+    local n = frames and #frames or 0
+    if n == 0 then return nil, nil end
+    if n == 1 then return frames[1], 1 end
+    -- spatial order as a permutation of the original indices
+    local order = {}
+    for i = 1, n do order[i] = i end
+    table.sort(order, function(a, b)
+        local fa, fb = frames[a], frames[b]
+        if fa.x ~= fb.x then return fa.x < fb.x end
+        if fa.y ~= fb.y then return fa.y < fb.y end
+        return a < b   -- deterministic for coincident origins (mirrored displays)
+    end)
+    local slot = 1
+    for s = 1, n do if order[s] == curIndex then slot = s; break end end
+    local step = (dir == "prev") and -1 or 1
+    local ni = order[((slot - 1 + step) % n) + 1]
+    return frames[ni], ni
+end
+
 --- The focused window's frame, or nil after alerting the user (the per-action
 --- guard): if Accessibility is missing, prompt + onboard; otherwise alert that
 --- nothing is focused.
