@@ -12,6 +12,11 @@ import AppKit
 @MainActor
 enum Toast {
     private static var active: [NSPanel] = []   // the top-right stack, oldest first
+    // The whole notify stack lives on ONE screen for its lifetime: the cursor's
+    // screen at the moment the stack was empty. Pinning it means a later card --
+    // or a restack after a dismiss -- never yanks an existing card to another
+    // display when the cursor has since moved. Reset to nil when the stack drains.
+    private static var stackScreen: NSScreen?
 
     // The quiet "flash" chip is a SINGLE slot (top-center), not a stack: each new
     // flash replaces the last so rapid shortcut presses can never pile up. `flashSeq`
@@ -28,7 +33,20 @@ enum Toast {
     /// notify-style: a top-right card (app icon + title + text) that stacks.
     /// alert-style: a brief centered card, no icon, no stacking.
     static func show(title: String?, text: String, centered: Bool, seconds: TimeInterval) {
-        guard let screen = NSScreen.main else { return }
+        // Land on the screen the user is on (cursor), not NSScreen.main -- so a
+        // notification (incl. an automated-run toast fired while you're at another
+        // display) lands where you're looking, consistent with the flash chip. A
+        // centered alert picks it fresh each time; the top-right STACK pins to one
+        // screen for its lifetime (see stackScreen) so a card never splits across
+        // or teleports between displays when the cursor moves mid-stack.
+        let screen: NSScreen?
+        if centered {
+            screen = activeScreen()
+        } else {
+            if active.isEmpty { stackScreen = activeScreen() }
+            screen = stackScreen
+        }
+        guard let screen else { return }
 
         let card = buildCard(title: title, text: text, showIcon: !centered)
         let size = card.frame.size
@@ -180,7 +198,10 @@ enum Toast {
             MainActor.assumeIsolated {
                 panel.orderOut(nil)
                 active.removeAll { $0 === panel }
-                if !centered, let screen = NSScreen.main { restack(on: screen) }
+                if !centered {
+                    if active.isEmpty { stackScreen = nil }            // drained -- unpin
+                    else if let screen = stackScreen { restack(on: screen) }
+                }
             }
         })
     }

@@ -44,7 +44,10 @@ local function stateKey(id, k) return "hammerdeck.state." .. id .. "." .. k end
 -- extra -- optional table of capability-gated methods (e.g. commands /
 --          runCommand) the registry injects ONLY for features that declared the
 --          matching capability; copied verbatim onto ctx (see manifest.lua).
-function M.make(m, resolveTrigger, extra)
+-- confirmFlash -- optional registry-injected, confirm_shortcut-gated flasher a
+--          MODAL feature fires at its real-action moment (surfaced as
+--          ctx.confirmAction); nil (a no-op) off the bind path (e.g. describe).
+function M.make(m, resolveTrigger, extra, confirmFlash)
     local live = {}   -- set: wrapper -> true
 
     local function track(raw)
@@ -139,6 +142,12 @@ function M.make(m, resolveTrigger, extra)
     function ctx.log(...) adapter.log("[" .. m.id .. "]", ...) end
     function ctx.notify(title, text) adapter.notify(title, text) end
     function ctx.alert(text) adapter.alert(text) end
+    -- confirmAction(label?) -- a MODAL feature calls this at the moment its REAL
+    -- action lands (the key inside the mode that finally acts), so a two-step
+    -- feature confirms the RESULT, not mode-entry. The platform owns the policy:
+    -- it flashes only when the confirm_shortcut preference is on, stamped with the
+    -- feature icon (label defaults to the feature name). No-op when uninjected.
+    ctx.confirmAction = confirmFlash or function() end
 
     -- bindings (all scope-tracked) --------------------------------------------
     function ctx.bindHotkey(mods, key, fn, onRelease) return track(adapter.bindHotkey(mods, key, fn, onRelease)) end

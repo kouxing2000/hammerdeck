@@ -35,10 +35,12 @@ end
 
 -- Place the focused window in cell `num` of a cols x rows grid (or alert via
 -- focusedOrAlert if there is no focused window / Accessibility is missing).
+-- Returns true iff a window was actually placed (so the caller only confirms real work).
 local function place(ctx, cols, rows, num)
     local f = W.focusedOrAlert(ctx, "Window Grid")
-    if not f then return end
+    if not f then return false end
     ctx.window.setFrame(W.gridCellToFrame(f.screen, { w = cols, h = rows }, cellOf(cols, num)))
+    return true
 end
 
 -- The numbered cheat-sheet for a cols x rows grid: each cell shows its number,
@@ -72,13 +74,26 @@ local function controllerFor(ctx)
         local bindings = {}
         for num = 1, cols * rows do
             bindings[#bindings + 1] = { key = tostring(num), fn = function()
-                place(ctx, cols, rows, num)
+                local placed = place(ctx, cols, rows, num)
                 if st.modal then st.modal.stop() end      -- single-shot: place, exit
+                -- Confirm the RESULT, not mode-entry (the entry hotkey is
+                -- selfEvident -> no flash): fire the flash AFTER the grid banner
+                -- dismisses, once the window has landed -- and name WHICH cell.
+                if placed then
+                    ctx.confirmAction(string.format(
+                        ctx.t("flash.placed", "Cell %d of %d"), num, cols * rows))
+                end
             end }
         end
         st.modal = ctx.modal({
             hud      = hudFor(ctx, cols, rows),
             bindings = bindings,
+            -- The entry key IS a cell here (Hyper+4 -> cell 4 of a 2x2, Hyper+9 ->
+            -- cell 9 of a 3x3), so -- UNLIKE a toggle mode (Window Mode's Hyper+w
+            -- exit) -- it must NOT be the sticky-twin exception. Otherwise, holding
+            -- Hyper, that last cell re-fires the entry hotkey (re-enters) instead of
+            -- placing. false = twin EVERY bare key, so Hyper+4 lands cell 4.
+            stickyExceptKey = false,
             onExit   = function() st.modal = nil end,
         })
     end

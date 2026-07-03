@@ -96,6 +96,7 @@ end
 local META_FIELDS = {
     "name", "version", "description", "category", "context",
     "requires", "recommended", "page", "preference", "icon", "defaultEnabled",
+    "selfEvident",
 }
 
 -- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
@@ -297,8 +298,27 @@ end
 -- triggers take notifyAutomatedFire instead; menubar/palette runs never get here.
 -- Best-effort: a flash failure must not disturb the fire.
 local function flashManualFire(m, a)
+    -- A self-evident feature (a chooser/palette opens, a window/tab fronts, or a
+    -- keyboard mode with its own banner is entered) shows its own result -- the
+    -- flash would just echo what you can already see. Such a feature that has a
+    -- discrete later "landing" moment (window_grid) instead confirms it itself via
+    -- ctx.confirmAction (below), so the flash reports the RESULT, not mode-entry.
+    if m.selfEvident then return end
     if not registry.isEnabled("confirm_shortcut") then return end
     pcall(adapter.flash, m.icon, commandLabel(m, a))
+end
+
+-- The confirm-flash a MODAL feature fires ITSELF at its real-action moment (the
+-- key inside the mode that finally acts) -- injected into its ctx as
+-- ctx.confirmAction. Gated on the confirm_shortcut preference and stamped with the
+-- feature icon, exactly like the automatic manual-fire flash; label defaults to
+-- the feature name. This is how a self-evident, two-step feature reports the
+-- RESULT rather than mode-entry (window_grid: Hyper+4 arms, then "3" lands + flashes).
+local function makeConfirmFlash(m)
+    return function(label)
+        if not registry.isEnabled("confirm_shortcut") then return end
+        pcall(adapter.flash, m.icon, label or locName(m))
+    end
 end
 
 -- Bind one action's trigger inside the feature's scope and record the live
@@ -373,7 +393,7 @@ local function bindFeature(m)
         local okR, a = pcall(resolveAction, m, actionId)
         if not okR then return nil end
         return triggerFor(m, a)
-    end, extra)
+    end, extra, makeConfirmFlash(m))
     local b = { ctx = ctx, scope = scope, actionHandles = {} }
     bound[m.id] = b
 

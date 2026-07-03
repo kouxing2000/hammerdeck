@@ -106,6 +106,7 @@
   "menu.showInDock.tip": "在程序坞中保留 %@ 图标; 点击它打开主页",
   "menu.timeline": "自动化时间线…",
   "menu.timeline.tip": "查看一整天的计划安排 -- 时间, 间隔和事件",
+  "notify.autoFired": "已自动运行",
   "recorder.help": "点击, 然后按下快捷键 (Esc 取消)",
   "req.accessibility": "需要辅助功能权限",
   "req.generic": "需要 %@",

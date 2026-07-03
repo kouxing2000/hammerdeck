@@ -485,9 +485,92 @@ do
         and fake.flashes[#fake.flashes].symbol == "bolt.fill",
         "manual hotkey with the confirm preference ON flashes the feature name + glyph")
 
+    -- A self-evident feature (opens its own UI) suppresses the flash even with the
+    -- preference ON -- the chooser/window it fronts is its own confirmation.
+    package.loaded["features._selfev_probe"] = {
+        api = 1, id = "selfev_probe", name = "Self Evident Probe", selfEvident = true,
+        defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "7" },
+        action = function() end,
+    }
+    registry.load("features._selfev_probe")
+    registry.setEnabled("selfev_probe", true)
+    local selfevBefore = #fake.flashes
+    fake.pressHotkey("7", { "ctrl", "alt" })
+    ok(#fake.flashes == selfevBefore,
+        "a selfEvident feature does not flash even with confirm_shortcut on")
+    registry.setEnabled("selfev_probe", false)
+    registry.unregister("selfev_probe")
+
     registry.setEnabled("flash_probe", false)
     registry.unregister("flash_probe")
     fake.settings["hammerdeck.enabled.confirm_shortcut"] = nil
+end
+
+-- T7f: ctx.confirmAction (a modal feature confirms its own real action) ----------
+-- A modal feature suppresses the mode-entry flash (selfEvident) and instead fires
+-- ctx.confirmAction when the real action lands. That flash is gated on the same
+-- confirm_shortcut preference and carries the feature icon. Scoped `do` (see T7c).
+do
+    package.loaded["features._confirm_probe"] = {
+        api = 1, id = "confirm_probe", name = "Confirm Probe", icon = "star.fill",
+        selfEvident = true,   -- entry hotkey must NOT auto-flash; only confirmAction does
+        defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "6" },
+        action = function(ctx) ctx.confirmAction() end,
+    }
+    registry.load("features._confirm_probe")
+    registry.setEnabled("confirm_probe", true)
+
+    fake.settings["hammerdeck.enabled.confirm_shortcut"] = false
+    local cBefore = #fake.flashes
+    fake.pressHotkey("6", { "ctrl", "alt" })
+    ok(#fake.flashes == cBefore,
+        "ctx.confirmAction does not flash while confirm_shortcut is off")
+
+    fake.settings["hammerdeck.enabled.confirm_shortcut"] = true
+    fake.pressHotkey("6", { "ctrl", "alt" })
+    ok(#fake.flashes == cBefore + 1
+        and fake.flashes[#fake.flashes].text == "Confirm Probe"
+        and fake.flashes[#fake.flashes].symbol == "star.fill",
+        "ctx.confirmAction flashes the feature name + icon once confirm_shortcut is on")
+
+    registry.setEnabled("confirm_probe", false)
+    registry.unregister("confirm_probe")
+    fake.settings["hammerdeck.enabled.confirm_shortcut"] = nil
+end
+
+-- T7g: modal sticky-twin exception (the window_grid Hyper+4 -> cell 4 fix) --------
+-- A modal binds each BARE key ALSO under the leader mods (sticky) so the user can
+-- hold Hyper through. The entry key is normally EXCLUDED from twinning (so a TOGGLE
+-- mode's re-press exits) -- but window_grid's entry key IS a cell, so it passes
+-- stickyExceptKey=false to twin every key; else Hyper+<entry> re-enters instead of
+-- placing that cell (cells 1-3 work, cell 4 didn't). Scoped `do` (see T7c).
+do
+    local modal = require("platform.modal")
+    local HYPER = { "cmd", "alt", "ctrl" }
+    local function twinBound(key)
+        for _, h in ipairs(fake.hotkeys) do
+            if not h.stopped and h.key == key and h.mods and #h.mods == 3 then return true end
+        end
+        return false
+    end
+
+    -- Toggle-mode default: the entry key ("4") is excluded from twinning.
+    local hExcl = modal.enter({
+        stickyMods = HYPER, stickyExceptKey = "4",
+        bindings = { { key = "1", fn = function() end }, { key = "4", fn = function() end } },
+    })
+    ok(twinBound("1") and not twinBound("4"),
+        "stickyExceptKey excludes the entry key's sticky twin (Hyper+1 yes, Hyper+4 no)")
+    hExcl.stop()
+
+    -- window_grid's fix: exception OFF -> every bare key twins, so Hyper+4 lands cell 4.
+    local hAll = modal.enter({
+        stickyMods = HYPER, stickyExceptKey = false,
+        bindings = { { key = "1", fn = function() end }, { key = "4", fn = function() end } },
+    })
+    ok(twinBound("1") and twinBound("4"),
+        "stickyExceptKey=false twins every bare key (Hyper+4 places cell 4, no re-enter)")
+    hAll.stop()
 end
 
 -- T7e: defaultEnabled (ships on until the user says otherwise) --------------------

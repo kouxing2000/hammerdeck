@@ -309,6 +309,18 @@ function manifest.validate(m)
     end
     m.defaultEnabled = (m.defaultEnabled == true)
 
+    -- selfEvident: do this feature's manual triggers already produce an obvious
+    -- on-screen result -- a chooser/palette opening, a browser tab or window coming
+    -- to the front? If so the "confirm shortcut" flash would just repeat what you can
+    -- plainly see, so it is SUPPRESSED for this feature (the flash is kept for silent
+    -- actions -- copy, plain-paste, an off-screen window move -- where it is the only
+    -- feedback). Consumed by registry.flashManualFire. Optional boolean, default false.
+    if m.selfEvident ~= nil then
+        assert(type(m.selfEvident) == "boolean",
+            "feature '" .. m.id .. "': selfEvident must be true/false")
+    end
+    m.selfEvident = (m.selfEvident == true)
+
     m.options = m.options or {}
     -- Index options by key so cross-references (gatedBy / valuesFrom) can be
     -- checked against real, validate-able options below.

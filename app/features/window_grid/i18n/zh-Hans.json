@@ -6,6 +6,8 @@
   "hud.caption": "按数字键放置窗口",
   "hud.footer": "esc  取消",
 
+  "flash.placed": "第 %d/%d 格",
+
   "action.grid_3x3.label": "3×3 网格放置",
   "action.grid_3x3.description": "把屏幕视为 3×3 网格, 然后按 1-9 把聚焦窗口落入该单元.",
   "action.grid_3x3.mnemonic": "Hyper+9 — 9 个单元 = 3×3",
