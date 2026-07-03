@@ -73,7 +73,9 @@ let package = Package(
                 "features/usage_stats/feature.json",
                 "features/usage_stats/i18n",
                 "features/volume",
-                "features/window_deck",
+                "features/window_deck/lua",
+                "features/window_deck/feature.json",
+                "features/window_deck/i18n",
                 "features/window_grid",
                 "features/window_modal",
                 "features/window_snap",
@@ -82,6 +84,7 @@ let package = Package(
             sources: [
                 "platform/swift",
                 "features/usage_stats/swift",
+                "features/window_deck/swift",
             ]
         ),
         // Thin launcher: top-level code only (executable targets cannot be

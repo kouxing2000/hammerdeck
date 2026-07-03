@@ -1,5 +1,7 @@
-// Panels.swift split: one self-owned native UI surface (see Panels.swift for the
-// shared FloatingPanel base and the rationale for our own panels).
+// window_deck's CONTRIBUTED native UI (co-located under the feature's swift/, like
+// usage_stats' UsageWidgetPanel): bespoke to this feature, driven only through the
+// thin `deck_widget_*` seam in Native+Panels.swift -- NOT a shared platform panel.
+// See Panels.swift for the shared FloatingPanel base and the rationale for our own panels.
 //
 // The Window Deck control card: a small DRAGGABLE floating panel above the
 // click-through scrim (ScrimPanel). Top row: grid glyph, "Window Deck · <name>",
