@@ -50,19 +50,21 @@
 -- keyOf: the OS-stable CGWindowID first (survives retitles), bundleID+title
 -- as the fallback tier (healed by resolveIds' adoption when a title churns).
 
-local W    = require("platform.windows")
-local json = require("platform.json")
+local W        = require("platform.windows")
+local identity = require("features.window_deck.identity")
+local colors   = require("features.window_deck.colors")
+local store    = require("features.window_deck.store")
+local focus    = require("features.window_deck.focus")
 
 local HYPER = { "cmd", "alt", "ctrl" }
 
--- Distinct per-window border colors ("#RRGGBB"). Defaults are positional; the
--- picker previews each window's color as a dot the user can click to recolor
--- (cycling this palette), and the chosen color persists per APP (bundle id) so
--- decks look stable session to session.
-local PALETTE = {
-    "#4C8DFF", "#34C759", "#FF9F0A", "#AF52DE", "#FF375F",
-    "#5AC8FA", "#FFD60A", "#FF6482", "#30D158",
-}
+-- Window identity keys + frame-proximity geometry (widKey/titleKey/keyOf ladder,
+-- onScreen/atFrame/frameFar) are a pure leaf in identity.lua; the border palette
+-- + positional dealing are a pure leaf in colors.lua. Aliased here so the
+-- controller body below reads unchanged.
+local widKey, titleKey, keyOf = identity.widKey, identity.titleKey, identity.keyOf
+local onScreen, atFrame, frameFar = identity.onScreen, identity.atFrame, identity.frameFar
+local PALETTE = colors.PALETTE
 
 -- Ring-flight duration (seconds): how long a border ring flies between a grid
 -- slot and the hero rect. The real window's AX move is dispatched at flight
@@ -71,34 +73,6 @@ local PALETTE = {
 -- (A hero swap plays TWO flights back to back -- home, then out -- so it
 -- takes ~2x this.)
 local FLIGHT = 0.15
-
--- Stable identity for a window across list() calls (row ids are rebuilt each
--- list). The IDENTITY LADDER: primary = the OS-stable CGWindowID the bridge
--- resolves (`wid` -- survives retitles, unique for the window's lifetime);
--- fallback = bundleID+title for the rare window whose wid is unresolvable
--- (see resolveIds' adoption for how that tier self-heals on retitles). The
--- two key spaces carry distinct prefixes so they can never collide. Two
--- untitled same-app windows still collide in the fallback tier -- a
--- documented limitation, now reachable only when wid resolution fails.
-local function widKey(bundleID, wid)
-    return (bundleID or "") .. "\0wid:" .. string.format("%d", wid)
-end
-local function titleKey(bundleID, title)
-    return (bundleID or "") .. "\0t:" .. (title or "")
-end
-local function keyOf(w)
-    if w.wid and w.wid ~= 0 then return widKey(w.bundleID, w.wid) end
-    return titleKey(w.bundleID, w.title)
-end
-
--- Is window `w`'s centre inside screen rect `s`? Pure geometry -- robust across
--- the separate native calls that produce window frames vs screen frames (their
--- screen tables are not the same object, so identity comparison would be wrong).
-local function onScreen(w, s)
-    local mx, my = w.x + w.w / 2, w.y + w.h / 2
-    return mx >= s.x and mx < s.x + s.w
-       and my >= s.y and my < s.y + s.h
-end
 
 -- One controller per enablement (ctx changes on re-enable). Holds the live deck
 -- session; nil/inactive between decks.
@@ -142,15 +116,6 @@ local function controllerFor(ctx)
 
     local function heroFrame()
         return W.centeredRect(st.screen, ctx.opt("heroPercent") / 100)
-    end
-
-    -- Frame proximity for the identity adoption below: the window still sits
-    -- where the member was last known to be (position ~32px, size ~64px --
-    -- generous enough for apps that clamp or snap the frames we dispatch,
-    -- e.g. terminals snapping to their character grid).
-    local function atFrame(w, f)
-        return f ~= nil and math.abs(w.x - f.x) <= 32 and math.abs(w.y - f.y) <= 32
-            and math.abs(w.w - f.w) <= 64 and math.abs(w.h - f.h) <= 64
     end
 
     -- key -> current id from a fresh list (row ids churn on every list()),
@@ -229,81 +194,30 @@ local function controllerFor(ctx)
         ctx.window.setFrameFor(id, frame)
     end
 
-    -- Persisted per-app border colors (bundleID -> "#RRGGBB"), JSON in feature
-    -- state. Object-tagged on encode so an empty map round-trips as {} not [].
-    local function readColors()
-        local raw = ctx.getState("colors")
-        if type(raw) ~= "string" or raw == "" then return {} end
-        return json.decode(raw) or {}
-    end
-    local function saveColors(map)
-        ctx.setState("colors", json.encode(json.asObject(map)))
-    end
+    -- Deck persistence (per-app colors, widget position, hero-mode) lives in
+    -- store.lua as a ctx-scoped factory; alias its surface so the body below
+    -- reads unchanged. Preview colors for the pick list come from the pure
+    -- colors.assign (stored map passed in).
+    local persist = store.new(ctx)
+    local readColors, saveColors = persist.readColors, persist.saveColors
+    local readWidgetPos, saveWidgetPos = persist.readWidgetPos, persist.saveWidgetPos
+    local readHeroMode, saveHeroMode = persist.readHeroMode, persist.saveHeroMode
 
-    -- The draggable widget's position, persisted as an OFFSET (dx, dy) from the
-    -- deck screen's top-left so it survives a screen move/reconfig. Default: a
-    -- small top-left inset.
-    local function readWidgetPos()
-        local raw = ctx.getState("widgetPos")
-        if type(raw) == "string" and raw ~= "" then
-            local p = json.decode(raw)
-            if type(p) == "table" and type(p.dx) == "number" and type(p.dy) == "number" then
-                return p.dx, p.dy
-            end
-        end
-        return 20, 20
+    -- The ONLY two mutators of the (mode, heroKey) pair -- the machine's core
+    -- state. The invariant "heroKey == nil  <=>  mode == 'grid'" is enforced by
+    -- routing every hero transition through here, each logged with its cause, so
+    -- the whole mode life is greppable to two functions instead of ~5 inline
+    -- assignments. (resolveIds' retitle ADOPTION re-keys the SAME hero in place,
+    -- not a transition, so it stays a direct st.heroKey rewrite there.)
+    local function setHero(key)
+        st.mode, st.heroKey = "focus", key
+        ctx.log("deck hero ->", key)
     end
-    local function saveWidgetPos(dx, dy)
-        ctx.setState("widgetPos", json.encode(json.asObject({ dx = dx, dy = dy })))
-    end
-
-    -- Hero mode: whether focusing a deck window ZOOMS it into a centered hero
-    -- (on, default) or leaves the deck a flat grid tiler (off). Persisted so the
-    -- last choice is remembered; set from both the picker and the widget toggle.
-    local function readHeroMode()
-        return ctx.getState("heroMode") ~= "off"   -- default on
-    end
-    local function saveHeroMode(on)
-        ctx.setState("heroMode", on and "on" or "off")
-    end
-
-    -- Preview colors for the pick list: an app the user has recolored keeps its
-    -- stored color (its first window), everyone else takes the next free palette
-    -- color positionally, skipping colors already in use.
-    local function colorsFor(wins)
-        local stored, used, out, seenApp = readColors(), {}, {}, {}
-        for i, w in ipairs(wins) do
-            local bid = w.bundleID or ""
-            if bid ~= "" and stored[bid] and not seenApp[bid] then
-                out[i], used[stored[bid]], seenApp[bid] = stored[bid], true, true
-            end
-        end
-        -- Positional dealing scans the WHOLE palette (cyclically from the
-        -- last deal) for a FREE color; only when every color is taken does it
-        -- knowingly reuse one, cyclically. DEFENSIVE, not a bug fix: with
-        -- today's numbers (deck cap 9 == #PALETTE) exhaustion is provably
-        -- unreachable and the simpler forward-only walk dealt identically --
-        -- this shape just stays correct if the palette shrinks or the cap
-        -- ever lifts.
-        local pi = 0
-        for i in ipairs(wins) do
-            if not out[i] then
-                local c
-                for step = 1, #PALETTE do
-                    local cand = PALETTE[((pi + step - 1) % #PALETTE) + 1]
-                    if not used[cand] then
-                        c, pi = cand, pi + step
-                        break
-                    end
-                end
-                if not c then
-                    pi = pi + 1
-                    c = PALETTE[((pi - 1) % #PALETTE) + 1]
-                end
-                out[i], used[c] = c, true
-            end
-        end
-        return out
+    local function dropToGrid(reason)
+        -- Log the DEPARTING key + cause (the audit rule wants the decision + the
+        -- key identity), captured before the clear below.
+        if st.heroKey then ctx.log("deck hero", st.heroKey, "-> grid (" .. (reason or "?") .. ")") end
+        st.mode, st.heroKey = "grid", nil
     end
 
     -- The rects the container scrim punches holes for = every present member at
@@ -338,14 +252,8 @@ local function controllerFor(ctx)
     -- Is any deck window off its home frame (its slot, or the hero frame for the
     -- hero)? Drives the widget's Rearrange button -- enabled only when re-tiling
     -- would actually move something. m.cur is our last dispatched target for our
-    -- own moves and the reported frame after a USER drag, so a drag makes it far.
-    local function frameFar(a, b)
-        if not a or not b then return false end
-        return math.abs((a.x or 0) - (b.x or 0)) > 6
-            or math.abs((a.y or 0) - (b.y or 0)) > 6
-            or math.abs((a.w or 0) - (b.w or 0)) > 6
-            or math.abs((a.h or 0) - (b.h or 0)) > 6
-    end
+    -- own moves and the reported frame after a USER drag, so a drag makes it far
+    -- (frameFar's >6px threshold lives in identity.lua).
     local function isDirty()
         for _, m in ipairs(st.group or {}) do
             if not m.gone and m.cur then
@@ -731,14 +639,14 @@ local function controllerFor(ctx)
             return
         end
         local items = {}
-        local colors = colorsFor(wins)   -- previewed as clickable dots in the picker
+        local cellColors = colors.assign(wins, readColors())   -- previewed as clickable dots in the picker
         for i, w in ipairs(wins) do
             local title = (w.title and #w.title > 0) and w.title
                 or (w.appName or ctx.t("pick.untitled", "Untitled window"))
             items[i] = {
                 key = keyOf(w), text = title, subText = w.appName,
                 image = w.icon or ctx.appIcon(w.bundleID),
-                color = colors[i],
+                color = cellColors[i],
             }
         end
         local h
@@ -839,8 +747,7 @@ local function controllerFor(ctx)
 
         st.screen  = screen
         st.group   = group
-        st.mode    = "grid"
-        st.heroKey = nil
+        dropToGrid("enter")   -- start flat: no hero (heroKey nil after any prior exit, so silent)
         st.active  = true
 
         -- focus is the promotion signal: app-activation (cross-app) + focused-
@@ -988,18 +895,28 @@ local function controllerFor(ctx)
         local ids = resolveIds()
         for _, m in ipairs(st.group) do m.gone = not ids[m.key] end
         if st.heroKey and not ids[st.heroKey] then
-            st.mode, st.heroKey = "grid", nil
+            dropToGrid("hero vanished")
             renderBorders()
         end
 
+        -- Classify the focus event with the pure decision core (focus.lua), then
+        -- apply the named outcome. reconcile stays the effectful SHELL: it
+        -- resolves presence above and runs the side effects below; the DECISION
+        -- (which of the 5 outcomes) is the testable pure part.
         local member, focusKey = focusedMember()
-        if not member then                     -- blur = stay: a peek, leave the deck behind
-            st.peeked = true                   -- a non-deck window took front; sunk at the next beat
-            hideChrome()                       -- deck chrome must not float over the peeked window
+        local outcome = focus.classify({
+            hasMember = member ~= nil,
+            isHero    = member ~= nil and member.key == st.heroKey,
+            listed    = member ~= nil and ids[member.key] ~= nil,
+            heroMode  = st.heroMode,
+        })
+
+        if outcome == "peek" then                  -- blur = stay: a peek, leave the deck behind
+            st.peeked = true                        -- a non-deck window took front; sunk at the next beat
+            hideChrome()                            -- deck chrome must not float over the peeked window
             ctx.log("reconcile: peek (non-deck focus)", focusKey, "-- stay (chrome hidden)")
             return
-        end
-        if member.key == st.heroKey then
+        elseif outcome == "return" then
             -- Raise NOTHING here. The user's own click/cmd-tab already fronted
             -- the hero (system click-to-front), and any AXRaise to an
             -- activating app would flash a member over the hero -- the "return
@@ -1010,10 +927,9 @@ local function controllerFor(ctx)
             ctx.log("reconcile: return to hero", member.key,
                 st.peeked and "(reclean deferred to next beat)" or "")
             return
-        end
-        if not ids[member.key] then return end -- focused window not listed yet
-
-        if not st.heroMode then
+        elseif outcome == "ignore" then
+            return                                  -- focused window not listed yet
+        elseif outcome == "gridFocus" then
             -- Grid-only mode (Hero off): focusing a deck window does NOT zoom it
             -- into a hero. Just re-show the chrome (a peek may have hidden it)
             -- and stay flat -- the deck is a pure tiler here.
@@ -1021,6 +937,8 @@ local function controllerFor(ctx)
             ctx.log("reconcile: focus", member.key, "-- grid-only (hero off), no promote")
             return
         end
+        -- outcome == "promote": a non-hero deck member regained front in Hero
+        -- mode -- fall through to the two-step beat below.
 
         -- A deck member (not the current hero) regained front: re-show the
         -- container chrome if a peek hid it, before the promote beat plays. The
@@ -1065,7 +983,7 @@ local function controllerFor(ctx)
             end
             moveWin(ids2[m2.key], m2, heroFrame())
             m2.gone = false
-            st.mode, st.heroKey = "focus", m2.key
+            setHero(m2.key)
             renderBorders()
             recleanIfPeeked()   -- a plain swap keeps the deck on top; only re-raise after a peek
         end
@@ -1124,7 +1042,7 @@ local function controllerFor(ctx)
             -- listing here. If a future edit lets pendingHome coexist with a
             -- live heroKey, re-list before using `ids` below.
             local old = memberByKey(st.heroKey)
-            st.mode, st.heroKey = "grid", nil
+            dropToGrid("demote for promote")
             if old and ids[old.key] then
                 -- Step 1: the old hero steps home; step 2 launches when its
                 -- ring lands. (`pendingHome` stays nil during step 1: the
@@ -1153,10 +1071,9 @@ local function controllerFor(ctx)
     -- settling into its slot as the ring lands instead of popping in after it).
     function st.dropHero()
         if st.mode ~= "focus" then return end
-        ctx.log("drop hero", tostring(st.heroKey), "-> grid")
         settlePending()
         local hero = memberByKey(st.heroKey)
-        st.mode, st.heroKey = "grid", nil
+        dropToGrid("drop")   -- reads heroKey above first, then clears + logs the transition
         if not hero then
             renderBorders()
             recleanIfPeeked()
