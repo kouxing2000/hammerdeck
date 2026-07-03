@@ -43,7 +43,9 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         if let palette = store.features.first(where: {
             $0.id == "command_palette" && $0.enabled
         }), let action = palette.actions.first {
-            menu.addItem(triggerItem(feature: palette, action: action, title: palette.name))
+            let it = triggerItem(feature: palette, action: action, title: palette.name)
+            it.image = featureImage(palette)
+            menu.addItem(it)
             menu.addItem(.separator())
             anyTrigger = true
         }
@@ -52,9 +54,12 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
             if feature.id == "command_palette" { continue }   // pinned above
             anyTrigger = true
             if feature.actions.count == 1, let action = feature.actions.first {
-                menu.addItem(triggerItem(feature: feature, action: action, title: feature.name))
+                let it = triggerItem(feature: feature, action: action, title: feature.name)
+                it.image = featureImage(feature)
+                menu.addItem(it)
             } else {
                 let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
+                parent.image = featureImage(feature)
                 let sub = NSMenu()
                 for action in feature.actions {
                     sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
@@ -171,6 +176,16 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         let quit = NSMenuItem(title: String(format: Strings.t("menu.quit", default: "Quit %@"), AppInfo.displayName), action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+    }
+
+    /// A menu-sized, template SF Symbol image for a feature's glyph, so each
+    /// quick-trigger row is scannable at a glance. Template rendering makes it
+    /// track the menu's light/dark + selection highlight like native items do.
+    private func featureImage(_ feature: FeatureInfo) -> NSImage? {
+        let img = NSImage(systemSymbolName: featureIcon(feature), accessibilityDescription: nil)
+        img?.isTemplate = true
+        return img?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
     }
 
     private func triggerItem(feature: FeatureInfo, action: ActionInfo,

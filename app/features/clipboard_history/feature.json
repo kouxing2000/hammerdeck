@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded.",
   "category": "productivity",
+  "icon": "list.clipboard",
   "context": "anywhere",
   "requires": ["accessibility"],
   "recommended": true

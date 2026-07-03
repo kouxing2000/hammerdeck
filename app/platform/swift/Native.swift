@@ -101,6 +101,7 @@ final class Native {
             "notify":        { L in MainActor.assumeIsolated { Native.shared.notify(L) } },
             "system_notify": { L in MainActor.assumeIsolated { Native.shared.systemNotify(L) } },
             "alert":         { L in MainActor.assumeIsolated { Native.shared.alert(L) } },
+            "flash":         { L in MainActor.assumeIsolated { Native.shared.flash(L) } },
             // banner
             "banner_show":  { L in MainActor.assumeIsolated { Native.shared.bannerShow(L) } },
             "banner_set_text": { L in MainActor.assumeIsolated { Native.shared.bannerSetText(L) } },

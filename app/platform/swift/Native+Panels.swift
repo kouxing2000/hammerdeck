@@ -20,6 +20,14 @@ extension Native {
         return 0
     }
 
+    // A brief single-slot "flash" chip: symbol (SF Symbol name, optional) + text.
+    // The quiet manual-shortcut confirmation -- top-center, replaces itself, fades.
+    func flash(_ L: OpaquePointer?) -> Int32 {
+        Toast.flash(symbol: LuaState.string(L, 1),
+                    text: LuaState.string(L, 2) ?? "", seconds: 1.4)
+        return 0
+    }
+
     // MARK: - Banner
 
     func bannerShow(_ L: OpaquePointer?) -> Int32 {

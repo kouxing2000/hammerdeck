@@ -340,7 +340,7 @@ private struct FeatureCard: View {
                     .fill(categoryColor(feature.category).opacity(feature.failed ? 0.15 : 0.22))
                     .frame(width: 30, height: 30)
                 Image(systemName: feature.failed ? "exclamationmark.triangle.fill"
-                                                  : categoryIcon(feature.category))
+                                                  : featureIcon(feature))
                     .foregroundStyle(feature.failed ? Color.red : categoryColor(feature.category))
             }
             Spacer()

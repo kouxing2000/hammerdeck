@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Drop the focused window into a cell of a square grid in two keystrokes: a hotkey deems the screen an N×N grid (Hyper+9 = 3×3, Hyper+4 = 2×2), then a number key lands the window in that cell. Pairs with Window Snap and Window Mode.",
   "category": "productivity",
+  "icon": "square.grid.3x3",
   "context": "window",
   "requires": ["accessibility"]
 }

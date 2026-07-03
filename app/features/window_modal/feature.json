@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "A modal keyboard layer for finer arranging -- move/resize/corners/center/undo under one key until Escape. Best when you want control without many global hotkeys. Pairs with Window Snap.",
   "category": "productivity",
+  "icon": "keyboard",
   "context": "window",
   "requires": ["accessibility"]
 }

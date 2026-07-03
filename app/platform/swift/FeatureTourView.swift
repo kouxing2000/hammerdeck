@@ -97,7 +97,7 @@ struct FeatureTourView: View {
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(tint.opacity(0.18), lineWidth: 1)
                 if case .none = archetype {
-                    Image(systemName: categoryIcon(f.category))
+                    Image(systemName: featureIcon(f))
                         .font(.system(size: 64))
                         .foregroundStyle(tint.opacity(0.7))
                 } else {

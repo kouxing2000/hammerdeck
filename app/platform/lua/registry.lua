@@ -95,7 +95,7 @@ end
 -- as the structural anchor + `api` + the behavioral surface). The JSON wins.
 local META_FIELDS = {
     "name", "version", "description", "category", "context",
-    "requires", "recommended", "page", "preference",
+    "requires", "recommended", "page", "preference", "icon", "defaultEnabled",
 }
 
 -- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
@@ -201,7 +201,11 @@ function registry.all()
 end
 
 function registry.isEnabled(id)
-    return adapter.getSetting(enabledKey(id), false) == true
+    -- A feature may ship enabled (m.defaultEnabled) -- but that is only the
+    -- FALLBACK when the user has never toggled it; an explicit stored choice
+    -- (getSetting returns it) always wins, so a user opt-out is never overridden.
+    local m = features[id]
+    return adapter.getSetting(enabledKey(id), m and m.defaultEnabled or false) == true
 end
 
 local function triggerKey(id, actionId)
@@ -253,12 +257,14 @@ local function fireKey(m, a) return m.id .. "." .. a.id end
 -- The trigger-fired streak is a separate channel from the manual menubar path
 -- (registry.runAction) on purpose: a manual run neither increments nor resets
 -- it, so its failures surface via runAction's return value, not this alert.
+-- Returns true iff the action ran cleanly -- callers (the fire-feedback path)
+-- use it to avoid reporting a crashed run as a successful one.
 local function runActionGuarded(m, a, ctx)
     local key = fireKey(m, a)
     local ok, err = pcall(a.run, ctx)
     if ok then
         fireFailures[key] = nil
-        return
+        return true
     end
     local n = (fireFailures[key] or 0) + 1
     fireFailures[key] = n
@@ -269,6 +275,30 @@ local function runActionGuarded(m, a, ctx)
         adapter.alert(who .. " keeps failing:\n" .. tostring(err)
             .. "\n\nSee \"Open Logs\" in the menubar for details.")
     end
+    return false
+end
+
+-- When the global "Notify on Automated Run" preference (the notify_on_trigger
+-- feature) is on, show a brief toast naming the feature whose action just fired
+-- from an automated trigger -- the unattended case a user can't see. ONLY the
+-- automated bind path calls this (see bindAction); manual hotkey/chord fires and
+-- menubar/palette runs never do, so a shortcut you pressed yourself is never
+-- echoed back as noise. Best-effort: a notify failure must not disturb the fire.
+local function notifyAutomatedFire(m, a)
+    if not registry.isEnabled("notify_on_trigger") then return end
+    pcall(adapter.notify, commandLabel(m, a), i18n.t("notify.autoFired", "Ran automatically"))
+    adapter.log(m.id .. "." .. a.id .. ": notified automated run")
+end
+
+-- The quiet twin of notifyAutomatedFire: when "Confirm Shortcut Presses"
+-- (the confirm_shortcut feature) is on, a MANUAL trigger (hotkey / chord) briefly
+-- flashes which action just ran -- a single-slot chip that confirms the press
+-- and, on a mis-remembered shortcut, reveals what actually fired. Automated
+-- triggers take notifyAutomatedFire instead; menubar/palette runs never get here.
+-- Best-effort: a flash failure must not disturb the fire.
+local function flashManualFire(m, a)
+    if not registry.isEnabled("confirm_shortcut") then return end
+    pcall(adapter.flash, m.icon, commandLabel(m, a))
 end
 
 -- Bind one action's trigger inside the feature's scope and record the live
@@ -289,11 +319,25 @@ local function bindAction(b, m, a, spec)
     -- Hyper+w toggle-off).
     local leaderMods = spec.type == "hotkey" and spec.mods or nil
     local leaderKey  = spec.type == "hotkey" and spec.key or nil
+    -- Automated = fired with nobody present (schedule / system event). Only these
+    -- get the optional "which feature ran" toast; manual hotkey/chord fires don't.
+    local isAutomated = spec.type == "schedule" or spec.type == "event"
     b.actionHandles[a.id] =
         b.scope.adopt(triggers.bind(spec, function()
             b.ctx._leaderMods, b.ctx._leaderKey = leaderMods, leaderKey
-            runActionGuarded(m, a, b.ctx)
+            local fired = runActionGuarded(m, a, b.ctx)
             b.ctx._leaderMods, b.ctx._leaderKey = nil, nil
+            -- Trigger-fire feedback (two independent prefs). Automated triggers
+            -- (schedule/event) NOTIFY -- but ONLY on success: that path exists to
+            -- surface unattended runs faithfully, so a crashed run must not read as
+            -- a clean one. Manual triggers (hotkey/chord) FLASH regardless -- the
+            -- value is "the press registered + which action", true even if the
+            -- action then threw (and a sustained failure still alerts separately).
+            if isAutomated then
+                if fired then notifyAutomatedFire(m, a) end
+            else
+                flashManualFire(m, a)
+            end
         end, a.label or a.id))
 end
 
@@ -846,6 +890,9 @@ function registry.describe()
         local row = {
             id = m.id, name = locName(m), description = locDesc(m),
             category = m.category, version = m.version or "",
+            -- Optional per-feature SF Symbol; nil falls back host-side to the
+            -- shared category glyph (see featureIcon in FeatureChrome.swift).
+            icon = m.icon,
             context = m.context or "anywhere",
             requires = json.asArray(m.requires or {}),
             recommended = m.recommended == true,

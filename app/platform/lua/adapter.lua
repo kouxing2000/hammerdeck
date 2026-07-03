@@ -166,6 +166,14 @@ function adapter.alert(text)
     native.alert(text)
 end
 
+-- A brief single-slot "flash" chip (SF Symbol glyph + one line, top-center,
+-- ~1.4s, replaces any prior flash) -- the QUIET confirmation that a manual
+-- shortcut fired and WHICH action it ran. Distinct from notify's stacking
+-- top-right card: this is at-keyboard feedback, meant to fire-and-fade.
+function adapter.flash(symbol, text)
+    native.flash(symbol, text)
+end
+
 function adapter.log(...)
     local parts = {}
     for i = 1, select("#", ...) do

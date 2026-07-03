@@ -287,7 +287,7 @@ struct DashboardView: View {
                         RoundedRectangle(cornerRadius: 9)
                             .fill(categoryColor(f.category).opacity(0.20))
                             .frame(width: 34, height: 34)
-                        Image(systemName: categoryIcon(f.category))
+                        Image(systemName: featureIcon(f))
                             .foregroundStyle(categoryColor(f.category))
                     }
                     VStack(alignment: .leading, spacing: 4) {

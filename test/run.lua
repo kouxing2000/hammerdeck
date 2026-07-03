@@ -377,6 +377,11 @@ ok(#jumpDesc.options == 0,
 ok(jumpDesc.context == "window", "describe() surfaces the feature context")
 ok(jumpDesc.requires[1] == "accessibility",
     "describe() surfaces OS preconditions (window features need Accessibility)")
+-- The per-feature SF Symbol overlaid from feature.json (META_FIELDS) flows all
+-- the way to describe(), so the menubar/Settings/Gallery can render it. nil when
+-- a feature declares none (host then falls back to the category glyph).
+ok(jumpDesc.icon == "macwindow.on.rectangle",
+    "describe() surfaces the per-feature icon overlaid from feature.json")
 -- typed option export incl. enum values, on a synthetic probe
 package.loaded["features._enum_probe"] = {
     api = 1, id = "enum_probe", name = "Enum Probe",
@@ -397,6 +402,124 @@ ok(probeDesc0.options[1].key == "mode" and probeDesc0.options[1].type == "enum"
 ok(probeDesc0.options[1].labels and probeDesc0.options[1].labels[2] == "Bee",
     "enum display labels exported parallel to values")
 registry.unregister("enum_probe")
+
+-- T7c: notify-on-automated-run preference ----------------------------------------
+-- An action fired from an AUTOMATED trigger (event/schedule) shows a toast naming
+-- the feature ONLY while the notify_on_trigger preference is on. Manual triggers
+-- (hotkey/chord) and menubar/palette runs never reach the notify path. Scoped in
+-- a `do` block so its locals release (the main chunk is near Lua's 200-local cap).
+do
+    package.loaded["features._notify_probe"] = {
+        api = 1, id = "notify_probe", name = "Notify Probe",
+        actions = { { id = "main", label = "Fire", automatable = true,
+                      defaultTrigger = { type = "event", event = "wake" },
+                      run = function() end } },
+    }
+    registry.load("features._notify_probe")
+    registry.setEnabled("notify_probe", true)
+
+    fake.settings["hammerdeck.enabled.notify_on_trigger"] = false
+    local notifyBefore = #fake.notifications
+    fake.systemEvent("wake")
+    ok(#fake.notifications == notifyBefore,
+        "automated fire with the notify preference OFF shows no notification")
+
+    fake.settings["hammerdeck.enabled.notify_on_trigger"] = true
+    fake.systemEvent("wake")
+    ok(#fake.notifications == notifyBefore + 1
+        and fake.notifications[#fake.notifications].title == "Notify Probe",
+        "automated fire with the notify preference ON shows a toast naming the feature")
+
+    -- The SAME action run manually (menubar/palette path) never notifies.
+    local notifyManual = #fake.notifications
+    registry.runAction("notify_probe", "main")
+    ok(#fake.notifications == notifyManual,
+        "a manual run does not notify even with the preference on")
+
+    -- A crashed automated run must NOT report as a clean "Ran automatically":
+    -- notify is gated on the action succeeding. Firing "wake" runs BOTH the
+    -- (ok) notify_probe and this throwing one, so exactly one notification lands.
+    package.loaded["features._throw_probe"] = {
+        api = 1, id = "throw_probe", name = "Throw Probe",
+        actions = { { id = "main", label = "Boom", automatable = true,
+                      defaultTrigger = { type = "event", event = "wake" },
+                      run = function() error("boom") end } },
+    }
+    registry.load("features._throw_probe")
+    registry.setEnabled("throw_probe", true)
+    local throwBefore = #fake.notifications
+    fake.systemEvent("wake")
+    ok(#fake.notifications == throwBefore + 1,
+        "a crashed automated run does not notify (only the successful sibling did)")
+    registry.setEnabled("throw_probe", false)
+    registry.unregister("throw_probe")
+
+    registry.setEnabled("notify_probe", false)
+    registry.unregister("notify_probe")
+    fake.settings["hammerdeck.enabled.notify_on_trigger"] = nil
+end
+
+-- T7d: confirm-shortcut (manual-trigger flash) -----------------------------------
+-- A MANUAL trigger (hotkey/chord) flashes which action fired ONLY while the
+-- confirm_shortcut preference is on. Automated triggers take the notify path, not
+-- this. Scoped in a `do` block (main-chunk local budget, see T7c).
+do
+    package.loaded["features._flash_probe"] = {
+        api = 1, id = "flash_probe", name = "Flash Probe", icon = "bolt.fill",
+        defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "8" },
+        action = function() end,
+    }
+    registry.load("features._flash_probe")
+    registry.setEnabled("flash_probe", true)
+
+    fake.settings["hammerdeck.enabled.confirm_shortcut"] = false
+    local flashBefore = #fake.flashes
+    fake.pressHotkey("8", { "ctrl", "alt" })
+    ok(#fake.flashes == flashBefore,
+        "manual hotkey with the confirm preference OFF shows no flash")
+
+    fake.settings["hammerdeck.enabled.confirm_shortcut"] = true
+    fake.pressHotkey("8", { "ctrl", "alt" })
+    ok(#fake.flashes == flashBefore + 1
+        and fake.flashes[#fake.flashes].text == "Flash Probe"
+        and fake.flashes[#fake.flashes].symbol == "bolt.fill",
+        "manual hotkey with the confirm preference ON flashes the feature name + glyph")
+
+    registry.setEnabled("flash_probe", false)
+    registry.unregister("flash_probe")
+    fake.settings["hammerdeck.enabled.confirm_shortcut"] = nil
+end
+
+-- T7e: defaultEnabled (ships on until the user says otherwise) --------------------
+-- A feature with defaultEnabled=true reports enabled when NO stored choice exists,
+-- but an explicit toggle always overrides it. Scoped in a `do` block (see T7c).
+do
+    package.loaded["features._defon_probe"] = {
+        api = 1, id = "defon_probe", name = "Default On Probe",
+        defaultEnabled = true, start = function() end,
+    }
+    registry.load("features._defon_probe")
+
+    fake.settings["hammerdeck.enabled.defon_probe"] = nil
+    ok(registry.isEnabled("defon_probe") == true,
+        "defaultEnabled=true ships enabled when the user has never toggled it")
+    fake.settings["hammerdeck.enabled.defon_probe"] = false
+    ok(registry.isEnabled("defon_probe") == false,
+        "an explicit user off overrides defaultEnabled=true")
+
+    -- and a plain feature (no defaultEnabled) still ships OFF, as before.
+    package.loaded["features._defoff_probe"] = {
+        api = 1, id = "defoff_probe", name = "Default Off Probe", start = function() end,
+    }
+    registry.load("features._defoff_probe")
+    fake.settings["hammerdeck.enabled.defoff_probe"] = nil
+    ok(registry.isEnabled("defoff_probe") == false,
+        "a feature without defaultEnabled stays off by default (blank-slate)")
+
+    registry.unregister("defon_probe")
+    registry.unregister("defoff_probe")
+    fake.settings["hammerdeck.enabled.defon_probe"] = nil
+end
 
 -- labels must be a list parallel to values (and enum-only)
 ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,

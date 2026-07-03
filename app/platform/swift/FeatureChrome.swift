@@ -39,8 +39,8 @@ func categoryLabel(_ category: String) -> String {
     }
 }
 
-/// An SF Symbol glyph for a manifest category. Features don't declare their own
-/// icons yet (Gallery spec, open question 1) -- v1 derives one from category.
+/// An SF Symbol glyph for a manifest category -- the shared fallback used when a
+/// feature declares no `icon` of its own (and still the tint source everywhere).
 func categoryIcon(_ category: String) -> String {
     switch category {
     case "health":       return "heart.fill"
@@ -49,6 +49,14 @@ func categoryIcon(_ category: String) -> String {
     case "platform":     return "gearshape.2.fill"
     default:             return "puzzlepiece.fill"
     }
+}
+
+/// The SF Symbol for a feature: its own declared `icon` if present, else the
+/// shared per-category glyph. The single resolver every surface (menubar,
+/// Settings list, Gallery card) calls, so a feature's glyph can never drift
+/// between them.
+func featureIcon(_ feature: FeatureInfo) -> String {
+    feature.icon ?? categoryIcon(feature.category)
 }
 
 /// The "Works when…" axis -- the PRIMARY way features are grouped (Gallery

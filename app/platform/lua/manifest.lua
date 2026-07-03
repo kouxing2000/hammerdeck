@@ -50,6 +50,7 @@
 --       "context":     "automatic",           -- WHEN it applies: textField|window|web|anywhere|automatic
 --       "requires":    ["accessibility"],     -- OS preconditions the user must grant
 --       "recommended": false,                 -- part of the curated Essentials set?
+--       "icon":        "bolt.fill",            -- SF Symbol glyph (falls back to category)
 --       "page":        { "title": "...", "icon": "..." }   -- contributes a native Homepage page
 --     }
 --
@@ -177,6 +178,17 @@ function manifest.validate(m)
             "feature '" .. m.id .. "': page.icon must be a string (SF Symbol name)")
     end
 
+    -- Optional: icon = an SF Symbol name shown as this feature's glyph in the
+    -- menubar quick-triggers, the Settings list, and the Gallery card. Pure
+    -- presentation metadata (usually set in feature.json); when absent the host
+    -- falls back to a shared per-category glyph. Only NAMES the symbol -- the
+    -- host renders it (SF Symbols are an Apple-platform asset, not authorable in
+    -- Lua), mirroring how page.icon works.
+    if m.icon ~= nil then
+        assert(type(m.icon) == "string" and m.icon ~= "",
+            "feature '" .. m.id .. "': icon must be a non-empty string (SF Symbol name)")
+    end
+
     -- Normalize the sugar, then validate the (possibly synthesized) list.
     if hasAction then
         m.actions = { { id = "main", label = m.name, mnemonic = m.mnemonic,
@@ -283,6 +295,19 @@ function manifest.validate(m)
             "feature '" .. m.id .. "': preference must be true/false")
     end
     m.preference = (m.preference == true)
+
+    -- defaultEnabled: does this ship ENABLED on a fresh install, before the user
+    -- has toggled it? The catalog is blank-slate by default (everything off; opt
+    -- in via the Essentials one-click or the per-feature toggle) -- but a quiet,
+    -- SELF-GATING system behavior (e.g. confirm_shortcut, which does nothing until
+    -- other features are on) may opt to ship on so a new user discovers it. The
+    -- user's explicit choice always overrides: registry.isEnabled reads this ONLY
+    -- as the fallback when no stored value exists. Optional boolean, default false.
+    if m.defaultEnabled ~= nil then
+        assert(type(m.defaultEnabled) == "boolean",
+            "feature '" .. m.id .. "': defaultEnabled must be true/false")
+    end
+    m.defaultEnabled = (m.defaultEnabled == true)
 
     m.options = m.options or {}
     -- Index options by key so cross-references (gatedBy / valuesFrom) can be

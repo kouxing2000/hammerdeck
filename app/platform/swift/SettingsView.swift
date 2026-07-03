@@ -90,6 +90,11 @@ private struct FeatureRow: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.red)
                             .font(.caption)
+                    } else {
+                        Image(systemName: featureIcon(feature))
+                            .foregroundStyle(categoryColor(feature.category))
+                            .font(.caption)
+                            .frame(width: 16, alignment: .center)
                     }
                     Text(feature.name)
                 }

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern).",
   "category": "productivity",
+  "icon": "calendar.badge.clock",
   "context": "textField",
   "requires": ["accessibility"]
 }

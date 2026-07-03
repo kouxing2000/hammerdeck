@@ -147,6 +147,11 @@ function adapter.notify(title, text)
     fake.notifications[#fake.notifications + 1] = { title = title, text = text }
 end
 
+fake.flashes = {}      -- recorded flash (manual-trigger confirmation) calls
+function adapter.flash(symbol, text)
+    fake.flashes[#fake.flashes + 1] = { symbol = symbol, text = text }
+end
+
 fake.systemNotifications = {}      -- recorded systemNotify (Notification Center) calls
 fake.systemNotifyDelivers = true   -- tests flip to false to exercise the toast fallback
 function adapter.systemNotify(title, text)

@@ -148,6 +148,8 @@ struct ShortcutMapView: View {
         return HStack(spacing: 6) {
             Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                 .font(.caption2).foregroundStyle(.secondary).frame(width: 12)
+            Image(systemName: featureIcon(feature))
+                .font(.caption).foregroundStyle(categoryColor(feature.category)).frame(width: 16)
             Text(feature.name).fontWeight(.semibold)
             Text("\(feature.actions.count)")
                 .font(.caption2).foregroundStyle(.secondary)
@@ -177,7 +179,8 @@ struct ShortcutMapView: View {
             ForEach(services.filter { matches($0, nil) }) { f in
                 HStack(spacing: 0) {
                     HStack(spacing: 6) {
-                        Image(systemName: "gearshape").foregroundStyle(.secondary).font(.caption)
+                        Image(systemName: featureIcon(f)).foregroundStyle(.secondary).font(.caption)
+                            .frame(width: 16)
                         Text(f.name)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(kMods, id: \.id) { _ in Text("").frame(width: kModW) }

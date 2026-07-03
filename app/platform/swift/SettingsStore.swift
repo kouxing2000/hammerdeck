@@ -254,6 +254,7 @@ struct FeatureInfo: Identifiable {
     let name: String
     let description: String
     let category: String        // domain tag (text/windows/web/...), shown as a small label
+    let icon: String?           // per-feature SF Symbol; nil -> fall back to the category glyph
     let context: String         // WHEN it applies -- the primary grouping axis (FeatureContext)
     let requires: [String]      // OS preconditions, e.g. ["accessibility"]
     let recommended: Bool       // part of the curated "Essentials" starter set
@@ -275,6 +276,7 @@ struct FeatureInfo: Identifiable {
         self.name = name
         self.description = dict.str("description")
         self.category = dict.str("category", "general")
+        self.icon = (dict["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.context = dict.str("context", "anywhere")
         self.requires = dict.strArray("requires")
         self.recommended = dict.bool("recommended")

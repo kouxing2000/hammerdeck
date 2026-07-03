@@ -1,0 +1,9 @@
+{
+  "name": "Notify on Automated Run",
+  "version": "1.0.0",
+  "description": "Show a brief on-screen notification naming a feature when one of its actions fires from an AUTOMATED trigger -- a schedule or a system event (sleep/wake/screen lock/...). Lets you see what ran while you were away. Manual shortcuts (hotkeys, chords) and menubar runs never notify -- you started those yourself.",
+  "category": "platform",
+  "icon": "bell.badge",
+  "context": "automatic",
+  "preference": true
+}

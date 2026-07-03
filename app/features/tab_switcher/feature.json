@@ -3,5 +3,6 @@
   "version": "1.1.0",
   "description": "Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons.",
   "category": "productivity",
+  "icon": "rectangle.stack",
   "context": "web"
 }

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "On-demand pointer helpers -- flash a crosshair to find the mouse, or center it on the focused window or a screen.",
   "category": "productivity",
+  "icon": "cursorarrow.rays",
   "context": "anywhere",
   "requires": ["accessibility"]
 }
