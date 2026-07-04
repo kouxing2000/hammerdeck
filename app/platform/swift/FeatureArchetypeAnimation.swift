@@ -26,6 +26,8 @@ enum FeatureArchetype {
     case none
     case chooser(ChooserSample)             // a panel pops, arrow + enter (window/tab switch, palette, clipboard)
     case windowArrange(WindowArrangeSample) // a window rect rearranges: snap / resize / center (snap AND modal)
+    case windowGrid                         // the focused window drops into a cell of a visible N×N grid (window_grid)
+    case windowDeck                         // a screen's windows tile into a grid; one lifts to a centered hero (window_deck)
     case banner(BannerSample)               // a notification/legend pill slides in from the top edge
     // Archetypes preview the visible EFFECT, not the trigger. A clock/ring would
     // only say "this runs on a schedule" -- meaningless. So sleep & display-off
@@ -54,6 +56,10 @@ enum FeatureArchetype {
         case "password_generator": return .passwordReveal
         case "window_snap":       return .windowArrange(.snap)
         case "window_modal":      return .windowArrange(.windowMode)
+        case "window_grid":       return .windowGrid
+        case "window_deck":       return .windowDeck
+        case "confirm_shortcut":  return .banner(.confirmShortcut)
+        case "notify_on_trigger": return .banner(.notifyOnTrigger)
         case "break_reminder":    return .banner(.breakReminder)
         case "sleep_schedule":    return .screenOff(.sleep)
         case "display_off":       return .screenOff(.displayOff)
@@ -77,6 +83,8 @@ enum FeatureArchetype {
         case .none:                 return 0
         case .chooser(let s):       return 0.85 * Double(max(1, s.rows.count))   // step per row
         case .windowArrange(let s): return 0.95 * Double(max(1, s.moves.count))  // step per move
+        case .windowGrid:           return WindowGridArchetypeScene.loopDuration  // heartbeat x cells
+        case .windowDeck:           return WindowDeckArchetypeScene.loopDuration  // heartbeat x heroes
         case .banner:               return 1.3 * 2     // slide in + out
         case .screenOff:            return 1.4 * 2     // dark + lit
         case .countdownStrip:       return 0.55 * 5    // cycle = 5 states
@@ -96,6 +104,8 @@ enum FeatureArchetype {
         case .none:                       EmptyView()
         case .chooser(let sample):        ChooserArchetypeScene(sample: sample, playing: playing)
         case .windowArrange(let sample):  WindowArrangeArchetypeScene(sample: sample, playing: playing)
+        case .windowGrid:                 WindowGridArchetypeScene(playing: playing)
+        case .windowDeck:                 WindowDeckArchetypeScene(playing: playing)
         case .banner(let sample):         BannerArchetypeScene(sample: sample, playing: playing)
         case .screenOff(let sample): ScreenOffArchetypeScene(sample: sample, playing: playing)
         case .countdownStrip:        CountdownStripArchetypeScene(playing: playing)

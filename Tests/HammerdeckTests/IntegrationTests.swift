@@ -413,6 +413,34 @@ final class IntegrationTests: XCTestCase {
             "feature.json declares a `page` with no provider in FeaturePageRegistry.roster (it will never render): \(pageWithoutProvider)")
     }
 
+    // The Feature Gallery gives every card an animated hover preview via
+    // FeatureArchetype.of(feature); an id missing from that switch falls through
+    // to `.none` and the card silently ships with just its static icon. NOTHING
+    // else couples the growing catalog to that switch, so a newly added feature
+    // slips through unnoticed -- exactly how window_grid / window_deck /
+    // confirm_shortcut / notify_on_trigger each regressed after landing. This is
+    // that check: every non-failed catalog feature (preferences included -- the
+    // Gallery shows them too) must map to a real archetype. A feature with
+    // genuinely nothing to animate goes in `previewExempt` WITH a reason -- empty
+    // today, on purpose.
+    func testEveryGalleryFeatureHasAPreview() {
+        host.store.refresh()
+        // Guard against a vacuous pass: refresh() early-returns WITHOUT clearing
+        // `features` on a bridge read failure, so an empty catalog would sail
+        // through the filter below. Assert we actually have features to check.
+        XCTAssertFalse(host.store.features.isEmpty, "catalog read produced no features")
+        let previewExempt: Set<String> = []   // none: every feature earns a preview
+        let missing = host.store.features
+            .filter { !$0.failed && !previewExempt.contains($0.id) }
+            .filter { if case .none = FeatureArchetype.of($0) { return true } else { return false } }
+            .map(\.id)
+            .sorted()
+        XCTAssertEqual(missing, [],
+            "these Gallery features have no archetype preview -- add a case in "
+            + "FeatureArchetype.of(...) (or, if there is truly nothing to show, add "
+            + "the id to previewExempt with a reason): \(missing)")
+    }
+
     func testSettingsBridgeRoundTrip() {
         eval("require('platform.adapter').setSetting('hammerdeck.it.num', 42); return true")
         XCTAssertEqual(UserDefaults.standard.double(forKey: "hammerdeck.it.num"), 42)

@@ -14,6 +14,17 @@ struct BannerSample {
 
     static let breakReminder = BannerSample(
         glyph: "eyes", title: "Time for a break", subtitle: "Rest your eyes for a moment")
+
+    // confirm_shortcut: the single-slot chip that flashes WHICH action a hotkey
+    // /chord just fired -- a checkmark + the action name. Previews the confirmation
+    // effect, not the trigger.
+    static let confirmShortcut = BannerSample(
+        glyph: "checkmark.circle.fill", title: "Snap Left", subtitle: "shortcut fired")
+
+    // notify_on_trigger: the notification naming a feature that ran from an
+    // AUTOMATED trigger (a schedule / system event) while you were away.
+    static let notifyOnTrigger = BannerSample(
+        glyph: "bell.badge.fill", title: "Bing Wallpaper", subtitle: "ran on schedule")
 }
 
 /// A notification/legend pill that slides in from the top edge, holds, slides
