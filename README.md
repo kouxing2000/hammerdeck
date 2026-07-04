@@ -90,9 +90,9 @@ print what the config UI renders: `HAMMERDECK_DUMP_CATALOG=1 swift run`.
 
 ## Design
 
-Native Swift host + embedded Lua, meeting at one seam. The big picture (layer
-chart, catalog, roadmap) lives in [`docs/ORIENTATION.md`](docs/ORIENTATION.md);
-the rationale + adding-a-feature guide in
+Native Swift host + embedded Lua, meeting at one seam. The living status +
+backlog lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); the rationale +
+adding-a-feature guide in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 The rule that protects every future option: **only the Swift bridge
@@ -128,7 +128,7 @@ test/
   fake_adapter.lua         in-memory adapter (controllable clock)
   run.lua                  headless test suite
 docs/
-  ORIENTATION.md  HANDOVER.md  ARCHITECTURE.md  PLUGIN_SYSTEM.md
-  PLUGIN_IDEAS.md  spoons-index.json
-  archive/         frozen records (migration, parity, product research, palette spec)
+  HANDOVER.md  ARCHITECTURE.md  PLUGIN_SYSTEM.md  MANUAL_QA.md
+  actions/         per-domain action lists (launch + code)
+  archive/         frozen records (audits, migration, parity, product research, built specs)
 ```

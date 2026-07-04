@@ -303,8 +303,8 @@ requires `automatable = true` -- manifest.validate rejects the mismatch.
 
 ## Status / roadmap
 
-`docs/ORIENTATION.md` is the step-back visual map (architecture, catalog,
-roadmap) -- start there for the big picture. `docs/HANDOVER.md` is the ONE
-living status + backlog doc -- read it for the truth (its doc map explains
-which docs are living / reference / archived). `docs/ARCHITECTURE.md` is the
-design rationale. Don't duplicate the backlog here.
+`docs/HANDOVER.md` is the ONE living status + backlog doc -- read it for the
+truth (its doc map explains which docs are living / reference / archived).
+`docs/ARCHITECTURE.md` is the design rationale; `docs/actions/` holds the
+per-domain launch + code action lists (index: `docs/actions/README.md`).
+Don't duplicate the backlog here.
