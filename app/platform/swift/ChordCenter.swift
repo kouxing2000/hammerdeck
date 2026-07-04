@@ -259,16 +259,12 @@ final class ChordCenter {
 
     /// Normalize modifier names to canonical, deduped, sorted form so that the
     /// prefix of "shift+cmd" and "cmd+shift" hash to the same Prefix.
+    /// Unknown names are skipped here, but never arrive: bind_chord rejects
+    /// them at the seam (KeyModifier.firstUnknown).
     static func canonicalMods(_ mods: [String]) -> [String] {
         var set = Set<String>()
         for m in mods {
-            switch m.lowercased() {
-            case "cmd", "command":  set.insert("cmd")
-            case "alt", "option":   set.insert("alt")
-            case "ctrl", "control": set.insert("ctrl")
-            case "shift":           set.insert("shift")
-            default: break
-            }
+            if let mod = KeyModifier.parse(m) { set.insert(mod.canonical) }
         }
         return set.sorted()
     }

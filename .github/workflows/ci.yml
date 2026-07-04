@@ -45,6 +45,16 @@ jobs:
       - name: Lua suite (vendored 5.4.7)
         run: scripts/test-lua.sh
 
+      # Static type gate: LuaLS over the whole workspace at Error level (the
+      # type-mismatch family is escalated to Error in .luarc.json). This is
+      # what makes the ---@enum/---@param annotations enforced rather than
+      # editor-only -- e.g. passing "previous" where ScreenDir is expected
+      # fails here. See scripts/check-lua-types.sh for the require-name stubs.
+      - name: Lua type check (LuaLS)
+        run: |
+          brew install lua-language-server
+          scripts/check-lua-types.sh
+
       # Real-bridge integration tests. The 8 gated UI tests auto-skip here
       # (HAMMERDECK_UI_TESTS unset), so this is the reliable per-commit gate.
       - name: Swift integration tests

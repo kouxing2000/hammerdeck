@@ -83,6 +83,7 @@ local function arranger(ctx)
         -- "next/prev" follow the PHYSICAL display arrangement (left-to-right),
         -- not NSScreen.screens' registration order (see windows.adjacentScreen).
         local s, t = f.screen, W.adjacentScreen(screens, f.screenIndex, dir)
+        if not t then return end   -- unreachable (#screens >= 2); keeps types exact
         local nf = W.moveToScreen(f, s, t)
 
         -- Capture the pointer's spot INSIDE the window (as a ratio) BEFORE moving,

@@ -802,6 +802,15 @@ function adapter.isModifierHeld(mod)
     return native.is_modifier_held(mod)
 end
 
+-- The modifier tokens the seam accepts (canonical + long aliases), sorted.
+-- KeyModifier.swift is the one authority; triggers.validate reads this
+-- instead of hardcoding a list (the fake adapter mirrors it, pinned by an
+-- integration contract test).
+---@return string[]
+function adapter.validModifiers()
+    return native.valid_modifiers()
+end
+
 -- Cryptographically secure uniform integer in [min, max] (CSPRNG in the host).
 -- The seam's one secure-randomness source: features only have Lua's non-crypto
 -- math.random, so anything sensitive (e.g. password_generator) uses this.

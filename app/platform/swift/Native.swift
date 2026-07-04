@@ -230,6 +230,7 @@ final class Native {
             "idle_seconds": { L in MainActor.assumeIsolated { Native.shared.idleSeconds(L) } },
             "random_int": { L in MainActor.assumeIsolated { Native.shared.randomInt(L) } },
             "is_modifier_held": { L in MainActor.assumeIsolated { Native.shared.isModifierHeld(L) } },
+            "valid_modifiers": { L in MainActor.assumeIsolated { Native.shared.validModifiers(L) } },
             "system_sleep": { L in MainActor.assumeIsolated { Native.shared.systemSleep(L) } },
             "lock_screen":  { L in MainActor.assumeIsolated { Native.shared.lockScreen(L) } },
             "run_shortcut": { L in MainActor.assumeIsolated { Native.shared.runShortcut(L) } },

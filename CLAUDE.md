@@ -257,12 +257,23 @@ prints the live `_VERSION` so you can see which engine ran. SourceKit may show "
 is the source of truth.
 
 Lua type-friendliness: `.luarc.json` pins the language server (runtime 5.4,
-`require` path resolution, the host-injected `native` global). Annotate
-cross-file functions and non-obvious table shapes with LuaLS `---@` annotations
-(`platform/json.lua` is the worked example). Array-vs-object shape that crosses
-the Swift bridge or `json.encode` is carried by the `__jsontype` metatable tag
-(`json.asObject`/`asArray`), honored by both `json.lua` and `LuaState.any`; a
-table mixing array entries with string keys is rejected loudly, never dropped.
+the host-injected `native` global, and the type-mismatch diagnostics escalated
+to Error). Annotate cross-file functions and non-obvious table shapes with
+LuaLS `---@` annotations (`platform/json.lua` is the worked example; string
+token sets get a real `---@enum`, see `ScreenDir` in `platform/windows.lua`).
+The annotations are ENFORCED, not editor-only: `scripts/check-lua-types.sh`
+runs LuaLS over the workspace at Error level (CI runs it per push). It first
+regenerates `.luals-stubs/` -- 2-line `---@meta` redirects mapping the
+loader's stable require names (`platform.*`, `features.<id>.*`) onto the
+co-located `lua/` files. WITHOUT those stubs the server resolves no
+cross-module require at all (the custom searcher's prefix mapping is
+inexpressible in `runtime.path`) and every cross-file contract silently goes
+unchecked -- so if requires seem un-typechecked, run the script to refresh
+the stubs (generated + gitignored; never hand-edit). Array-vs-object shape
+that crosses the Swift bridge or `json.encode` is carried by the `__jsontype`
+metatable tag (`json.asObject`/`asArray`), honored by both `json.lua` and
+`LuaState.any`; a table mixing array entries with string keys is rejected
+loudly, never dropped.
 
 ## Adding a feature
 

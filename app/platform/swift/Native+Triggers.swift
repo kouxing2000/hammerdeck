@@ -21,6 +21,17 @@ extension Native {
         guard let key = LuaState.string(L, 2) else {
             return luaError(L, "bind_hotkey: key must be a string")
         }
+        // A silently-dropped unknown modifier would REGISTER a less-modified
+        // combo (e.g. {"cmmd","alt"}+k binds plain alt+k and hijacks it), and
+        // registration succeeds so no error would surface. Reject loudly --
+        // including non-string entries, which stringArray filters out before
+        // firstUnknown could see them (the same bug through a side door).
+        if lua_type(L, 1) == LUA_TTABLE, Int(lua_rawlen(L, 1)) != mods.count {
+            return luaError(L, "bind_hotkey: mods must be modifier name strings")
+        }
+        if let bad = KeyModifier.firstUnknown(in: mods) {
+            return luaError(L, "bind_hotkey: unknown modifier '\(bad)'")
+        }
         let ref = lua.makeRef(at: 3)
         // Optional 4th arg: a key-release callback (for hold / auto-repeat).
         let hasRelease = lua_type(L, 4) == LUA_TFUNCTION
@@ -61,6 +72,15 @@ extension Native {
         let mods = LuaState.stringArray(L, 1)
         guard let key = LuaState.string(L, 2) else {
             return luaError(L, "bind_chord: key must be a string")
+        }
+        // Same guards as bind_hotkey: a dropped modifier (unknown string OR a
+        // non-string entry stringArray filtered) arms the chord on a
+        // less-modified prefix. Reject loudly.
+        if lua_type(L, 1) == LUA_TTABLE, Int(lua_rawlen(L, 1)) != mods.count {
+            return luaError(L, "bind_chord: mods must be modifier name strings")
+        }
+        if let bad = KeyModifier.firstUnknown(in: mods) {
+            return luaError(L, "bind_chord: unknown modifier '\(bad)'")
         }
         let follows = LuaState.stringArray(L, 3)
         // Optional 5th arg: the action label, shown in the which-key hint. Read

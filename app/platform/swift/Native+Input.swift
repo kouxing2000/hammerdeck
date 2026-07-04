@@ -13,13 +13,7 @@ extension Native {
     private static func carbonFlags(_ mods: [String]) -> CGEventFlags {
         var flags: CGEventFlags = []
         for m in mods {
-            switch m.lowercased() {
-            case "cmd", "command":  flags.insert(.maskCommand)
-            case "alt", "option":   flags.insert(.maskAlternate)
-            case "ctrl", "control": flags.insert(.maskControl)
-            case "shift":           flags.insert(.maskShift)
-            default: break
-            }
+            if let mod = KeyModifier.parse(m) { flags.insert(mod.cgFlag) }
         }
         return flags
     }
@@ -31,6 +25,15 @@ extension Native {
         guard let key = LuaState.string(L, 2),
               let code = HotkeyCenter.keyCodes[key.lowercased()] else {
             return luaError(L, "key_stroke: unknown key '\(LuaState.string(L, 2) ?? "?")'")
+        }
+        // A dropped modifier would post the LESS-modified combo -- e.g. a bare
+        // "v" typed into the user's document instead of cmd+v. Reject loudly,
+        // including non-string entries stringArray filtered before the read.
+        if lua_type(L, 1) == LUA_TTABLE, Int(lua_rawlen(L, 1)) != mods.count {
+            return luaError(L, "key_stroke: mods must be modifier name strings")
+        }
+        if let bad = KeyModifier.firstUnknown(in: mods) {
+            return luaError(L, "key_stroke: unknown modifier '\(bad)'")
         }
         let flags = Native.carbonFlags(mods)
         let src = CGEventSource(stateID: .combinedSessionState)
@@ -138,17 +141,26 @@ extension Native {
         return v
     }
 
-    func isModifierHeld(_ L: OpaquePointer?) -> Int32 {
-        let flags = NSEvent.modifierFlags
-        let held: Bool
-        switch LuaState.string(L, 1) ?? "" {
-        case "alt":   held = flags.contains(.option)
-        case "cmd":   held = flags.contains(.command)
-        case "ctrl":  held = flags.contains(.control)
-        case "shift": held = flags.contains(.shift)
-        default:      held = false
+    // valid_modifiers(): the modifier tokens the seam accepts (sorted), so
+    // the Lua layer (triggers.validate) reads the SAME whitelist KeyModifier
+    // enforces -- one authority, no hand-synced copies.
+    func validModifiers(_ L: OpaquePointer?) -> Int32 {
+        let tokens = KeyModifier.validTokens
+        lua_createtable(L, Int32(tokens.count), 0)
+        for (i, t) in tokens.enumerated() {
+            lua_pushstring(L, t)
+            lua_rawseti(L, -2, lua_Integer(i + 1))
         }
-        lua_pushboolean(L, held ? 1 : 0)
+        return 1
+    }
+
+    func isModifierHeld(_ L: OpaquePointer?) -> Int32 {
+        // An unknown token used to read as "never held", silently killing
+        // hold-to-keep-open behavior (cyclingChooser). Reject loudly instead.
+        guard let name = LuaState.string(L, 1), let mod = KeyModifier.parse(name) else {
+            return luaError(L, "is_modifier_held: unknown modifier '\(LuaState.string(L, 1) ?? "?")'")
+        }
+        lua_pushboolean(L, NSEvent.modifierFlags.contains(mod.nsFlag) ? 1 : 0)
         return 1
     }
 

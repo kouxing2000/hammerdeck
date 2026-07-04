@@ -89,7 +89,11 @@ local function arrangerFor(ctx)
 
     -- Move to another screen: size kept, position scaled per axis (clamped;
     -- shrunk only if larger than the target). dir = left|right|up|down|next.
+    local MOVE_DIRS = { left = true, right = true, up = true, down = true, next = true }
     local function moveScreen(dir)
+        -- Closed set, asserted loudly: the else-chain below would otherwise
+        -- treat an unknown direction as "down" (the silent-fallthrough class).
+        assert(MOVE_DIRS[dir], "moveScreen: unknown direction '" .. tostring(dir) .. "'")
         apply(function(f)
             local screens = ctx.screen.frames()
             if #screens < 2 then
@@ -126,6 +130,7 @@ local function arrangerFor(ctx)
                 target = best.t
             end
             -- size kept (shrunk to fit) + clamp -- shared geometry (windows.lua).
+            if not target then return nil end   -- unreachable (#screens >= 2); keeps types exact
             return W.moveToScreen(f, s, target, { keepSize = true })
         end)
     end

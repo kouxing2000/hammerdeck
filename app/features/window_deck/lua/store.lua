@@ -25,7 +25,10 @@ function M.new(ctx)
     function s.readColors()
         local raw = ctx.getState("colors")
         if type(raw) ~= "string" or raw == "" then return {} end
-        return json.decode(raw) or {}
+        -- decode can yield a non-table for a corrupt blob ("1", '"x"'); callers
+        -- are promised a map, so anything else degrades to empty.
+        local t = json.decode(raw)
+        return type(t) == "table" and t or {}
     end
     ---@param map table<string,string>
     function s.saveColors(map)

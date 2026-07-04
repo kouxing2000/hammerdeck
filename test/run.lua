@@ -18,7 +18,7 @@ package.loaded["platform.adapter"] = fake.adapter   -- preempt the seam
 -- Pin the fake clock to a deterministic mid-day instant: the suite advances
 -- time via fake.clockOffset, and a real near-midnight wall clock would
 -- otherwise cross a day boundary mid-test (day-rollover resets fire).
-local pin = os.date("*t")
+local pin = os.date("*t") --[[@as osdateparam]]
 pin.hour, pin.min, pin.sec = 10, 0, 0
 fake.clockOffset = os.time(pin) - os.time()
 
@@ -841,6 +841,26 @@ ok(not pcall(triggers.validate, { type = "schedule" }), "validate rejects a sche
 ok(not pcall(triggers.validate, { type = "schedule", at = "29:99" }),
     "validate rejects a schedule with an out-of-range at")
 
+-- modifier NAMES are validated too (the Swift parsers used to drop an unknown
+-- name silently, binding a less-modified combo); long aliases stay accepted.
+ok(not pcall(triggers.validate, { type = "hotkey", mods = { "cmmd" }, key = "k" }),
+    "validate rejects a hotkey with an unknown modifier")
+ok(not pcall(triggers.validate, { type = "chord", mods = { "hyper" }, key = "a", follows = { "b" } }),
+    "validate rejects a chord with an unknown modifier")
+ok(pcall(triggers.validate, { type = "hotkey", mods = { "Command", "option" }, key = "k" }),
+    "validate accepts long modifier aliases, case-insensitive")
+
+-- the fake adapter mirrors the seam's loud token rejection (KeyModifier.swift):
+-- a typo'd token errors in tests exactly like the real bridge would.
+ok(not pcall(fake.adapter.bindHotkey, { "cmmd" }, "k", function() end),
+    "fake bind_hotkey rejects an unknown modifier")
+ok(not pcall(fake.adapter.keyStroke, { "comd" }, "v"), "fake key_stroke rejects an unknown modifier")
+ok(not pcall(fake.adapter.keyStroke, { true }, "v"), "fake key_stroke rejects a non-string modifier")
+ok(not pcall(fake.adapter.isModifierHeld, "atl"), "fake is_modifier_held rejects an unknown modifier")
+ok(not pcall(fake.adapter.setAppearance, "drak"), "fake set_appearance rejects an unknown mode")
+ok(pcall(fake.adapter.setAppearance, "toggle") and pcall(fake.adapter.setAppearance, nil),
+    "fake set_appearance accepts toggle and nil (= toggle)")
+
 -- spec -> string formatters (the verbose describe + compact glyph forms)
 ok(triggers.describe(nil) == "no trigger", "describe: nil -> no trigger")
 ok(triggers.describe({ type = "hotkey", mods = { "cmd", "shift" }, key = "v" })
@@ -1441,7 +1461,7 @@ ok(select(2, je({ 1, 2, x = "oops" })) ~= nil,
     "json: a mixed array+string-key table is rejected loudly, not silently dropped")
 -- The command_palette legacy case: a map persisted as "[]" decodes array-tagged;
 -- re-tagging it object lets string keys be added and re-encoded without error.
-local relabelled = jsonlib.asObject(jd("[]")); relabelled.k = 1
+local relabelled = jsonlib.asObject(jd("[]") --[[@as table]]); relabelled.k = 1
 ok(je(relabelled) == '{"k":1}', "json: asObject re-tags a decoded [] so a map built on it is safe")
 
 registry.register(require("features.bing_daily"))
@@ -1633,7 +1653,7 @@ ok(not legendHasLabel(registry.hyperLegend(), "Go"),
 registry.register(require("features.usage_stats"))
 
 -- Re-pin the clock to a fresh morning so this test owns its day arithmetic.
-local pin20 = os.date("*t")
+local pin20 = os.date("*t") --[[@as osdateparam]]
 pin20.hour, pin20.min, pin20.sec = 9, 0, 0
 fake.clockOffset = os.time(pin20) - os.time()
 fake.idle = 0
@@ -1641,7 +1661,7 @@ fake.idle = 0
 -- pin the storage folder to an absolute path (no ~ expansion) so the CSV
 -- paths below stay deterministic; the months live directly under it
 fake.settings["hammerdeck.opt.usage_stats.dir"] = "/fake/data/usage"
-local day20 = os.date("%Y-%m-%d", fake.now())
+local day20 = os.date("%Y-%m-%d", fake.now()) --[[@as string]]
 local appsCsv = "/fake/data/usage/" .. day20:sub(1, 7) .. "/" .. day20 .. "-apps.csv"
 local sessCsv = "/fake/data/usage/" .. day20:sub(1, 7) .. "/" .. day20 .. ".csv"
 

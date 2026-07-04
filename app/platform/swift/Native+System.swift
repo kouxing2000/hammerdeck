@@ -222,9 +222,12 @@ extension Native {
         let mode = LuaState.string(L, 1) ?? "toggle"
         let value: String
         switch mode {
-        case "dark":  value = "true"
-        case "light": value = "false"
-        default:      value = "not dark mode"   // toggle
+        case "dark":   value = "true"
+        case "light":  value = "false"
+        case "toggle": value = "not dark mode"
+        default:
+            // An unknown mode used to silently TOGGLE -- wrong half the time.
+            return luaError(L, "set_appearance: unknown mode '\(mode)' (dark|light|toggle)")
         }
         let script = "tell application \"System Events\" to tell appearance preferences "
             + "to set dark mode to \(value)"

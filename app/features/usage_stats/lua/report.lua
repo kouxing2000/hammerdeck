@@ -28,8 +28,9 @@ end
 -- 86400s). Returns nil on a malformed date.
 local function isoToTime(iso)
     local y, m, d = iso:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
-    if not y then return nil end
-    return os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
+    local yn, mn, dn = tonumber(y), tonumber(m), tonumber(d)
+    if not (yn and mn and dn) then return nil end
+    return os.time({ year = yn, month = mn, day = dn, hour = 12 })
 end
 
 -- Iterate dates from..to inclusive, calling fn(dateStr, weekdayIndex1to7).
@@ -89,8 +90,15 @@ function M.range(fromISO, toISO)
                     first = false
                 else
                     local wake, sleep, dur = line:match("^([^,]+),([^,]+),(%d+)")
-                    if wake then
-                        local wmin, smin, mn = hmsToMin(wake), hmsToMin(sleep), tonumber(dur)
+                    -- mn in the guard: (%d+) already guarantees digits, so this
+                    -- is type-exactness plus future-proofing -- if the pattern
+                    -- ever loosens, a bad duration cell skips the row instead
+                    -- of crashing the whole report (this reader outlives any
+                    -- app run, so old CSVs can carry rows a newer writer never
+                    -- would).
+                    local mn = tonumber(dur)
+                    if wake and mn then
+                        local wmin, smin = hmsToMin(wake), hmsToMin(sleep)
                         sessions[#sessions + 1] = {
                             date = d, min = mn,
                             wakeMin = wmin, sleepMin = smin,

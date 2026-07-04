@@ -10,9 +10,18 @@
   "diagnostics.globals": [
     "native"
   ],
+  "diagnostics.severity": {
+    "param-type-mismatch": "Error",
+    "assign-type-mismatch": "Error",
+    "return-type-mismatch": "Error",
+    "cast-local-type": "Error"
+  },
   "workspace.ignoreDir": [
     ".build",
     "Sources"
+  ],
+  "workspace.library": [
+    ".luals-stubs"
   ],
   "telemetry.enable": false
 }

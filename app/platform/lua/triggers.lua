@@ -30,6 +30,29 @@ local VALID_EVENTS = {
     screenChanged = true,   -- display added/removed/rearranged
 }
 
+-- The modifier names the native seam accepts -- read FROM the seam
+-- (adapter.validModifiers, backed by KeyModifier.swift, the one authority),
+-- so validate can never drift from what bind_hotkey would reject. The Swift
+-- parsers used to DROP an unknown name silently, so {"cmmd","alt"}+k bound
+-- plain alt+k and hijacked it -- reject at validate time, before a bad spec
+-- ever persists or binds. Built lazily on first use (after the test fake has
+-- preempted the adapter).
+local VALID_MODS
+local function validMods()
+    if not VALID_MODS then
+        VALID_MODS = {}
+        for _, m in ipairs(adapter.validModifiers()) do VALID_MODS[m] = true end
+    end
+    return VALID_MODS
+end
+
+local function assertValidMods(mods, what)
+    for _, m in ipairs(mods or {}) do
+        assert(type(m) == "string" and validMods()[m:lower()],
+            what .. " has unknown modifier '" .. tostring(m) .. "'")
+    end
+end
+
 -- Is this an AUTOMATED trigger -- one that fires on its own (a clock or a
 -- system event) with no human present and no live UI context? schedule and
 -- event are automated; hotkey and chord are MANUAL (a person presses keys, so
@@ -62,9 +85,11 @@ function triggers.validate(spec)
     if spec.type == "hotkey" then
         assert(type(spec.key) == "string" and #spec.key > 0, "hotkey trigger needs a key")
         assert(spec.mods == nil or type(spec.mods) == "table", "hotkey mods must be a table")
+        assertValidMods(spec.mods, "hotkey trigger")
     elseif spec.type == "chord" then
         assert(type(spec.key) == "string" and #spec.key > 0, "chord trigger needs a prefix key")
         assert(spec.mods == nil or type(spec.mods) == "table", "chord mods must be a table")
+        assertValidMods(spec.mods, "chord trigger")
         assert(type(spec.follows) == "table" and #spec.follows >= 1,
             "chord trigger needs at least one follow key")
         for _, f in ipairs(spec.follows) do

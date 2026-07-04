@@ -13,6 +13,9 @@ Package.resolved
 .idea/
 /.deleted
 
+# Generated LuaLS require-name redirect stubs (scripts/check-lua-types.sh)
+.luals-stubs/
+
 # Local dev secrets (e.g. OPENAI_KEY for text_actions) -- never commit
 .env
 

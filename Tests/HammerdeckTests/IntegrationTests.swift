@@ -1369,4 +1369,60 @@ final class IntegrationTests: XCTestCase {
         pressCmdShiftB()
         XCTAssertEqual(fires, 2, "restore must re-register the shadowed hotkey so it fires again")
     }
+
+    // MARK: - Seam token strictness
+
+    /// Unknown string tokens must fail LOUDLY at the native seam, never fall
+    /// into a silent default -- the class of bug where window_snap's
+    /// "previous" fell through adjacentScreen's `dir == "prev"` to "next".
+    /// A silently-dropped modifier binds or synthesizes a LESS-modified combo;
+    /// an unknown appearance mode used to silently toggle; an unknown
+    /// held-modifier probe read as "never held". Every rejected call here
+    /// fails BEFORE its side effect (no registration, no CGEvent, no
+    /// AppleScript), so this is Tier 1 -- safe everywhere.
+    func testSeamRejectsUnknownTokensLoudly() {
+        let cases: [(String, String)] = [
+            ("native.bind_hotkey({'cmmd'}, 'k', function() end)", "bind_hotkey"),
+            ("native.bind_chord({'hyper'}, 'a', {'b'}, function() end)", "bind_chord"),
+            ("native.key_stroke({'comd'}, 'v')", "key_stroke"),
+            ("native.is_modifier_held('atl')", "is_modifier_held"),
+            ("native.set_appearance('drak')", "set_appearance"),
+        ]
+        for (call, name) in cases {
+            let r = eval("local ok, err = pcall(function() \(call) end); "
+                + "return ok and 'ok' or tostring(err)") as? String
+            XCTAssertNotEqual(r, "ok", "\(name) must reject an unknown token")
+            XCTAssertTrue(r?.contains("unknown") == true,
+                          "\(name) error should name the bad token -- got \(r ?? "nil")")
+        }
+        // Non-string mods entries are the same bug through a side door:
+        // stringArray filters them out before the token gate, so the seam
+        // also checks the raw table length survived the read.
+        let nonString = eval("local ok, err = pcall(function() native.key_stroke({true}, 'v') end); "
+            + "return ok and 'ok' or tostring(err)") as? String
+        XCTAssertTrue(nonString?.contains("modifier name strings") == true,
+                      "non-string mods must be rejected -- got \(nonString ?? "nil")")
+
+        // The long aliases stay valid through the same gate: 'command'+'option'
+        // registers (obscure combo, unbound immediately).
+        let id = eval("return native.bind_hotkey({'command','option','ctrl'}, 'f19', function() end)")
+            as? Double
+        XCTAssertNotNil(id, "long modifier aliases must still bind (numeric resource id)")
+        if let id {
+            eval("native.stop(\(Int(id))); return true")   // never leak the registration
+        }
+    }
+
+    /// The fake adapter mirrors the seam's modifier whitelist by hand -- pin
+    /// the two together so the headless suite rejects exactly what the real
+    /// bridge rejects. (triggers.validate needs no pin: it reads the live
+    /// adapter's validModifiers, so it follows whichever side is loaded.)
+    func testFakeAdapterModifierWhitelistMatchesSeam() {
+        let real = eval("return table.concat(native.valid_modifiers(), ',')") as? String
+        let fake = eval("local f = dofile('\(TestHost.repoRoot)/test/fake_adapter.lua'); "
+            + "return table.concat(f.adapter.validModifiers(), ',')") as? String
+        XCTAssertNotNil(real, "native.valid_modifiers must return the token list")
+        XCTAssertEqual(real, fake,
+                       "fake_adapter's modifier whitelist must equal KeyModifier.validTokens")
+    }
 }

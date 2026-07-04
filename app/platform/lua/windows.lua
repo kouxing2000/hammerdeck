@@ -198,7 +198,9 @@ end
 -- full cost) keeps the typical case far under the worst case.
 local function bruteAssign(winCenters, slotCenters, n)
     local used, current = {}, {}
-    local best = { cost = math.huge, perm = nil }
+    -- perm = {} is a placeholder the first full leaf always replaces (n >= 1
+    -- guarantees one); it keeps the return type non-nil for the checker.
+    local best = { cost = math.huge, perm = {} }
     local function recurse(i, cost)
         if cost >= best.cost then return end
         if i > n then

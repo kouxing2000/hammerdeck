@@ -162,16 +162,12 @@ final class HotkeyCenter {
     }
 
     /// Bitmask of Carbon modifier flags for the given modifier names.
+    /// Unknown names are skipped here, but never arrive: bind_hotkey /
+    /// bind_chord reject them at the seam (KeyModifier.firstUnknown).
     static func carbonMods(_ mods: [String]) -> UInt32 {
         var m: UInt32 = 0
         for name in mods {
-            switch name.lowercased() {
-            case "cmd", "command":  m |= UInt32(cmdKey)
-            case "alt", "option":   m |= UInt32(optionKey)
-            case "ctrl", "control": m |= UInt32(controlKey)
-            case "shift":           m |= UInt32(shiftKey)
-            default: break
-            }
+            if let mod = KeyModifier.parse(name) { m |= mod.carbon }
         }
         return m
     }

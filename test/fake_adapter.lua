@@ -42,14 +42,28 @@ local function freeOnce(obj)
     end
 end
 
+-- Canonical short name for a modifier token ("Command" -> "cmd"), mirroring
+-- KeyModifier.canonical -- alias specs must match exactly as the real
+-- bridge's bitmask comparison does (command+k and cmd+k are one combo).
+local CANON_MOD = { command = "cmd", option = "alt", control = "ctrl" }
+local function canonMod(m)
+    m = tostring(m):lower()
+    return CANON_MOD[m] or m
+end
+
+-- Order-independent canonical key for a modifier list ({"option","Cmd"} ->
+-- "alt,cmd") -- the fake twin of Carbon's bitmask equality.
+local function modsKey(mods)
+    local c = {}
+    for _, m in ipairs(mods or {}) do c[#c + 1] = canonMod(m) end
+    table.sort(c)
+    return table.concat(c, ",")
+end
+
 -- Order-independent modifier-set equality (matches HotkeyCenter.park's combo
 -- comparison, which is a bitmask and so order-independent).
 local function sameMods(a, b)
-    local ca, cb = {}, {}
-    for _, m in ipairs(a or {}) do ca[#ca + 1] = m end
-    for _, m in ipairs(b or {}) do cb[#cb + 1] = m end
-    table.sort(ca); table.sort(cb)
-    return table.concat(ca, ",") == table.concat(cb, ",")
+    return modsKey(a) == modsKey(b)
 end
 
 -- Triggers / bindings ---------------------------------------------------------
@@ -61,7 +75,33 @@ local function makeTimer(kind, n, fn)
     return t, { stop = function() freeOnce(t) end }
 end
 
+-- Mirror the real seam's modifier whitelist (KeyModifier.swift): the native
+-- bridge REJECTS unknown modifier names loudly, so the fake must too -- or the
+-- headless suite green-lights token typos the real app would error on.
+local VALID_MODS = {
+    cmd = true, command = true, alt = true, option = true,
+    ctrl = true, control = true, shift = true,
+}
+
+local function assertMods(mods, what)
+    for _, m in ipairs(mods or {}) do
+        assert(type(m) == "string" and VALID_MODS[m:lower()],
+            what .. ": unknown modifier '" .. tostring(m) .. "'")
+    end
+end
+
+-- Same surface as the real seam's native.valid_modifiers(). An integration
+-- contract test compares this list against KeyModifier's, so the fake's
+-- whitelist above cannot silently drift from the real bridge.
+function adapter.validModifiers()
+    local out = {}
+    for k in pairs(VALID_MODS) do out[#out + 1] = k end
+    table.sort(out)
+    return out
+end
+
 function adapter.bindHotkey(mods, key, fn, onRelease, shadow)
+    assertMods(mods, "bind_hotkey")
     local h = { mods = mods, key = key, fn = fn, onRelease = onRelease,
                 stopped = false, parked = false }
     -- Model HotkeyCenter.park: when `shadow`, temporarily deactivate every LIVE
@@ -88,6 +128,7 @@ function adapter.bindHotkey(mods, key, fn, onRelease, shadow)
 end
 
 function adapter.bindChord(mods, key, follows, fn)
+    assertMods(mods, "bind_chord")
     local c = { mods = mods, key = key, follows = follows, fn = fn, stopped = false }
     fake.chords[#fake.chords + 1] = c
     alloc()
@@ -587,6 +628,10 @@ function adapter.quitApp(name)
 end
 
 function adapter.setAppearance(mode)
+    -- Mirror set_appearance's whitelist: unknown mode used to silently toggle.
+    mode = mode or "toggle"
+    assert(mode == "dark" or mode == "light" or mode == "toggle",
+        "set_appearance: unknown mode '" .. tostring(mode) .. "' (dark|light|toggle)")
     fake.appearanceSet[#fake.appearanceSet + 1] = mode
     return true
 end
@@ -773,7 +818,10 @@ function fake.now()
 end
 
 function adapter.isModifierHeld(mod)
-    return fake.modifiers[mod] == true
+    assertMods({ mod }, "is_modifier_held")
+    -- canonical lookup: probing "option" reads the same key a test presets as
+    -- fake.modifiers.alt, exactly as the real bridge probes the option key.
+    return fake.modifiers[canonMod(mod)] == true
 end
 
 -- In tests the host CSPRNG is absent; math.random gives the same uniform [min,max]
@@ -789,6 +837,7 @@ fake.runningApps   = {}   -- set: name -> true (preset by tests)
 fake.activatedApps = {}   -- recorded successful activateApp names
 
 function adapter.keyStroke(mods, key)
+    assertMods(mods, "key_stroke")
     fake.keyEvents[#fake.keyEvents + 1] = { mods = mods or {}, key = key }
 end
 
@@ -1047,13 +1096,9 @@ end
 -- modifier matches fire -- needed when the same key is bound under different
 -- modifier sets (e.g. cmd+alt+ctrl+left vs ctrl+alt+left).
 function fake.pressHotkey(key, mods)
-    local want = nil
-    if mods then
-        want = {}
-        for _, m in ipairs(mods) do want[#want + 1] = m end
-        table.sort(want)
-        want = table.concat(want, ",")
-    end
+    -- canonical (alias-folding) match, like Carbon's bitmask: a hotkey bound
+    -- with {"command"} fires on a press described as {"cmd"}.
+    local want = mods and modsKey(mods) or nil
     -- Snapshot before firing: real Carbon dispatches a key event only to the
     -- hotkeys registered AT event time, never to ones a handler registers mid-
     -- dispatch (e.g. entering a modal binds its keys -- including a "sticky" twin
@@ -1062,14 +1107,7 @@ function fake.pressHotkey(key, mods)
     for _, h in ipairs(fake.hotkeys) do live[#live + 1] = h end
     for _, h in ipairs(live) do
         if not h.stopped and not h.parked and h.key == key then
-            local fire = true
-            if want then
-                local have = {}
-                for _, m in ipairs(h.mods or {}) do have[#have + 1] = m end
-                table.sort(have)
-                fire = table.concat(have, ",") == want
-            end
-            if fire then h.fn() end
+            if not want or modsKey(h.mods) == want then h.fn() end
         end
     end
 end
@@ -1077,25 +1115,12 @@ end
 -- Fire the key-UP edge: invokes the onRelease handler of matching hotkeys (for
 -- testing hold / auto-repeat). Same matching rules as fake.pressHotkey.
 function fake.releaseHotkey(key, mods)
-    local want = nil
-    if mods then
-        want = {}
-        for _, m in ipairs(mods) do want[#want + 1] = m end
-        table.sort(want)
-        want = table.concat(want, ",")
-    end
+    local want = mods and modsKey(mods) or nil
     local live = {}
     for _, h in ipairs(fake.hotkeys) do live[#live + 1] = h end
     for _, h in ipairs(live) do
         if not h.stopped and not h.parked and h.key == key and h.onRelease then
-            local fire = true
-            if want then
-                local have = {}
-                for _, m in ipairs(h.mods or {}) do have[#have + 1] = m end
-                table.sort(have)
-                fire = table.concat(have, ",") == want
-            end
-            if fire then h.onRelease() end
+            if not want or modsKey(h.mods) == want then h.onRelease() end
         end
     end
 end
