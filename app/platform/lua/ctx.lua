@@ -258,8 +258,10 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- at its real position with name/resolution/window-count). Reusable: set
     -- `selectCount` (2 for Window Snap's swap pair, 1 for a "which display?" pick)
     -- and `preselect` defaults (pass the "sticky" display LAST). onPick gets the
-    -- 1-based selected indices as an array. Scope-tracked; one-shot (frees itself
-    -- on pick/cancel). See adapter.pickDisplays for the full opts.
+    -- 1-based selected indices as an array. An optional `extraLabel` adds a
+    -- secondary-action button (e.g. Window Deck's "Restore last deck") whose press
+    -- calls `onExtra`. Scope-tracked; one-shot (frees itself on pick/cancel/extra).
+    -- See adapter.pickDisplays for the full opts.
     function ctx.screen.pickDisplay(opts) return track(adapter.pickDisplays(opts)) end
 
     ctx.mouse = {}

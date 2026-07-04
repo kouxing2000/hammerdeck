@@ -312,6 +312,7 @@ local function controllerFor(ctx)
     end
 
     local renderBorders   -- forward: defined below (swapCells re-renders after a swap)
+    local focusedMember   -- forward: defined below (renderBorders bolds the focused member; raiseDeck gates on it)
 
     -- (Re)build the mini-map cell order from the current slot layout: cell i
     -- (row-major reading order) -> the window now in that slot, and its color.
@@ -376,6 +377,15 @@ local function controllerFor(ctx)
         -- lines across the hero.
         local hero = st.heroKey and memberByKey(st.heroKey) or nil
         local hole = hero and (hero.cur or heroFrame()) or nil
+        -- In HERO-OFF grid mode (a pure tiler, with no hero to signal the active
+        -- window), the member holding focus gets a BOLDER ring so you can see which
+        -- tiled window is focused as you cmd-tab / click around. In hero mode the
+        -- hero already signals focus, so this stays off (and never fights it).
+        local focusKey = nil
+        if not st.heroMode then
+            local _, fk = focusedMember()
+            focusKey = fk
+        end
         for _, m in ipairs(st.group) do
             if m.gone then
                 if st.borders[m.key] then st.borders[m.key].stop(); st.borders[m.key] = nil end
@@ -389,6 +399,8 @@ local function controllerFor(ctx)
                 if not b then b = ctx.outline("member", m.color); st.borders[m.key] = b end
                 if m.key == st.heroKey then
                     b.setStyle("hero"); b.setHole(nil); b.setFrame(m.cur or heroFrame())
+                elseif m.key == focusKey then
+                    b.setStyle("focus"); b.setHole(hole); b.setFrame(m.cur or m.slot)
                 else
                     b.setStyle("member"); b.setHole(hole); b.setFrame(m.cur or m.slot)
                 end
@@ -456,8 +468,6 @@ local function controllerFor(ctx)
         end
         if st.ghost then st.ghost.stop(); st.ghost = nil end
     end
-
-    local focusedMember   -- forward: defined below (raiseDeck gates on it)
 
     -- Keep the deck ABOVE non-deck windows: raise every present non-hero member
     -- with a surgical raise (doesn't drag same-app siblings, so no spurious
@@ -613,7 +623,7 @@ local function controllerFor(ctx)
     -- instant -- no picker on the way out. `picking` guards a re-trigger while a
     -- panel is open (the toggle hotkey stays live).
     --
-    -- The screen-selector also carries a "restore last deck" row when one is
+    -- The screen-selector also carries a "restore last deck" BUTTON when one is
     -- available (multi-monitor -- that step exists only here; single-monitor
     -- keeps its one-tap fast path to the window picker, so restore rides the
     -- selector rather than forcing a chooser onto the single-screen flow).
@@ -638,36 +648,44 @@ local function controllerFor(ctx)
         end
     end
 
-    -- Multi-monitor: pick which screen to deck. The display the user is CURRENTLY
-    -- on (their focused window's screen, else the cursor's) is offered FIRST and
-    -- marked "(current)" -- askChoice pre-selects row 1, so a single Enter takes
-    -- it without reading the list. (If we can't tell which is active -- no focused
-    -- window and the cursor is off every screen -- the first-listed / primary is
-    -- the default: still a one-Enter pick, just unmarked.) Cancel backs all the
-    -- way out.
+    -- Multi-monitor: pick which screen to deck, off a spatial display map. The
+    -- display the user is CURRENTLY on (their focused window's screen, else the
+    -- cursor's) is the pre-selected DEFAULT, so a single Enter decks it without
+    -- touching the mouse. (If we can't tell which is active -- no focused window
+    -- and the cursor is off every screen -- the first display is the default:
+    -- still a one-Enter pick.) Cancel / click-away backs all the way out.
     function st.pickScreen(screens, restore)
         local activeIdx = activeScreenIndex()
-        local ordered, labels = {}, {}
-        for _, s in ipairs(screens) do
-            if s.index == activeIdx then
-                table.insert(ordered, 1, s)   -- current display first (Enter takes it)
-            else
-                ordered[#ordered + 1] = s
+        -- The spatial display map (ctx.screen.pickDisplay): each display drawn at
+        -- its real position, tagged with its deckable-window count. Indices map
+        -- 1:1 to `screens`. The display the user is on is the DEFAULT selection
+        -- (Enter decks it -- the one-tap fast path the old text list had via a
+        -- pre-selected first row), and every display is freely clickable.
+        -- Deckable-window count per screen in ONE list() pass -- the AX window
+        -- listing is dear (see groupWindows), so bucket rather than call
+        -- groupWindows per screen (window_snap's displaysWithCounts does the same).
+        -- Same deckable predicate: sized, not minimized/fullscreen, on that screen.
+        local counts = {}
+        for i = 1, #screens do counts[i] = 0 end
+        for _, w in ipairs(ctx.window.list()) do
+            if w.w and w.h and w.w > 0 and w.h > 0
+                and not w.minimized and not w.fullscreen then
+                for i, s in ipairs(screens) do
+                    if onScreen(w, s) then counts[i] = counts[i] + 1; break end
+                end
             end
         end
-        for _, s in ipairs(ordered) do
-            local name = s.name
-                or string.format(ctx.t("pick.screenN", "Display %d"), s.index or 0)
-            if s.index == activeIdx then
-                name = name .. " " .. ctx.t("pick.current", "(current)")
-            end
-            labels[#labels + 1] = name
+        local displays, activeMapIdx = {}, nil
+        for i, s in ipairs(screens) do
+            displays[i] = { x = s.x, y = s.y, w = s.w, h = s.h, name = s.name,
+                            windows = counts[i] }
+            if s.index == activeIdx then activeMapIdx = i end
         end
-        -- With a restorable last deck, offer it as the LAST row -- a deliberate
-        -- pick that does NOT hijack the default (Enter still takes the current
-        -- screen for a fresh deck). The label states availability, so a deck with
-        -- some windows now closed reads "N of M available" and still restores
-        -- around the missing ones (>= 2 survive -- restoreOption's gate).
+        -- A restorable last deck rides the map as a secondary-action BUTTON (not a
+        -- display), so it does NOT hijack the default (Enter still decks the
+        -- current screen). Its label states availability, so a deck with some
+        -- windows now closed reads "N of M available" and still restores around
+        -- the missing ones (>= 2 survive -- restoreOption's gate).
         local restoreLabel
         if restore then
             if #restore.matched >= restore.total then
@@ -680,27 +698,24 @@ local function controllerFor(ctx)
                     #restore.matched, restore.total)
             end
         end
-        local actions = {}
-        for _, l in ipairs(labels) do actions[#actions + 1] = l end
-        if restoreLabel then actions[#actions + 1] = restoreLabel end
         local h
-        h = ctx.askChoice {
-            title   = ctx.t("pick.screen", "Deck which screen?"),
-            actions = actions,
-            onChoose = function(label)
+        h = ctx.screen.pickDisplay {
+            displays    = displays,
+            preselect   = { activeMapIdx or 1 },   -- current display (else the first) is the default
+            selectCount = 1,
+            title       = ctx.t("pick.screen", "Deck which screen?"),
+            prompt      = ctx.t("pick.screenPrompt",
+                "Pick the display to deck. Your current one is selected by default."),
+            confirmVerb = ctx.t("pick.deckVerb", "Deck on"),
+            extraLabel  = restoreLabel,   -- nil/absent -> no restore button
+            onPick = function(indices)
                 if h then h.stop() end   -- drop the one-shot from the scope
-                if not label then st.picking = false; return end
-                if restoreLabel and label == restoreLabel then
-                    st.restoreLast(restore)
-                    return
-                end
-                -- Map the chosen label back to its screen (first match; duplicate
-                -- display names are rare and only cost a wrong-of-two pick).
-                local chosen
-                for i, l in ipairs(labels) do
-                    if l == label then chosen = ordered[i]; break end
-                end
-                if chosen then st.pickWindows(chosen) else st.picking = false end
+                local idx = indices and indices[1]
+                if idx and screens[idx] then st.pickWindows(screens[idx]) else st.picking = false end
+            end,
+            onExtra = function()
+                if h then h.stop() end
+                st.restoreLast(restore)
             end,
         }
     end

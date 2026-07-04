@@ -320,7 +320,10 @@ end
 --   title       = header text
 --   prompt      = one/two-line explanation under the title
 --   confirmVerb = the confirm button's verb, e.g. "Swap" / "Deck on"
+--   extraLabel  = optional secondary-action button label (nil/"" = none), e.g.
+--                 "Restore last deck (3 windows)"
 --   onPick(indices|nil) -- the chosen displays' 1-based indices (array), or nil
+--   onExtra()   -- the secondary action button was pressed
 -- Returns a handle with .stop() (a one-shot: it frees itself on pick/cancel).
 function adapter.pickDisplays(opts)
     return handleFor(native.display_picker(
@@ -330,7 +333,14 @@ function adapter.pickDisplays(opts)
         opts.title or "",
         opts.prompt or "",
         opts.confirmVerb or "Select",
-        function(indices) if opts.onPick then opts.onPick(indices) end end))
+        opts.extraLabel or "",
+        function(indices, extra)
+            if extra then
+                if opts.onExtra then opts.onExtra() end
+            elseif opts.onPick then
+                opts.onPick(indices)
+            end
+        end))
 end
 
 -- Full-width banner overlay along a screen's top edge. `screenFrame`

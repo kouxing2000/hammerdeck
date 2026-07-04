@@ -338,8 +338,10 @@ extension Native {
     // Args: (1) displays = array of {x,y,w,h,name,windows} top-left global frames;
     // (2) preselect = array of 1-based default-selected indices (last = "sticky");
     // (3) selectCount = how many displays to pick; (4) title; (5) prompt;
-    // (6) confirmVerb (e.g. "Swap" / "Deck on"); (7) callback(indices|nil) -- the
-    // 1-based selected displays as an array, or nil on cancel.
+    // (6) confirmVerb (e.g. "Swap" / "Deck on"); (7) extraLabel ("" = none) for an
+    // optional secondary action button; (8) callback(indices|nil, extraChosen) --
+    // the 1-based picked displays (array) else nil, plus a bool set when the
+    // secondary action was chosen.
     func displayPicker(_ L: OpaquePointer?) -> Int32 {
         let items = LuaState.dictArray(L, 1)
         let preselect = LuaState.intArray(L, 2)
@@ -347,7 +349,8 @@ extension Native {
         let title = LuaState.string(L, 4) ?? ""
         let prompt = LuaState.string(L, 5) ?? ""
         let confirmVerb = LuaState.string(L, 6) ?? "Select"
-        let ref = lua.makeRef(at: 7)
+        let extraLabel = LuaState.string(L, 7) ?? ""
+        let ref = lua.makeRef(at: 8)
 
         let entries = items.map { d -> DisplayEntry in
             DisplayEntry(frame: CGRect(x: d["x"] as? Double ?? 0, y: d["y"] as? Double ?? 0,
@@ -371,17 +374,26 @@ extension Native {
         var done = false
         let panel = DisplayPickerPanel(title: title, prompt: prompt, entries: entries,
                                        preselect: preselect, selectCount: selectCount,
-                                       confirmVerb: confirmVerb) { picked in
+                                       confirmVerb: confirmVerb, extraLabel: extraLabel) { result in
             guard !done else { return }
             done = true
             Native.shared.lua.callRef(ref) { L in
-                guard let picked else { lua_pushnil(L); return 1 }
-                lua_createtable(L, Int32(picked.count), 0)
-                for (i, idx) in picked.enumerated() {
-                    lua_pushinteger(L, lua_Integer(idx))
-                    lua_rawseti(L, -2, lua_Integer(i + 1))
+                // (indices|nil, extraChosen): indices is the pick array; the bool
+                // flags the secondary action so the adapter can route it apart.
+                switch result {
+                case .picked(let picked):
+                    lua_createtable(L, Int32(picked.count), 0)
+                    for (i, idx) in picked.enumerated() {
+                        lua_pushinteger(L, lua_Integer(idx))
+                        lua_rawseti(L, -2, lua_Integer(i + 1))
+                    }
+                    lua_pushboolean(L, 0)
+                case .cancelled:
+                    lua_pushnil(L); lua_pushboolean(L, 0)
+                case .extra:
+                    lua_pushnil(L); lua_pushboolean(L, 1)
                 }
-                return 1
+                return 2
             }
             Native.shared.lua.releaseRef(ref)
             Native.shared.freeResource(id)

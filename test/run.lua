@@ -2928,8 +2928,8 @@ do
     -- hand instead.) Exiting is a plain toggle press -- no picker on the way out.
     local function enterDeck()
         fake.pressHotkey("k", HYP)
-        local scr = fake.openDialog()
-        if scr and scr.title == "Deck which screen?" then scr.choose(scr.actions[1]) end
+        local dp = fake.openDisplayPicker()
+        if dp then dp.userConfirm(dp.preselect) end   -- take the default (current) display
         local p = fake.openWindowPicker()
         if p then p.confirm(nil) end
         fake.fireTimers("after")   -- flush the deck's settle window (see beginSettle)
@@ -3100,11 +3100,11 @@ do
         p.cancel()
     end
 
-    -- T-WD-restore: the screen-selector "restore last deck" row (multi-monitor).
+    -- T-WD-restore: the screen-selector "restore last deck" BUTTON (multi-monitor).
     -- A FRESH pick saves its membership as a template; a later trigger offers
-    -- "Restore last deck" FIRST and rebuilds the SAME set with no window multi-
-    -- select. Availability is smart: a closed member drops, the label reads
-    -- "N of M", and the template is NOT eroded by a partial restore.
+    -- "Restore last deck" as the map's secondary action and rebuilds the SAME set
+    -- with no window multi-select. Availability is smart: a closed member drops,
+    -- the label reads "N of M", and the template is NOT eroded by a partial restore.
     do
         local S2 = { x = 1440, y = 0, w = 1440, h = 900, name = "Ext", index = 2 }
         fake.screenList = { SCREEN, S2 }              -- 2 screens -> the selector opens
@@ -3117,10 +3117,11 @@ do
         fake.windowFrameSets = {}
         fake.pressHotkey("k", HYP)
         do
-            local scr = fake.openDialog()
-            ok(scr and scr.title == "Deck which screen?", "multi-monitor opens the screen selector")
-            ok(#scr.actions == 2, "no last deck yet -> the selector lists only the two screens")
-            scr.choose(scr.actions[1])                -- screen 1 (current)
+            local dp = fake.openDisplayPicker()
+            ok(dp and dp.title == "Deck which screen?", "multi-monitor opens the display map")
+            ok(#dp.displays == 2 and dp.extraLabel == "",
+                "no last deck yet -> the map shows two displays and no restore button")
+            dp.userConfirm({ 1 })                     -- deck the current display (screen 1)
         end
         do
             local p = fake.openWindowPicker()
@@ -3136,13 +3137,13 @@ do
         fake.windowFrameSets = {}
         fake.pressHotkey("k", HYP)
         do
-            local scr = fake.openDialog()
-            ok(scr and #scr.actions == 3, "the selector now carries a restore row + two screens")
-            ok(scr.actions[1] == "Main (current)",
-                "the current screen stays the default first row (restore does not hijack Enter)")
-            ok(scr.actions[3] == "Restore last deck (3 windows)",
-                "restore is the LAST row, labelling the full available count")
-            scr.choose(scr.actions[3])                -- restore
+            local dp = fake.openDisplayPicker()
+            ok(dp and #dp.displays == 2, "the map shows the two displays")
+            ok(dp.preselect[1] == 1 and dp.displays[1].name == "Main",
+                "the current display (screen 1) is the pre-selected default (Enter decks it)")
+            ok(dp.extraLabel == "Restore last deck (3 windows)",
+                "a restorable last deck is offered as the secondary-action button (full count)")
+            dp.userExtra()                            -- press Restore last deck
         end
         fake.fireTimers("after")
         ok(fake.openWindowPicker() == nil, "restore skips the window multi-select")
@@ -3157,10 +3158,10 @@ do
         fake.windowFrameSets = {}
         fake.pressHotkey("k", HYP)
         do
-            local scr = fake.openDialog()
-            ok(scr.actions[3] == "Restore last deck (2 of 3 available)",
+            local dp = fake.openDisplayPicker()
+            ok(dp.extraLabel == "Restore last deck (2 of 3 available)",
                 "a closed member drops from the count without blocking restore")
-            scr.choose(scr.actions[3])                -- restore around the missing one
+            dp.userExtra()                            -- restore around the missing one
         end
         fake.fireTimers("after")
         ok(#fake.liveOutlines("member") == 2, "a partial restore decks the survivors (2 of 3)")
@@ -3171,10 +3172,10 @@ do
         fake.windows = quadWindows()
         fake.pressHotkey("k", HYP)
         do
-            local scr = fake.openDialog()
-            ok(scr.actions[3] == "Restore last deck (3 windows)",
+            local dp = fake.openDisplayPicker()
+            ok(dp.extraLabel == "Restore last deck (3 windows)",
                 "a partial restore did not erode the saved template")
-            scr.choose(nil)                           -- cancel out
+            dp.cancel()                               -- cancel out
         end
 
         -- 4) beyond the 9-cap: with many windows open, template members sitting
@@ -3190,10 +3191,10 @@ do
         fake.windows = many
         fake.pressHotkey("k", HYP)
         do
-            local scr = fake.openDialog()
-            ok(scr.actions[#scr.actions] == "Restore last deck (3 windows)",
+            local dp = fake.openDisplayPicker()
+            ok(dp.extraLabel == "Restore last deck (3 windows)",
                 "template members past the MRU top-9 are still found (uncapped restore match)")
-            scr.choose(nil)                           -- cancel out
+            dp.cancel()                               -- cancel out
         end
 
         fake.screenList = { SCREEN }                  -- back to single-screen for later tests
@@ -3434,6 +3435,8 @@ do
         focusWin(3)                    -- focus another window
         ok(fake.liveOutline("hero") == nil,
             "with Hero off, focusing a window does not zoom it (pure grid tiler)")
+        ok(#fake.liveOutlines("focus") == 1 and #fake.liveOutlines("member") == 3,
+            "with Hero off, the focused window gets a bold FOCUS ring; the rest stay subtle members")
         w.onToggleHero(true)           -- flip Hero back ON
         ok(w.switchHint == hintOn, "the hint reverts when Hero is toggled back on")
         focusWin(3)
@@ -3457,8 +3460,8 @@ do
         fake.screenList = { SCREEN }
         registry.setEnabled("window_deck", true)
         fake.pressHotkey("k", HYP)
-        local scr = fake.openDialog()
-        if scr and scr.title == "Deck which screen?" then scr.choose(scr.actions[1]) end
+        local dp = fake.openDisplayPicker()
+        if dp then dp.userConfirm(dp.preselect) end
         local p = fake.openWindowPicker()
         ok(p ~= nil and p.hero == true,
             "the picker's Hero switch starts from the persisted value (on)")
@@ -3957,16 +3960,17 @@ do
     fake.focusedWindow = { x = 1600, y = 100, w = 300, h = 200, screenIndex = 2 }  -- focus on the right screen
     fake.windowFrameSets = {}
     fake.pressHotkey("k", HYP)
-    -- multi-monitor: a screen chooser opens first, with the ACTIVE screen offered
-    -- first so a single Enter takes it.
-    local scr = fake.openDialog()
-    ok(scr and scr.title == "Deck which screen?"
-        and scr.actions[1]:find("Right", 1, true)
-        and scr.actions[1]:find("(current)", 1, true),
-        "multi-monitor picker offers the CURRENT display first, marked so Enter takes it")
-    ok(scr.actions[2] and not scr.actions[2]:find("(current)", 1, true),
-        "the non-current display is listed after, unmarked")
-    scr.choose(scr.actions[1])   -- 'press Enter' on the pre-selected current display
+    -- multi-monitor: the display map opens with the ACTIVE screen pre-selected as
+    -- the default, so a single Enter decks it.
+    local dp = fake.openDisplayPicker()
+    ok(dp and dp.title == "Deck which screen?"
+        and #dp.displays == 2
+        and dp.preselect[1] == 2
+        and dp.displays[2].name == "Right",
+        "multi-monitor opens the map with the CURRENT display (Right) pre-selected")
+    ok(dp.displays[1].name == "Left",
+        "the map lists displays in screen order (Left, Right)")
+    dp.userConfirm(dp.preselect)   -- 'press Enter' on the pre-selected current display
     local wp = fake.openWindowPicker()
     ok(wp ~= nil and #wp.items == 2,
         "picking a screen leads to a window multi-select of only that screen's windows")

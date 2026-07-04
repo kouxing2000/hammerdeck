@@ -8,20 +8,21 @@
 // displays by clicking them (a green ring + corner check); `selectCount` sets how
 // many are needed to confirm.
 //
-// Reusable across features via `selectCount` + `preselect` + `confirmVerb`:
-//   * Window Snap "swap windows between displays": selectCount = 2, verb "Swap".
-//     The two are the swap pair -- either can be changed; the active display is
-//     merely a DEFAULT (passed LAST in `preselect` so it stays selected when the
-//     user clicks a new partner). There is no locked "current" -- pick any two.
-//   * A "which display?" pick (e.g. Window Deck's target): selectCount = 1, verb
-//     "Deck on"; clicking a new display replaces the selection.
+// Reusable across features via `selectCount` + `preselect` + `confirmVerb`, plus
+// an OPTIONAL secondary action (`extraLabel`) for a non-display choice a caller
+// needs to offer alongside the map:
+//   * Window Snap "swap windows between displays": selectCount = 2, verb "Swap",
+//     no extra. Pick any two; the active display is a sticky DEFAULT only.
+//   * Window Deck "deck which screen?": selectCount = 1, verb "Deck on", and an
+//     extra "Restore last deck (N)" button -- clicking a display decks it,
+//     clicking the extra restores the saved deck.
 //
 // Selection is FIFO-capped at `selectCount`: clicking a selected display
 // deselects it; clicking an unselected one adds it and drops the OLDEST when that
 // would exceed the cap (so the last-passed `preselect` entry is "sticky"). It
 // does NOT reuse ChooserPanel / WindowPickerPanel (text lists) -- the point here
-// is the spatial map, a custom-drawn NSView. onDone gets the 1-based selected
-// indices, or nil on cancel.
+// is the spatial map, a custom-drawn NSView. onDone reports how the session ended
+// (a pick, the extra action, or cancel).
 
 import AppKit
 
@@ -31,12 +32,20 @@ struct DisplayEntry {
     let windows: Int    // window count to show; < 0 = unknown (not drawn)
 }
 
+/// How a DisplayPickerPanel session ended.
+enum DisplayPickResult {
+    case picked([Int])   // 1-based selected display indices
+    case cancelled       // escape / click-away / Cancel
+    case extra           // the optional secondary action button
+}
+
 @MainActor
 final class DisplayPickerPanel: NSObject, NSWindowDelegate {
     private let panel: FloatingPanel
     private let titleLabel = NSTextField(labelWithString: "")
     private let promptLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "")
+    private let extraButton = NSButton()
     private let cancelButton = NSButton()
     private let confirmButton = NSButton()
     private let mapView: DisplayMapView
@@ -44,8 +53,9 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
     private let entries: [DisplayEntry]
     private let selectCount: Int
     private let confirmVerb: String
-    private var selected: [Int]             // 0-based, FIFO-ordered, capped at selectCount
-    private let onDone: ([Int]?) -> Void    // 1-based selection, or nil on cancel
+    private let extraLabel: String              // "" = no secondary action button
+    private var selected: [Int]                 // 0-based, FIFO-ordered, capped at selectCount
+    private let onDone: (DisplayPickResult) -> Void
 
     private var keyMonitor: Any?
     private var isClosing = false
@@ -55,13 +65,19 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
     private static let edgeInset: CGFloat = 20
     private static let footerBottomPad: CGFloat = 14
 
+    private var hasExtra: Bool { !extraLabel.isEmpty }
+
     /// - `preselect`: 1-based indices selected by default (deduped, clamped to
     ///   `selectCount`). Pass the display you want "sticky" LAST.
+    /// - `extraLabel`: when non-empty, adds a secondary action button; pressing it
+    ///   ends the session with `.extra`.
     init(title: String, prompt: String, entries: [DisplayEntry], preselect: [Int],
-         selectCount: Int, confirmVerb: String, onDone: @escaping ([Int]?) -> Void) {
+         selectCount: Int, confirmVerb: String, extraLabel: String,
+         onDone: @escaping (DisplayPickResult) -> Void) {
         self.entries = entries
         self.selectCount = max(1, selectCount)
         self.confirmVerb = confirmVerb
+        self.extraLabel = extraLabel
         self.onDone = onDone
         // Seed the selection from preselect: valid, deduped, keep the LAST N.
         var seed: [Int] = []
@@ -111,7 +127,18 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
         hintLabel.stringValue = selectCount == 1
             ? "click a display    \u{23CE}  confirm"
             : "click to change the pair    \u{23CE}  confirm"
+        hintLabel.isHidden = hasExtra   // the extra button takes the hint's left slot
         content.addSubview(hintLabel)
+
+        // Optional secondary action, far left (e.g. "Restore last deck"). Shown
+        // only when the caller passes a label; it replaces the keyboard hint.
+        if hasExtra {
+            extraButton.bezelStyle = .rounded
+            extraButton.title = extraLabel
+            extraButton.target = self
+            extraButton.action = #selector(extraClicked)
+            content.addSubview(extraButton)
+        }
 
         cancelButton.bezelStyle = .rounded
         cancelButton.title = "Cancel"
@@ -164,6 +191,7 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
     func debugToggle(_ oneBased: Int) { toggle(oneBased - 1) }
     func debugConfirm() { confirm() }
     func debugCancel() { cancel() }
+    func debugExtra() { extra() }
 
     // MARK: selection
 
@@ -220,15 +248,17 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
 
     @objc private func confirmClicked() { confirm() }
     @objc private func cancelClicked() { cancel() }
+    @objc private func extraClicked() { extra() }
 
     private func confirm() {
         guard selected.count == selectCount else { NSSound.beep(); return }
-        finish(selected.map { $0 + 1 })
+        finish(.picked(selected.map { $0 + 1 }))
     }
 
-    private func cancel() { finish(nil) }
+    private func cancel() { finish(.cancelled) }
+    private func extra() { guard hasExtra else { return }; finish(.extra) }
 
-    private func finish(_ result: [Int]?) {
+    private func finish(_ result: DisplayPickResult) {
         guard !isClosing else { return }
         isClosing = true
         removeKeys()
@@ -240,7 +270,7 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         guard !isClosing, panel.isVisible else { return }
-        finish(nil)
+        finish(.cancelled)
     }
 
     // MARK: layout
@@ -287,10 +317,16 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
         let cancelX = W - E - sw - 10 - cw
         cancelButton.frame = NSRect(x: cancelX, y: by, width: cw, height: bh)
 
-        // Clamp the hint so it can never run under the Cancel button (the overlap
-        // bug): it lives left of Cancel and truncates if there isn't room.
-        let hintW = max(0, cancelX - E - 10)
-        hintLabel.frame = NSRect(x: E, y: by + (bh - 15) / 2, width: hintW, height: 15)
+        // Left slot: the optional extra-action button, else the keyboard hint.
+        // Both are clamped to end before Cancel so they can never overlap it.
+        let leftAvail = max(0, cancelX - E - 10)
+        if hasExtra {
+            extraButton.sizeToFit()
+            let ew = min(leftAvail, max(120, extraButton.frame.width + 20))
+            extraButton.frame = NSRect(x: E, y: by, width: ew, height: bh)
+        } else {
+            hintLabel.frame = NSRect(x: E, y: by + (bh - 15) / 2, width: leftAvail, height: 15)
+        }
     }
 }
 

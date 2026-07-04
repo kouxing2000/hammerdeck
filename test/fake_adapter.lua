@@ -322,25 +322,27 @@ function adapter.askWindows(opts)
 end
 
 -- Spatial display picker (see adapter.pickDisplays). One-shot: frees itself on
--- confirm/cancel, mirroring the real DisplayPickerPanel. Test drivers:
--- userConfirm(indices) confirms the given 1-based selection, cancel() dismisses.
+-- confirm/cancel/extra, mirroring the real DisplayPickerPanel. Test drivers:
+-- userConfirm(indices) confirms the given 1-based selection, userExtra() presses
+-- the secondary-action button, cancel() dismisses.
 function adapter.pickDisplays(opts)
     local d = {
         displays = opts.displays or {}, preselect = opts.preselect or {},
-        selectCount = opts.selectCount or 1,
+        selectCount = opts.selectCount or 1, extraLabel = opts.extraLabel or "",
         title = opts.title, prompt = opts.prompt, confirmVerb = opts.confirmVerb,
-        onPick = opts.onPick, open = true, stopped = false,
+        onPick = opts.onPick, onExtra = opts.onExtra, open = true, stopped = false,
     }
     fake.displayPickers[#fake.displayPickers + 1] = d
     alloc()
-    local function finish(indices)
+    local function finish(fn, arg)
         if not d.open then return end
         d.open = false
         freeOnce(d)
-        if d.onPick then d.onPick(indices) end
+        if fn then fn(arg) end
     end
-    function d.userConfirm(indices) finish(indices) end
-    function d.cancel() finish(nil) end
+    function d.userConfirm(indices) finish(d.onPick, indices) end
+    function d.userExtra() finish(d.onExtra) end
+    function d.cancel() finish(d.onPick, nil) end
     return {
         stop = function() d.open = false; freeOnce(d) end,
     }
@@ -1201,6 +1203,13 @@ end
 function fake.openWindowPicker()
     for i = #fake.windowPickers, 1, -1 do
         if fake.windowPickers[i].open then return fake.windowPickers[i] end
+    end
+    return nil
+end
+
+function fake.openDisplayPicker()
+    for i = #fake.displayPickers, 1, -1 do
+        if fake.displayPickers[i].open then return fake.displayPickers[i] end
     end
     return nil
 end

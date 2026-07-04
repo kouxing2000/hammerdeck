@@ -2,8 +2,10 @@
 // shared FloatingPanel base and the rationale for our own panels).
 //
 // A click-through accent BORDER drawn around a window region. Window Deck rings
-// every deck member so membership is legible, in three styles (`kind`):
+// every deck member so membership is legible, in four styles (`kind`):
 //   member -- subtle: every deck window, so you see which are in the deck.
+//   focus  -- bold: the FOCUSED window in hero-off grid mode, so the active
+//             tiled window stands out without a zoom to signal it.
 //   hero   -- strong: the promoted window, so the active one stands out.
 //   ghost  -- faint dashed: left at the hero's home SLOT while it's lifted to
 //             centre, so you see where it drops back to.
@@ -210,6 +212,9 @@ private struct OutlineStyle {
     static func forKind(_ kind: String) -> OutlineStyle {
         switch kind {
         case "hero":  return OutlineStyle(width: 4, radius: 11, alpha: 1.0,  dashed: false)
+        // focus: a bold, fully-opaque ring at a member's slot -- twice the member
+        // weight so the focused tiled window reads at a glance (hero-off grid mode).
+        case "focus": return OutlineStyle(width: 4, radius: 10, alpha: 1.0,  dashed: false)
         case "ghost": return OutlineStyle(width: 2, radius: 10, alpha: 0.35, dashed: true)
         default:      return OutlineStyle(width: 2, radius: 10, alpha: 0.55, dashed: false)  // member
         }
