@@ -13,6 +13,17 @@
 
 local M = {}
 
+--- Direction tokens for `adjacentScreen`. A LuaLS value enum: annotated call
+--- sites get editor/CI diagnostics for any string outside it, and a typo'd
+--- FIELD (`W.DIR.PREVIOUS`) is nil, which the runtime assert rejects loudly.
+--- Born of a real bug: a stringly-typed "previous" never matched "prev" and
+--- silently fell through to "next", sending both bracket keys rightward.
+---@enum ScreenDir
+M.DIR = {
+    NEXT = "next",
+    PREV = "prev",
+}
+
 --- A screen-ratio rect: x/y offset and w/h size as fractions of the screen
 --- visible frame (the donor's positionWindow).
 ---@param s {x:number,y:number,w:number,h:number} screen visible frame
@@ -389,9 +400,13 @@ end
 --- (the original index, NOT the spatial slot).
 ---@param frames table[] rows from adapter.screenFrames()
 ---@param curIndex integer
----@param dir "next"|"prev"
+---@param dir ScreenDir
 ---@return table|nil frame, integer|nil index
 function M.adjacentScreen(frames, curIndex, dir)
+    -- Loud on a bad direction (see M.DIR): an unknown value silently stepping
+    -- "next" once sent BOTH bracket keys rightward.
+    assert(dir == M.DIR.NEXT or dir == M.DIR.PREV,
+        "adjacentScreen: dir must be 'next' or 'prev' (windows.DIR), got " .. tostring(dir))
     local n = frames and #frames or 0
     if n == 0 then return nil, nil end
     if n == 1 then return frames[1], 1 end

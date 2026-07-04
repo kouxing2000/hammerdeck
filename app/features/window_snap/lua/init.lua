@@ -68,6 +68,7 @@ local function arranger(ctx)
     -- Move to the adjacent screen (by index), rescaling the frame with the
     -- shared least-distortion geometry (windows.moveToScreen). The pointer is
     -- carried over at the same relative spot and flashed.
+    ---@param dir ScreenDir
     function a.moveScreen(dir)
         local f = focused()
         if not f then return end
@@ -171,12 +172,12 @@ return {
               .. "proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "]" },
           mnemonic = "Hyper+] — ] pushes forward to the next screen",
-          run = function(ctx) with(ctx).moveScreen("next") end },
+          run = function(ctx) with(ctx).moveScreen(W.DIR.NEXT) end },
         { id = "screen_prev", label = "To previous screen",
           description = "Throw the focused window to the previous screen, rescaling "
               .. "it proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "[" },
           mnemonic = "Hyper+[ — [ pushes back to the previous screen",
-          run = function(ctx) with(ctx).moveScreen("previous") end },
+          run = function(ctx) with(ctx).moveScreen(W.DIR.PREV) end },
     },
 }

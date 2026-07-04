@@ -2235,6 +2235,26 @@ lf = lastFrame()
 ok(lf.x == 0 and lf.y == 0 and lf.w == 1000 and lf.h == 800,
     "oversized throw clamps to the target screen")
 
+-- direction needs 3+ screens to be observable (with 2, next and prev both
+-- wrap to the other screen -- which is how a "previous" that never matched
+-- adjacentScreen's "prev" and fell through to next hid here): from the
+-- middle screen, ] must land right and [ must land left.
+do
+    local saved = fake.screenList
+    fake.screenList = {
+        { x = -800, y = 0, w = 800, h = 600 },   -- left
+        { x = 0, y = 0, w = 800, h = 600 },      -- middle (primary)
+        { x = 800, y = 0, w = 800, h = 600 },    -- right
+    }
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 2 }
+    fake.pressHotkey("]", AC)
+    ok(lastFrame().x >= 800, "] throws to the screen on the right")
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 2 }
+    fake.pressHotkey("[", AC)
+    ok(lastFrame().x < 0, "[ throws to the screen on the left")
+    fake.screenList = saved
+end
+
 -- thirds (the ported grid cell-placement: a 3-wide grid). Dormant actions with
 -- no trigger -> fire them via registry.runAction. Clean 1200-wide screen so the
 -- columns are integers. Scoped in a `do` block to keep its locals off the main
@@ -2451,6 +2471,12 @@ do
     local solo = W.adjacentScreen({ { x = 0, y = 0, w = 1, h = 1, name = "solo" } }, 1, "next")
     ok(solo and solo.name == "solo", "adjacentScreen on one screen re-centers on itself")
     ok(W.adjacentScreen({}, 1, "next") == nil, "adjacentScreen on no screens returns nil")
+
+    -- a direction outside W.DIR errors loudly instead of silently stepping
+    -- "next" (the '"previous"' bug class); a typo'd FIELD (W.DIR.PREVIOUS)
+    -- is nil and takes the same loud path.
+    ok(not pcall(W.adjacentScreen, scr, 1, "previous"), "adjacentScreen rejects a non-enum direction loudly")
+    ok(not pcall(W.adjacentScreen, scr, 1, W.DIR.PREVIOUS), "a typo'd DIR field is nil and rejected loudly")
 
     -- screenIndexAt: the frame containing the point, defaulting to 1 off-screen.
     ok(W.screenIndexAt(scr, 500, 400) == 3, "screenIndexAt returns the frame under the point (middle)")

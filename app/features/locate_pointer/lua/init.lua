@@ -74,7 +74,7 @@ return {
               -- (wraps), per the display arrangement -- see windows.adjacentScreen.
               local frames = ctx.screen.frames()
               local pos = ctx.mouse.position()
-              local f = W.adjacentScreen(frames, W.screenIndexAt(frames, pos.x, pos.y), "next")
+              local f = W.adjacentScreen(frames, W.screenIndexAt(frames, pos.x, pos.y), W.DIR.NEXT)
               if f then centerOn(ctx, f) end
           end },
     },

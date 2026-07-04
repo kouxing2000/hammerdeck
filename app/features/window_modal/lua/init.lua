@@ -100,7 +100,7 @@ local function arrangerFor(ctx)
             local target
             if dir == "next" then
                 -- physical left-to-right order, not NSScreen registration order.
-                target = W.adjacentScreen(screens, f.screenIndex, "next")
+                target = W.adjacentScreen(screens, f.screenIndex, W.DIR.NEXT)
             else
                 -- The nearest screen whose center lies in that direction.
                 local cx, cy = s.x + s.w / 2, s.y + s.h / 2
