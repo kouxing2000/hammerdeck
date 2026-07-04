@@ -1403,6 +1403,82 @@ final class IntegrationTests: XCTestCase {
                       "the synthesized chord (⌘⇧A then B) should run the action end to end")
     }
 
+    /// The sticky-modifier fix: a chord's follow key must fire whether or not the
+    /// user released the leader mods -- Hyper is a HELD combo, so "Hyper+M then M/C"
+    /// naturally keeps them down on the follow. Covers BOTH halves: a DIFFERENT
+    /// follow key held-leader (the sticky twin bound at the prefix mods) and the
+    /// SAME key as the prefix held-leader (prefixPressed advances vs re-arming).
+    func testChordStickyModifiersFollowLeaderHeld() throws {
+        try requireUITests()
+        try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
+            "this environment cannot deliver synthesized hotkeys (grant Accessibility to the terminal running `swift test`)")
+
+        host.store.setEnabled("plain_paste", true)
+        UserDefaults.standard.removeObject(forKey: "hammerdeck.opt.plain_paste.mode")
+
+        let pb = NSPasteboard.general
+        let saved = pb.string(forType: .string)
+        defer {
+            host.store.clearTrigger("plain_paste", "main")
+            host.store.setEnabled("plain_paste", false)
+            pb.clearContents()
+            if let saved { pb.setString(saved, forType: .string) }
+        }
+
+        let src = CGEventSource(stateID: .hidSystemState)
+        func key(_ code: Int, down: Bool, flags: CGEventFlags) {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(code), keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+        }
+        // Press ⌘⇧ and the prefix A, leaving ⌘⇧ STILL held down.
+        func armLeaderHeld() {
+            key(kVK_Command, down: true, flags: [.maskCommand])
+            key(kVK_Shift, down: true, flags: [.maskCommand, .maskShift])
+            key(kVK_ANSI_A, down: true, flags: [.maskCommand, .maskShift])
+            key(kVK_ANSI_A, down: false, flags: [.maskCommand, .maskShift])
+        }
+        func pressHeld(_ code: Int) {
+            key(code, down: true, flags: [.maskCommand, .maskShift])
+            key(code, down: false, flags: [.maskCommand, .maskShift])
+        }
+        func releaseLeader() {
+            key(kVK_Shift, down: false, flags: [.maskCommand])
+            key(kVK_Command, down: false, flags: [])
+        }
+        func chordRan() -> Bool {
+            for _ in 0..<16 {
+                pumpAppEvents(0.05)
+                if pb.string(forType: .string) == "padded text" { return true }
+            }
+            return false
+        }
+
+        // Half 1 -- DIFFERENT follow key, leader held (⌘⇧A then ⌘⇧B): the sticky
+        // twin bound at ⌘⇧+B fires the advance.
+        XCTAssertNil(host.store.setTrigger("plain_paste", "main",
+            TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["b"])))
+        pb.clearContents(); pb.setString("  padded text  ", forType: .string)
+        armLeaderHeld()
+        pumpAppEvents(0.4)                 // let arm() register the bare + sticky follow twins
+        pressHeld(kVK_ANSI_B)              // B with ⌘⇧ STILL held
+        releaseLeader()
+        XCTAssertTrue(chordRan(),
+            "a different follow key pressed leader-held (⌘⇧A then ⌘⇧B) still fires the chord")
+
+        // Half 2 -- SAME key as the prefix, leader held (⌘⇧A then ⌘⇧A): the exact
+        // re-press of the prefix combo advances (there is no follow twin for it).
+        XCTAssertNil(host.store.setTrigger("plain_paste", "main",
+            TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["a"])))
+        pb.clearContents(); pb.setString("  padded text  ", forType: .string)
+        armLeaderHeld()
+        pumpAppEvents(0.4)
+        pressHeld(kVK_ANSI_A)              // the SECOND ⌘⇧A = the follow key
+        releaseLeader()
+        XCTAssertTrue(chordRan(),
+            "the same key as the prefix pressed leader-held (⌘⇧A then ⌘⇧A) advances and fires")
+    }
+
     /// The park/restore primitive a modal's "sticky" keys use to SHADOW a
     /// standalone hotkey on their combo (e.g. window_grid's 2×2 mode shadowing a
     /// standalone "Hyper+1" while the mode is live, so a leader-held "1" lands the

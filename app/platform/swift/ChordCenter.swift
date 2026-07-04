@@ -81,7 +81,7 @@ final class ChordCenter {
         if idsByPrefix[prefix] == nil {
             guard let unbind = HotkeyCenter.shared.bind(
                 mods: prefix.mods, key: prefix.key,
-                handler: { ChordCenter.shared.arm(prefix) }) else { return nil }
+                handler: { ChordCenter.shared.prefixPressed(prefix) }) else { return nil }
             prefixUnbind[prefix] = unbind
             idsByPrefix[prefix] = []
         }
@@ -123,6 +123,24 @@ final class ChordCenter {
         scheduleHint()
     }
 
+    /// A press of a prefix combo. Normally (re-)arms the chord. BUT if that prefix
+    /// is ALREADY armed and its own key is the next follow -- the "Hyper+M then M"
+    /// case -- the user kept the leader (Hyper = a HELD combo) down, so this exact
+    /// re-press IS the follow key: advance rather than reset. Without this, a chord
+    /// whose follow equals its prefix key could never be typed leader-held (the
+    /// second press just re-armed to the start). The sibling half -- a follow key
+    /// DIFFERENT from the prefix key, pressed leader-held -- is the sticky twin in
+    /// registerLevel().
+    private func prefixPressed(_ prefix: Prefix) {
+        if armedPrefix == prefix,
+           armedCandidates.contains(where: {
+               armedPos < $0.follows.count && $0.follows[armedPos] == prefix.key }) {
+            advance(prefix.key)
+            return
+        }
+        arm(prefix)
+    }
+
     /// Register the distinct follow keys live at the current position, plus
     /// Escape (always cancels). Each fires advance(key)/disarm on the main loop.
     private func registerLevel() {
@@ -130,8 +148,22 @@ final class ChordCenter {
         for c in armedCandidates where armedPos < c.follows.count {
             keys.insert(c.follows[armedPos])
         }
+        // The leader (e.g. Hyper = ⌘⌥⌃) is a HELD combo, so a user typing
+        // "Hyper+M then C" naturally keeps Hyper down on the C. Bind each follow
+        // key BARE *and* -- for keys other than the prefix key -- at the still-held
+        // prefix mods (the "sticky twin", mirroring modal.lua's stickyMods), so the
+        // chord fires whether or not the leader was released. The prefix KEY is
+        // excepted: its sticky combo IS the prefix hotkey, so that same-key case is
+        // handled in prefixPressed (advance vs re-arm). A sticky combo already
+        // taken by a global just fails to register -- the bare key still works.
+        let sticky = armedPrefix?.mods ?? []
         for k in keys {
             if let unbind = HotkeyCenter.shared.bind(mods: [], key: k,
+                handler: { ChordCenter.shared.advance(k) }) {
+                armedUnbinds.append(unbind)
+            }
+            if !sticky.isEmpty, k != armedPrefix?.key,
+               let unbind = HotkeyCenter.shared.bind(mods: sticky, key: k,
                 handler: { ChordCenter.shared.advance(k) }) {
                 armedUnbinds.append(unbind)
             }
