@@ -274,6 +274,7 @@ function adapter.askChoice(opts)
 end
 
 fake.windowPickers = {}   -- see adapter.askWindows
+fake.displayPickers = {}  -- see adapter.pickDisplays
 
 -- One-shot multi-select picker (Window Deck's entry). Records the items + min +
 -- palette, and exposes drivers: confirm(indices|nil) keeps those 1-based rows
@@ -315,6 +316,31 @@ function adapter.askWindows(opts)
     function d.recolor(i, hex)
         if d.items[i] then d.items[i].color = hex end
     end
+    return {
+        stop = function() d.open = false; freeOnce(d) end,
+    }
+end
+
+-- Spatial display picker (see adapter.pickDisplays). One-shot: frees itself on
+-- confirm/cancel, mirroring the real DisplayPickerPanel. Test drivers:
+-- userConfirm(indices) confirms the given 1-based selection, cancel() dismisses.
+function adapter.pickDisplays(opts)
+    local d = {
+        displays = opts.displays or {}, preselect = opts.preselect or {},
+        selectCount = opts.selectCount or 1,
+        title = opts.title, prompt = opts.prompt, confirmVerb = opts.confirmVerb,
+        onPick = opts.onPick, open = true, stopped = false,
+    }
+    fake.displayPickers[#fake.displayPickers + 1] = d
+    alloc()
+    local function finish(indices)
+        if not d.open then return end
+        d.open = false
+        freeOnce(d)
+        if d.onPick then d.onPick(indices) end
+    end
+    function d.userConfirm(indices) finish(indices) end
+    function d.cancel() finish(nil) end
     return {
         stop = function() d.open = false; freeOnce(d) end,
     }

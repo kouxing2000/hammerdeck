@@ -10,6 +10,10 @@
   "action.center.description": "将鼠标指针移动到聚焦窗口的中心, 然后闪现定位器.",
   "action.center.mnemonic": "C 代表居中 (相同的 Hyper+M 前缀)",
 
+  "action.center_active_screen.label": "将指针居中到当前屏幕",
+  "action.center_active_screen.description": "将鼠标指针移动到你正在使用的屏幕的中心 -- 聚焦窗口所在的屏幕, 无聚焦时则为指针所在的屏幕 -- 然后闪现定位器.",
+  "action.center_active_screen.mnemonic": "A 代表当前屏幕 (相同的 Hyper+M 前缀)",
+
   "action.center_screen.label": "将指针居中到主屏幕",
   "action.center_screen.description": "将鼠标指针移动到主屏幕的中心, 然后闪现定位器.",
   "action.center_screen.mnemonic": "S 代表屏幕 (相同的 Hyper+M 前缀)",

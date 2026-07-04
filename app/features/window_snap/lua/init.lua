@@ -2,8 +2,9 @@
 --
 -- Arrange the focused window (ported from myHammerSpoon
 -- modules/window/windowManagement.lua): snap to screen halves, toggle
--- maximize <-> centered 75%, and throw to the next/previous screen with
--- proportional rescaling + the mouse pointer carried along.
+-- maximize <-> centered 75%, throw to the next/previous screen with
+-- proportional rescaling + the mouse pointer carried along, and swap ALL
+-- windows between the two displays.
 --
 -- MULTI-ACTION feature: each arrangement is its own independently rebindable
 -- action (the donor's seven hotkeys). Fullscreen windows are taken out of
@@ -104,6 +105,138 @@ local function arranger(ctx)
         ctx.mouse.locate(2)
     end
 
+    -- Swap EVERY window between two displays: all windows on one move to the
+    -- other and vice versa, each rescaled with the same least-distortion geometry
+    -- as the single-window throw (windows.moveToScreen). Distinct from moveScreen:
+    -- it operates on the whole window LIST, not just the focused one.
+    --
+    -- Uses the batch placement primitive (ctx.window.setFrameFor) on purpose: it
+    -- sets each frame WITHOUT raising or activating the window and WITHOUT moving
+    -- the pointer -- a multi-window layout must never fight z-order or yank the
+    -- cursor (the Z-order hard constraint; see CLAUDE.md -- window_deck and the
+    -- rules-engine layout effect follow the same rule). Minimized/fullscreen
+    -- windows, and windows on any OTHER display, are left untouched.
+    local function swapBetween(frames, iA, iB)
+        local A, B = frames[iA], frames[iB]
+        -- Guard the indices against the CURRENT frames: the picker is async, so a
+        -- display may have been unplugged/rearranged while it was open, leaving a
+        -- picked index dangling. Abort rather than index a nil screen rect.
+        if not A or not B then return end
+        -- One snapshot: ids stay valid (no re-list mid-batch) and each window's
+        -- target is computed from its captured frame BEFORE its own move.
+        local wins = ctx.window.list()
+        local moved = 0
+        for _, w in ipairs(wins) do
+            if not (w.minimized or w.fullscreen) then
+                local idx = W.screenIndexAt(frames, w.x + w.w / 2, w.y + w.h / 2)
+                local src, dst
+                if idx == iA then src, dst = A, B
+                elseif idx == iB then src, dst = B, A end
+                if src then
+                    ctx.window.setFrameFor(w.id, W.moveToScreen(w, src, dst))
+                    moved = moved + 1
+                end
+            end
+        end
+        ctx.log(string.format(
+            "window_snap: swap displays -- moved %d window(s) between %s and %s",
+            moved, A.name or ("#" .. iA), B.name or ("#" .. iB)))
+    end
+
+    -- Per-display window counts (skipping minimized/fullscreen, matching what the
+    -- swap will actually move) so the picker can show "N windows" on each display.
+    local function displaysWithCounts(frames)
+        local counts = {}
+        for i = 1, #frames do counts[i] = 0 end
+        for _, w in ipairs(ctx.window.list()) do
+            if not (w.minimized or w.fullscreen) then
+                local idx = W.screenIndexAt(frames, w.x + w.w / 2, w.y + w.h / 2)
+                counts[idx] = (counts[idx] or 0) + 1
+            end
+        end
+        local out = {}
+        for i, s in ipairs(frames) do
+            out[i] = { x = s.x, y = s.y, w = s.w, h = s.h, name = s.name, windows = counts[i] }
+        end
+        return out
+    end
+
+    -- The spatial display picker for the 3+-display case: the user picks the TWO
+    -- displays to swap off a map. The active display is a DEFAULT only (passed
+    -- LAST in `preselect` so it stays selected when the user clicks a new partner);
+    -- either side is freely changeable -- there is no locked "current". One-shot +
+    -- scope-tracked, so nothing to memoize or tear down here. cb gets {a, b}.
+    local function pickPair(frames, activeIdx, cb)
+        -- default the other side to the display spatially next to the active one
+        local _, nextIdx = W.adjacentScreen(frames, activeIdx, W.DIR.NEXT)
+        local other = (nextIdx and nextIdx ~= activeIdx) and nextIdx or nil
+        if not other then
+            for i = 1, #frames do if i ~= activeIdx then other = i; break end end
+        end
+        ctx.screen.pickDisplay {
+            displays    = displaysWithCounts(frames),
+            preselect   = other and { other, activeIdx } or { activeIdx },
+            selectCount = 2,
+            title       = ctx.t("swap.pickTitle", "Swap which two displays?"),
+            prompt      = ctx.t("swap.pickPrompt",
+                "Pick the two displays to swap. Your current one is selected by default -- change either."),
+            confirmVerb = ctx.t("swap.pickVerb", "Swap"),
+            onPick      = function(pair)
+                if pair and pair[1] and pair[2] then cb(pair[1], pair[2]) end
+            end,
+        }
+    end
+
+    -- Swap the windows of the ACTIVE display (the one the user is on) with those
+    -- of another. Per the design: the active display is ALWAYS one side of the
+    -- swap. With exactly two displays there is nothing to choose, so it swaps
+    -- immediately; with three or more it first asks which OTHER display to use.
+    function a.swapScreens()
+        local frames = ctx.screen.frames()
+        if #frames < 2 then
+            ctx.alert(ctx.t("alert.oneScreen", "Only one screen"))
+            return
+        end
+        -- Needs Accessibility to read/move windows. Onboard like the other actions
+        -- (which route through W.focusedOrAlert) instead of silently no-op'ing --
+        -- without the grant ctx.window.list() is empty, so this would move nothing
+        -- and (on 3+ displays) open a picker showing "0 windows" everywhere.
+        if not ctx.axTrusted() then
+            ctx.axPrompt()
+            ctx.alert(string.format(
+                ctx.t("window.axRequired",
+                    "%s needs the Accessibility permission -- grant %s in System Settings, then try again"),
+                "Window Arrange", ctx.appName))
+            return
+        end
+        -- The active display: the focused window's screen, else the pointer's,
+        -- else the main screen (screenIndexAt defaults to 1 off every screen).
+        local activeIdx
+        local wf = ctx.window.frame()
+        if wf and wf.screenIndex then
+            activeIdx = wf.screenIndex
+        else
+            local m = ctx.mouse.position()
+            activeIdx = W.screenIndexAt(frames, m.x, m.y)
+        end
+
+        local others = {}
+        for i = 1, #frames do
+            if i ~= activeIdx then others[#others + 1] = i end
+        end
+
+        if #others == 1 then
+            swapBetween(frames, activeIdx, others[1])
+        else
+            pickPair(frames, activeIdx, function(ia, ib)
+                -- Re-fetch the screen rects: the picker is async, so the display
+                -- arrangement may have changed while it was open. swapBetween
+                -- bounds-guards the picked indices against the current frames.
+                swapBetween(ctx.screen.frames(), ia, ib)
+            end)
+        end
+    end
+
     return a
 end
 
@@ -180,5 +313,16 @@ return {
           defaultTrigger = { type = "hotkey", mods = MODS, key = "[" },
           mnemonic = "Hyper+[ — [ pushes back to the previous screen",
           run = function(ctx) with(ctx).moveScreen(W.DIR.PREV) end },
+
+        -- Swap the whole layout across the two displays. No default trigger (like
+        -- the thirds): a swap-all is a deliberate, occasional action, not worth
+        -- grabbing another global hotkey for uninvited -- fire it from the menubar
+        -- or bind any key/chord in Settings.
+        { id = "swap_screens", label = "Swap windows between displays",
+          description = "Swap the windows of the display you are on with another "
+              .. "display's -- everything on each moves to the other, rescaled "
+              .. "proportionally. On three or more displays it first asks which "
+              .. "one. Minimized and fullscreen windows stay put.",
+          run = function(ctx) with(ctx).swapScreens() end },
     },
 }

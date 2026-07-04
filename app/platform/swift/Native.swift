@@ -25,6 +25,7 @@ final class Native {
     var windowModeHUDs: [Int32: WindowModeHUDPanel] = [:]
     var choosers: [Int32: ChooserPanel] = [:]
     var windowPickers: [Int32: WindowPickerPanel] = [:]
+    var displayPickers: [Int32: DisplayPickerPanel] = [:]
     var outlines: [Int32: OutlinePanel] = [:]
     var scrims: [Int32: ScrimPanel] = [:]
     var deckWidgets: [Int32: DeckWidgetPanel] = [:]
@@ -61,6 +62,7 @@ final class Native {
         windowModeHUDs[id] = nil
         choosers[id] = nil
         windowPickers[id] = nil
+        displayPickers[id] = nil
         outlines[id] = nil
         scrims[id] = nil
         deckWidgets[id] = nil
@@ -121,6 +123,7 @@ final class Native {
             "chooser_set_selected_row": { L in MainActor.assumeIsolated { Native.shared.chooserSetSelectedRow(L) } },
             "chooser_select": { L in MainActor.assumeIsolated { Native.shared.chooserSelect(L) } },
             "ask_choice":   { L in MainActor.assumeIsolated { Native.shared.askChoice(L) } },
+            "display_picker": { L in MainActor.assumeIsolated { Native.shared.displayPicker(L) } },
             "ask_windows":  { L in MainActor.assumeIsolated { Native.shared.askWindows(L) } },
             "ask_text":     { L in MainActor.assumeIsolated { Native.shared.askText(L) } },
             "ask_text_dismiss": { L in MainActor.assumeIsolated { Native.shared.askTextDismiss(L) } },

@@ -998,6 +998,50 @@ final class IntegrationTests: XCTestCase {
     }
     #endif
 
+    #if DEBUG
+    // The spatial display picker (DisplayPickerPanel) drives a real NSPanel, but
+    // its seam wiring -- pin the onPick ref, register the panel, then release BOTH
+    // when the one-shot completes -- is only observable on the REAL bridge (the
+    // same leak class the deck-chrome test guards). Also drives the panel's
+    // selection + confirm and asserts the pick flows back through the seam to Lua.
+    func testDisplayPickerRegistersDrivesAndReleases() throws {
+        try requireUITests()   // creates a real always-front NSPanel
+        let lua = host.lua
+        let baseRefs = lua.pinnedRefCount
+        let basePickers = Native.shared.displayPickers.count
+        eval("""
+        _G.itDPpick = nil
+        _G.itDP = require('platform.adapter').pickDisplays({
+            displays = {
+                {x=0,    y=0, w=1440, h=900,  name='Built-in', windows=2},
+                {x=1440, y=0, w=2560, h=1440, name='DELL',     windows=1},
+                {x=4000, y=0, w=2560, h=1440, name='LG',       windows=0},
+            },
+            preselect = {1, 2}, selectCount = 2, title='Swap', prompt='p', confirmVerb='Swap',
+            onPick = function(sel) _G.itDPpick = sel end,
+        }); return true
+        """)
+        XCTAssertEqual(lua.pinnedRefCount, baseRefs + 1, "the picker pins its onPick callback")
+        XCTAssertEqual(Native.shared.displayPickers.count, basePickers + 1, "and registers one panel")
+
+        let panel = Native.shared.displayPickers.values.first
+        XCTAssertEqual(panel?.selectedOneBased, [1, 2], "preselect seeds the two selected displays")
+        XCTAssertEqual(panel?.displayCount, 3, "all displays are handed to the map")
+        // Change the pair off the map: deselect Built-in, select LG -> {2, 3}.
+        panel?.debugToggle(1)
+        panel?.debugToggle(3)
+        panel?.debugConfirm()
+        XCTAssertEqual(
+            eval("return _G.itDPpick and #_G.itDPpick == 2 and _G.itDPpick[1] == 2 and _G.itDPpick[2] == 3")
+                as? Bool, true,
+            "confirming returns the chosen pair {2,3} to the Lua onPick")
+        XCTAssertEqual(Native.shared.displayPickers.count, basePickers,
+                       "the one-shot frees its panel dict entry on confirm")
+        XCTAssertEqual(lua.pinnedRefCount, baseRefs, "and releases the pinned callback ref")
+        eval("_G.itDP = nil; _G.itDPpick = nil; return true")
+    }
+    #endif
+
     func testDataDirAndAppTrackingBridge() {
         let dir = eval("return require('platform.adapter').dataDir()") as? String
         XCTAssertEqual(dir?.hasSuffix("Application Support/Hammerdeck"), true)

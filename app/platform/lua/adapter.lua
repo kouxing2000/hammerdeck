@@ -307,6 +307,32 @@ function adapter.askWindows(opts)
     }
 end
 
+-- One-shot SPATIAL display picker (DisplayPickerPanel): draws every display at
+-- its real relative position (name + resolution + window count) and returns the
+-- displays the user selects. Reusable across features (Window Snap's swap picks
+-- 2; a "which display?" pick like Window Deck's target picks 1). opts:
+--   displays    = { {x,y,w,h,name,windows}, ... } -- e.g. ctx.screen.frames()
+--                 rows, each optionally tagged with a `windows` count to show
+--   preselect   = { idx, ... } 1-based defaults; pass the "sticky" one LAST (it
+--                 survives when the user clicks a new pick -- e.g. the active
+--                 display for a swap)
+--   selectCount = how many displays must be picked to confirm (default 1)
+--   title       = header text
+--   prompt      = one/two-line explanation under the title
+--   confirmVerb = the confirm button's verb, e.g. "Swap" / "Deck on"
+--   onPick(indices|nil) -- the chosen displays' 1-based indices (array), or nil
+-- Returns a handle with .stop() (a one-shot: it frees itself on pick/cancel).
+function adapter.pickDisplays(opts)
+    return handleFor(native.display_picker(
+        opts.displays or {},
+        opts.preselect or {},
+        opts.selectCount or 1,
+        opts.title or "",
+        opts.prompt or "",
+        opts.confirmVerb or "Select",
+        function(indices) if opts.onPick then opts.onPick(indices) end end))
+end
+
 -- Full-width banner overlay along a screen's top edge. `screenFrame`
 -- (optional, a {x,y,w,h} top-left-global rect -- e.g. a ctx.screen.frames()
 -- row) pins the banner to THAT screen; without it the banner falls to the

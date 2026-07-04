@@ -15,10 +15,12 @@
 -- defaults and are rebindable like everything else. The locate action keeps id
 -- "main" (the single-action sugar's id) so an existing custom hotkey survives.
 --
--- The two "Center pointer on ... screen" actions are the worthwhile half of the
--- old mouseUtils.lua (the rest -- a console coords printer and an HS-Lua region
--- picker -- were authoring aids with no place here). They live alongside the
--- window-center action because all three end in a locate ripple.
+-- The two "Center pointer on <main/next> screen" actions are the worthwhile half
+-- of the old mouseUtils.lua (the rest -- a console coords printer and an HS-Lua
+-- region picker -- were authoring aids with no place here). "Center pointer on
+-- active screen" (the screen holding the focused window) is a later sibling for
+-- "yank my cursor to the display I am working on". They live alongside the
+-- window-center action because all end in a locate ripple.
 
 local W = require("platform.windows")
 
@@ -53,6 +55,27 @@ return {
           mnemonic = "C for Center (same Hyper+M prefix)",
           run = function(ctx)
               local f = ctx.window.frame() or ctx.screen.frames()[1]
+              if f then centerOn(ctx, f) end
+          end },
+        { id = "center_active_screen", label = "Center pointer on active screen",
+          description = "Warp the mouse pointer to the center of the screen you are "
+              .. "working on -- the focused window's screen, or the screen under the "
+              .. "pointer when nothing is focused -- then flash the locator.",
+          defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "a" } },
+          mnemonic = "A for Active screen (same Hyper+M prefix)",
+          run = function(ctx)
+              -- The screen you are working on: the focused window's screen, else
+              -- the screen under the pointer (never a surprise jump to a display
+              -- you are not near). Same "active display" resolution window_snap uses.
+              local wf = ctx.window.frame()
+              local f
+              if wf and wf.screen then
+                  f = wf.screen
+              else
+                  local frames = ctx.screen.frames()
+                  local pos = ctx.mouse.position()
+                  f = frames[W.screenIndexAt(frames, pos.x, pos.y)]
+              end
               if f then centerOn(ctx, f) end
           end },
         { id = "center_screen", label = "Center pointer on main screen",

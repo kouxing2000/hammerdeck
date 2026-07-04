@@ -226,6 +226,19 @@ final class LuaState {
         return out
     }
 
+    /// Read a Lua array of integers at `index` (e.g. a set of 1-based indices).
+    static func intArray(_ L: OpaquePointer?, _ index: Int32) -> [Int] {
+        guard lua_type(L, index) == LUA_TTABLE else { return [] }
+        var out: [Int] = []
+        let n = lua_rawlen(L, index)
+        for i in 1...max(n, 1) where n > 0 {
+            lua_rawgeti(L, index, lua_Integer(i))
+            if let v = int(L, -1) { out.append(v) }
+            lua_settop(L, -2)
+        }
+        return out
+    }
+
     /// Read a Lua array of tables with string/number/bool fields at `index`.
     static func dictArray(_ L: OpaquePointer?, _ index: Int32) -> [[String: Any]] {
         guard lua_type(L, index) == LUA_TTABLE else { return [] }

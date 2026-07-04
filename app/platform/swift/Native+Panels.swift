@@ -333,6 +333,76 @@ extension Native {
         return 1
     }
 
+    // MARK: - display_picker (one-shot spatial display picker, DisplayPickerPanel)
+    //
+    // Args: (1) displays = array of {x,y,w,h,name,windows} top-left global frames;
+    // (2) preselect = array of 1-based default-selected indices (last = "sticky");
+    // (3) selectCount = how many displays to pick; (4) title; (5) prompt;
+    // (6) confirmVerb (e.g. "Swap" / "Deck on"); (7) callback(indices|nil) -- the
+    // 1-based selected displays as an array, or nil on cancel.
+    func displayPicker(_ L: OpaquePointer?) -> Int32 {
+        let items = LuaState.dictArray(L, 1)
+        let preselect = LuaState.intArray(L, 2)
+        let selectCount = LuaState.int(L, 3) ?? 1
+        let title = LuaState.string(L, 4) ?? ""
+        let prompt = LuaState.string(L, 5) ?? ""
+        let confirmVerb = LuaState.string(L, 6) ?? "Select"
+        let ref = lua.makeRef(at: 7)
+
+        let entries = items.map { d -> DisplayEntry in
+            DisplayEntry(frame: CGRect(x: d["x"] as? Double ?? 0, y: d["y"] as? Double ?? 0,
+                                       width: d["w"] as? Double ?? 0, height: d["h"] as? Double ?? 0),
+                         name: d["name"] as? String ?? "",
+                         windows: (d["windows"] as? Double).map { Int($0) } ?? -1)
+        }
+
+        // Center on the "sticky" preselected display (last entry -- e.g. the active
+        // screen), converting top-left global to AppKit bottom-left, so the picker
+        // opens where the user is.
+        var screen: NSRect?
+        if let anchor = preselect.last, anchor >= 1, anchor <= entries.count {
+            let fr = entries[anchor - 1].frame
+            let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
+            screen = NSRect(x: fr.minX, y: primaryMaxY - (fr.minY + fr.height),
+                            width: fr.width, height: fr.height)
+        }
+
+        let id = allocId()
+        var done = false
+        let panel = DisplayPickerPanel(title: title, prompt: prompt, entries: entries,
+                                       preselect: preselect, selectCount: selectCount,
+                                       confirmVerb: confirmVerb) { picked in
+            guard !done else { return }
+            done = true
+            Native.shared.lua.callRef(ref) { L in
+                guard let picked else { lua_pushnil(L); return 1 }
+                lua_createtable(L, Int32(picked.count), 0)
+                for (i, idx) in picked.enumerated() {
+                    lua_pushinteger(L, lua_Integer(idx))
+                    lua_rawseti(L, -2, lua_Integer(i + 1))
+                }
+                return 1
+            }
+            Native.shared.lua.releaseRef(ref)
+            Native.shared.freeResource(id)
+        }
+        panel.show(on: screen)
+
+        // Deferred close: as with askWindows, this canceller commonly fires FROM
+        // the panel's own completion (the one-shot's onPick calls stop()), so the
+        // close is deferred one runloop turn to keep the closure alive past finish().
+        cancellers[id] = {
+            if !done {
+                done = true
+                Native.shared.lua.releaseRef(ref)
+            }
+            DispatchQueue.main.async { panel.close() }
+        }
+        displayPickers[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
     // MARK: - askText (one-shot text prompt)
 
     func askText(_ L: OpaquePointer?) -> Int32 {

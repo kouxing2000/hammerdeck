@@ -1433,6 +1433,18 @@ ok(fake.mousePos.x == 720 and fake.mousePos.y == 450, "Hyper+M N wraps from the 
 fake.mousePos = { x = 2000, y = 100 }   -- pointer parked on DELL
 fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "s" })
 ok(fake.mousePos.x == 720 and fake.mousePos.y == 450, "Hyper+M S centers the pointer on the main screen")
+-- active screen (Hyper+M A) = the screen holding the focused window; falls back
+-- to the main screen when nothing is focused.
+fake.focusedWindow = { x = 1500, y = 100, w = 400, h = 300, screenIndex = 2 }  -- on DELL
+fake.mousePos = { x = 10, y = 10 }
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "a" })
+ok(fake.mousePos.x == 2720 and fake.mousePos.y == 720,
+    "Hyper+M A centers the pointer on the active window's screen (DELL)")
+fake.focusedWindow = nil
+fake.mousePos = { x = 2000, y = 100 }   -- pointer parked on DELL
+fake.fireChord({ "cmd", "alt", "ctrl" }, "m", { "a" })
+ok(fake.mousePos.x == 2720 and fake.mousePos.y == 720,
+    "Hyper+M A falls back to the pointer's screen (DELL) when nothing is focused")
 fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1 } }
 registry.setEnabled("locate_pointer", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after locate_pointer test")
@@ -2296,6 +2308,107 @@ do
     ok(lf.x == 0 and lf.w == 800, "left two-thirds spans the first two columns")
     lf = third("right_two_thirds")
     ok(lf.x == 400 and lf.w == 800, "right two-thirds spans the last two columns")
+end
+
+-- swap the ACTIVE display's windows with another (no trigger -> runAction). Two
+-- displays: no choice to make, so it swaps immediately. Focus is on screen 1
+-- (activeIdx=1); each live window lands on the OTHER screen, rescaled; minimized
+-- and fullscreen windows are skipped.
+do
+    fake.screenList = {
+        { x = 0,    y = 0, w = 1000, h = 800 },      -- A (primary)
+        { x = 1000, y = 0, w = 2000, h = 1200 },     -- B (bigger)
+    }
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 } -- active = A
+    fake.windows = {
+        { id = 11, x = 100,  y = 100, w = 400, h = 300 },                    -- on A: moves
+        { id = 12, x = 1200, y = 150, w = 600, h = 450 },                    -- on B: moves
+        { id = 13, x = 200,  y = 200, w = 100, h = 100, minimized = true },  -- A, minimized: skip
+        { id = 14, x = 1300, y = 100, w = 200, h = 200, fullscreen = true }, -- B, fullscreen: skip
+    }
+    fake.windowFrameSets = {}
+    assert(registry.runAction("window_snap", "swap_screens"))
+    local byId = {}
+    for _, s in ipairs(fake.windowFrameSets) do byId[s.id] = s end
+    ok(byId[11] and byId[12], "two displays swap immediately (no picker)")
+    ok(not byId[13] and not byId[14], "minimized and fullscreen windows are skipped")
+    -- w11 A->B: sx=2, sy=1.5; 1.5 is nearer 1 -> scale 1.5. 400x300 -> 600x450.
+    -- pos: 1000+100*2=1200, 0+100*1.5=150.
+    ok(byId[11].x == 1200 and byId[11].y == 150 and byId[11].w == 600 and byId[11].h == 450,
+        "window on A lands on B, rescaled by the least-distortion axis")
+    -- w12 B->A: sx=0.5, sy=2/3; 2/3 nearer 1 -> scale 2/3. 600x450 -> 400x300.
+    -- pos: 0+(1200-1000)*0.5=100, 0+150*(2/3)=100.
+    ok(byId[12].x == 100 and byId[12].y == 100 and byId[12].w == 400 and byId[12].h == 300,
+        "window on B lands on A, rescaled back")
+end
+-- three displays: NO auto-swap -- the spatial picker opens to pick ANY two
+-- displays (the active one is only the sticky DEFAULT, passed LAST in preselect;
+-- no locked "current"). Each display carries its window count. Equal-size screens
+-- keep the geometry trivial (scale 1, +/-1000 shift).
+do
+    fake.screenList = {
+        { x = 0,    y = 0, w = 1000, h = 800, name = "Left"   },
+        { x = 1000, y = 0, w = 1000, h = 800, name = "Middle" },
+        { x = 2000, y = 0, w = 1000, h = 800, name = "Right"  },
+    }
+    fake.focusedWindow = { x = 1100, y = 100, w = 200, h = 150, screenIndex = 2 } -- active = Middle
+    fake.windows = {
+        { id = 41, x = 100,  y = 100, w = 200, h = 150 },   -- Left   (1 window)
+        { id = 42, x = 1100, y = 100, w = 200, h = 150 },   -- Middle
+        { id = 43, x = 2100, y = 200, w = 300, h = 200 },   -- Right  (1 window)
+        { id = 44, x = 1200, y = 300, w = 200, h = 150 },   -- Middle (2nd -> count 2)
+    }
+    fake.windowFrameSets = {}
+    local nPickers = #fake.displayPickers
+    assert(registry.runAction("window_snap", "swap_screens"))
+    ok(#fake.windowFrameSets == 0, "3 displays: nothing moves until the user confirms")
+    ok(#fake.displayPickers == nPickers + 1, "3 displays: the spatial display picker opens")
+    local dp = fake.displayPickers[#fake.displayPickers]
+    ok(dp.selectCount == 2, "picker asks for a pair (selectCount 2)")
+    ok(#dp.preselect == 2 and dp.preselect[#dp.preselect] == 2,
+        "the active display (Middle) is the sticky default -- passed LAST in preselect")
+    ok(#dp.displays == 3, "the whole arrangement is drawn")
+    ok(dp.displays[1].windows == 1 and dp.displays[2].windows == 2 and dp.displays[3].windows == 1,
+        "each display carries its (minimized/fullscreen-excluded) window count")
+    -- the user is free to pick ANY two -- confirm Left + Right (neither is active)
+    dp.userConfirm({ 1, 3 })
+    local byId = {}
+    for _, s in ipairs(fake.windowFrameSets) do byId[s.id] = s end
+    ok(not byId[42] and not byId[44], "windows on the un-chosen display (Middle) are left alone")
+    ok(byId[41] and byId[41].x == 2100 and byId[41].y == 100 and byId[41].w == 200 and byId[41].h == 150,
+        "a window on the first picked display (Left) moves to the second (Right)")
+    ok(byId[43] and byId[43].x == 100 and byId[43].y == 200 and byId[43].w == 300 and byId[43].h == 200,
+        "a window on the second picked display (Right) moves to the first (Left)")
+end
+-- one display -> alerts, moves nothing, no picker
+do
+    fake.screenList = { { x = 0, y = 0, w = 1000, h = 800 } }
+    fake.focusedWindow = nil
+    fake.windows = { { id = 31, x = 10, y = 10, w = 100, h = 100 } }
+    fake.windowFrameSets = {}
+    local before, nPickers = #fake.alerts, #fake.displayPickers
+    assert(registry.runAction("window_snap", "swap_screens"))
+    ok(#fake.windowFrameSets == 0 and #fake.alerts > before and #fake.displayPickers == nPickers,
+        "swap with one display alerts, moves nothing, opens no picker")
+    fake.windows = {}
+end
+-- swap without Accessibility: onboard (prompt + alert), don't silently no-op or
+-- open a picker full of "0 windows" displays.
+do
+    fake.screenList = {
+        { x = 0, y = 0, w = 1000, h = 800 },
+        { x = 1000, y = 0, w = 2000, h = 1200 },
+    }
+    fake.focusedWindow = nil
+    fake.windows = { { id = 61, x = 100, y = 100, w = 200, h = 150 } }
+    fake.windowFrameSets = {}
+    fake.axTrusted = false
+    local before, nPickers = #fake.alerts, #fake.displayPickers
+    assert(registry.runAction("window_snap", "swap_screens"))
+    ok(#fake.windowFrameSets == 0 and #fake.alerts > before and #fake.displayPickers == nPickers,
+        "swap without Accessibility onboards (alert), moves nothing, opens no picker")
+    fake.axTrusted = true
+    fake.windows = {}
 end
 
 -- no focused window -> plain alert (trusted)
