@@ -115,6 +115,31 @@ function M.gridCellToFrame(s, dims, cell, margin)
     }
 end
 
+--- Orientation-aware grid shape for placing ONE window among `n` equal cells:
+--- the most balanced factor pair of `n`, with the LARGER factor on the screen's
+--- LONGER axis. So n=6 -> 3x2 (three columns) on a landscape display, 2x3 on a
+--- portrait one; n=4 -> 2x2 either way (square, so aspect is moot). Distinct from
+--- `gridDims` below, which is the DECK's window-count tiling (always wide-biased);
+--- this one FOLLOWS the screen the window lives on, for Window Grid's per-window
+--- cell placement where a non-square cell count (6) should split by aspect.
+--- Pure: only the screen's aspect (w vs h) is read; hand the result to
+--- gridCellToFrame as its `dims`.
+---@param n integer cell count (>= 1)
+---@param screen {w:number,h:number} screen visible frame (aspect only)
+---@return {w:integer,h:integer} columns x rows
+function M.gridDimsForScreen(n, screen)
+    assert(n and n >= 1, "gridDimsForScreen: n must be >= 1")
+    local a = math.floor(math.sqrt(n))
+    while a > 1 and n % a ~= 0 do a = a - 1 end   -- largest factor <= sqrt(n)
+    local b = math.floor(n / a)                   -- b >= a, and a*b == n
+    -- Wider than tall -> more columns (b) than rows; taller -> more rows.
+    if screen.w >= screen.h then
+        return { w = b, h = a }
+    else
+        return { w = a, h = b }
+    end
+end
+
 -- ---------------------------------------------------------------------------
 -- Deck tiling (Window Deck): a uniform grid over the whole screen + a
 -- minimise-travel assignment of windows to cells. Pure rect math, same tier as

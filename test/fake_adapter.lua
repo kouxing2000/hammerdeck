@@ -464,7 +464,10 @@ function adapter.hud(spec)
     fake.huds[#fake.huds + 1] = h
     alloc()
     return {
-        stop = function() freeOnce(h) end,
+        stop   = function() freeOnce(h) end,
+        -- Re-render in place: mutate the live record so fake.liveHud().spec
+        -- reflects the update (e.g. window_grid's corner highlight / dimming).
+        update = function(newSpec) h.spec = newSpec; h.title = newSpec and newSpec.title end,
     }
 end
 

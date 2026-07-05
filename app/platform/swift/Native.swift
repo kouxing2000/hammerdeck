@@ -108,6 +108,7 @@ final class Native {
             "banner_show":  { L in MainActor.assumeIsolated { Native.shared.bannerShow(L) } },
             "banner_set_text": { L in MainActor.assumeIsolated { Native.shared.bannerSetText(L) } },
             "hud_show":     { L in MainActor.assumeIsolated { Native.shared.hudShow(L) } },
+            "hud_update":   { L in MainActor.assumeIsolated { Native.shared.hudUpdate(L) } },
         ]
         let fns2: [String: LuaState.Function] = [
             // chooser / dialogs

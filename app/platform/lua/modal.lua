@@ -127,6 +127,10 @@ function modal.enter(spec)
     return {
         stop = exit,
         isActive = function() return active end,
+        -- Re-render a structured HUD in place (no-op for a plain-banner mode).
+        -- Lets a feature update the card mid-mode, e.g. window_grid highlighting
+        -- the picked corner after the first keypress.
+        updateHud = function(hud) if banner.update then banner.update(hud) end end,
     }
 end
 

@@ -364,12 +364,15 @@ function adapter.banner(text, screenFrame)
 end
 
 -- Structured HUD card (a spatial cheat-sheet, e.g. Window Mode). `spec` is a
--- plain table: { title, cells = {{col,row,keys,label?}, ...}, caption,
--- groups = {{label, keys}, ...}, footer }. Returns { stop() }.
+-- plain table: { title, cells = {{col,row,keys,label?,state?}, ...}, caption,
+-- groups = {{label, keys}, ...}, footer }. Returns { stop(), update(newSpec) }.
+-- update() re-renders the SAME card in place (e.g. window_grid highlighting the
+-- picked corner + dimming the invalid cells after the first press).
 function adapter.hud(spec)
     local id = native.hud_show(spec or {})
     return {
-        stop = function() native.stop(id) end,
+        stop   = function() native.stop(id) end,
+        update = function(newSpec) native.hud_update(id, newSpec or {}) end,
     }
 end
 

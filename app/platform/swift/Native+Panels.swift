@@ -64,6 +64,16 @@ extension Native {
         return 1
     }
 
+    /// Re-render a live HUD in place from a fresh spec (window_grid highlighting
+    /// the picked corner after the first keypress). No-op if the id is stale.
+    func hudUpdate(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) {
+            let dict = LuaState.any(L, 2) as? [String: Any] ?? [:]
+            windowModeHUDs[id]?.update(spec: WindowModeHUDPanel.Spec(dict))
+        }
+        return 0
+    }
+
     // MARK: - Chooser
 
     func chooserNew(_ L: OpaquePointer?) -> Int32 {
