@@ -515,6 +515,34 @@ function registry.reload()
     return { count = #registry.all(), failures = #loadFailures }
 end
 
+-- TEST-SUPPORT: return the platform to a pristine, EMPTY-catalog state -- the
+-- teardown half of reload() without the re-populate. Used by the hermetic
+-- case runner to start every case on an empty catalog. Three things must all
+-- happen (a raw `features, bound = {}, {}` is WRONG and silently corrupts the
+-- next case):
+--   1. Tear every feature down through the real stop path (unregister ->
+--      unbindFeature -> m.stop + scope.teardown), so a transitively-held
+--      singleton is released -- e.g. window_rewind:stop() -> window_history
+--      clear(); a dropped table would strand window_history's pending group.
+--   2. Purge the cached feature modules, so a re-register re-reads a pristine
+--      manifest. register() mutates the manifest in place (expandDynamicActions
+--      appends to m.actions), and require() caches that mutated table -- without
+--      this purge, re-registering a dynamicActions feature (window_snap) would
+--      double-append its placement actions.
+--   3. Clear every catalog upvalue.
+-- Persisted per-feature settings (enabled/opt/trigger/state) live in the
+-- adapter and are deliberately NOT touched here (unregister leaves them, so a
+-- reload preserves the user's selections); a test that wants a blank slate
+-- resets the adapter (fake.resetWorld) alongside this.
+function registry.reset()
+    for _, m in ipairs(registry.all()) do registry.unregister(m.id) end   -- (1) stop path
+    for name in pairs(package.loaded) do                                  -- (2) the same purge reload() does
+        if tostring(name):match("^features%.") then package.loaded[name] = nil end
+    end
+    loadFailures, startFailures, fireFailures = {}, {}, {}                 -- (3) catalog upvalues
+    catalog, discoverDir = {}, nil
+end
+
 function registry.setEnabled(id, on)
     local m = features[id]
     assert(m, "no such feature: " .. id)

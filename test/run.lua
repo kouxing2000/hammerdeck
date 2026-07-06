@@ -6,33 +6,21 @@
 -- lifecycle, the three MVP features' main flows, and the scoped-ctx guarantee
 -- that disable leaks nothing.
 
+-- Shared setup, the `ok`/helpers, the assertion counter, and the per-case world
+-- reset all live in test/harness.lua now (RUN_LUA_SPLIT_SPEC Phase 0), so the one
+-- `passed` total spans this transitional monolith and the migrating
+-- test/cases/<id>.lua files alike. Bootstrap package.path here so `require` can
+-- find harness under test/; harness itself installs the co-located loader + seam
+-- and pins the deterministic clock.
 package.path = "app/?.lua;app/?/init.lua;test/?.lua;" .. package.path
-
--- Co-located layout: install the searcher that resolves platform/feature module
--- names into their `lua/` subfolders, before any platform require below.
-require("loader").install()
-
-local fake = require("fake_adapter")
-package.loaded["platform.adapter"] = fake.adapter   -- preempt the seam
-
--- Pin the fake clock to a deterministic mid-day instant: the suite advances
--- time via fake.clockOffset, and a real near-midnight wall clock would
--- otherwise cross a day boundary mid-test (day-rollover resets fire).
-local pin = os.date("*t") --[[@as osdateparam]]
-pin.hour, pin.min, pin.sec = 10, 0, 0
-fake.clockOffset = os.time(pin) - os.time()
-
-local registry = require("platform.registry")
-
-local passed = 0
-local function ok(cond, msg)
-    if not cond then error("FAIL: " .. msg, 2) end
-    passed = passed + 1
-end
-
-local function minutesFromNow(min)
-    return os.date("%H:%M", fake.now() + min * 60)
-end
+local harness = require("harness")
+local t = harness.t
+local fake, registry     = t.fake, t.registry
+local manifest, triggers = t.manifest, t.triggers
+local W, AC              = t.W, t.AC
+local ok, rejects        = t.ok, t.rejects
+local lastFrame, frameEq = t.lastFrame, t.frameEq
+local minutesFromNow     = t.minutesFromNow
 
 -- T0: fake-adapter <-> real-adapter SURFACE PARITY ----------------------------
 -- The fake adapter must export exactly the same function surface as the real
@@ -191,10 +179,6 @@ ok(#registry.all() == 3, "3 features registered")
 end
 -- T2: the manifest contract is enforced ----------------------------------------
 fake.resetOpts()
-local manifest = require("platform.manifest")
-local function rejects(m, why)
-    ok(pcall(manifest.validate, m) == false, "manifest rejected: " .. why)
-end
 rejects({ api = 99, id = "x", name = "X", action = function() end }, "wrong api version")
 rejects({ api = 1, id = "x", name = "X" }, "neither action nor start")
 rejects({ api = 1, id = "x", name = "X", action = function() end, start = function() end },
@@ -842,7 +826,6 @@ ok(registry.failures().start["bad_start"] == nil, "disable clears the start fail
 end
 -- T10: trigger rebind -- bind ANY action to ANY trigger (the core promise) -----
 fake.resetOpts()
-local triggers = require("platform.triggers")
 
 -- codec round-trips for every spec shape
 local function roundtrip(spec) return triggers.decode(triggers.encode(spec)) end
@@ -2357,9 +2340,6 @@ fake.screenList = {
     { x = 0, y = 0, w = 1000, h = 800 },        -- primary
     { x = 1000, y = 0, w = 2000, h = 1200 },    -- bigger secondary
 }
-local AC = { "cmd", "alt", "ctrl" }
-local function lastFrame() return fake.windowFrames[#fake.windowFrames] end
-
 -- halves snap against the window's own screen
 fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
 fake.pressHotkey("left", AC)
@@ -2920,11 +2900,6 @@ fake.settings["hammerdeck.opt.window_modal.stepParts"] = nil
 end
 -- T25c: windows.moveToScreen geometry (the pure shared core of both features) ---
 fake.resetOpts()
-local W = require("platform.windows")
-local function frameEq(nf, x, y, w, h, msg)
-    ok(nf.x == x and nf.y == y and nf.w == w and nf.h == h,
-        msg .. " (got " .. nf.x .. "," .. nf.y .. "," .. nf.w .. "," .. nf.h .. ")")
-end
 local s1 = { x = 0, y = 0, w = 1000, h = 800 }
 -- default (window_snap): same-size target, scale 1 -> position shifts, size kept.
 frameEq(W.moveToScreen({ x = 100, y = 100, w = 400, h = 300 }, s1, { x = 1000, y = 0, w = 1000, h = 800 }),
@@ -6809,4 +6784,17 @@ do
     fake.systemNotifyDelivers = true
 end
 
-print("OK -- " .. passed .. " assertions passed (" .. _VERSION .. ")")
+-- Phase 1 (RUN_LUA_SPLIT_SPEC): run the migrated hermetic cases, each in a fresh
+-- world, AFTER the (shrinking) legacy monolith above. Each case owns its fixtures;
+-- the freshWorld() before it and the handle tripwire after keep it isolated -- a
+-- STRONGER guarantee than the monolith's scattered positional liveHandles checks,
+-- since every case is checked. `arg` may name one case (narrowing the cases loop;
+-- the monolith above still runs this phase) or pass --shuffle (order self-check).
+for _, case in ipairs(harness.discover("test/cases", arg)) do
+    harness.freshWorld()
+    case.run(t)
+    ok(fake.liveHandles == 0 and registry.liveHandleCount() == 0,
+        case.id .. ": leaked no native handles")
+end
+
+harness.report()

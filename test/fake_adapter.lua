@@ -1356,4 +1356,40 @@ function fake.resetOpts()
     end
 end
 
+-- DEEP reset for the hermetic case runner (RUN_LUA_SPLIT_SPEC R5): restore the
+-- fake to its pristine load-time state -- everything fake.reset() clears PLUS the
+-- state it deliberately preserves (the live-binding registries, fake.liveHandles,
+-- fake.files, the full fake.settings incl. enabled/state, fake.secrets, the clock,
+-- fake.featureNames). Called BETWEEN cases; the shallow fake.reset() / resetOpts()
+-- above stay for intra-case continuity.
+--
+-- Implemented as snapshot-restore, NOT a hand-maintained field list: the fake's
+-- ~100 state fields are declared inline across this whole file, so any explicit
+-- clear-list would silently miss a newly-added field and leak it into the next
+-- case. Snapshotting the module's load-time state (captured here, after every
+-- top-level `fake.X = ...` has run) covers every field automatically and restores
+-- non-empty defaults (screenList, volume, ...) for free.
+local function deepcopy(v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    for k, val in pairs(v) do out[k] = deepcopy(val) end
+    return out
+end
+local pristine = {}
+for k, v in pairs(fake) do
+    if type(v) ~= "function" and k ~= "adapter" then pristine[k] = deepcopy(v) end
+end
+function fake.resetWorld()
+    -- drop every captured (data) field, then restore the pristine snapshot; a
+    -- field created lazily mid-case (never present at load) is dropped -> absent,
+    -- exactly as on a fresh boot.
+    for k, v in pairs(fake) do
+        if type(v) ~= "function" and k ~= "adapter" then fake[k] = nil end
+    end
+    for k, v in pairs(pristine) do fake[k] = deepcopy(v) end
+    -- canonicalize the ephemeral inputs/queues uniformly (mousePos and a few
+    -- others are established only by reset(), not at top-level declaration).
+    fake.reset()
+end
+
 return fake
