@@ -1252,4 +1252,100 @@ function fake.liveProgressBar()
     return nil
 end
 
+-- Reset the EPHEMERAL scenario state so a preset one section leaves behind can't
+-- silently corrupt the next. Call it at the TOP of a test section (see run.lua's
+-- T20 / T24r) for a clean input slate. Clears the inputs a test sets up (windows,
+-- frontmost app, idle, mouse, browser tabs, appearance, ...), the observation
+-- queues it reads back (alerts, notifications, key events, recorded frames, ...),
+-- and any `hammerdeck.opt.*` option overrides.
+--
+-- DELIBERATELY PRESERVED (these carry real state, not scratch, and resetting them
+-- would break correctness or intentional continuity):
+--   * fake.adapter -- the seam itself.
+--   * the live-binding registries (timers / hotkeys / chords / watchers / choosers
+--     / banners / huds / widgets / outlines / scrims / *Watchers ...) and
+--     fake.liveHandles -- they MIRROR the actually-enabled platform, so clearing
+--     them would orphan a still-enabled feature and desync the handle accounting.
+--   * fake.files and the non-opt settings (hammerdeck.enabled.* / .state.*) --
+--     sections carry these forward on purpose (e.g. T20 writes usage CSVs that T32
+--     later reads; enabled-state persists across a disable/re-enable test).
+--   * fake.clockOffset -- tests advance time deliberately; a reset-to-zero would
+--     jump the clock backward mid-suite.
+--   * fake.secrets -- the simulated login keychain.
+function fake.reset()
+    -- scenario inputs a test presets
+    fake.idle          = 0
+    fake.mousePos      = { x = 0, y = 0 }
+    fake.modifiers     = {}
+    fake.windows       = {}
+    fake.focused       = {}
+    fake.focusedWindow = nil
+    fake.focusedWid    = nil
+    fake.windowTitle   = nil
+    fake.screenList    = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1, builtin = true } }
+    fake.frontmost     = nil
+    fake.frontmostId   = ""
+    fake.runningApps        = {}
+    fake.runningAppInfoList = {}
+    fake.appearance    = "light"
+    fake.power         = "ac"
+    fake.axTrusted     = true
+    fake.activeUrls    = {}
+    fake.browserTabs   = {}
+    fake.browserTabsByApp = {}
+    fake.pasteboard          = nil
+    fake.pasteboardConcealed = false
+    fake.httpResponses = {}
+    fake.chromeFavicons = {}
+    fake.jumpUrlOverride = nil
+    fake.failWindowFrameIds = {}
+    fake.minimizeOk    = true
+    fake.downloadOk    = true
+    fake.volumeReturn  = nil
+    fake.systemNotifyDelivers = true
+
+    -- observation queues (recorded outputs an assertion reads back)
+    fake.notifications = {}
+    fake.alerts        = {}
+    fake.flashes       = {}
+    fake.systemNotifications = {}
+    fake.logs          = {}
+    fake.keyEvents     = {}
+    fake.typedTexts    = {}
+    fake.openedUrls    = {}
+    fake.windowFrames  = {}
+    fake.windowFrameSets = {}
+    fake.fullscreenSets  = {}
+    fake.raises        = {}
+    fake.axPrompts     = 0
+    fake.axSettingsOpens = 0
+    fake.activatedApps = {}
+    fake.launchedApps  = {}
+    fake.focusedTabs   = {}
+    fake.openedNewTabs = {}
+    fake.tabJumps      = {}
+    fake.appWindows    = {}
+    fake.siteOpens     = {}
+    fake.minimized     = {}
+    fake.hidden        = {}
+    fake.quit          = {}
+    fake.appearanceSet = {}
+    fake.shortcutsRun  = {}
+    fake.spokenTexts   = {}
+    fake.mouseLocates  = {}
+    fake.extractedBatches = {}
+    fake.httpRequests  = {}
+    fake.downloads     = {}
+    fake.wallpapers    = {}
+    fake.wallpaperModes = {}
+    fake.wallpaperColors = {}
+    fake.mediaKeys     = {}
+
+    -- option overrides only -- keep enabled-state (.enabled.*) and feature state
+    -- (.state.*), which sections carry forward on purpose.
+    for k in pairs(fake.settings) do
+        if k:match("^hammerdeck%.opt%.") then fake.settings[k] = nil end
+    end
+end
+
 return fake

@@ -1546,6 +1546,7 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after bing_
 
 -- T19: chord triggers -- prefix hotkey arms a follow-key sequence -------------
 -- (`triggers` is the file-scope local from T10.)
+do
 
 -- codec round-trip: mods canonicalized (sorted), follow sequence ORDER kept
 local chordEnc = triggers.encode(
@@ -1633,6 +1634,7 @@ ok(okPlain == false and whyPlain ~= nil, "a plain hotkey on a chord's prefix com
 registry.setEnabled("chordy", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after chord tests")
 
+end
 -- T19b: registry.hyperLegend() -- which-key legend of enabled Hyper bindings ---
 package.loaded["features._hyperprobe"] = {
     api = 1, id = "hyperprobe", name = "Hyper Probe",
@@ -1665,6 +1667,8 @@ ok(not legendHasLabel(registry.hyperLegend(), "Go"),
     "hyperLegend drops a disabled feature's bindings")
 
 -- T20: usage_stats (service: sessions + per-app focus time to CSV) ------------
+do
+fake.reset()   -- clean input slate: isolate from any preset an upstream section left
 registry.register(require("features.usage_stats"))
 
 -- Re-pin the clock to a fresh morning so this test owns its day arithmetic.
@@ -1898,6 +1902,7 @@ registry.setEnabled("usage_stats", false)
 fake.settings["hammerdeck.opt.usage_stats.dir"] = nil
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage_stats test")
 
+end
 -- T21: Accessibility onboarding (window_switcher with no windows) ------------------
 registry.setEnabled("window_switcher", true)
 fake.windows = {}
@@ -1921,6 +1926,7 @@ registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after AX onboarding test")
 
 -- T22: text_actions (selection capture -> open/transform/paste back) ----------
+do
 local OPENAI_TEST_URL = "https://api.openai.com/v1/chat/completions"
 
 -- urls.encodeComponent: unreserved passthrough, space, and per-octet UTF-8
@@ -2091,9 +2097,11 @@ ok(fake.alerts[#fake.alerts]:match("Nothing selected") ~= nil, "empty selection 
 registry.setEnabled("text_actions", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after text_actions test")
 
+end
 -- T23: site_switcher / "Quick Sites" (a list of favorite sites in a searchable
 -- chooser; pick a row -- click, Enter, or cmd+<n> -- to focus that site's tab,
 -- open it, or open it as a standalone app window) ----------------------------
+do
 registry.register(require("features.site_switcher"))
 registry.setEnabled("site_switcher", true)
 
@@ -2265,6 +2273,7 @@ fake.downloads = {}
 fake.extractedBatches = {}
 fake.chromeFavicons = {}
 
+end
 -- T24: window_snap (snap halves, max toggle, throw across screens) ---------
 registry.register(require("features.window_snap"))
 registry.setEnabled("window_snap", true)
@@ -2643,6 +2652,7 @@ end
 -- so a snap, a whole-display swap, or a deck retile is all undoable by one global
 -- Hyper+Z. window_snap (registered above, left disabled) is the real mover here;
 -- window_rewind only records + restores.
+fake.reset()   -- clean input slate: isolate from the prior window sections
 registry.register(require("features.window_rewind"))
 registry.setEnabled("window_rewind", true)   -- start(ctx) turns recording on
 registry.setEnabled("window_snap", true)     -- a real mover to generate history
@@ -4497,6 +4507,7 @@ do
 end
 
 -- T26: tab_switcher (cross-browser tab switcher, MRU-first) ----------------------
+do
 local jsonlib = require("platform.json")
 
 -- the new encoder round-trips what the feature persists
@@ -4600,6 +4611,7 @@ fake.modifiers.alt = false
 registry.setEnabled("tab_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after tab_switcher test")
 
+end
 -- T27: registry.runAction -- the menubar's quick triggers ----------------------
 registry.register(require("features.plain_paste"))   -- dropped by T14's reload
 registry.setEnabled("plain_paste", true)
@@ -4615,6 +4627,7 @@ ok(registry.runAction("ghost_feature") == false, "unknown feature refused")
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after runAction test")
 
 -- T28: clipboard_history (poll, conceal, dedup, cap, persist, pick-to-paste) --
+do
 registry.register(require("features.clipboard_history"))
 registry.setEnabled("clipboard_history", true)
 local histPath = "/fake/data/clipboard_history/history.json"
@@ -4678,7 +4691,9 @@ fake.fireTimers("after", 0.15)
 registry.setEnabled("clipboard_history", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipboard_history test")
 
+end
 -- T29: command_palette (fuzzy launcher over every enabled feature) -------------
+do
 registry.register(require("features.command_palette"))
 
 -- the capability gate is enforced at manifest validation
@@ -4781,6 +4796,7 @@ registry.setEnabled("command_palette", false)
 registry.setEnabled("cmd_off", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after command_palette test")
 
+end
 -- T30: fire-time error surfacing -- repeated failures raise ONE visible alert --
 local boomCount = 0
 package.loaded["features._boom"] = {
