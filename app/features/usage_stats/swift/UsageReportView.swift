@@ -210,10 +210,18 @@ struct UsageReportView: View {
         DashCard(title: Strings.t("usage.topApps", default: "Top Apps"), icon: "square.stack.3d.up.fill", tint: .indigo) {
             let top = Array(data.apps.prefix(8))
             let maxSecs = data.apps.first?.secs ?? 1
+            // A browser row is always drillable -- even with no sites yet it opens the
+            // consent card (Chrome) or the risk note (Safari), so the opt-in is
+            // discoverable BEFORE any site is recorded.
+            if top.contains(where: { !$0.contexts.isEmpty || isBrowser($0.app) }) {
+                Text(Strings.t("usage.clickHint", default: "Click an app (›) to see its sites / projects."))
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
             ForEach(top) { app in
                 Button { selectedApp = app.app } label: {
                     appBarRow(name: app.app, secs: app.secs, share: app.share,
-                              fraction: maxSecs > 0 ? app.secs / maxSecs : 0)
+                              fraction: maxSecs > 0 ? app.secs / maxSecs : 0,
+                              showChevron: !app.contexts.isEmpty || isBrowser(app.app))
                 }
                 .buttonStyle(.plain)
             }
@@ -224,13 +232,18 @@ struct UsageReportView: View {
         }
     }
 
-    private func appBarRow(name: String, secs: Double, share: Double, fraction: Double) -> some View {
-        HStack(spacing: 10) {
+    private func appBarRow(name: String, secs: Double, share: Double, fraction: Double,
+                           showChevron: Bool = false, muted: Bool = false) -> some View {
+        // `muted` (the synthetic "Other / untracked" remainder) reads greyer than a
+        // real site/project row, so it's clearly not a place you visited.
+        let barTint: Color = muted ? .gray : accent
+        return HStack(spacing: 10) {
             Text(name).font(.callout).lineLimit(1).frame(width: 130, alignment: .leading)
+                .foregroundStyle(muted ? Color.gray : Color.primary)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(accent.opacity(0.14))
-                    Capsule().fill(accent).frame(width: max(3, geo.size.width * fraction))
+                    Capsule().fill(barTint.opacity(0.14))
+                    Capsule().fill(barTint).frame(width: max(3, geo.size.width * fraction))
                 }
             }
             .frame(height: 7)
@@ -239,6 +252,13 @@ struct UsageReportView: View {
             Text(String(format: Strings.t("usage.percent", default: "%d%%"), Int((share * 100).rounded())))
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                 .frame(width: 34, alignment: .trailing)
+            // Marks rows that drill into a site/project breakdown, so the click
+            // affordance is discoverable (esp. a browser -> its domains). Kept in
+            // the layout (opacity, not omitted) so bars stay column-aligned.
+            Image(systemName: "chevron.right")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .frame(width: 10, alignment: .trailing)
+                .opacity(showChevron ? 1 : 0)
         }
         .contentShape(Rectangle())
         .padding(.vertical, 1)
@@ -253,13 +273,36 @@ struct UsageReportView: View {
                         usageTimeString(row.secs), Int((row.share * 100).rounded())))
                 .font(.caption).foregroundStyle(.secondary)
             if row.contexts.isEmpty {
-                Text(Strings.t("usage.noBreakdown", default: "No per-site / per-project breakdown for this app."))
-                    .font(.callout).foregroundStyle(.secondary).padding(.top, 4)
+                if row.app == "Google Chrome" && !chromeTrackingOn {
+                    siteConsentCard                      // safe, one-tap enable (Chrome)
+                } else if row.app == "Safari" && !safariTrackingOn {
+                    safariRiskNote                       // Settings-only; states the risk, no one-tap
+                } else if isBrowser(row.app) {
+                    Text(Strings.t("usage.siteRecording",
+                                   default: "Recording sites now — they'll appear here as you browse (domain only)."))
+                        .font(.callout).foregroundStyle(.secondary).padding(.top, 4)
+                } else {
+                    Text(Strings.t("usage.noBreakdown", default: "No per-site / per-project breakdown for this app."))
+                        .font(.callout).foregroundStyle(.secondary).padding(.top, 4)
+                }
             } else {
-                let maxSecs = row.contexts.first?.secs ?? 1
+                // Known sites/projects, then an "Other / untracked" remainder so the
+                // bars account for the app's WHOLE time. "Other" absorbs incognito
+                // (never attributed to a site), untrackable pages (chrome://, new
+                // tab), and time recorded before site-tracking was turned on --
+                // WITHOUT singling out or labeling private browsing.
+                let known = row.contexts.reduce(0.0) { $0 + $1.secs }
+                let other = max(0, row.secs - known)
+                let showOther = other >= 30      // hide sub-minute rounding dust
+                let maxSecs = max(row.contexts.first?.secs ?? 1, showOther ? other : 0)
                 ForEach(row.contexts) { c in
                     appBarRow(name: c.name.isEmpty ? "—" : c.name, secs: c.secs,
                               share: c.share, fraction: maxSecs > 0 ? c.secs / maxSecs : 0)
+                }
+                if showOther {
+                    appBarRow(name: Strings.t("usage.otherUntracked", default: "Other / untracked"),
+                              secs: other, share: row.secs > 0 ? other / row.secs : 0,
+                              fraction: maxSecs > 0 ? other / maxSecs : 0, muted: true)
                 }
             }
             Button { selectedApp = nil } label: {
@@ -267,6 +310,72 @@ struct UsageReportView: View {
             }
             .buttonStyle(.link).font(.caption).padding(.top, 4)
         }
+    }
+
+    // MARK: browser-site consent (opt-in, shown in a browser's drill-in)
+    //
+    // Site/domain collection is off by default; the user must agree before any
+    // browsing domain is recorded, per browser. Consent lives HERE -- exactly where
+    // the user looks for the per-site detail. Chrome gets a one-tap enable because
+    // its incognito is provably excluded at the seam. Safari CANNOT exclude Private
+    // Browsing, so it gets no one-tap enable -- only a risk note pointing to
+    // Settings, so turning it on is a deliberate, eyes-open choice.
+
+    private func isBrowser(_ app: String) -> Bool {
+        app == "Google Chrome" || app == "Safari"
+    }
+
+    /// A named usage_stats option (feature id, OptionInfo) if the catalog is loaded.
+    private func option(_ key: String) -> (feature: String, opt: OptionInfo)? {
+        guard let f = store.features.first(where: { $0.id == "usage_stats" }),
+              let o = f.options.first(where: { $0.key == key }) else { return nil }
+        return ("usage_stats", o)
+    }
+
+    private func trackingOn(_ key: String) -> Bool {
+        guard let s = option(key) else { return false }
+        return (store.optionValue(s.feature, s.opt) as? Bool) ?? false
+    }
+
+    private var chromeTrackingOn: Bool { trackingOn("trackChromeSite") }
+    private var safariTrackingOn: Bool { trackingOn("trackSafariSite") }
+
+    private var siteConsentCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Strings.t("usage.siteConsentTitle", default: "Chrome site details are off"))
+                .font(.callout.weight(.medium))
+            Text(Strings.t("usage.siteConsentBody",
+                           default: "Turn on to record which sites you visit in Chrome — the domain only (e.g. github.com), never the full URL or page, and never incognito windows. You can turn it off anytime."))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                if let s = option("trackChromeSite") {
+                    store.setOptionValue(s.feature, s.opt, true)
+                    load(reset: false)
+                }
+            } label: {
+                Label(Strings.t("usage.enableSiteDetails", default: "Turn on Chrome site details"),
+                      systemImage: "checkmark.shield")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(option("trackChromeSite") == nil)
+        }
+        .padding(.top, 4)
+    }
+
+    /// Safari's drill-in when its tracking is off: unlike Chrome, no one-tap enable
+    /// -- Safari can't hide Private Browsing, so we state the risk and route the
+    /// opt-in through Settings, where the same warning is on the toggle itself.
+    private var safariRiskNote: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Strings.t("usage.safariOffTitle", default: "Safari sites aren't recorded"))
+                .font(.callout.weight(.medium))
+            Text(Strings.t("usage.safariOffBody",
+                           default: "Unlike Chrome, Safari gives us no way to tell a Private Browsing window apart, so a private site could be recorded. If you accept that, turn on “Also record Safari sites” in Settings › Usage Stats."))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
     }
 
     // MARK: full ranked table
@@ -280,6 +389,7 @@ struct UsageReportView: View {
                     .frame(width: 56, alignment: .trailing)
                 Text(Strings.t("usage.share", default: "SHARE")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .trailing)
+                Color.clear.frame(width: 10, height: 1)   // aligns with the row chevron
             }
             Divider().opacity(0.4)
             ForEach(data.apps) { app in
@@ -292,6 +402,10 @@ struct UsageReportView: View {
                         Text(String(format: Strings.t("usage.percent", default: "%d%%"), Int((app.share * 100).rounded())))
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .trailing)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                            .frame(width: 10, alignment: .trailing)
+                            .opacity(app.contexts.isEmpty && !isBrowser(app.app) ? 0 : 1)
                     }
                     .contentShape(Rectangle())
                 }

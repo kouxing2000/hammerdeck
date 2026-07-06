@@ -149,7 +149,11 @@ final class UsageWidgetPanel {
                 bar(x: Self.pad, y: y, width: w * row.secs / maxSecs, height: 4,
                     color: accent, radius: 2)
                 y += 8
-                // Context sub-rows: domain / project breakdown (donor parity).
+                // Context sub-rows: domain / project breakdown (donor parity), then an
+                // "Other" remainder so the sub-rows account for the app's whole time
+                // (absorbs incognito, untrackable pages, the tail beyond the top few,
+                // and pre-consent time -- never labeled as private). Shown only when
+                // there ARE real sites, so it reads as a remainder, not a 100% bucket.
                 for c in row.contexts {
                     if y > Self.height - chartReserve - 14 { break }
                     _ = label(c.name, size: 10, weight: .regular,
@@ -157,6 +161,17 @@ final class UsageWidgetPanel {
                               x: Self.pad + 10, y: y, width: w - 70)
                     _ = label(Self.formatTime(c.secs), size: 10, weight: .regular,
                               color: .tertiaryLabelColor,
+                              x: Self.pad + w - 60, y: y, width: 60, align: .right)
+                    y += 13
+                }
+                let shown = row.contexts.reduce(0.0) { $0 + $1.secs }
+                let other = row.secs - shown
+                if !row.contexts.isEmpty && other >= 30 && y <= Self.height - chartReserve - 14 {
+                    _ = label("Other", size: 10, weight: .regular,
+                              color: .quaternaryLabelColor,
+                              x: Self.pad + 10, y: y, width: w - 70)
+                    _ = label(Self.formatTime(other), size: 10, weight: .regular,
+                              color: .quaternaryLabelColor,
                               x: Self.pad + w - 60, y: y, width: 60, align: .right)
                     y += 13
                 }

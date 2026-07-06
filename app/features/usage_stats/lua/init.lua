@@ -14,11 +14,17 @@
 -- data is not auto-moved).
 --
 -- Sessions span unlock/wake -> lock/sleep. App focus time accrues to the
--- frontmost app, with idle time subtracted at each flush. The donor's
--- `context` column is FILLED (since 2026-06-11): the active tab's domain for
--- browsers (curated browserActiveURL), the project name parsed from the
--- focused window title for code editors; a 30s poll splits the accrual when
--- the context changes mid-app (tab switch, project switch).
+-- frontmost app, with idle time subtracted at each flush. The `context` column
+-- records what the app was looking at: for code editors, the project name
+-- parsed from the focused window title (always on -- low sensitivity, your own
+-- repo names); for browsers, the active tab's DOMAIN ONLY (e.g. github.com, never
+-- the full URL/path), each browser behind its OWN opt-in toggle (both OFF by
+-- default -- browsing domains are sensitive). Chrome (`trackChromeSite`) excludes
+-- incognito at the seam (browserActiveURL returns nil for a private window), so it
+-- can promise "never incognito". Safari (`trackSafariSite`) CANNOT -- AppleScript
+-- exposes no private-window flag -- so its toggle is separately RISK-FLAGGED:
+-- enabling it may record Private Browsing domains. A 30s poll splits the accrual
+-- when the context changes mid-app (tab switch, project switch).
 --
 -- Deliberate departures from the donor: no git auto-commit of the data dir
 -- (plain CSVs; commit yourself if you want history), and the storage root is a
@@ -37,7 +43,19 @@ local TOP_APPS            = 5         -- widget shows this many rows
 local TOP_CONTEXTS        = 3         -- context sub-rows per app (donor)
 local IDLE_POLL_SKIP      = 5 * 60    -- skip context polling while idle
 local IGNORE_APPS  = { loginwindow = true }
-local BROWSER_APPS = { ["Google Chrome"] = true, ["Safari"] = true }
+-- Browsers we can track sites for, each behind its OWN opt-in toggle. The split
+-- exists because incognito-safety differs by browser: Chrome's window `mode`
+-- marks incognito, so the seam returns nil for private windows -- Chrome tracking
+-- can honestly promise "never incognito". Safari exposes NO private-window flag
+-- via AppleScript (verified online: no scripting property; only a fragile,
+-- locale-dependent Window-menu-scrape hack exists), so a Safari private window
+-- CANNOT be excluded -- its toggle is therefore separate and RISK-FLAGGED:
+-- enabling it MAY record Private Browsing domains. Both default off. (tab_switcher
+-- still lists Safari tabs; this map governs only what usage_stats writes to disk.)
+local BROWSER_OPT = {
+    ["Google Chrome"] = "trackChromeSite",
+    ["Safari"]        = "trackSafariSite",
+}
 local EDITOR_APPS  = { ["Code"] = true, ["Cursor"] = true }
 
 local getDomain = require("platform.urls").getDomain
@@ -66,7 +84,14 @@ local function start(ctx)
     -- domain. Editors: the project name from the window title (donor format
     -- "file — Project", with any " [SSH: ...]"-style suffix stripped).
     local function contextFor(app)
-        if BROWSER_APPS[app] then
+        local siteOpt = BROWSER_OPT[app]
+        if siteOpt then
+            -- Site (domain) tracking is OPT-IN per browser: off by default, so the
+            -- user must agree before any domain is recorded. Read live each poll, so
+            -- toggling applies on the next tick without a restart. For Chrome the
+            -- seam excludes incognito (returns nil -> ""); for Safari it cannot,
+            -- which is exactly why trackSafariSite is its own risk-flagged toggle.
+            if ctx.opt(siteOpt) ~= true then return "" end
             return getDomain(ctx.browserActiveURL(app)) or ""
         elseif EDITOR_APPS[app] then
             local title = ctx.window.title() or ""
@@ -322,6 +347,10 @@ return {
         { key = "dir", type = "string", default = "~/.computer-usage",
           collapsible = true,
           label = "Storage folder (~ allowed; restart to apply)" },
+        { key = "trackChromeSite", type = "bool", default = false,
+          label = "Record which website you're on in Chrome (domain only, e.g. github.com; off by default, incognito never recorded)" },
+        { key = "trackSafariSite", type = "bool", default = false,
+          label = "Also record Safari sites -- RISK: Safari can't hide Private Browsing, so private sites may be recorded (off by default)" },
         { key = "showWidget", type = "bool", default = true,
           label = "Show desktop widget" },
         { key = "screen", type = "enum", default = "primary",

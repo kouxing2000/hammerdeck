@@ -403,6 +403,15 @@ extension Native {
 
     // browser_active_url(app) -> url|nil. Sync + cheap (one property read);
     // this is the curated "what is the browser looking at" call (#9 context).
+    //
+    // PRIVACY -- incognito is NEVER reported. A Chrome window carries a `mode`
+    // property ("normal"/"incognito"); when the front window is incognito this
+    // bails to "" (-> nil) BEFORE reading the tab URL, so nothing downstream (the
+    // usage_stats site column, tab_switcher's MRU) ever sees or records a
+    // private-browsing URL. Safari's AppleScript exposes NO private-window flag,
+    // so Safari private tabs CANNOT be excluded here -- callers that must honor
+    // "never record incognito" treat Safari site context as best-effort
+    // (usage_stats gates browser domains behind an opt-in and documents the gap).
     func browserActiveUrl(_ L: OpaquePointer?) -> Int32 {
         guard let app = LuaState.string(L, 1), Native.scriptableBrowsers.contains(app) else {
             lua_pushnil(L)
@@ -410,7 +419,13 @@ extension Native {
         }
         let source = app == "Safari"
             ? "tell application \"Safari\" to return URL of front document"
-            : "tell application \"Google Chrome\" to return URL of active tab of front window"
+            : """
+              tell application "Google Chrome"
+                  if (count of windows) is 0 then return ""
+                  if (mode of front window) is "incognito" then return ""
+                  return URL of active tab of front window
+              end tell
+              """
         var errInfo: NSDictionary?
         let result = NSAppleScript(source: source)?.executeAndReturnError(&errInfo)
         if errInfo == nil, let url = result?.stringValue, !url.isEmpty {

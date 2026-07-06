@@ -1768,7 +1768,10 @@ registry.setEnabled("usage_stats", true)
 fake.fireTimers("every", 600)
 ok(fake.files[appsCsv]:match("\nCode,,120\n") and fake.files[appsCsv]:match("\nSafari,,205\n"),
     "today's totals (incl. the blip's focus, flushed on disable) restored after re-enable")
--- context enrichment: browser domain + editor project fill the CSV column
+-- context enrichment: browser domain + editor project fill the CSV column.
+-- Chrome-site tracking is opt-in, so enable it for this slice (editor project
+-- context is always on and needs no opt-in).
+fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = true
 fake.activeUrls["Google Chrome"] = "https://github.com/owner/repo"
 fake.activateApp("Google Chrome")              -- switch reads the context
 fake.clockOffset = fake.clockOffset + 90
@@ -1797,6 +1800,7 @@ for _, r in ipairs(wd.apps) do if r.app == "Google Chrome" then chromeRow = r en
 ok(chromeRow and chromeRow.secs == 150 and #chromeRow.contexts == 2
     and chromeRow.contexts[1].name == "github.com" and chromeRow.contexts[1].secs == 90,
     "widget aggregates contexts under the app, sorted by time")
+fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = nil
 fake.windowTitle = nil
 
 -- the widget screen option recreates the panel on the chosen display instantly
@@ -1829,6 +1833,66 @@ registry.setEnabled("usage_stats", true)     -- re-enable reloads from the CSV
 fake.fireTimers("every", 600)
 ok(fake.files[appsCsv]:match('\n"Excel, Inc%.",') ~= nil,
     "the quoted app round-trips through reload (parsed back, not column-shifted)")
+
+-- browser SITE (domain) tracking is OPT-IN and PER-BROWSER, verified on a FRESH
+-- day so these assertions own their CSV (a rollover clears the accumulated app
+-- time first). Chrome's incognito is excluded upstream in the Swift seam; the
+-- fake seam just returns the URL we set, so this covers the pieces that live in
+-- Lua: the per-browser consent gate and the domain-only reduction. (do-scoped:
+-- main chunk is at the 200-local cap; a single reused `csv` local keeps it lean.)
+do
+    fake.clockOffset = fake.clockOffset + 86400          -- next day -> rollover resets appTime
+    fake.idle = 0
+    fake.windowTitle = nil
+    local d2    = os.date("%Y-%m-%d", fake.now())
+    local apps2 = "/fake/data/usage/" .. d2:sub(1, 7) .. "/" .. d2 .. "-apps.csv"
+    local csv
+    fake.activeUrls["Google Chrome"] = "https://github.com/acme/repo?token=secret"
+
+    -- Chrome OFF by default: time accrues, but with an EMPTY context (no domain)
+    fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = nil
+    fake.activateApp("Google Chrome")                    -- rolls to d2, opens the app
+    fake.clockOffset = fake.clockOffset + 60
+    fake.fireTimers("every", 600)
+    csv = fake.files[apps2]
+    ok(csv ~= nil and csv:match("\nGoogle Chrome,,%d+\n") ~= nil,
+        "Chrome site OFF by default: time keyed with an EMPTY context")
+    ok(csv:find("github") == nil, "no Chrome domain recorded without consent")
+
+    -- opt in to Chrome: the domain (only) becomes the context on the next poll
+    fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = true
+    fake.fireTimers("every", 30)
+    fake.clockOffset = fake.clockOffset + 60
+    fake.fireTimers("every", 600)
+    csv = fake.files[apps2]
+    ok(csv:match("Google Chrome,github%.com,%d+") ~= nil,
+        "after opt-in, Chrome time keys by DOMAIN (github.com)")
+    ok(csv:find("token=secret") == nil and csv:find("/acme/repo") == nil,
+        "only the domain is stored -- never the full URL/path")
+
+    -- Safari has an INDEPENDENT gate: Chrome ON but trackSafariSite OFF must NOT
+    -- record a Safari domain (proving the two toggles are not shared).
+    fake.activeUrls["Safari"] = "https://duckduckgo.com/?q=x"
+    fake.settings["hammerdeck.opt.usage_stats.trackSafariSite"] = nil
+    fake.activateApp("Safari")
+    fake.clockOffset = fake.clockOffset + 60
+    fake.fireTimers("every", 600)
+    csv = fake.files[apps2]
+    ok(csv:match("\nSafari,,%d+\n") ~= nil,
+        "Safari OFF stays empty-context even while Chrome tracking is ON")
+    ok(csv:find("duckduckgo") == nil, "Safari domain not recorded under Chrome's toggle")
+
+    -- opt in to Safari specifically -> its own domain is recorded (its own risk)
+    fake.settings["hammerdeck.opt.usage_stats.trackSafariSite"] = true
+    fake.fireTimers("every", 30)
+    fake.clockOffset = fake.clockOffset + 60
+    fake.fireTimers("every", 600)
+    ok(fake.files[apps2]:match("Safari,duckduckgo%.com,%d+") ~= nil,
+        "Safari ON: records its own domain via its independent toggle")
+
+    fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = nil
+    fake.settings["hammerdeck.opt.usage_stats.trackSafariSite"] = nil
+end
 
 registry.setEnabled("usage_stats", false)
 fake.settings["hammerdeck.opt.usage_stats.dir"] = nil
