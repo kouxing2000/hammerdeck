@@ -13,6 +13,11 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
     private let store: SettingsStore
     private let openHome: (HomeDestination) -> Void
 
+    /// A context collapses into a quick-trigger submenu once it has this many
+    /// enabled action-features (fewer stay inline). Six window features today;
+    /// text / web fold the same way as they grow.
+    private static let groupThreshold = 3
+
     init(store: SettingsStore,
          openHome: @escaping (HomeDestination) -> Void) {
         self.store = store
@@ -50,36 +55,50 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
             anyTrigger = true
         }
 
-        for feature in store.features where feature.enabled && !feature.actions.isEmpty {
-            if feature.id == "command_palette" { continue }   // pinned above
-            anyTrigger = true
-            if feature.actions.count == 1, let action = feature.actions.first {
-                let it = triggerItem(feature: feature, action: action, title: feature.name)
-                it.image = featureImage(feature)
-                menu.addItem(it)
-            } else {
-                let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
-                parent.image = featureImage(feature)
+        // Quick triggers, grouped by CONTEXT. A context that forms a real cluster
+        // (window / text / web -- NOT the "anywhere" catch-all) collapses into a
+        // submenu once it has `groupThreshold`+ enabled action-features, so the top
+        // level stays short as the catalog grows; sparser contexts and the
+        // "anywhere" features stay inline. Data-driven off the manifest `context`
+        // field -- the SAME axis the Gallery/Tour group by (FeatureContext) -- so a
+        // new feature slots into its group with no menu code. Command Palette is
+        // excluded (pinned above).
+        let triggerFeatures = store.features.filter {
+            $0.enabled && !$0.actions.isEmpty && $0.id != "command_palette"
+        }
+        if !triggerFeatures.isEmpty { anyTrigger = true }
+
+        var contextCount: [FeatureContext: Int] = [:]
+        for f in triggerFeatures { contextCount[FeatureContext(f.context), default: 0] += 1 }
+        func folds(_ c: FeatureContext) -> Bool {
+            c != .anywhere && (contextCount[c] ?? 0) >= Self.groupThreshold
+        }
+
+        // Top-level entries: one submenu per folded context (its features nested
+        // inside, each keeping its own single-row / sub-submenu shape), plus an
+        // inline item for every ungrouped feature. Sorted by display title so the
+        // order stays stable and alphabetical -- a folded group sorts by its context
+        // title (e.g. "Windows"), landing right where its features used to.
+        var entries: [(title: String, item: NSMenuItem)] = []
+        var built: Set<FeatureContext> = []
+        for feature in triggerFeatures {
+            let c = FeatureContext(feature.context)
+            if folds(c) {
+                guard built.insert(c).inserted else { continue }   // one submenu per context
+                let parent = NSMenuItem(title: c.title, action: nil, keyEquivalent: "")
+                parent.image = contextImage(c)
                 let sub = NSMenu()
-                // Built-in actions first; then any DYNAMIC ones (user-defined, e.g.
-                // window_snap's saved placement snaps) grouped below a separator, so
-                // they read as "your saved" rather than mixing in with the built-ins.
-                for action in feature.actions where !action.dynamic {
-                    sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
-                }
-                let saved = feature.actions.filter { $0.dynamic }
-                if !saved.isEmpty {
-                    // Separate saved from built-ins only when both exist -- a feature
-                    // with ONLY dynamic actions must not get a leading separator.
-                    if !sub.items.isEmpty { sub.addItem(.separator()) }
-                    for action in saved {
-                        sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
-                    }
+                for gf in triggerFeatures where FeatureContext(gf.context) == c {
+                    sub.addItem(featureMenuItem(gf))
                 }
                 parent.submenu = sub
-                menu.addItem(parent)
+                entries.append((c.title, parent))
+            } else {
+                entries.append((feature.name, featureMenuItem(feature)))
             }
         }
+        entries.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        for e in entries { menu.addItem(e.item) }
         if !anyTrigger {
             let hint = NSMenuItem(title: Strings.t("menu.noTriggers", default: "No triggerable features enabled"),
                                   action: nil, keyEquivalent: "")
@@ -198,6 +217,45 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         img?.isTemplate = true
         return img?.withSymbolConfiguration(
             NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+    }
+
+    /// Template image for a context-group submenu -- mirrors featureImage but uses
+    /// the FeatureContext glyph (e.g. "macwindow" for Windows).
+    private func contextImage(_ context: FeatureContext) -> NSImage? {
+        let img = NSImage(systemSymbolName: context.icon, accessibilityDescription: nil)
+        img?.isTemplate = true
+        return img?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+    }
+
+    /// The quick-trigger menu item for one feature: a single row (its hotkey shown
+    /// flush-right) for a one-action feature, or a submenu of its actions --
+    /// built-ins first, then any DYNAMIC (user-saved, e.g. window_snap's saved
+    /// placements) below a separator so they read as "yours". Used both inline at
+    /// the top level and nested inside a context group.
+    private func featureMenuItem(_ feature: FeatureInfo) -> NSMenuItem {
+        if feature.actions.count == 1, let action = feature.actions.first {
+            let it = triggerItem(feature: feature, action: action, title: feature.name)
+            it.image = featureImage(feature)
+            return it
+        }
+        let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
+        parent.image = featureImage(feature)
+        let sub = NSMenu()
+        for action in feature.actions where !action.dynamic {
+            sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
+        }
+        let saved = feature.actions.filter { $0.dynamic }
+        if !saved.isEmpty {
+            // Separate saved from built-ins only when both exist -- a feature with
+            // ONLY dynamic actions must not get a leading separator.
+            if !sub.items.isEmpty { sub.addItem(.separator()) }
+            for action in saved {
+                sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
+            }
+        }
+        parent.submenu = sub
+        return parent
     }
 
     private func triggerItem(feature: FeatureInfo, action: ActionInfo,
