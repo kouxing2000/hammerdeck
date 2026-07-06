@@ -2723,6 +2723,32 @@ do
     ok(#fake.windowFrameSets == 0, "disabling window_rewind clears pending history")
 end
 
+-- (d) a move we CAN'T record (unresolvable window id, a fresh action >1s later)
+-- must NOT clobber the still-valid prior undo group into an empty one -- the
+-- earlier change stays undoable. (Without the record-side guard, the id-less move
+-- would replace the pending group with an empty one and undo would restore
+-- nothing.)
+do
+    fake.screenList = { { x = 0, y = 0, w = 1000, h = 800 } }
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+    fake.focusedWid = 111
+    fake.windows = { { id = 11, wid = 111, x = 100, y = 100, w = 400, h = 300 } }
+    fake.pressHotkey("left", AC)                  -- group A: before-frame {100,100,400,300}
+    ok(fake.focusedWindow.x == 0 and fake.focusedWindow.w == 500,
+        "precondition: the first snap moved and recorded the window")
+    fake.clockOffset = fake.clockOffset + 2       -- a fresh action window (>GAP)
+    fake.focusedWid = 0                            -- unresolvable id: this move can't be recorded
+    fake.pressHotkey("right", AC)                 -- moves via AX, but records nothing
+    fake.focusedWid = 111
+    fake.windows = { { id = 11, wid = 111, x = 500, y = 0, w = 500, h = 800 } }  -- mirror the moved frame
+    fake.windowFrameSets = {}
+    assert(registry.runAction("window_rewind", "undo"))
+    ok(#fake.windowFrameSets == 1
+        and fake.windows[1].x == 100 and fake.windows[1].y == 100
+        and fake.windows[1].w == 400 and fake.windows[1].h == 300,
+        "an unrecordable move does not clobber the prior undo group (it still restores)")
+end
+
 fake.focusedWid = nil
 registry.setEnabled("window_snap", false)
 registry.setEnabled("window_rewind", false)

@@ -102,9 +102,14 @@ end
 --- the write. Self-captures (no list()), so it never invalidates a batch's ids.
 function M.recordFocused()
     if not enabled or restoring then return end
+    local wid, f = adapter.focusedWindowWid(), adapter.focusedWindowFrame()
+    -- Nothing recordable (unresolvable wid / no frame): do NOT touch the pending
+    -- group. An id-less move must not clobber a still-valid prior undo into an
+    -- empty group -- only a real capture may open or extend one.
+    if not (wid and wid ~= 0 and f) then return end
     local now = adapter.now()
     beginGroupIfNeeded(now)
-    stash(adapter.focusedWindowWid(), adapter.focusedWindowFrame())
+    stash(wid, f)
     lastWriteAt = now
 end
 
@@ -114,10 +119,14 @@ end
 ---@param id integer
 function M.recordById(id)
     if not enabled or restoring then return end
+    -- Resolve from the caller's cached list FIRST; if the id isn't there (or has no
+    -- stable wid) there is nothing to record, so leave the pending group untouched
+    -- rather than clobber it into an empty group (same rule as recordFocused).
+    local ent = lastList and lastList.byId[id]
+    if not (ent and ent.wid and ent.wid ~= 0) then return end
     local now = adapter.now()
     beginGroupIfNeeded(now)
-    local ent = lastList and lastList.byId[id]
-    if ent then stash(ent.wid, ent) end   -- ent already carries x/y/w/h
+    stash(ent.wid, ent)                    -- ent already carries x/y/w/h
     lastWriteAt = now
 end
 
