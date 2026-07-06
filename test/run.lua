@@ -2638,6 +2638,96 @@ do
         "clean after window_snap presets test")
 end
 
+-- T24r: window_rewind -- single-step undo of the last window LAYOUT change. It
+-- records at the window_ops funnel (the same seam window_snap/deck move through),
+-- so a snap, a whole-display swap, or a deck retile is all undoable by one global
+-- Hyper+Z. window_snap (registered above, left disabled) is the real mover here;
+-- window_rewind only records + restores.
+registry.register(require("features.window_rewind"))
+registry.setEnabled("window_rewind", true)   -- start(ctx) turns recording on
+registry.setEnabled("window_snap", true)     -- a real mover to generate history
+
+-- (a) BY-ID batch: a two-display swap fires many setFrameFor in one synchronous
+-- loop -> ONE undo group. Undo restores every moved window to its pre-swap frame
+-- AND the pointer to where it was when the swap began. (Keys on the STABLE wid,
+-- re-resolved to a live id at undo time -- the ids-only-valid-until-next-list rule.)
+do
+    fake.screenList = {
+        { x = 0,    y = 0, w = 1000, h = 800 },      -- A
+        { x = 1000, y = 0, w = 2000, h = 1200 },     -- B (bigger)
+    }
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 } -- active = A
+    fake.windows = {
+        { id = 11, wid = 111, x = 100,  y = 100, w = 400, h = 300 },   -- on A -> moves to B
+        { id = 12, wid = 222, x = 1200, y = 150, w = 600, h = 450 },   -- on B -> moves to A
+    }
+    fake.mousePos = { x = 150, y = 200 }         -- captured at group start
+    local A = { x = 100,  y = 100, w = 400, h = 300 }
+    local B = { x = 1200, y = 150, w = 600, h = 450 }
+
+    assert(registry.runAction("window_snap", "swap_screens"))
+    ok(fake.windows[1].x ~= A.x, "precondition: the swap actually moved the windows")
+
+    fake.mousePos = { x = 999, y = 999 }         -- user drifts the pointer after the swap
+    fake.windowFrameSets = {}
+    assert(registry.runAction("window_rewind", "undo"))
+    ok(#fake.windowFrameSets == 2, "undo moved back exactly the two swapped windows")
+    ok(fake.windows[1].x == A.x and fake.windows[1].y == A.y
+        and fake.windows[1].w == A.w and fake.windows[1].h == A.h,
+        "window A restored to its pre-swap frame")
+    ok(fake.windows[2].x == B.x and fake.windows[2].y == B.y
+        and fake.windows[2].w == B.w and fake.windows[2].h == B.h,
+        "window B restored to its pre-swap frame")
+    ok(fake.mousePos.x == 150 and fake.mousePos.y == 200,
+        "undo returns the pointer to the group-start position")
+
+    fake.windowFrameSets = {}
+    assert(registry.runAction("window_rewind", "undo"))
+    ok(#fake.windowFrameSets == 0, "single-step: a second undo is a no-op (the group was consumed)")
+end
+
+-- (b) FOCUSED move: recorded via focusedWindowFrame()+focusedWindowWid() (no
+-- list() -- that path must never rebuild the AX cache mid-batch), restored by
+-- re-resolving the stored wid to a live id. The prior group was consumed by (a)'s
+-- undo, so this snap starts a fresh group.
+do
+    fake.screenList = { { x = 0, y = 0, w = 1000, h = 800 } }
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+    fake.focusedWid = 111
+    fake.windows = { { id = 11, wid = 111, x = 100, y = 100, w = 400, h = 300 } }
+    fake.pressHotkey("left", AC)                  -- window_snap "left" -> focused {0,0,500,800}
+    ok(fake.focusedWindow.x == 0 and fake.focusedWindow.w == 500,
+        "precondition: the snap moved the focused window")
+    -- The fake keeps the window LIST and the focused frame in separate stores;
+    -- mirror what a real listWindows() would now report (the moved frame) so undo's
+    -- re-list resolves wid 111 to id 11.
+    fake.windows = { { id = 11, wid = 111, x = 0, y = 0, w = 500, h = 800 } }
+    fake.windowFrameSets = {}
+    assert(registry.runAction("window_rewind", "undo"))
+    ok(#fake.windowFrameSets == 1
+        and fake.windows[1].x == 100 and fake.windows[1].y == 100
+        and fake.windows[1].w == 400 and fake.windows[1].h == 300,
+        "undo restores a focused snap to its pre-snap frame")
+end
+
+-- disabling window_rewind clears any pending history (nothing to undo afterward)
+do
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+    fake.focusedWid = 111
+    fake.windows = { { id = 11, wid = 111, x = 100, y = 100, w = 400, h = 300 } }
+    fake.pressHotkey("left", AC)                  -- record a change...
+    registry.setEnabled("window_rewind", false)   -- ...then disable: history is cleared
+    registry.setEnabled("window_rewind", true)
+    fake.windowFrameSets = {}
+    assert(registry.runAction("window_rewind", "undo"))
+    ok(#fake.windowFrameSets == 0, "disabling window_rewind clears pending history")
+end
+
+fake.focusedWid = nil
+registry.setEnabled("window_snap", false)
+registry.setEnabled("window_rewind", false)
+ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_rewind test")
+
 -- T25: window_modal (modal hotkey group over the frame surface) ----------------
 registry.register(require("features.window_modal"))
 registry.setEnabled("window_modal", true)

@@ -213,3 +213,94 @@ struct WindowSwapArchetypeScene: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
+
+/// window_rewind: "undo the last window change". A single window springs from a
+/// snapped/displaced spot BACK to its home rect; an undo-arrow badge flashes at the
+/// moment it returns, with a faint dashed ghost marking where it just came from --
+/// so the return reads as UNDO, not just another arrangement. That restore IS the
+/// whole feature (put back what a snap/swap/deck move just did), so the scene loops
+/// the away<->home rewind. Plays only while `playing` (hover); at rest it shows the
+/// window settled at home (the restored, calm frame). Static loopDuration so the
+/// gallery playback bar tracks the two-beat cycle, as in the grid/deck scenes.
+struct WindowRewindArchetypeScene: View {
+    let playing: Bool
+
+    // nonisolated for the same reason as the grid/deck scenes: read by the
+    // nonisolated FeatureArchetype.loopDuration.
+    nonisolated static let heartbeat = 1.1
+    nonisolated static let loopDuration = heartbeat * 2   // away <-> home
+
+    // home = the restored resting frame; away = where a snap/move had thrown it.
+    private let home = CGRect(x: 0.24, y: 0.22, width: 0.52, height: 0.56)
+    private let away = CGRect(x: 0.05, y: 0.09, width: 0.40, height: 0.46)
+
+    @State private var atHome = true
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let gap: CGFloat = 3
+            let r = atHome ? home : away
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(LinearGradient(colors: [.secondary.opacity(0.10), .secondary.opacity(0.04)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.18), lineWidth: 1))
+
+                // ghost of where it just was -- fades in as the window snaps home,
+                // so the return reads as "undo" rather than just another move.
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(.secondary.opacity(0.45),
+                                  style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                    .frame(width: max(0, away.width * w - gap * 2),
+                           height: max(0, away.height * h - gap * 2))
+                    .offset(x: away.minX * w + gap, y: away.minY * h + gap)
+                    .opacity(atHome ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.4), value: atHome)
+
+                // the window springing home (and back out again next beat), with the
+                // undo badge shown at the moment of return.
+                window
+                    .frame(width: max(0, r.width * w - gap * 2),
+                           height: max(0, r.height * h - gap * 2))
+                    .offset(x: r.minX * w + gap, y: r.minY * h + gap)
+                    .overlay(
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(5)
+                            .background(Circle().fill(Color.accentColor.opacity(0.9)))
+                            .opacity(atHome ? 1 : 0)
+                            .scaleEffect(atHome ? 1 : 0.6)
+                            .animation(.spring(response: 0.32, dampingFraction: 0.6), value: atHome)
+                    )
+                    .animation(.spring(response: 0.4, dampingFraction: 0.72), value: atHome)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .scaleEffect(playing ? 1 : 0.98)
+            .opacity(playing ? 1 : 0.9)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
+        }
+        .heartbeat(Self.heartbeat, active: playing) { atHome.toggle() }
+        .onChange(of: playing) { isOn in
+            if !isOn { atHome = true }   // settle at home (restored, calm frame) at rest
+        }
+    }
+
+    private var window: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { _ in
+                    Circle().fill(.secondary.opacity(0.5)).frame(width: 3, height: 3)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 4).frame(height: 9)
+            .background(Color.accentColor.opacity(0.28))
+            Spacer(minLength: 0)
+        }
+        .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor.opacity(0.7), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "Window Rewind",
+  "version": "1.0.0",
+  "description": "Undo the last window layout change -- one hotkey (Hyper+Z) restores every window a snap, screen-swap, grid, or deck move just repositioned, and returns the pointer with them. Single-step: it rewinds the most recent change.",
+  "category": "productivity",
+  "icon": "arrow.uturn.backward",
+  "context": "window",
+  "requires": ["accessibility"]
+}

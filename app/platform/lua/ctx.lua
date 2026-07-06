@@ -221,7 +221,9 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- the rest are thin adapter pass-throughs. New pure-Lua window helpers
     -- (tiling/grid, ported onto platform.windows math) will surface here too.
     ctx.window = {}
-    function ctx.window.list()           return adapter.listWindows() end
+    -- Routed through window_ops so window_history captures the snapshot (lets a
+    -- following setFrameFor batch resolve before-frames without re-listing).
+    function ctx.window.list()           return window_ops.list() end
     function ctx.window.focus(id)        return adapter.focusWindow(id) end
     function ctx.window.frame()          return adapter.focusedWindowFrame() end
     function ctx.window.title()          return adapter.focusedWindowTitle() end
@@ -231,8 +233,9 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- Bypasses window_ops on purpose: a multi-window layout must NOT yank the
     -- pointer to follow one of them (the rules engine's layout effect follows
     -- the same rule). Ids are only valid until the next list() -- re-list right
-    -- before a placement batch. Returns true on success.
-    function ctx.window.setFrameFor(id, f) return adapter.setWindowFrame(id, f) end
+    -- before a placement batch. Returns true on success. Routed through window_ops
+    -- so the move is recorded for undo (window_history), still bypassing pointer-follow.
+    function ctx.window.setFrameFor(id, f) return window_ops.setFrameFor(id, f) end
     -- Raise a listed window above others WITHOUT activating its app or moving the
     -- pointer -- a surgical AXRaise (no same-app-sibling drag, no app activation,
     -- so no spurious focus events; see adapter.raiseWindow). Window Deck keeps the
@@ -251,6 +254,13 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- The focused window's stable CGWindowID (0/nil = unresolvable) -- same
     -- identity as the `wid` field on ctx.window.list() rows.
     function ctx.window.focusedWid() return adapter.focusedWindowWid() end
+    -- Undo the most-recent window LAYOUT change (single-step): restore every window
+    -- a snap / screen-swap / deck move just repositioned, and the pointer with them.
+    -- Returns the count restored (0 = nothing to undo). Powers window_rewind.
+    function ctx.window.undoLast() return window_ops.undoLast() end
+    -- Turn window-layout history recording on/off. window_rewind's start/stop calls
+    -- this so the recording cost is paid only while that feature is enabled.
+    function ctx.window.enableHistory(on) window_ops.setHistoryEnabled(on) end
 
     ctx.screen = {}
     function ctx.screen.frames()         return adapter.screenFrames() end

@@ -24,6 +24,7 @@
 -- feature (no stringly-typed enabled-key read) -- the registry does.
 
 local adapter = require("platform.adapter")
+local history = require("platform.window_history")   -- CORE peer; records before-frames
 
 local M = {}
 
@@ -53,6 +54,7 @@ end
 ---@param f {x:number,y:number,w:number,h:number}
 ---@return boolean ok
 function M.setFrame(f)
+    history.recordFocused()   -- snapshot the focused window's before-frame for undo
     if pointerFollowEnabled() ~= true then
         return adapter.setFocusedWindowFrame(f)
     end
@@ -70,5 +72,35 @@ function M.setFrame(f)
     end
     return ok
 end
+
+-- List windows, feeding the snapshot to window_history so a following setFrameFor
+-- batch can resolve each moved window's before-frame WITHOUT a second list() (which
+-- would invalidate the caller's ids). Rows returned unchanged.
+---@return { id:integer, wid:integer?, x:number, y:number, w:number, h:number }[]
+function M.list()
+    local rows = adapter.listWindows()
+    history.noteList(rows)
+    return rows
+end
+
+--- Place a SPECIFIC listed window by id (batch layout). Records the before-frame
+--- for undo, then writes WITHOUT pointer-follow -- a multi-window layout must never
+--- yank the cursor to chase one of its members (same rule the rules engine follows).
+---@param id integer
+---@param f {x:number,y:number,w:number,h:number}
+---@return boolean ok
+function M.setFrameFor(id, f)
+    history.recordById(id)
+    return adapter.setWindowFrame(id, f)
+end
+
+--- Restore the most-recent window layout change (single-step). Returns the count
+--- of windows moved back.
+---@return integer restored
+function M.undoLast() return history.undoLast() end
+
+--- Turn window-layout history recording on/off (window_rewind toggles this).
+---@param on boolean
+function M.setHistoryEnabled(on) history.setEnabled(on) end
 
 return M

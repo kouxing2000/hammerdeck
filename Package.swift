@@ -77,6 +77,7 @@ let package = Package(
                 "features/window_deck/i18n",
                 "features/window_grid",
                 "features/window_modal",
+                "features/window_rewind",
                 "features/window_snap",
                 "features/window_switcher",
             ],
