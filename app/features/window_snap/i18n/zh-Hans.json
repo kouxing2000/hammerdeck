@@ -26,6 +26,9 @@
   "action.swap_screens.label": "在显示器之间交换窗口",
   "action.swap_screens.description": "把你当前所在显示器的所有窗口与另一台显示器的窗口互换 -- 两边各自搬到对方, 按比例缩放. 三台及以上显示器时会先询问与哪台交换. 最小化和全屏窗口保持不动.",
 
+  "option.presets.label": "自定义摆放",
+  "option.presets.hint": "设计一个窗口矩形, 并把它绑定到你自己的快捷键.",
+
   "alert.oneScreen": "只有一个屏幕",
   "swap.pickTitle": "交换哪两台显示器?",
   "swap.pickPrompt": "选择要交换的两台显示器. 默认选中你当前所在的那台 -- 两台都可更改.",

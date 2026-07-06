@@ -130,6 +130,7 @@ do
             { "window_grid",     "hud.caption",         "press a number to place the window" },
             { "window_grid",     "hud.captionExtend",   "press a cell down-right to extend" },
             { "window_grid",     "flash.span",          "%d×%d region" },
+            { "window_snap",     "option.presets.label", "Saved placements" },
             { "window_deck",     "pick.windows",        "Deck which windows?" },
         }
         for _, e in ipairs(sweep) do
@@ -2289,28 +2290,10 @@ do
     fake.screenList = saved
 end
 
--- thirds (the ported grid cell-placement: a 3-wide grid). Dormant actions with
--- no trigger -> fire them via registry.runAction. Clean 1200-wide screen so the
--- columns are integers. Scoped in a `do` block to keep its locals off the main
--- chunk (Lua caps a function at 200 locals; this file is one flat chunk).
-do
-    fake.screenList = { { x = 0, y = 0, w = 1200, h = 900 } }
-    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
-    local function third(actionId)
-        assert(registry.runAction("window_snap", actionId))
-        return lastFrame()
-    end
-    lf = third("left_third")
-    ok(lf.x == 0 and lf.y == 0 and lf.w == 400 and lf.h == 900, "left third = first column of a 3-grid")
-    lf = third("center_third")
-    ok(lf.x == 400 and lf.w == 400 and lf.h == 900, "center third = middle column")
-    lf = third("right_third")
-    ok(lf.x == 800 and lf.w == 400, "right third = last column")
-    lf = third("left_two_thirds")
-    ok(lf.x == 0 and lf.w == 800, "left two-thirds spans the first two columns")
-    lf = third("right_two_thirds")
-    ok(lf.x == 400 and lf.w == 800, "right two-thirds spans the last two columns")
-end
+-- (The thirds are no longer hardcoded snap actions: they live as a QUICK-ADD
+-- recipe library in the placement editor -- a Swift-side affordance that appends a
+-- normal preset. Nothing to test at the Lua layer; the preset -> action apply path
+-- is covered by T24p above.)
 
 -- swap the ACTIVE display's windows with another (no trigger -> runAction). Two
 -- displays: no choice to make, so it swaps immediately. Focus is on screen 1
@@ -2484,6 +2467,112 @@ ok(fake.mousePos.x == 1275 and fake.mousePos.y == 300,
 registry.setEnabled("pointer_follows_window", false)
 registry.setEnabled("window_snap", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after pointer_follows_window test")
+
+-- T24p: window_snap PLACEMENT PRESETS -- the dynamicActions hook turns each saved
+-- preset (a JSON array in the feature's OWN option) into its own rebindable action
+-- (preset_<uuid>). Exercises: expansion, apply via rectFromRatios, stable-id
+-- trigger survival across a re-register (what reload() does), rename relabel, and
+-- tolerance of a corrupt setting. All in window_snap's own namespace -- no other
+-- feature involved (the decoupled design the owner asked for).
+do
+    local pjson = require("platform.json")
+    local presetsKey = "hammerdeck.opt.window_snap.presets"
+
+    -- Re-register window_snap from a FRESH module (clears the require cache like
+    -- reload() does, so the static action list is expanded anew from the CURRENT
+    -- setting -- never double-appended), then enable it.
+    local function reregister()
+        pcall(registry.setEnabled, "window_snap", false)
+        registry.unregister("window_snap")
+        package.loaded["features.window_snap"] = nil
+        registry.register(require("features.window_snap"))
+        registry.setEnabled("window_snap", true)
+    end
+    -- The described action row for an id, or nil.
+    local function snapAction(id)
+        for _, f in ipairs(registry.describe()) do
+            if f.id == "window_snap" then
+                for _, a in ipairs(f.actions) do
+                    if a.id == id then return a end
+                end
+            end
+        end
+        return nil
+    end
+
+    fake.screenList    = { { x = 0, y = 0, w = 1200, h = 900 } }
+    fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+
+    -- (1) two presets -> two bindable actions (clean 0.5 fractions so the frame is exact)
+    fake.settings[presetsKey] = pjson.encode({
+        { id = "aaa", name = "Left half",         x = 0,   y = 0, w = 0.5, h = 1 },
+        { id = "bbb", name = "Top-right quarter", x = 0.5, y = 0, w = 0.5, h = 0.5 },
+    })
+    reregister()
+    ok(snapAction("preset_aaa") ~= nil and snapAction("preset_bbb") ~= nil,
+        "each stored preset becomes a bindable action")
+    ok(snapAction("preset_aaa").label == "Left half",
+        "the action takes the preset's name as its label")
+    ok(registry.isActionAutomatable("window_snap", "preset_aaa") == false,
+        "a preset action is manual-only (not automatable)")
+    ok(snapAction("preset_aaa").defaultTrigger == nil,
+        "a preset ships dormant -- no default trigger (no uninvited hotkey grab)")
+    -- The dynamic tag is what the config UI reads to HIDE these from the generic
+    -- per-action trigger sections (they are bound inline in Saved placements); a
+    -- built-in action must stay non-dynamic.
+    ok(snapAction("preset_aaa").dynamic == true,
+        "a preset action is tagged dynamic (config UI hides its duplicate trigger section)")
+    ok(snapAction("left").dynamic == false,
+        "a built-in action is not dynamic")
+
+    -- (2) firing a preset applies its fractions via rectFromRatios
+    assert(registry.runAction("window_snap", "preset_aaa"))
+    local lf = lastFrame()
+    ok(lf.x == 0 and lf.y == 0 and lf.w == 600 and lf.h == 900,
+        "preset_aaa applies the left-half rectangle")
+    assert(registry.runAction("window_snap", "preset_bbb"))
+    lf = lastFrame()
+    ok(lf.x == 600 and lf.y == 0 and lf.w == 600 and lf.h == 450,
+        "preset_bbb applies the top-right-quarter rectangle")
+
+    -- (3) stable id: a bound shortcut survives a re-register (reload's essence),
+    -- because the trigger override keys on preset_<uuid>, not the array index.
+    ok(registry.setTrigger("window_snap", "preset_aaa",
+        { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "1" }),
+        "a preset action binds a hotkey")
+    reregister()
+    local a = snapAction("preset_aaa")
+    ok(a ~= nil and a.triggerOverridden == true and a.trigger and a.trigger.key == "1",
+        "the bound shortcut survives a re-register (stable preset id)")
+
+    -- (4) rename (same id, new name) -> new label, SAME binding
+    fake.settings[presetsKey] = pjson.encode({
+        { id = "aaa", name = "My Big Left",       x = 0,   y = 0, w = 0.5, h = 1 },
+        { id = "bbb", name = "Top-right quarter", x = 0.5, y = 0, w = 0.5, h = 0.5 },
+    })
+    reregister()
+    a = snapAction("preset_aaa")
+    ok(a ~= nil and a.label == "My Big Left", "a rename updates the action label")
+    ok(a.triggerOverridden == true, "a rename keeps the shortcut (the id is unchanged)")
+
+    -- (5) tolerance: a corrupt setting yields NO preset actions, but the built-in
+    -- snaps still bind (a bad value must never disable the feature)
+    fake.settings[presetsKey] = "{ not json"
+    reregister()
+    ok(snapAction("preset_aaa") == nil, "a corrupt presets value drops the preset actions")
+    ok(snapAction("left") ~= nil, "... and the built-in snaps still bind")
+
+    -- clean up: clear the setting + the override, re-register a clean window_snap,
+    -- leave it DISABLED as the earlier tests left it.
+    fake.settings[presetsKey] = nil
+    fake.settings["hammerdeck.trigger.window_snap.preset_aaa"] = nil
+    pcall(registry.setEnabled, "window_snap", false)
+    registry.unregister("window_snap")
+    package.loaded["features.window_snap"] = nil
+    registry.register(require("features.window_snap"))
+    ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
+        "clean after window_snap presets test")
+end
 
 -- T25: window_modal (modal hotkey group over the frame surface) ----------------
 registry.register(require("features.window_modal"))

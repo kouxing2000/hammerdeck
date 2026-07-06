@@ -149,6 +149,10 @@ extension FeatureArchetype {
             // as keystrokes" types the clipboard out char-by-char -- a typing
             // scene, nothing to do with stripping styling.
             TypeKeystrokesArchetypeScene(playing: playing)
+        } else if feature.id == "window_snap", actionId == "swap_screens" {
+            // "Swap windows between displays" is a two-window exchange, not a single
+            // move -- its own scene (WindowArrangeArchetypeScene animates one window).
+            WindowSwapArchetypeScene(playing: playing)
         } else if let sample = windowActionSample(feature: feature, actionId: actionId) {
             WindowArrangeArchetypeScene(sample: sample, playing: playing)
         } else {

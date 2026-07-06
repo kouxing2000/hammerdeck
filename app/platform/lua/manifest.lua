@@ -80,7 +80,7 @@ manifest.API_VERSION = 1
 -- declare a plaintext `default` (enforced below).
 local VALID_OPTION_TYPES = {
     bool = true, int = true, string = true, enum = true, time = true, appList = true,
-    siteList = true, secret = true,
+    siteList = true, placementList = true, secret = true,
 }
 
 -- Privileged ctx extensions a feature may opt into via `capabilities = {...}`.
@@ -142,6 +142,17 @@ function manifest.validate(m)
     if m.onOptionChange ~= nil then
         assert(type(m.onOptionChange) == "function",
             "feature '" .. m.id .. "': onOptionChange must be a function")
+    end
+    -- Optional: dynamicActions(read) -> a list of extra action tables, expanded by
+    -- the REGISTRY at register time (it passes a scoped option reader so the
+    -- feature stays off the adapter seam). Lets a feature derive actions from its
+    -- own stored data -- e.g. window_snap turning each user placement preset into
+    -- its own rebindable action. The returned actions are appended to m.actions
+    -- BEFORE the validation below, so they pass the same id-uniqueness / run
+    -- checks as static ones. Pure metadata here; the registry owns the invocation.
+    if m.dynamicActions ~= nil then
+        assert(type(m.dynamicActions) == "function",
+            "feature '" .. m.id .. "': dynamicActions must be a function (read) -> actions")
     end
     -- Optional: schedule(ctx) -> list of {label, at|everyMin|event|note, optionKey?}.
     -- A SERVICE that runs its own internal timers (ctx.everySeconds / dailyAt)

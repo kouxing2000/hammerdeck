@@ -182,6 +182,10 @@ struct ActionInfo: Identifiable {
     // event), not just a manual one (hotkey / chord)? False for context-
     // dependent actions -- the trigger picker hides the automated types for them.
     let automatable: Bool
+    // Created + bound by an option editor (e.g. a Saved-placements snap with its
+    // inline shortcut), so the detail view hides it from the generic per-action
+    // trigger sections -- otherwise it appears twice.
+    let dynamic: Bool
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
@@ -194,6 +198,7 @@ struct ActionInfo: Identifiable {
         self.triggerOverridden = dict.bool("triggerOverridden")
         self.triggerDesc = dict.str("triggerDesc")
         self.automatable = dict.bool("automatable")
+        self.dynamic = dict.bool("dynamic")
     }
 }
 

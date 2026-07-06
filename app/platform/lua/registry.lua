@@ -127,13 +127,50 @@ local function applyFeatureMeta(m)
     end
 end
 
+-- The option-setting key for a feature's option value (mirrors ctx.opt's read
+-- path, hammerdeck.opt.<id>.<key>), used to feed a feature's dynamicActions hook.
+local function optSettingKey(id, key) return "hammerdeck.opt." .. id .. "." .. key end
+
+-- Expand a feature's dynamicActions(read) hook into extra actions appended to
+-- m.actions, BEFORE manifest.validate runs (so the generated actions get the same
+-- id-uniqueness / run checks as static ones). The REGISTRY -- not the feature --
+-- reads the stored option value (a feature must never touch the adapter seam),
+-- passing a reader scoped to this feature's option namespace. This is the
+-- sanctioned way a feature derives actions from its own persisted data (e.g.
+-- window_snap turning each placement preset into a bindable action). Re-runs on
+-- every register (incl. reload()), so a fresh module's static list is expanded
+-- anew from the CURRENT setting -- no stale or double-appended actions. A hook
+-- throw propagates to registry.load's pcall (which quarantines the feature); the
+-- hook itself should be tolerant so a corrupt setting yields no actions rather
+-- than disabling the feature.
+local function expandDynamicActions(m)
+    if type(m) ~= "table" or type(m.dynamicActions) ~= "function" then return end
+    local read = function(key)
+        return adapter.getSetting(optSettingKey(m.id, key), manifest.defaultFor(m, key))
+    end
+    local extra = m.dynamicActions(read)
+    if type(extra) ~= "table" then return end
+    m.actions = m.actions or {}
+    for _, a in ipairs(extra) do
+        -- Tag as dynamic so the config UI can hide it from the generic per-action
+        -- trigger sections: a dynamic action (e.g. a window_snap placement preset)
+        -- is created + bound by the OPTION editor that owns it (the Saved
+        -- placements list, with its inline shortcut), so a second system-style
+        -- "Trigger -- X" section would just duplicate it.
+        a.dynamic = true
+        m.actions[#m.actions + 1] = a
+    end
+end
+
 -- Register a feature module (its validated manifest). First overlays the
--- feature's co-located feature.json (applyFeatureMeta), so it now also reads a
--- file and THROWS on malformed JSON / a non-object root -- on top of throwing on
--- a bad manifest or duplicate id. Callers that must survive a broken plugin use
--- registry.load() (below), which quarantines all of those throws.
+-- feature's co-located feature.json (applyFeatureMeta), then expands any
+-- dynamicActions hook, so it now also reads a file and a setting and THROWS on
+-- malformed JSON / a non-object root -- on top of throwing on a bad manifest or
+-- duplicate id. Callers that must survive a broken plugin use registry.load()
+-- (below), which quarantines all of those throws.
 function registry.register(m)
     applyFeatureMeta(m)
+    expandDynamicActions(m)
     manifest.validate(m)
     assert(not features[m.id], "duplicate feature id: " .. m.id)
     features[m.id] = m
@@ -947,6 +984,9 @@ function registry.describe()
                 defaultTrigger = a.defaultTrigger,
                 triggerOverridden = storedTrigger(m, a) ~= nil,
                 triggerDesc = triggers.describe(current),
+                -- Created + bound by an option editor (its inline shortcut), so the
+                -- UI hides it from the generic per-action trigger sections.
+                dynamic = a.dynamic == true,
             }
         end
         row.actions = actions

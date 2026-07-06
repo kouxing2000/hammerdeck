@@ -147,3 +147,69 @@ struct WindowArrangeArchetypeScene: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
+
+/// window_snap's "swap windows between displays": TWO displays, each holding its
+/// own window; every beat the two windows EXCHANGE displays (and back). Distinct
+/// from the single-window throw -- two windows crossing reads as a swap, not a move.
+/// A dedicated scene because WindowArrangeArchetypeScene animates only one window.
+struct WindowSwapArchetypeScene: View {
+    let playing: Bool
+    @State private var swapped = false
+
+    // Each window sits inset within its display; the two are tinted differently so
+    // the exchange is legible as they cross.
+    private let inset = CGRect(x: 0.12, y: 0.15, width: 0.76, height: 0.7)
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let screenGap: CGFloat = 6
+            let dispW = (w - screenGap) / 2
+            let gap: CGFloat = 3
+            let aDisplay = swapped ? 1 : 0
+            let bDisplay = swapped ? 0 : 1
+            let ax = CGFloat(aDisplay) * (dispW + screenGap) + inset.minX * dispW + gap
+            let bx = CGFloat(bDisplay) * (dispW + screenGap) + inset.minX * dispW + gap
+            ZStack(alignment: .topLeading) {
+                ForEach(0..<2, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(LinearGradient(colors: [.secondary.opacity(0.10), .secondary.opacity(0.04)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.18), lineWidth: 1))
+                        .frame(width: dispW, height: h)
+                        .offset(x: CGFloat(i) * (dispW + screenGap), y: 0)
+                }
+                swapWindow(.accentColor)
+                    .frame(width: max(0, inset.width * dispW - gap * 2), height: max(0, inset.height * h - gap * 2))
+                    .offset(x: ax, y: inset.minY * h + gap)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.72), value: swapped)
+                swapWindow(.orange)
+                    .frame(width: max(0, inset.width * dispW - gap * 2), height: max(0, inset.height * h - gap * 2))
+                    .offset(x: bx, y: inset.minY * h + gap)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.72), value: swapped)
+            }
+            .scaleEffect(playing ? 1 : 0.98)
+            .opacity(playing ? 1 : 0.9)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
+        }
+        .heartbeat(0.95, active: playing) { swapped.toggle() }
+        .onChange(of: playing) { isOn in if !isOn { swapped = false } }
+    }
+
+    private func swapWindow(_ tint: Color) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { _ in
+                    Circle().fill(.secondary.opacity(0.5)).frame(width: 3, height: 3)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 4).frame(height: 9)
+            .background(tint.opacity(0.28))
+            Spacer(minLength: 0)
+        }
+        .background(RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(tint.opacity(0.7), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}

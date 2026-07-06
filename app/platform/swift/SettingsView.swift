@@ -228,8 +228,11 @@ private struct FeatureDetail: View {
                 }
             }
             // One trigger editor per declared action (a plugin may have several
-            // shortcuts). Pure services have none.
-            ForEach(feature.actions) { action in
+            // shortcuts). Pure services have none. DYNAMIC actions are omitted: they
+            // are created + bound by the option editor that owns them (window_snap's
+            // Saved-placements list binds each snap's shortcut inline), so a system-
+            // style "Trigger -- X" section here would just duplicate them.
+            ForEach(feature.actions.filter { !$0.dynamic }) { action in
                 Section(feature.actions.count == 1
                         ? Strings.t("settings.bind_trigger", default: "Bind trigger")
                         : String(format: Strings.t("settings.trigger_named", default: "Trigger -- %@"), action.label)) {
@@ -307,9 +310,10 @@ private struct OptionEditor: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 editor
-                // siteList manages its own rows (add/remove); a blanket reset
-                // would be confusing, so it has no reset affordance.
-                if store.isOptionOverridden(featureId, opt) && opt.type != "siteList" { resetButton }
+                // siteList / placementList manage their own rows and start empty
+                // (no meaningful default), so a blanket reset would confuse -- no reset.
+                if store.isOptionOverridden(featureId, opt)
+                    && opt.type != "siteList" && opt.type != "placementList" { resetButton }
             }
             hintView
             actionButton
@@ -325,7 +329,7 @@ private struct OptionEditor: View {
                 editor
                 hintView
                 actionButton
-                if store.isOptionOverridden(featureId, opt) {
+                if store.isOptionOverridden(featureId, opt) && opt.type != "placementList" {
                     Button {
                         store.resetOption(featureId, opt)
                     } label: {
@@ -495,6 +499,37 @@ private struct OptionEditor: View {
                     json: store.optionValue(featureId, opt) as? String
                         ?? (opt.defaultValue as? String ?? ""),
                     onChange: { store.setOptionValue(featureId, opt, $0) }
+                )
+            }
+        case "placementList":
+            VStack(alignment: .leading, spacing: 4) {
+                if !opt.collapsible { Text(opt.label) }
+                PlacementListEditor(
+                    json: store.optionValue(featureId, opt) as? String
+                        ?? (opt.defaultValue as? String ?? ""),
+                    onChange: { store.setOptionValue(featureId, opt, $0) },
+                    // Adding/removing/renaming a snap changes the feature's action
+                    // set/labels, which only re-derive on register -- so a commit
+                    // reloads the catalog to bind the new snap's action live.
+                    reload: { store.reload() },
+                    // The shortcut lives in the row: read/write the hotkey of the
+                    // snap's "preset_<id>" action so shape + key sit in one place.
+                    comboFor: { pid in
+                        let a = store.features.first { $0.id == featureId }?
+                            .actions.first { $0.id == "preset_" + pid }
+                        if let t = a?.trigger, t.type == "hotkey" {
+                            return SnapCombo(mods: Set(t.mods), key: t.key)
+                        }
+                        return SnapCombo(mods: [], key: "")
+                    },
+                    bind: { pid, mods, key in
+                        // keyish() is the canonical "editor fields -> spec" factory
+                        // (mod order + key casing), shared with the trigger editor.
+                        // Returns setTrigger's refusal reason (nil on success) so the
+                        // row can revert a rejected combo instead of showing a phantom.
+                        store.setTrigger(featureId, "preset_" + pid,
+                                         TriggerSpec.keyish(mods: mods, key: key, follows: ""))
+                    }
                 )
             }
         default:

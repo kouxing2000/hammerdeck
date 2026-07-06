@@ -14,6 +14,7 @@
 -- it every action alerts the onboarding message.
 
 local W = require("platform.windows")
+local json = require("platform.json")
 
 local RETRY_SECONDS = 0.5   -- fullscreen exit settle time before retrying
 local TOGGLE_SCALE  = 0.75  -- the "smaller" size of the maximize toggle
@@ -39,16 +40,6 @@ local function arranger(ctx)
         local f = focused()
         if not f then return end
         ctx.window.setFrame(W.rectFromRatios(f.screen, xR, yR, wR, hR))
-    end
-
-    -- Snap to a cell of a `cols` x `rows` grid: cell {cx,cy} 0-based offset,
-    -- {cw,ch} span (the ported grid algorithm -- windows.gridCellToFrame). Thirds
-    -- ride a 3x1 grid; flush (no gutter), matching the halves.
-    function a.snapGrid(cols, rows, cx, cy, cw, ch)
-        local f = focused()
-        if not f then return end
-        ctx.window.setFrame(W.gridCellToFrame(f.screen,
-            { w = cols, h = rows }, { x = cx, y = cy, w = cw, h = ch }))
     end
 
     -- Maximized (full width or height) -> centered 75%; else maximize.
@@ -245,13 +236,102 @@ local function with(ctx)
     return ctx.perEnable(arranger)
 end
 
+-- ---------------------------------------------------------------------------
+-- User-defined placement presets. Each is a saved rectangle {id,name,x,y,w,h}
+-- (x/y/w/h are screen fractions in [0,1]) designed in the inline Settings editor
+-- (the `placementList` option). The registry turns each stored preset into its
+-- OWN rebindable action ("preset_<uuid>") via the dynamicActions hook below, so a
+-- user can bind a custom placement to a shortcut -- the one-key replacement for
+-- stepping a window through the grid by hand. All self-contained: presets live in
+-- window_snap's own option namespace and apply with the SAME rectFromRatios call
+-- the built-in half-snaps use. No dependency on any other feature.
+-- ---------------------------------------------------------------------------
+
+---@class SnapPreset
+---@field id string     stable UUID (the action key -- survives rename/reorder)
+---@field name string
+---@field x number
+---@field y number
+---@field w number
+---@field h number
+
+local function clamp01(v) return math.max(0, math.min(1, v)) end
+
+-- Decode the stored presets option (a JSON array string) into a validated list.
+-- Tolerant by design: a nil / blank / corrupt / partial value yields {} and any
+-- malformed or duplicate-id entry is dropped, so a bad setting can NEVER break the
+-- feature -- the built-in snaps still bind. Pure (platform.json is a leaf util).
+---@param raw any
+---@return SnapPreset[]
+local function decodePresets(raw)
+    if type(raw) ~= "string" or raw:match("^%s*$") then return {} end
+    local ok, data = pcall(json.decode, raw)
+    if not ok or type(data) ~= "table" then return {} end
+    local out, seen = {}, {}
+    for _, p in ipairs(data) do
+        if type(p) == "table" and type(p.id) == "string" and p.id ~= "" and not seen[p.id]
+            and type(p.x) == "number" and type(p.y) == "number"
+            and type(p.w) == "number" and type(p.h) == "number" then
+            -- Clamp to on-screen fractions so even a hand-edited / corrupt-but-typed
+            -- setting can only ever produce a rectangle INSIDE the display (the
+            -- Swift editor already constrains to [0,1]; this guards the seam).
+            local x, y = clamp01(p.x), clamp01(p.y)
+            local w = math.min(clamp01(p.w), 1 - x)
+            local h = math.min(clamp01(p.h), 1 - y)
+            if w > 0 and h > 0 then
+                seen[p.id] = true
+                out[#out + 1] = {
+                    id   = p.id,
+                    name = (type(p.name) == "string" and p.name ~= "") and p.name or "Placement",
+                    x = x, y = y, w = w, h = h,
+                }
+            end
+        end
+    end
+    return out
+end
+
 local MODS = { "cmd", "alt", "ctrl" }
 
 return {
     api         = 1,
     id          = "window_snap",
 
-    options = {},
+    options = {
+        -- The inline placement designer: a variable-length list of rectangles,
+        -- edited in Settings (PlacementListEditor -- click two corners on a grid).
+        -- Stored as a JSON-array string in window_snap's OWN option namespace; the
+        -- registry turns each entry into a bindable action via the dynamicActions
+        -- hook below.
+        -- The saved list starts EMPTY -- your placements only. Common arrangements
+        -- (thirds, quarters, center, ...) are a QUICK-ADD library in the editor, NOT
+        -- seeded data, so there is nothing to mask or restore. Adding one drops a
+        -- normal placement into the list; each becomes a "preset_<id>" action via
+        -- dynamicActions. Not collapsible: it is the feature's primary content.
+        { key = "presets", type = "placementList", default = "",
+          label = "Saved placements",
+          hint = "Quick-add a common arrangement or design your own, then bind it to a shortcut." },
+    },
+
+    -- Turn each stored preset into its own independently-rebindable action.
+    -- Invoked by the REGISTRY at register time with a scoped option reader, so the
+    -- feature never touches the adapter seam. Action ids are stable
+    -- ("preset_<uuid>") so a rename or reorder keeps the user's bound shortcut.
+    -- Presets ship WITHOUT a defaultTrigger -- dormant until the user binds one,
+    -- like the swap action (no uninvited hotkey grabs).
+    ---@param read fun(key: string): any
+    dynamicActions = function(read)
+        local out = {}
+        for _, p in ipairs(decodePresets(read("presets"))) do
+            out[#out + 1] = {
+                id    = "preset_" .. p.id,
+                label = p.name,
+                description = "Move the focused window to your saved \"" .. p.name .. "\" placement.",
+                run   = function(ctx) with(ctx).snap(p.x, p.y, p.w, p.h) end,
+            }
+        end
+        return out
+    end,
 
     actions = {
         { id = "left", label = "Left half",
@@ -275,26 +355,10 @@ return {
           mnemonic = "Hyper+↓ — the arrow points to the edge",
           run = function(ctx) with(ctx).snap(0, 0.5, 1, 0.5) end },
 
-        -- Thirds (a 3-wide grid). No default trigger -- there is no natural
-        -- arrow for a third, and grabbing five more global hotkeys uninvited is
-        -- worse than leaving them dormant: each is fireable from the menubar and
-        -- bindable to any key/chord in Settings. The columns-of-three idiom
-        -- (Rectangle/Magnet) is the most-requested snap the halves don't cover.
-        { id = "left_third", label = "Left third",
-          description = "Move the focused window to the left third of the screen.",
-          run = function(ctx) with(ctx).snapGrid(3, 1, 0, 0, 1, 1) end },
-        { id = "center_third", label = "Center third",
-          description = "Move the focused window to the center third of the screen.",
-          run = function(ctx) with(ctx).snapGrid(3, 1, 1, 0, 1, 1) end },
-        { id = "right_third", label = "Right third",
-          description = "Move the focused window to the right third of the screen.",
-          run = function(ctx) with(ctx).snapGrid(3, 1, 2, 0, 1, 1) end },
-        { id = "left_two_thirds", label = "Left two-thirds",
-          description = "Move the focused window to the left two-thirds of the screen.",
-          run = function(ctx) with(ctx).snapGrid(3, 1, 0, 0, 2, 1) end },
-        { id = "right_two_thirds", label = "Right two-thirds",
-          description = "Move the focused window to the right two-thirds of the screen.",
-          run = function(ctx) with(ctx).snapGrid(3, 1, 1, 0, 2, 1) end },
+        -- The thirds (and quarters, center, ...) are no longer hardcoded here: they
+        -- live as a QUICK-ADD recipe library in the placement editor. Add one and it
+        -- becomes your own "preset_<id>" placement (editable, bindable) via
+        -- dynamicActions -- the columns-of-three idiom the halves don't cover, self-served.
 
         { id = "toggle_max", label = "Maximize / 75%",
           description = "Toggle the focused window between maximized and 75% centered.",

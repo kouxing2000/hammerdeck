@@ -61,8 +61,20 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
                 let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
                 parent.image = featureImage(feature)
                 let sub = NSMenu()
-                for action in feature.actions {
+                // Built-in actions first; then any DYNAMIC ones (user-defined, e.g.
+                // window_snap's saved placement snaps) grouped below a separator, so
+                // they read as "your saved" rather than mixing in with the built-ins.
+                for action in feature.actions where !action.dynamic {
                     sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
+                }
+                let saved = feature.actions.filter { $0.dynamic }
+                if !saved.isEmpty {
+                    // Separate saved from built-ins only when both exist -- a feature
+                    // with ONLY dynamic actions must not get a leading separator.
+                    if !sub.items.isEmpty { sub.addItem(.separator()) }
+                    for action in saved {
+                        sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
+                    }
                 }
                 parent.submenu = sub
                 menu.addItem(parent)
