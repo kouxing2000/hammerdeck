@@ -1917,7 +1917,7 @@ do
     fake.clockOffset = fake.clockOffset + 86400          -- next day -> rollover resets appTime
     fake.idle = 0
     fake.windowTitle = nil
-    local d2    = os.date("%Y-%m-%d", fake.now())
+    local d2    = os.date("%Y-%m-%d", fake.now()) --[[@as string]]
     local apps2 = "/fake/data/usage/" .. d2:sub(1, 7) .. "/" .. d2 .. "-apps.csv"
     local csv
     fake.activeUrls["Google Chrome"] = "https://github.com/acme/repo?token=secret"
