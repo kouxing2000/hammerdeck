@@ -22,25 +22,39 @@ struct SettingsPane: View {
     /// that are not a Lua feature -- Caps->Hyper, Show in Dock).
     static let generalId = "__general__"
 
+    /// The live filter text. Local UI state -- resets when Settings reopens.
+    @State private var query = ""
+
     var body: some View {
         HSplitView {
-            List(selection: $store.selectedFeatureId) {
-                // Host-level app preferences, pinned above the feature catalog so
-                // they are discoverable (not buried in the menubar only).
-                Section(Strings.t("settings.app", default: "App")) {
-                    Label(Strings.t("settings.general", default: "General"), systemImage: "gearshape")
-                        .tag(Self.generalId)
-                }
-                ForEach(groupedCategories, id: \.self) { category in
-                    Section(categoryLabel(category)) {
-                        // Global behavior preferences live in General > Behavior,
-                        // not the catalog -- filter them out here. Exception: a FAILED
-                        // preference stays so its red "failed to load" row still shows
-                        // (the Behavior section renders only healthy ones).
-                        ForEach(store.features.filter { $0.category == category && (!$0.preference || $0.failed) }) { feature in
-                            FeatureRow(store: store, feature: feature)
-                                .tag(feature.id)
+            VStack(spacing: 0) {
+                searchField
+                List(selection: $store.selectedFeatureId) {
+                    // Host-level app preferences, pinned above the feature catalog so
+                    // they are discoverable (not buried in the menubar only). Hidden
+                    // when a search is active that it doesn't match.
+                    if showGeneralRow {
+                        Section(Strings.t("settings.app", default: "App")) {
+                            Label(Strings.t("settings.general", default: "General"), systemImage: "gearshape")
+                                .tag(Self.generalId)
                         }
+                    }
+                    ForEach(groupedCategories, id: \.self) { category in
+                        Section(categoryLabel(category)) {
+                            // Global behavior preferences live in General > Behavior,
+                            // not the catalog -- filter them out here. Exception: a FAILED
+                            // preference stays so its red "failed to load" row still shows
+                            // (the Behavior section renders only healthy ones).
+                            ForEach(featuresIn(category)) { feature in
+                                FeatureRow(store: store, feature: feature)
+                                    .tag(feature.id)
+                            }
+                        }
+                    }
+                    if isSearching && showGeneralRow == false && groupedCategories.isEmpty {
+                        Text(Strings.t("settings.no_matches", default: "No matching features"))
+                            .font(.callout).foregroundStyle(.secondary)
+                            .padding(.vertical, 6)
                     }
                 }
             }
@@ -66,12 +80,67 @@ struct SettingsPane: View {
         }
     }
 
+    /// The filter field pinned above the sidebar list. A plain field (not
+    /// `.searchable`, which needs a NavigationStack this HSplitView deliberately
+    /// avoids) with a clear button.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary).font(.caption)
+            TextField(Strings.t("settings.filter", default: "Filter features"), text: $query)
+                .textFieldStyle(.plain)
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                .accessibilityLabel(Strings.t("settings.filter_clear", default: "Clear filter"))
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+        .padding(8)
+    }
+
+    private var trimmedQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var isSearching: Bool { !trimmedQuery.isEmpty }
+
+    /// A feature matches the filter by name, description, category label, OR any of
+    /// its action labels -- so searching "left" finds Window Snap via its "Left
+    /// half" action, not only by the feature's own name (findability is the point).
+    private func matches(_ f: FeatureInfo) -> Bool {
+        if !isSearching { return true }
+        let q = trimmedQuery
+        if f.name.localizedCaseInsensitiveContains(q) { return true }
+        if f.description.localizedCaseInsensitiveContains(q) { return true }
+        if categoryLabel(f.category).localizedCaseInsensitiveContains(q) { return true }
+        return f.actions.contains { $0.label.localizedCaseInsensitiveContains(q) }
+    }
+
+    /// The catalog features in a category that pass the filter (healthy preferences
+    /// still hidden -- they live in General; a FAILED preference stays for its red row).
+    private func featuresIn(_ category: String) -> [FeatureInfo] {
+        store.features.filter {
+            $0.category == category && (!$0.preference || $0.failed) && matches($0)
+        }
+    }
+
+    /// Show the host "General" row unless a search is active that it doesn't match.
+    private var showGeneralRow: Bool {
+        if !isSearching { return true }
+        let q = trimmedQuery
+        return Strings.t("settings.general", default: "General").localizedCaseInsensitiveContains(q)
+            || Strings.t("settings.app", default: "App").localizedCaseInsensitiveContains(q)
+    }
+
     private var groupedCategories: [String] {
         var seen: [String] = []
         // Skip healthy preference features (they render in General, not the catalog)
         // so a category holding only preferences never shows as an empty section; a
-        // FAILED preference stays, since its red row belongs in the catalog.
-        for f in store.features where (!f.preference || f.failed) && !seen.contains(f.category) {
+        // FAILED preference stays, since its red row belongs in the catalog. Also
+        // drop categories with no filter match, so no empty section renders.
+        for f in store.features where (!f.preference || f.failed) && matches(f) && !seen.contains(f.category) {
             seen.append(f.category)
         }
         return seen
