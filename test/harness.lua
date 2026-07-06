@@ -32,6 +32,7 @@ local manifest = require("platform.manifest")
 local triggers = require("platform.triggers")
 local W        = require("platform.windows")
 local rules    = require("platform.rules")
+local i18n     = require("platform.i18n")
 
 local M = {}
 local passed = 0
@@ -88,6 +89,10 @@ function M.freshWorld()
     rules.load({})     -- platform teardown, phase 1: stop every live rule
     fake.resetWorld()  -- THEN wipe the fake to pristine (zeroes liveHandles + registries)
     pinClock()         -- re-pin the deterministic clock resetWorld cleared
+    -- i18n is a process-global singleton (module-level `locale`, catalog caches) that
+    -- freshWorld would otherwise miss: a case switching locale (describe_localization)
+    -- must not leak zh-Hans into the next case. configure(en) is its canonical reset.
+    i18n.configure({ locale = "en" })
 end
 
 --- The single assertion total, preserved verbatim from the monolith's final line.
