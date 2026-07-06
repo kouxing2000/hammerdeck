@@ -42,6 +42,7 @@ end
 -- It does NOT prove behavioral equivalence -- only that the API shape matches;
 -- behavior is covered per-function by the feature tests below and the real-
 -- bridge Swift integration suite.
+fake.resetOpts()
 do
     -- Load the REAL adapter for inspection. adapter.lua assert()s `native` is a
     -- table at load, so stub it (we only read its key set, never call through).
@@ -73,6 +74,7 @@ end
 -- The i18n module is locale-injected (not seam-coupled): configure() with a code
 -- + appdir, assert against the shipped app/i18n/zh-Hans.json, then RESET to "en"
 -- so the describe() tests below see the inline English source.
+fake.resetOpts()
 do
     local i18n    = require("platform.i18n")
     local windows = require("platform.windows")
@@ -177,6 +179,8 @@ end
 -- T1: all manifests register + validate --------------------------------------
 -- loadCatalog (not three register() calls) so the catalog is recorded for the
 -- hot-reload test (T11), exactly as the real bootstrap does.
+do
+fake.resetOpts()
 registry.loadCatalog({
     "features.sleep_schedule",
     "features.break_reminder",
@@ -184,7 +188,9 @@ registry.loadCatalog({
 })
 ok(#registry.all() == 3, "3 features registered")
 
+end
 -- T2: the manifest contract is enforced ----------------------------------------
+fake.resetOpts()
 local manifest = require("platform.manifest")
 local function rejects(m, why)
     ok(pcall(manifest.validate, m) == false, "manifest rejected: " .. why)
@@ -205,6 +211,8 @@ rejects({ api = 1, id = "x", name = "X", action = function() end,
     "gatedBy names no validate-able option")
 
 -- T3: window_switcher (action feature: open, select; cycle on repeat) -------------
+do
+fake.resetOpts()
 fake.windows = {
     { id = 11, title = "Current Window",  appName = "AppA", bundleID = "com.a" },
     { id = 22, title = "Previous Window", appName = "AppB", bundleID = "com.b" },
@@ -271,7 +279,10 @@ fake.modifiers.alt = false
 registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0, "window_switcher disable left no live handles")
 
+end
 -- T4: sleep_schedule (service feature, graduated phases) -----------------------
+do
+fake.resetOpts()
 fake.settings["hammerdeck.opt.sleep_schedule.weekendShiftMin"] = 0
 fake.settings["hammerdeck.opt.sleep_schedule.hardCapAt"] = minutesFromNow(30)
 fake.settings["hammerdeck.opt.sleep_schedule.sleepAt"] = minutesFromNow(7)
@@ -319,7 +330,10 @@ ok(fake.liveBanner() == nil, "phase 3 cleared the banner")
 registry.setEnabled("sleep_schedule", false)
 ok(registry.liveHandleCount() == 0, "sleep_schedule disable left no live handles")
 
+end
 -- T5: break_reminder (service feature: cycle, busy-retry, dialog, lock/unlock) -----
+do
+fake.resetOpts()
 local notificationsBefore = #fake.notifications
 registry.setEnabled("break_reminder", true)
 ok(#fake.notifications == notificationsBefore + 1, "break_reminder announces the cycle")
@@ -362,10 +376,15 @@ ok(fake.fireTimers("after") == 0, "long idle cancelled the rest timer")
 registry.setEnabled("break_reminder", false)
 ok(registry.liveHandleCount() == 0, "break_reminder disable left no live handles")
 
+end
 -- T6: nothing leaks globally ----------------------------------------------------
+do
+fake.resetOpts()
 ok(fake.liveHandles == 0, "fake adapter reports zero live native resources")
 
+end
 -- T7: catalog description for the config UI --------------------------------------
+fake.resetOpts()
 local desc = registry.describe()
 ok(#desc == 3, "describe lists all 3 features")
 ok(desc[1].id == "break_reminder" and desc[1].kind == "service", "describe is sorted by id")
@@ -411,6 +430,7 @@ registry.unregister("enum_probe")
 -- the feature ONLY while the notify_on_trigger preference is on. Manual triggers
 -- (hotkey/chord) and menubar/palette runs never reach the notify path. Scoped in
 -- a `do` block so its locals release (the main chunk is near Lua's 200-local cap).
+fake.resetOpts()
 do
     package.loaded["features._notify_probe"] = {
         api = 1, id = "notify_probe", name = "Notify Probe",
@@ -466,6 +486,7 @@ end
 -- A MANUAL trigger (hotkey/chord) flashes which action fired ONLY while the
 -- confirm_shortcut preference is on. Automated triggers take the notify path, not
 -- this. Scoped in a `do` block (main-chunk local budget, see T7c).
+fake.resetOpts()
 do
     package.loaded["features._flash_probe"] = {
         api = 1, id = "flash_probe", name = "Flash Probe", icon = "bolt.fill",
@@ -513,6 +534,7 @@ end
 -- A modal feature suppresses the mode-entry flash (selfEvident) and instead fires
 -- ctx.confirmAction when the real action lands. That flash is gated on the same
 -- confirm_shortcut preference and carries the feature icon. Scoped `do` (see T7c).
+fake.resetOpts()
 do
     package.loaded["features._confirm_probe"] = {
         api = 1, id = "confirm_probe", name = "Confirm Probe", icon = "star.fill",
@@ -547,6 +569,7 @@ end
 -- mode's re-press exits) -- but window_grid's entry key IS a cell, so it passes
 -- stickyExceptKey=false to twin every key; else Hyper+<entry> re-enters instead of
 -- placing that cell (cells 1-3 work, cell 4 didn't). Scoped `do` (see T7c).
+fake.resetOpts()
 do
     local modal = require("platform.modal")
     local HYPER = { "cmd", "alt", "ctrl" }
@@ -579,6 +602,7 @@ end
 -- T7e: defaultEnabled (ships on until the user says otherwise) --------------------
 -- A feature with defaultEnabled=true reports enabled when NO stored choice exists,
 -- but an explicit toggle always overrides it. Scoped in a `do` block (see T7c).
+fake.resetOpts()
 do
     package.loaded["features._defon_probe"] = {
         api = 1, id = "defon_probe", name = "Default On Probe",
@@ -698,6 +722,8 @@ ok(sleepDesc.enabled == false, "describe reflects enabled state")
 -- A SERVICE's internal timers are invisible to the trigger model; the schedule
 -- descriptor self-reports them. Derived times must track live option values,
 -- and the editable rows carry the optionKey the Timeline writes through.
+do
+fake.resetOpts()
 fake.settings["hammerdeck.opt.sleep_schedule.sleepAt"]   = "23:30"
 fake.settings["hammerdeck.opt.sleep_schedule.warn1Min"]  = 10
 fake.settings["hammerdeck.opt.sleep_schedule.warn2Min"]  = 5
@@ -762,15 +788,21 @@ ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X", action = functi
     schedule = { { label = "nope" } } }),
     "schedule must be a function, not a table")
 
+end
 -- T8: re-enable works with fresh state ------------------------------------------
+do
+fake.resetOpts()
 registry.setEnabled("window_switcher", true)
 fake.pressHotkey("tab")
 ok(fake.visibleChooser() ~= nil, "re-enabled feature works with a fresh ctx")
 registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after re-enable cycle")
 
+end
 -- T9: plugin quarantine -- one bad plugin must never take the platform down ----
 -- (a) a missing module is recorded, not thrown
+do
+fake.resetOpts()
 ok(registry.load("features._does_not_exist") == nil, "load returns nil for a missing module")
 ok(#registry.failures().load >= 1, "missing module recorded as a load failure")
 
@@ -807,7 +839,9 @@ ok(sawLoadFail, "describe surfaces load failures as inert rows")
 registry.setEnabled("bad_start", false)
 ok(registry.failures().start["bad_start"] == nil, "disable clears the start failure")
 
+end
 -- T10: trigger rebind -- bind ANY action to ANY trigger (the core promise) -----
+fake.resetOpts()
 local triggers = require("platform.triggers")
 
 -- codec round-trips for every spec shape
@@ -1001,6 +1035,8 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after trigg
 -- T11: hot reload -- re-read the catalog from disk, keep enabled-state ---------
 -- Uses the real on-disk MVP modules (recorded as the catalog in T1), so the
 -- package.loaded invalidation + re-require-from-disk path runs for real.
+do
+fake.resetOpts()
 registry.setEnabled("window_switcher", true)
 ok(registry.liveHandleCount() >= 1, "an enabled feature has a live binding before reload")
 
@@ -1032,7 +1068,10 @@ ok(not stillHasProbe, "non-catalog features are dropped by reload")
 registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after hot-reload test")
 
+end
 -- T12: display_off (service: warn after idle, sleep display after lead time) ---
+do
+fake.resetOpts()
 registry.register(require("features.display_off"))
 fake.settings["hammerdeck.opt.display_off.idleThresholdMin"] = 5   -- 300s
 -- (the 10s warning lead time is a constant now, not an option)
@@ -1071,7 +1110,10 @@ ok(#fake.alerts == alertsBefore + 2, "returning to activity re-arms the warning"
 registry.setEnabled("display_off", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after display_off test")
 
+end
 -- T13: plain_paste (action: rewrite clipboard as trimmed plain text) -------
+do
+fake.resetOpts()
 registry.register(require("features.plain_paste"))
 registry.setEnabled("plain_paste", true)
 
@@ -1115,7 +1157,10 @@ ok(fake.typedTexts[#fake.typedTexts] == "secret token",
 registry.setEnabled("plain_paste", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after plain_paste test")
 
+end
 -- T13c: password_generator (action: build a random password, copy to clipboard) --
+do
+fake.resetOpts()
 registry.register(require("features.password_generator"))
 fake.settings["hammerdeck.opt.password_generator.length"]         = 24
 fake.settings["hammerdeck.opt.password_generator.avoidAmbiguous"] = true
@@ -1160,12 +1205,14 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after passw
 -- (volume + media_keys were demoted from features to rules effect kinds; their
 -- behavior is now covered by the effect-dispatch tests in T39.)
 
+end
 -- T13c2: describe() localizes feature metadata via per-feature catalogs --------
 -- describe() applies i18n at CALL time: switch the locale, re-describe, and the
 -- gallery/settings text returns translated -- the 8 SwiftUI views are unchanged
 -- (they render whatever describe() returns). Reset to "en" so the rest of the
 -- suite sees the English source. Runs here because the features it asserts on
 -- (window_switcher / plain_paste / password_generator) are all registered now.
+fake.resetOpts()
 do
     local i18n = require("platform.i18n")
     i18n.configure({ locale = "zh-Hans", appdir = "app" })
@@ -1221,6 +1268,8 @@ do
 end
 
 -- T13d: insert_datetime (action: type the formatted current time) -------------
+do
+fake.resetOpts()
 registry.register(require("features.insert_datetime"))
 registry.setEnabled("insert_datetime", true)
 
@@ -1273,9 +1322,12 @@ ok(fake.alerts[#fake.alerts]:find("Invalid", 1, true),
 registry.setEnabled("insert_datetime", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after insert_datetime test")
 
+end
 -- T14: feature autodiscovery -- scan the features dir instead of a fixed list --
 -- (the fake adapter exposes bare names; the real modules are on disk, so the
 --  re-require path works.)
+do
+fake.resetOpts()
 fake.featureNames = { "window_switcher", "display_off", "plain_paste", "break_reminder", "sleep_schedule" }
 
 local discovered = registry.discover("ignored-by-fake")
@@ -1297,7 +1349,10 @@ ok(registry.describe()[1].id == "window_switcher", "the surviving feature is the
 
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after autodiscovery test")
 
+end
 -- T15: multi-action features -- one plugin, several shortcuts ------------------
+do
+fake.resetOpts()
 local hits = { a = 0, b = 0 }
 local starts = 0
 package.loaded["features._multi"] = {
@@ -1367,7 +1422,10 @@ registry.setEnabled("multi", false)
 registry.setEnabled("legacy", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after multi-action tests")
 
+end
 -- T16: count_down (multi-action spoon port: prompt -> bar -> notify) -----------
+do
+fake.resetOpts()
 registry.register(require("features.count_down"))
 registry.setEnabled("count_down", true)
 
@@ -1407,7 +1465,10 @@ ok(fake.liveProgressBar() == nil, "dismissed prompt starts nothing")
 registry.setEnabled("count_down", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after count_down test")
 
+end
 -- T17: locate_pointer (locate pointer) -------------------------------------------
+do
+fake.resetOpts()
 registry.register(require("features.locate_pointer"))
 registry.setEnabled("locate_pointer", true)
 fake.mouseLocates = {}   -- fresh recorder: this block asserts absolute counts/indices
@@ -1452,7 +1513,10 @@ fake.screenList = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index 
 registry.setEnabled("locate_pointer", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after locate_pointer test")
 
+end
 -- T18: json decoder + bing_daily (service + dormant refresh action) ------------
+do
+fake.resetOpts()
 local jsonlib = require("platform.json")
 local jd = jsonlib.decode
 ok(jd('{"a":1,"b":[true,false,"x"],"c":{"d":-2.5e2}}').c.d == -250, "json: nested object/array/number")
@@ -1544,8 +1608,10 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after bing_
 -- (dark_mode was demoted from a feature to the `setAppearance` rules effect kind;
 -- its behavior is now covered by the effect-dispatch tests in T39.)
 
+end
 -- T19: chord triggers -- prefix hotkey arms a follow-key sequence -------------
 -- (`triggers` is the file-scope local from T10.)
+fake.resetOpts()
 do
 
 -- codec round-trip: mods canonicalized (sorted), follow sequence ORDER kept
@@ -1636,6 +1702,8 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after chord
 
 end
 -- T19b: registry.hyperLegend() -- which-key legend of enabled Hyper bindings ---
+do
+fake.resetOpts()
 package.loaded["features._hyperprobe"] = {
     api = 1, id = "hyperprobe", name = "Hyper Probe",
     actions = {
@@ -1666,6 +1734,7 @@ registry.setEnabled("hyperprobe", false)
 ok(not legendHasLabel(registry.hyperLegend(), "Go"),
     "hyperLegend drops a disabled feature's bindings")
 
+end
 -- T20: usage_stats (service: sessions + per-app focus time to CSV) ------------
 do
 fake.reset()   -- clean input slate: isolate from any preset an upstream section left
@@ -1904,6 +1973,8 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after usage
 
 end
 -- T21: Accessibility onboarding (window_switcher with no windows) ------------------
+do
+fake.resetOpts()
 registry.setEnabled("window_switcher", true)
 fake.windows = {}
 
@@ -1925,7 +1996,9 @@ ok(fake.alerts[#fake.alerts]:match("No windows"), "trusted empty list says so pl
 registry.setEnabled("window_switcher", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after AX onboarding test")
 
+end
 -- T22: text_actions (selection capture -> open/transform/paste back) ----------
+fake.resetOpts()
 do
 local OPENAI_TEST_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -2101,6 +2174,7 @@ end
 -- T23: site_switcher / "Quick Sites" (a list of favorite sites in a searchable
 -- chooser; pick a row -- click, Enter, or cmd+<n> -- to focus that site's tab,
 -- open it, or open it as a standalone app window) ----------------------------
+fake.resetOpts()
 do
 registry.register(require("features.site_switcher"))
 registry.setEnabled("site_switcher", true)
@@ -2275,6 +2349,7 @@ fake.chromeFavicons = {}
 
 end
 -- T24: window_snap (snap halves, max toggle, throw across screens) ---------
+fake.resetOpts()
 registry.register(require("features.window_snap"))
 registry.setEnabled("window_snap", true)
 
@@ -2482,6 +2557,8 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after windo
 -- follow lives at the ctx.window.setFrame -> window_ops seam, so ANY feature that
 -- moves the focused window exercises it. Screen 1 = {0,0,1000,800}; "left" snaps
 -- to {0,0,500,800}.
+do
+fake.resetOpts()
 registry.register(require("features.pointer_follows_window"))
 registry.setEnabled("window_snap", true)
 
@@ -2541,12 +2618,14 @@ registry.setEnabled("pointer_follows_window", false)
 registry.setEnabled("window_snap", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after pointer_follows_window test")
 
+end
 -- T24p: window_snap PLACEMENT PRESETS -- the dynamicActions hook turns each saved
 -- preset (a JSON array in the feature's OWN option) into its own rebindable action
 -- (preset_<uuid>). Exercises: expansion, apply via rectFromRatios, stable-id
 -- trigger survival across a re-register (what reload() does), rename relabel, and
 -- tolerance of a corrupt setting. All in window_snap's own namespace -- no other
 -- feature involved (the decoupled design the owner asked for).
+fake.resetOpts()
 do
     local pjson = require("platform.json")
     local presetsKey = "hammerdeck.opt.window_snap.presets"
@@ -2652,6 +2731,7 @@ end
 -- so a snap, a whole-display swap, or a deck retile is all undoable by one global
 -- Hyper+Z. window_snap (registered above, left disabled) is the real mover here;
 -- window_rewind only records + restores.
+do
 fake.reset()   -- clean input slate: isolate from the prior window sections
 registry.register(require("features.window_rewind"))
 registry.setEnabled("window_rewind", true)   -- start(ctx) turns recording on
@@ -2764,7 +2844,10 @@ registry.setEnabled("window_snap", false)
 registry.setEnabled("window_rewind", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_rewind test")
 
+end
 -- T25: window_modal (modal hotkey group over the frame surface) ----------------
+do
+fake.resetOpts()
 registry.register(require("features.window_modal"))
 registry.setEnabled("window_modal", true)
 fake.settings["hammerdeck.opt.window_modal.stepParts"] = 10   -- step = 100 x 80
@@ -2834,7 +2917,9 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
     "disable mid-mode tears everything down")
 fake.settings["hammerdeck.opt.window_modal.stepParts"] = nil
 
+end
 -- T25c: windows.moveToScreen geometry (the pure shared core of both features) ---
+fake.resetOpts()
 local W = require("platform.windows")
 local function frameEq(nf, x, y, w, h, msg)
     ok(nf.x == x and nf.y == y and nf.w == w and nf.h == h,
@@ -2861,6 +2946,7 @@ frameEq(W.moveToScreen({ x = 100, y = 100, w = 1500, h = 1000 }, s1, { x = 1000,
 -- Three monitors registered OUT of spatial order proves it: array is A,C,B but
 -- physically A(left) B(middle) C(right). The old (i % n)+1 cycle would step
 -- A -> C (skipping the middle); the spatial helper steps A -> B -> C.
+fake.resetOpts()
 do
     local scr = {
         { x = -1000, y = 0, w = 1000, h = 800, name = "A" },  -- index 1, leftmost
@@ -2901,6 +2987,7 @@ end
 -- T25d: windows.gridCellToFrame -- the ported grid cell-placement algorithm ------
 -- A 3x1 grid on a 1200x900 screen -> 400-wide full-height columns. `do`-scoped
 -- to keep its locals off the flat main chunk (Lua's 200-locals-per-function cap).
+fake.resetOpts()
 do
     local g3 = { w = 3, h = 1 }
     local gs = { x = 0, y = 0, w = 1200, h = 900 }
@@ -2918,6 +3005,7 @@ do
 end
 
 -- T25d2: windows.gridDimsForScreen -- orientation-aware split (Window Grid's 6) --
+fake.resetOpts()
 do
     local land = { w = 1600, h = 900 }   -- landscape: more columns
     local port = { w = 900,  h = 1600 }  -- portrait:  more rows
@@ -2938,6 +3026,7 @@ end
 
 -- T25e: window_grid ENTRY -- Hyper+N shows the numbered grid; the FIRST cell press
 -- places that single cell immediately AND arms the mode (no longer single-shot).
+fake.resetOpts()
 do
     registry.register(require("features.window_grid"))
     registry.setEnabled("window_grid", true)
@@ -3035,6 +3124,7 @@ end
 
 -- T25e2: window_grid TWO-CORNER placement (place-and-extend, directional). First
 -- cell = top-left corner-A; a second cell DOWN-RIGHT of it fills the rectangle.
+fake.resetOpts()
 do
     fake.screenList = { { x = 0, y = 0, w = 1200, h = 900 } }
     fake.focusedWindow = { x = 0, y = 0, w = 100, h = 100, screenIndex = 1 }
@@ -3151,6 +3241,7 @@ end
 -- T25e: window_deck pure leaves (identity keys + color dealing) ----------------
 -- These moved out of init.lua's stateful controller into pure sibling modules;
 -- test them directly (no deck, no fake adapter) since that is now possible.
+fake.resetOpts()
 do
     local ident  = require("features.window_deck.identity")
     local colors = require("features.window_deck.colors")
@@ -3270,6 +3361,7 @@ end
 -- uses quadWindows(), which carry no wid, so it exercises only the title path;
 -- this closes that gap: a regression in the wid encode/read chain would slip
 -- past a title-only test.)
+fake.resetOpts()
 do
     local store = require("features.window_deck.store")
     local ident = require("features.window_deck.identity")
@@ -3300,6 +3392,7 @@ do
 end
 
 -- T25f: window_deck (grid <-> focus-driven hero over the by-id frame surface) ----
+fake.resetOpts()
 do
     local Wd = require("platform.windows")
     registry.register(require("features.window_deck"))
@@ -4453,6 +4546,7 @@ end
 -- any default-vs-default conflict, catching it at authoring time / CI instead.
 -- (window_deck once shipped Hyper+D, already Insert Date/Time's default -- exactly
 -- the class of bug this guards.) Runs on both engines (lua run.lua + test-lua.sh).
+fake.resetOpts()
 do
     local appdir = require("loader").appdir
 
@@ -4507,6 +4601,7 @@ do
 end
 
 -- T26: tab_switcher (cross-browser tab switcher, MRU-first) ----------------------
+fake.resetOpts()
 do
 local jsonlib = require("platform.json")
 
@@ -4613,6 +4708,8 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after tab_s
 
 end
 -- T27: registry.runAction -- the menubar's quick triggers ----------------------
+do
+fake.resetOpts()
 registry.register(require("features.plain_paste"))   -- dropped by T14's reload
 registry.setEnabled("plain_paste", true)
 fake.pasteboard = "  menu fired  "
@@ -4626,7 +4723,9 @@ ok(okRun == false and why:match("not enabled"), "disabled feature refused")
 ok(registry.runAction("ghost_feature") == false, "unknown feature refused")
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after runAction test")
 
+end
 -- T28: clipboard_history (poll, conceal, dedup, cap, persist, pick-to-paste) --
+fake.resetOpts()
 do
 registry.register(require("features.clipboard_history"))
 registry.setEnabled("clipboard_history", true)
@@ -4693,6 +4792,7 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after clipb
 
 end
 -- T29: command_palette (fuzzy launcher over every enabled feature) -------------
+fake.resetOpts()
 do
 registry.register(require("features.command_palette"))
 
@@ -4798,6 +4898,8 @@ ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after comma
 
 end
 -- T30: fire-time error surfacing -- repeated failures raise ONE visible alert --
+do
+fake.resetOpts()
 local boomCount = 0
 package.loaded["features._boom"] = {
     api = 1, id = "boom", name = "Boom Feature",
@@ -4819,9 +4921,12 @@ ok(boomCount == 4, "a throwing action is contained, not silently swallowed (stil
 registry.setEnabled("boom", false)
 ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after error-surfacing test")
 
+end
 -- T31: modal auto-repeat -- hold a `repeats` key to fire it steadily, key-up
 -- (or exit) stops it. Carbon gives no native repeat, so modal.lua builds it
 -- from the press+release edges and a delay/tick timer pair.
+do
+fake.resetOpts()
 local modal = require("platform.modal")
 local repHits, plainHits = 0, 0
 local m = modal.enter {
@@ -4892,11 +4997,13 @@ ok(hasWarn(triggers.advisories({ type = "hotkey", mods = { "ctrl", "shift" }, ke
     "My Custom Action"), "live-read system shortcut is detected")
 fake.systemHotkeys = {}
 
+end
 -- T32: usage_stats report.range -- historical aggregation over the CSVs --------
 -- The Homepage "Usage" tab calls features.usage_stats.report.range(from,to) via
 -- lua.call; it reads straight from disk (works even when the feature is off).
 -- Seed a few daily apps/sessions CSVs under the default dir (~/.computer-usage,
 -- so /fake/home/.computer-usage) and assert the rolled-up shape.
+fake.resetOpts()
 do
     local function approx(a, b) return math.abs(a - b) < 1e-6 end
     local U = "/fake/home/.computer-usage"
@@ -4963,6 +5070,7 @@ end
 -- T33: manifest `page` -- feature-contributed native pages -------------------
 -- A feature may declare page = { title, icon } to dock a native Homepage view.
 -- Validate the shape, and that describe() passes it through for the host.
+fake.resetOpts()
 do
     local mok = manifest.validate({ api = 1, id = "p1", name = "P1",
         action = function() end, page = { title = "Usage", icon = "chart.bar.xaxis" } })
@@ -4995,6 +5103,7 @@ end
 -- The automation framework spine: a rule fires an effect (M0 effect = run a
 -- feature action) on a trigger, with the same automatable context policy the
 -- registry enforces per action. Pure Lua over the fake adapter.
+fake.resetOpts()
 do
     local rules = require("platform.rules")
     local json  = require("platform.json")
@@ -5104,6 +5213,7 @@ end
 -- The condition/state half of the framework: a rule fires on a STATE SIGNAL
 -- crossing a value (frontmostApp becomes/leaves), the observable `notify` effect,
 -- and the add/setEnabled/remove + describe surface the Settings Rules tab calls.
+fake.resetOpts()
 do
     local rules   = require("platform.rules")
     local effects = require("platform.effects")
@@ -5339,6 +5449,7 @@ end
 -- registry.FAIL_ALERT_AFTER; rules now mirror it, keyed per RULE). Manual "Test"
 -- fires don't count toward the streak, and a success resets it -- so a scheduled
 -- rule silently dying surfaces, without per-effect popup spam.
+fake.resetOpts()
 do
     local rules = require("platform.rules")
     -- An automatable action that throws on demand (toggle `boom` to make it succeed).
@@ -5402,6 +5513,7 @@ end
 -- and a DIFFERENT app that merely shares the display name does NOT. A rule with no
 -- bundle id (free-typed) still matches by name. Exercises the real signal value
 -- ({name, bundleId}) + rules.bindOne's bundle-id-first target + sig.match.
+fake.resetOpts()
 do
     local rules   = require("platform.rules")
     local effects = require("platform.effects")
@@ -5477,6 +5589,7 @@ end
 -- T35p: PARKING -- a stored rule whose target is absent THIS boot (a renamed/gone
 -- signal or feature) is PRESERVED + surfaced as "unavailable", never silently
 -- deleted on the next mutation, and re-activates when its target returns ----------
+fake.resetOpts()
 do
     local rules = require("platform.rules")
     fake.settings["hammerdeck.rules"] = nil
@@ -5547,6 +5660,7 @@ end
 
 -- T35f: per-rule FIRE STATUS -- describe() reports when a rule last fired, whether
 -- it was a Test, and whether the effect succeeded, so a silently-dead rule shows --
+fake.resetOpts()
 do
     local rules = require("platform.rules")
     fake.settings["hammerdeck.rules"] = nil
@@ -5606,6 +5720,7 @@ end
 -- apps snap to assigned rects on assigned displays. A layout placement is
 -- SELF-GATING -- it targets a display by name, so it no-ops when that monitor is
 -- unplugged, which is why a coarse screenChanged trigger is enough.
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     local rules   = require("platform.rules")
@@ -5825,6 +5940,7 @@ end
 -- `displaysPresent becomes "DELL"` fires when THAT monitor connects (membership
 -- enter), `leaves` when it disconnects -- so the seed "external monitor" case is
 -- expressible by name, with a symmetric disconnect for free.
+fake.resetOpts()
 do
     local rules   = require("platform.rules")
     local signals = require("platform.signals")
@@ -5889,6 +6005,7 @@ end
 -- powerSource (scalar). Each re-reads on a coarse onSystemEvent and fires on the
 -- becomes/leaves transition; formOptions carries each signal's UI metadata so the
 -- Rules form needs no per-signal Swift code.
+fake.resetOpts()
 do
     local rules   = require("platform.rules")
     local signals = require("platform.signals")
@@ -5985,6 +6102,7 @@ end
 -- T39: curated atomic effects (M3) -- runShortcut (the Shortcuts escape hatch),
 -- openURL, lockScreen. All context-free, so they validate + fire on automated
 -- triggers and the form's Do dropdown offers them.
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     local rules   = require("platform.rules")
@@ -6123,6 +6241,7 @@ end
 -- T39b: solidWallpaper effect -- paint a solid color on a chosen display; context-
 -- free, and its `display` may be a literal/category OR drawn from the trigger
 -- ("the connecting display", via the effects.TRIGGER_DISPLAY sentinel).
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     local rules   = require("platform.rules")
@@ -6190,6 +6309,7 @@ end
 -- T39b2: setWallpaperImage effect -- the sibling of solidWallpaper that paints a
 -- photo (adapter.setWallpaper) instead of a flat color; same display param model
 -- (literal / category / from-trigger), context-free.
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     fake.settings["hammerdeck.rules"] = nil
@@ -6235,6 +6355,7 @@ end
 -- T39b3: moveAppToDisplay effect -- relocate an app's window to another display
 -- KEEPING its size (vs layout, which resizes). Reuses listWindows/screenFrames/
 -- setWindowFrame; context-free; app/display may be from-trigger.
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     fake.settings["hammerdeck.rules"] = nil
@@ -6292,6 +6413,7 @@ end
 -- to the display name for legacy rules + the from-trigger path. Proves (a) the
 -- minimize/hide/quit trio pass the bundle id to the adapter, and (b) moveAppToDisplay
 -- matches a window by bundleID even when its localized appName differs.
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     fake.settings["hammerdeck.rules"] = nil
@@ -6353,6 +6475,7 @@ end
 -- BUNDLE ID (the only launchable identifier), so validate requires appBundleId; `app`
 -- is just the readable name for the sentence/log. Context-free, so it can fire on an
 -- automated trigger ("open Slack at 9am").
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     fake.settings["hammerdeck.rules"] = nil
@@ -6398,6 +6521,7 @@ end
 -- `app` may be drawn from the trigger ("the app from the trigger"). The SECOND
 -- context-bound effect, and the first that binds on the `leaves` edge (an app
 -- losing focus) -- proving from-trigger isn't display/becomes-only.
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     local rules   = require("platform.rules")
@@ -6488,6 +6612,7 @@ end
 
 -- T40: chain effect (M3) -- run several sub-effects IN ORDER; context-free iff every
 -- step is; partial-success aggregation names the failed steps --------------------
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     local rules   = require("platform.rules")
@@ -6576,6 +6701,7 @@ end
 -- T40b: rules.sentence -- the plain-language read-back shown live above the rule
 -- form (the redesign's comprehension win: a rule reads as one English line, and a
 -- from-trigger param reads as "it"). Pure formatting over signals.meta + describe.
+fake.resetOpts()
 do
     local effects = require("platform.effects")
     local rules   = require("platform.rules")
@@ -6641,6 +6767,7 @@ end
 
 -- T41: notify delivery channel (M3) -- a notify can target the macOS Notification
 -- Center ("system") or the in-app banner ("app", default), with a toast fallback --
+fake.resetOpts()
 do
     local effects = require("platform.effects")
 

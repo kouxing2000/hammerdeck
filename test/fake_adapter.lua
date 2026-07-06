@@ -1341,8 +1341,16 @@ function fake.reset()
     fake.wallpaperColors = {}
     fake.mediaKeys     = {}
 
-    -- option overrides only -- keep enabled-state (.enabled.*) and feature state
-    -- (.state.*), which sections carry forward on purpose.
+    fake.resetOpts()   -- option overrides (below)
+end
+
+-- Clear ONLY the `hammerdeck.opt.*` option overrides, keeping enabled-state
+-- (.enabled.*) and feature state (.state.*) -- and every other fixture (windows,
+-- frontmost, files, ...) -- untouched. This is the LIGHT per-section isolator: an
+-- option a section sets can't leak into the next, WITHOUT forcing that next
+-- section to re-establish shared fixtures. Sections that own all their inputs use
+-- the deep fake.reset() instead (see T20 / T24r).
+function fake.resetOpts()
     for k in pairs(fake.settings) do
         if k:match("^hammerdeck%.opt%.") then fake.settings[k] = nil end
     end
