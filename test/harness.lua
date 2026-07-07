@@ -101,7 +101,9 @@ function M.report()
 end
 
 --- Discover hermetic case files under `dir` (per-feature) and `dir/_integration`
---- (cross-catalog), each a module returning { id, run = function(t) end, tags? }.
+--- (cross-catalog, scanned RECURSIVELY so a subsystem cluster may live in its own
+--- subfolder, e.g. `_integration/rules/`), each a module returning
+--- { id, run = function(t) end, tags? }.
 --- `argv` is the script's `arg` table: a bare `<id>` narrows the CASES loop to
 --- that one case; `--shuffle` randomizes their order (the order-independence
 --- self-check, R8). Default order is sorted by id for stable output; per-feature
@@ -121,9 +123,13 @@ function M.discover(dir, argv)
     end
     -- io.popen disk scan (the mechanism T25g uses, proven on both engines) -- NOT
     -- registry.discover, which under the fake returns a preset featureNames list.
-    local function scan(d, tag)
+    local function scan(d, tag, recursive)
         local out = {}
-        local pipe = io.popen('ls "' .. d .. '"/*.lua 2>/dev/null')
+        -- recursive (find) for _integration, so a cluster's subfolder (e.g. rules/)
+        -- is picked up; flat (ls) for the top-level per-feature cases.
+        local pipe = io.popen(recursive
+            and 'find "' .. d .. '" -type f -name "*.lua" 2>/dev/null'
+            or  'ls "' .. d .. '"/*.lua 2>/dev/null')
         if not pipe then return out end
         for path in pipe:lines() do
             local case = dofile(path)
@@ -141,7 +147,7 @@ function M.discover(dir, argv)
         return out
     end
     local cases = scan(dir)
-    for _, c in ipairs(scan(dir .. "/_integration", "integration")) do cases[#cases + 1] = c end
+    for _, c in ipairs(scan(dir .. "/_integration", "integration", true)) do cases[#cases + 1] = c end
     if only then
         local filtered = {}
         for _, c in ipairs(cases) do if c.id == only then filtered[#filtered + 1] = c end end
