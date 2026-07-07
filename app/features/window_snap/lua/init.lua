@@ -334,22 +334,22 @@ return {
     end,
 
     actions = {
-        { id = "left", label = "Left half",
+        { id = "left", label = "Left half", icon = "rectangle.lefthalf.filled",
           description = "Move the focused window to the left half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "left" },
           mnemonic = "Hyper+← — the arrow points to the edge",
           run = function(ctx) with(ctx).snap(0, 0, 0.5, 1) end },
-        { id = "right", label = "Right half",
+        { id = "right", label = "Right half", icon = "rectangle.righthalf.filled",
           description = "Move the focused window to the right half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "right" },
           mnemonic = "Hyper+→ — the arrow points to the edge",
           run = function(ctx) with(ctx).snap(0.5, 0, 0.5, 1) end },
-        { id = "top", label = "Top half",
+        { id = "top", label = "Top half", icon = "rectangle.tophalf.filled",
           description = "Move the focused window to the top half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "up" },
           mnemonic = "Hyper+↑ — the arrow points to the edge",
           run = function(ctx) with(ctx).snap(0, 0, 1, 0.5) end },
-        { id = "bottom", label = "Bottom half",
+        { id = "bottom", label = "Bottom half", icon = "rectangle.bottomhalf.filled",
           description = "Move the focused window to the bottom half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "down" },
           mnemonic = "Hyper+↓ — the arrow points to the edge",
@@ -360,18 +360,18 @@ return {
         -- becomes your own "preset_<id>" placement (editable, bindable) via
         -- dynamicActions -- the columns-of-three idiom the halves don't cover, self-served.
 
-        { id = "toggle_max", label = "Maximize / 75%",
+        { id = "toggle_max", label = "Maximize / 75%", icon = "arrow.up.left.and.arrow.down.right",
           description = "Toggle the focused window between maximized and 75% centered.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "return" },
           mnemonic = "Hyper+Return — Return = fill the screen",
           run = function(ctx) with(ctx).toggleMax() end },
-        { id = "screen_next", label = "To next screen",
+        { id = "screen_next", label = "To next screen", icon = "arrow.right.to.line",
           description = "Throw the focused window to the next screen, rescaling it "
               .. "proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "]" },
           mnemonic = "Hyper+] — ] pushes forward to the next screen",
           run = function(ctx) with(ctx).moveScreen(W.DIR.NEXT) end },
-        { id = "screen_prev", label = "To previous screen",
+        { id = "screen_prev", label = "To previous screen", icon = "arrow.left.to.line",
           description = "Throw the focused window to the previous screen, rescaling "
               .. "it proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "[" },
@@ -382,7 +382,7 @@ return {
         -- the thirds): a swap-all is a deliberate, occasional action, not worth
         -- grabbing another global hotkey for uninvited -- fire it from the menubar
         -- or bind any key/chord in Settings.
-        { id = "swap_screens", label = "Swap windows between displays",
+        { id = "swap_screens", label = "Swap windows between displays", icon = "arrow.left.arrow.right",
           description = "Swap the windows of the display you are on with another "
               .. "display's -- everything on each moves to the other, rescaled "
               .. "proportionally. On three or more displays it first asks which "

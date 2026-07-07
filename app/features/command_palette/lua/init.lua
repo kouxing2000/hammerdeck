@@ -75,6 +75,10 @@ local function buildChoices(ctx)
             text     = cmd.label,        -- action label is the primary line
             subText  = source,           -- dim source-feature context column
             shortcut = shortcut,         -- trigger preview, flush-right
+            -- Leading glyph: the command's resolved SF Symbol (per-action icon,
+            -- else feature icon) as a "symbol:" icon token -- so every row shows
+            -- the same glyph the menubar / Settings list use for that feature.
+            image    = cmd.icon and ("symbol:" .. cmd.icon) or nil,
             id       = cmd.featureId,    -- carried back on select
             actionId = cmd.actionId,
         }

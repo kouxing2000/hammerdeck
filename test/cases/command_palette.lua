@@ -26,6 +26,14 @@ return {
         ok(pcall(manifest.validate, { api = 1, id = "x", name = "X", action = function() end,
             capabilities = { "commands" } }), "manifest accepts the known capability")
 
+        -- per-action icon is optional metadata; when present it must be a string
+        ok(pcall(manifest.validate, { api = 1, id = "x", name = "X",
+            actions = { { id = "a", icon = "star.fill", run = function() end } } }),
+            "manifest accepts a string per-action icon")
+        ok(not pcall(manifest.validate, { api = 1, id = "x", name = "X",
+            actions = { { id = "a", icon = 42, run = function() end } } }),
+            "manifest rejects a non-string per-action icon")
+
         -- two dummy features populate the palette: a single-action one and a
         -- multi-action one (one of whose actions is left unbound).
         local palHits = { a = 0, one = 0, two = 0 }
@@ -36,11 +44,13 @@ return {
         }
         package.loaded["features._cmd_b"] = {
             api = 1, id = "cmd_b", name = "Cmd B",
+            icon = "b.circle",   -- feature-level glyph: inherited by every action...
             actions = {
                 { id = "one", label = "Do one",
                   defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "7" },
                   run = function() palHits.one = palHits.one + 1 end },
                 { id = "two", label = "Do two",   -- no trigger: dormant, manual-only
+                  icon = "two.square",   -- ...unless the action overrides it
                   run = function() palHits.two = palHits.two + 1 end },
             },
         }
@@ -61,8 +71,10 @@ return {
         ok(pch ~= nil, "palette opened a chooser")
         -- cmd_a (1) + cmd_b (2) = 3 rows; the palette excludes itself, disabled cmd_off excluded
         ok(#pch.choices == 3, "lists enabled features' actions; self + disabled excluded")
-        local sub, sc, seen = {}, {}, {}
-        for _, c in ipairs(pch.choices) do sub[c.text] = c.subText; sc[c.text] = c.shortcut; seen[c.text] = true end
+        local sub, sc, seen, img = {}, {}, {}, {}
+        for _, c in ipairs(pch.choices) do
+            sub[c.text] = c.subText; sc[c.text] = c.shortcut; seen[c.text] = true; img[c.text] = c.image
+        end
         ok(seen["Cmd A"], "a single-action feature shows its name as the command")
         ok(seen["Do one"] and seen["Do two"], "a multi-action feature contributes one row per action")
         ok(sub["Cmd A"] == nil, "a single-action feature omits the redundant source column")
@@ -70,6 +82,14 @@ return {
         ok(sub["Do one"] == "Cmd B" and sub["Do two"] == "Cmd B", "multi-action rows show their source feature")
         ok(sc["Do one"] == "⌃7", "a bound multi-action row shows its own shortcut")
         ok(sc["Do two"] == nil, "an unbound action has no shortcut")
+        -- Icon resolution: every row carries a "symbol:" glyph token (never ragged);
+        -- action icon overrides feature icon overrides a generic fallback.
+        ok(img["Cmd A"] == "symbol:puzzlepiece.fill",
+            "a feature with no icon falls back to the generic glyph (list never ragged)")
+        ok(img["Do one"] == "symbol:b.circle",
+            "an action with no icon of its own inherits the feature icon")
+        ok(img["Do two"] == "symbol:two.square",
+            "a per-action icon overrides the feature icon for that row")
 
         -- selecting a row runs that command -- on the next tick, after the panel yields
         local target

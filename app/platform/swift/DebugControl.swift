@@ -84,6 +84,10 @@ enum DebugControl {
                     // Preview the chord which-key hint card (pixels only).
                     ChordCenter.shared.debugPreviewHint()
                     out = "showed chord hint"
+                } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@hyperhint" {
+                    // Preview the Hyper which-key legend from the live catalog.
+                    CapsHyperTap.shared.debugPreviewLegend()
+                    out = "showed hyper hint"
                 } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@tour" {
                     DebugControl.presentTour?()
                     out = "presented tour"

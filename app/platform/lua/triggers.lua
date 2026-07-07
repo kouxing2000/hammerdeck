@@ -202,16 +202,18 @@ function triggers.decode(str)
 end
 
 -- spec: trigger table; action: function to run when it fires. `label` (optional):
--- the action's human name, used only by chords for the which-key hint.
+-- the action's human name; `icon` (optional): its SF Symbol name -- both used
+-- only by chords, for the which-key hint (the icon is the same glyph the command
+-- palette / menubar show for this action).
 -- returns a handle with .stop()
-function triggers.bind(spec, action, label)
+function triggers.bind(spec, action, label, icon)
     assert(type(spec) == "table" and spec.type, "trigger spec needs a type")
 
     if spec.type == "hotkey" then
         return adapter.bindHotkey(spec.mods or {}, spec.key, action)
 
     elseif spec.type == "chord" then
-        return adapter.bindChord(spec.mods or {}, spec.key, spec.follows or {}, action, label)
+        return adapter.bindChord(spec.mods or {}, spec.key, spec.follows or {}, action, label, icon)
 
     elseif spec.type == "schedule" then
         if spec.everyMin then

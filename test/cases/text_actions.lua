@@ -47,6 +47,10 @@ return {
         invokeOnSelection("Hello WORLD")
         local dlg = fake.openDialog()
         ok(dlg ~= nil and #dlg.actions == 4, "not validated: picker offers only the four base actions")
+        local baseIcon = {}
+        for i, lbl in ipairs(dlg.actions) do baseIcon[lbl] = dlg.items[i].image end
+        ok(baseIcon["lowercase"] == "symbol:characters.lowercase" and baseIcon["Calculate"] == "symbol:function",
+            "base transforms carry a leading glyph in the picker")
         dlg.choose("lowercase")
         ok(fake.pasteboard == "hello world", "lowercase result lands on the clipboard")
         ok(fake.keyEvents[#fake.keyEvents].key == "v", "and is pasted back (cmd+v)")
@@ -112,6 +116,10 @@ return {
         invokeOnSelection("draft text")
         local aiDlg = fake.openDialog()
         ok(#aiDlg.actions == 10, "validated: picker offers the four base + six AI actions")
+        local aiIcon = {}
+        for i, lbl in ipairs(aiDlg.actions) do aiIcon[lbl] = aiDlg.items[i].image end
+        ok(aiIcon["AI: Refine"] == "symbol:wand.and.stars" and aiIcon["AI: Translate"] == "symbol:globe",
+            "AI entries carry their own glyphs")
         aiDlg.choose("AI: Refine")
         local req = fake.httpRequests[#fake.httpRequests]
         ok(req.url == OPENAI_TEST_URL and req.method == "POST", "AI action POSTs to OpenAI")

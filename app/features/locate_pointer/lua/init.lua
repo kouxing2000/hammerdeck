@@ -40,7 +40,7 @@ return {
     },
 
     actions = {
-        { id = "main", label = "Locate pointer",
+        { id = "main", label = "Locate pointer", icon = "cursorarrow.rays",
           description = "Flash a crosshair around the mouse pointer so you can "
               .. "find it on screen.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "m" } },
@@ -48,7 +48,7 @@ return {
           run = function(ctx)
               ctx.mouse.locate(ctx.opt("seconds"))
           end },
-        { id = "center", label = "Center pointer on focused window",
+        { id = "center", label = "Center pointer on focused window", icon = "macwindow",
           description = "Warp the mouse pointer to the center of the focused "
               .. "window, then flash the locator.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "c" } },
@@ -57,7 +57,7 @@ return {
               local f = ctx.window.frame() or ctx.screen.frames()[1]
               if f then centerOn(ctx, f) end
           end },
-        { id = "center_active_screen", label = "Center pointer on active screen",
+        { id = "center_active_screen", label = "Center pointer on active screen", icon = "display",
           description = "Warp the mouse pointer to the center of the screen you are "
               .. "working on -- the focused window's screen, or the screen under the "
               .. "pointer when nothing is focused -- then flash the locator.",
@@ -78,7 +78,7 @@ return {
               end
               if f then centerOn(ctx, f) end
           end },
-        { id = "center_screen", label = "Center pointer on main screen",
+        { id = "center_screen", label = "Center pointer on main screen", icon = "desktopcomputer",
           description = "Warp the mouse pointer to the center of the main screen, "
               .. "then flash the locator.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "s" } },
@@ -87,7 +87,7 @@ return {
               local f = ctx.screen.frames()[1]
               if f then centerOn(ctx, f) end
           end },
-        { id = "center_next_screen", label = "Center pointer on next screen",
+        { id = "center_next_screen", label = "Center pointer on next screen", icon = "display.2",
           description = "Warp the mouse pointer to the center of the next display "
               .. "(wraps around), then flash the locator.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "n" } },

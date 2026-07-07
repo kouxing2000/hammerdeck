@@ -116,7 +116,10 @@ local function start(ctx)
         for i, e in ipairs(st.history) do
             st.shown[i] = e
             local text, sub = preview(e)
-            choices[#choices + 1] = { text = text, subText = sub, index = i }
+            -- Leading glyph so entries are scannable at a glance: a URL reads as
+            -- a link, everything else as plain text.
+            local icon = e:lower():find("^%s*https?://") and "symbol:link" or "symbol:doc.plaintext"
+            choices[#choices + 1] = { text = text, subText = sub, index = i, image = icon }
         end
         st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Clipboard history"))
         st.chooser.setChoices(choices)

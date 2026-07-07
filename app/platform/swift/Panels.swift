@@ -79,8 +79,14 @@ final class VibrancyHUDPanel: FloatingPanel {
     /// Size to fit the stack (floored at `minWidth`) and show centered in the
     /// lower third of the main screen -- the present sequence all three HUDs
     /// share. Returns the final width (ChordHint sizes its depletion bar from it).
+    ///
+    /// `lockSize`: after sizing, clamp the window's content size (min == max ==
+    /// the presented size) so AppKit's auto-resize-to-fit-content is pinned and
+    /// the frame can NEVER change afterward. Use it for a HUD whose content
+    /// mutates while shown (HyperHint's hover hint), so nothing it does can grow
+    /// or shift the card. Off for the static HUDs.
     @discardableResult
-    func present(minWidth: CGFloat) -> CGFloat {
+    func present(minWidth: CGFloat, lockSize: Bool = false) -> CGFloat {
         effect.layoutSubtreeIfNeeded()
         let fit = stack.fittingSize
         let w = max(minWidth, fit.width)
@@ -89,6 +95,10 @@ final class VibrancyHUDPanel: FloatingPanel {
         setFrame(NSRect(x: screen.midX - w / 2,
                         y: screen.minY + screen.height * 0.30,
                         width: w, height: h), display: true)
+        if lockSize {
+            contentMinSize = NSSize(width: w, height: h)
+            contentMaxSize = NSSize(width: w, height: h)
+        }
         orderFrontRegardless()
         return w
     }

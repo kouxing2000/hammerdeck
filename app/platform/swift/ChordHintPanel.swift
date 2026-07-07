@@ -19,7 +19,7 @@ import QuartzCore
 /// key before this runs out" cue.
 @MainActor
 final class ChordHintPanel {
-    struct Row { let key: String; let label: String }
+    struct Row { let key: String; let label: String; let icon: String? }
 
     private let hud = VibrancyHUDPanel(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80))
     private var effect: NSVisualEffectView { hud.effect }
@@ -141,10 +141,38 @@ final class ChordHintPanel {
             let tint = Self.capPalette[i % Self.capPalette.count]
             line.addArrangedSubview(keyCap(KeyGlyphs.glyph(r.key), fontSize: 13, height: 24,
                                            fixedWidth: 26, tint: tint))
+            line.addArrangedSubview(iconView(r.icon))
             line.addArrangedSubview(labelField(r.label))
             col.addArrangedSubview(line)
         }
         return col
+    }
+
+    /// The action's leading glyph, in a FIXED-width box so every label starts at
+    /// the same x -- an empty box when the row has no icon, so the icon column
+    /// never goes ragged. Dim (secondary) so the vivid key-cap stays the row's
+    /// color anchor and the glyph reads as quiet reinforcement, like the palette.
+    private func iconView(_ symbol: String?) -> NSView {
+        let box = NSView()
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        box.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        guard let symbol,
+              let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                  .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)) else { return box }
+        img.isTemplate = true
+        let iv = NSImageView(image: img)
+        iv.translatesAutoresizingMaskIntoConstraints = false
+        iv.contentTintColor = .secondaryLabelColor
+        iv.imageScaling = .scaleProportionallyDown
+        box.addSubview(iv)
+        NSLayoutConstraint.activate([
+            iv.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+            iv.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            iv.widthAnchor.constraint(equalToConstant: 18),
+            iv.heightAnchor.constraint(equalToConstant: 18),
+        ])
+        return box
     }
 
     private func labelField(_ s: String) -> NSTextField {

@@ -42,8 +42,9 @@ end
 -- are registered transiently only while the prefix has armed the chord mode.
 -- `label` (optional): the action's human name, shown in the which-key hint that
 -- appears after the prefix arms (so a chord menu is discoverable, not memorized).
-function adapter.bindChord(mods, key, follows, fn, label)
-    return handleFor(native.bind_chord(mods or {}, key, follows or {}, fn, label))
+-- `icon` (optional): its SF Symbol name, rendered as the hint row's leading glyph.
+function adapter.bindChord(mods, key, follows, fn, label, icon)
+    return handleFor(native.bind_chord(mods or {}, key, follows or {}, fn, label, icon))
 end
 
 function adapter.everySeconds(n, fn)

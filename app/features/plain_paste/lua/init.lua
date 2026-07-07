@@ -48,7 +48,7 @@ return {
 
     actions = {
         -- id "main" keeps the pre-multi-action stored trigger keys valid.
-        { id = "main", label = "Paste as plain text",
+        { id = "main", label = "Paste as plain text", icon = "doc.on.clipboard",
           description = "Strip formatting from the clipboard text, then paste it "
               .. "with a synthesized cmd+v.",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "shift" }, key = "v" },
@@ -73,7 +73,7 @@ return {
                   ctx.keyStroke({ "cmd" }, "v")
               end)
           end },
-        { id = "type", label = "Type clipboard as keystrokes",
+        { id = "type", label = "Type clipboard as keystrokes", icon = "keyboard",
           description = "Type the stripped clipboard text as keystrokes instead "
               .. "of pasting -- works in paste-blocking fields.",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "y" },

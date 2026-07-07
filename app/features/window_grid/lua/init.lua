@@ -265,14 +265,14 @@ return {
     id      = "window_grid",
 
     actions = {
-        { id = "grid_3x3", label = "3×3 grid placement",
+        { id = "grid_3x3", label = "3×3 grid placement", icon = "square.grid.3x3",
           description = "Deem the screen a 3×3 grid, then press a cell to place the "
               .. "focused window there -- or press a second cell down-right of it to "
               .. "fill that rectangle.",
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "9" },
           mnemonic = "Hyper+9 — 9 cells = 3×3",
           run = function(ctx) with(ctx).enter(3, 3) end },
-        { id = "grid_2x2", label = "2×2 grid placement",
+        { id = "grid_2x2", label = "2×2 grid placement", icon = "square.grid.2x2",
           description = "Deem the screen a 2×2 grid, then press a cell to place the "
               .. "focused window there -- or press a second cell down-right of it to "
               .. "fill that rectangle.",
@@ -284,7 +284,7 @@ return {
         -- that 2×2 and 3×3 can't express, and the one an ultrawide actually wants.
         -- Hyper+6 keeps the digit=cell-count mnemonic of Hyper+4 / Hyper+9.
         -- enterOriented reads the focused window's screen aspect to pick 3×2 vs 2×3.
-        { id = "grid_6", label = "6-cell grid placement",
+        { id = "grid_6", label = "6-cell grid placement", icon = "square.grid.3x2",
           description = "Deem the screen a 6-cell grid -- 3×2 on a wide display, "
               .. "2×3 on a tall one -- then press a cell to place the focused window "
               .. "there, or a second cell down-right of it to fill that rectangle.",

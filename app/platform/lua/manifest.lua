@@ -245,6 +245,17 @@ function manifest.validate(m)
                 "feature '" .. m.id .. "': action '" .. a.id ..
                 "' mnemonic must be a string")
         end
+        -- icon: optional per-action SF Symbol name, shown as this action's glyph
+        -- in the command palette. Overrides the feature-level `icon` for THIS
+        -- action -- lets a multi-action feature give each shortcut a distinct
+        -- glyph (e.g. window_snap's left/right halves). Absent -> the row falls
+        -- back to the feature icon (see buildCommandList). Pure presentation
+        -- metadata; only NAMES the symbol (the host renders it), like m.icon.
+        if a.icon ~= nil then
+            assert(type(a.icon) == "string" and a.icon ~= "",
+                "feature '" .. m.id .. "': action '" .. a.id ..
+                "' icon must be a non-empty string (SF Symbol name)")
+        end
         -- A declared default that IS an automated trigger implies the action is
         -- automatable -- otherwise the seam would refuse to bind its own default.
         if a.defaultTrigger and not a.automatable then

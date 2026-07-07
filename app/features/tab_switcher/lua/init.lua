@@ -270,13 +270,13 @@ return {
     start = function(ctx) with(ctx) end,
 
     actions = {
-        { id = "open", label = "Switch to a tab",
+        { id = "open", label = "Switch to a tab", icon = "rectangle.stack",
           description = "Open the tab switcher, or cycle forward through tabs when "
               .. "it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
           mnemonic = "⌃⌥Tab — the window-switch keys + Ctrl, for tabs",
           run = function(ctx) with(ctx).open("open", false) end },
-        { id = "open_backward", label = "Cycle backward",
+        { id = "open_backward", label = "Cycle backward", icon = "arrow.uturn.backward",
           description = "Open the tab switcher, or cycle backward through tabs when "
               .. "it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "`" },

@@ -27,6 +27,7 @@ final class ChordCenter {
         let id: UInt32
         let follows: [String]      // ordered, lowercased follow-key names
         let label: String          // action label, shown in the which-key hint
+        let icon: String?          // action's SF Symbol name, the hint row's glyph
         let handler: () -> Void
     }
     private struct Prefix: Hashable {
@@ -61,7 +62,7 @@ final class ChordCenter {
     /// hotkey, which callers should use instead). `label` names the action in
     /// the which-key hint.
     func bind(mods: [String], key: String, follows: [String],
-              label: String = "", handler: @escaping () -> Void) -> UInt32? {
+              label: String = "", icon: String? = nil, handler: @escaping () -> Void) -> UInt32? {
         guard !follows.isEmpty else { return nil }
         guard HotkeyCenter.keyCodes[key.lowercased()] != nil else { return nil }
         for f in follows {
@@ -73,7 +74,7 @@ final class ChordCenter {
         let prefix = Prefix(mods: Self.canonicalMods(mods), key: key.lowercased())
         let id = nextId; nextId += 1
         let chord = Chord(id: id, follows: follows.map { $0.lowercased() },
-                          label: label, handler: handler)
+                          label: label, icon: icon, handler: handler)
 
         // Register the prefix hotkey once; later chords on the same prefix just
         // join the set. Bail (without consuming the id slot's side effects) if
@@ -234,11 +235,11 @@ final class ChordCenter {
     func debugPreviewHint() {
         if hintPanel == nil { hintPanel = ChordHintPanel() }
         let rows = [
-            ChordHintPanel.Row(key: "w", label: "Window switcher"),
-            ChordHintPanel.Row(key: "p", label: "Command palette"),
-            ChordHintPanel.Row(key: "s", label: "Site switcher"),
-            ChordHintPanel.Row(key: "r", label: "Refresh wallpaper"),
-            ChordHintPanel.Row(key: "c", label: "more..."),
+            ChordHintPanel.Row(key: "w", label: "Window switcher", icon: "macwindow.on.rectangle"),
+            ChordHintPanel.Row(key: "p", label: "Command palette", icon: "command"),
+            ChordHintPanel.Row(key: "s", label: "Site switcher", icon: "bookmark"),
+            ChordHintPanel.Row(key: "r", label: "Refresh wallpaper", icon: "photo.artframe"),
+            ChordHintPanel.Row(key: "c", label: "more...", icon: "ellipsis"),
         ]
         hintPanel?.update(prefixMods: ["cmd", "shift"], prefixKey: "a", rows: rows,
                           remaining: timeout, total: timeout)
@@ -281,9 +282,13 @@ final class ChordCenter {
         return byKey.keys.sorted().map { k in
             let cs = byKey[k]!
             if let done = cs.first(where: { armedPos + 1 == $0.follows.count }) {
-                return ChordHintPanel.Row(key: k, label: done.label.isEmpty ? "(action)" : done.label)
+                // Terminal key: the action's own glyph (nil -> a neutral dot, so
+                // the icon column never goes ragged within the card).
+                return ChordHintPanel.Row(key: k, label: done.label.isEmpty ? "(action)" : done.label,
+                                          icon: done.icon)
             }
-            return ChordHintPanel.Row(key: k, label: "more...")
+            // Branch key: more follow-keys lie below it -- a continuation glyph.
+            return ChordHintPanel.Row(key: k, label: "more...", icon: "ellipsis")
         }
     }
 

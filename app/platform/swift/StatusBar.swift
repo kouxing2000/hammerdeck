@@ -219,6 +219,17 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
             NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
     }
 
+    /// The glyph for one action row in a multi-action submenu: its own declared
+    /// icon, else the feature glyph -- the same resolution the command palette
+    /// uses, so an action's icon matches across surfaces.
+    private func actionImage(_ feature: FeatureInfo, _ action: ActionInfo) -> NSImage? {
+        let img = NSImage(systemSymbolName: action.icon ?? featureIcon(feature),
+                          accessibilityDescription: nil)
+        img?.isTemplate = true
+        return img?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+    }
+
     /// Template image for a context-group submenu -- mirrors featureImage but uses
     /// the FeatureContext glyph (e.g. "macwindow" for Windows).
     private func contextImage(_ context: FeatureContext) -> NSImage? {
@@ -235,9 +246,10 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
     /// the top level and nested inside a context group.
     private func featureMenuItem(_ feature: FeatureInfo) -> NSMenuItem {
         if feature.actions.count == 1, let action = feature.actions.first {
-            let it = triggerItem(feature: feature, action: action, title: feature.name)
-            it.image = featureImage(feature)
-            return it
+            // triggerItem already sets the glyph (action icon -> feature icon);
+            // don't override with the feature glyph or a single-action feature's
+            // own per-action icon would be dropped here but honored in the palette.
+            return triggerItem(feature: feature, action: action, title: feature.name)
         }
         let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
         parent.image = featureImage(feature)
@@ -263,6 +275,9 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         let mi = NSMenuItem(title: title, action: #selector(runAction(_:)), keyEquivalent: "")
         mi.target = self
         mi.representedObject = [feature.id, action.id]
+        // Leading glyph so a multi-action submenu is scannable (single-action
+        // rows re-set the feature glyph in featureMenuItem, same result).
+        mi.image = actionImage(feature, action)
         // Show a bound hotkey as a real key-equivalent so it sits flush-right in
         // the native shortcut column. It is DISPLAY ONLY: menuHasKeyEquivalent
         // refuses to fire any quick-trigger item, so the global hotkey stays the

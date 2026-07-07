@@ -35,11 +35,14 @@ local OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 -- translation exists. The picker is built with localized labels (ctx.t) and a
 -- label->entry map, so onChoose dispatches by `id` -- display and comparison are
 -- decoupled, and the labels can localize without breaking dispatch.
+-- `icon` is an icon token (SF Symbol) shown as the entry's leading glyph in the
+-- "act on selection" picker -- the same treatment the command palette gives an
+-- action, applied to this in-app sub-menu so the transforms are scannable.
 local BASE_ACTIONS = {
-    { id = "dictionary", label = "Dictionary", opt = "showDictionary" },
-    { id = "lowercase",  label = "lowercase",  opt = "showLowercase" },
-    { id = "uppercase",  label = "UPPERCASE",  opt = "showUppercase" },
-    { id = "calculate",  label = "Calculate",  opt = "showCalculate" },
+    { id = "dictionary", label = "Dictionary", opt = "showDictionary", icon = "symbol:character.book.closed" },
+    { id = "lowercase",  label = "lowercase",  opt = "showLowercase",  icon = "symbol:characters.lowercase" },
+    { id = "uppercase",  label = "UPPERCASE",  opt = "showUppercase",  icon = "symbol:characters.uppercase" },
+    { id = "calculate",  label = "Calculate",  opt = "showCalculate",  icon = "symbol:function" },
 }
 
 -- Default system prompts for the AI actions. These seed the per-action prompt
@@ -65,12 +68,12 @@ local PROMPTS = {
 -- user's run-time instruction, so it has no promptOpt. AI entries appear only
 -- when BOTH the key is validated and the entry's toggle is on.
 local AI_ACTIONS = {
-    { id = "aiRefine",    label = "AI: Refine",    opt = "showAiRefine",    promptOpt = "aiRefinePrompt" },
-    { id = "aiEnrich",    label = "AI: Enrich",    opt = "showAiEnrich",    promptOpt = "aiEnrichPrompt" },
-    { id = "aiComplete",  label = "AI: Complete",  opt = "showAiComplete",  promptOpt = "aiCompletePrompt" },
-    { id = "aiSummary",   label = "AI: Summary",   opt = "showAiSummary",   promptOpt = "aiSummaryPrompt" },
-    { id = "aiTranslate", label = "AI: Translate", opt = "showAiTranslate", promptOpt = "aiTranslatePrompt", translate = true },
-    { id = "aiFreeAsk",   label = "AI: Free ask",  opt = "showAiFreeAsk",   freeAsk = true },
+    { id = "aiRefine",    label = "AI: Refine",    opt = "showAiRefine",    promptOpt = "aiRefinePrompt",    icon = "symbol:wand.and.stars" },
+    { id = "aiEnrich",    label = "AI: Enrich",    opt = "showAiEnrich",    promptOpt = "aiEnrichPrompt",    icon = "symbol:sparkles" },
+    { id = "aiComplete",  label = "AI: Complete",  opt = "showAiComplete",  promptOpt = "aiCompletePrompt",  icon = "symbol:text.append" },
+    { id = "aiSummary",   label = "AI: Summary",   opt = "showAiSummary",   promptOpt = "aiSummaryPrompt",   icon = "symbol:list.bullet.rectangle" },
+    { id = "aiTranslate", label = "AI: Translate", opt = "showAiTranslate", promptOpt = "aiTranslatePrompt", translate = true, icon = "symbol:globe" },
+    { id = "aiFreeAsk",   label = "AI: Free ask",  opt = "showAiFreeAsk",   freeAsk = true,                  icon = "symbol:questionmark.bubble" },
 }
 
 -- Look `word` up in the dictionary: the user's custom app (launch/focus it --
@@ -145,7 +148,9 @@ local function buildPicker(ctx)
     local actions, byLabel = {}, {}
     local function addEntry(e)
         local label = ctx.t("action." .. e.id, e.label)
-        actions[#actions + 1] = label
+        -- A { label, icon } entry -- askChoice still hands the LABEL back to
+        -- onChoose, so byLabel dispatch is unchanged; the icon is pure display.
+        actions[#actions + 1] = { label = label, icon = e.icon }
         byLabel[label] = e
     end
     for _, b in ipairs(BASE_ACTIONS) do

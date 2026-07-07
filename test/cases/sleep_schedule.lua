@@ -25,6 +25,8 @@ return {
         local dlg = fake.openDialog()
         ok(dlg ~= nil, "phase 1: warning dialog at T-7min")
         ok(dlg.actions[2] and dlg.actions[2]:find("^Snooze") ~= nil, "warning offers snooze")
+        ok(dlg.items[1].image == "symbol:checkmark.circle" and dlg.items[2].image == "symbol:zzz",
+            "dialog actions carry leading glyphs (wrap-up, snooze)")
 
         dlg.choose(dlg.actions[2])                     -- snooze (+15min, cap now+30)
         fake.fireTimers("every", 10)

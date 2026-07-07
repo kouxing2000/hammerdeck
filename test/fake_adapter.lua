@@ -127,9 +127,12 @@ function adapter.bindHotkey(mods, key, fn, onRelease, shadow)
     end }
 end
 
-function adapter.bindChord(mods, key, follows, fn)
+function adapter.bindChord(mods, key, follows, fn, label, icon)
     assertMods(mods, "bind_chord")
-    local c = { mods = mods, key = key, follows = follows, fn = fn, stopped = false }
+    -- Capture label + icon like the real seam does (they feed the which-key
+    -- hint's row text + leading glyph), so a test can assert on them.
+    local c = { mods = mods, key = key, follows = follows, fn = fn,
+                label = label, icon = icon, stopped = false }
     fake.chords[#fake.chords + 1] = c
     alloc()
     return { stop = function() freeOnce(c) end }
@@ -253,8 +256,24 @@ function adapter.chooser(opts)
 end
 
 function adapter.askChoice(opts)
+    -- Mirror the real adapter: each action entry is a plain label STRING or a
+    -- { label, icon } table (icon = an icon token like "symbol:zzz"); onChoose
+    -- always receives the LABEL string either way. Expose `actions` as those
+    -- label strings (what tests read and pass to choose) and `items` as the
+    -- normalized { text, image } rows, so a test can also assert on the icons.
+    local raw = opts.actions or {}
+    local labels, items = {}, {}
+    for i, a in ipairs(raw) do
+        if type(a) == "table" then
+            labels[i] = a.label or a.text or ""
+            items[i] = { text = labels[i], image = a.icon }
+        else
+            labels[i] = a
+            items[i] = { text = a }
+        end
+    end
     local d = {
-        title = opts.title, infos = opts.infos or {}, actions = opts.actions or {},
+        title = opts.title, infos = opts.infos or {}, actions = labels, items = items,
         onChoose = opts.onChoose, open = true, stopped = false,
     }
     fake.dialogs[#fake.dialogs + 1] = d

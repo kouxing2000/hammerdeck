@@ -182,6 +182,9 @@ struct ActionInfo: Identifiable {
     // event), not just a manual one (hotkey / chord)? False for context-
     // dependent actions -- the trigger picker hides the automated types for them.
     let automatable: Bool
+    // Optional per-action SF Symbol name; nil falls back to the feature glyph.
+    // The command palette and the menubar submenu render it as the row's icon.
+    let icon: String?
     // Created + bound by an option editor (e.g. a Saved-placements snap with its
     // inline shortcut), so the detail view hides it from the generic per-action
     // trigger sections -- otherwise it appears twice.
@@ -198,6 +201,7 @@ struct ActionInfo: Identifiable {
         self.triggerOverridden = dict.bool("triggerOverridden")
         self.triggerDesc = dict.str("triggerDesc")
         self.automatable = dict.bool("automatable")
+        self.icon = (dict["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.dynamic = dict.bool("dynamic")
     }
 }

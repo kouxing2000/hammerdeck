@@ -16,9 +16,10 @@ return {
 
         do
         package.loaded["features._hyperprobe"] = {
-            api = 1, id = "hyperprobe", name = "Hyper Probe",
+            api = 1, id = "hyperprobe", name = "Hyper Probe", icon = "star.fill",
             actions = {
-                { id = "go", label = "Go",
+                { id = "go", label = "Go",   -- no per-action icon: falls back to the feature glyph
+                  description = "Jump to it",
                   defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "h" },
                   run = function() end },
                 { id = "no", label = "NotHyper",   -- only cmd: must be excluded
@@ -38,8 +39,15 @@ return {
             for _, it in ipairs(rows) do if it.label == label then return true end end
             return false
         end
+        local function legendField(rows, key, field)
+            for _, it in ipairs(rows) do if it.key == key then return it[field] end end
+        end
         local legend = registry.hyperLegend()
         ok(legendHas(legend, "h", "Go"), "hyperLegend lists a Hyper binding as { key, label }")
+        ok(legendField(legend, "h", "icon") == "star.fill",
+            "hyperLegend row carries the action glyph (feature icon when no per-action icon)")
+        ok(legendField(legend, "h", "desc") == "Jump to it",
+            "hyperLegend row carries the action description (for the keyboard HUD's hover hint)")
         ok(not legendHasLabel(legend, "NotHyper"), "hyperLegend excludes non-Hyper bindings")
         registry.setEnabled("hyperprobe", false)
         ok(not legendHasLabel(registry.hyperLegend(), "Go"),

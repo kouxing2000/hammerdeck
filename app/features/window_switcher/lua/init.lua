@@ -101,13 +101,13 @@ return {
 
     actions = {
         -- id "main" keeps pre-multi-action stored trigger keys valid.
-        { id = "main", label = "Switch to a window",
+        { id = "main", label = "Switch to a window", icon = "macwindow.on.rectangle",
           description = "Open the window switcher, or cycle forward through windows "
               .. "when it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "tab" },
           mnemonic = "⌥Tab — mirrors ⌘Tab, but for windows",
           run = function(ctx) jump(ctx, "main", false) end },
-        { id = "open_backward", label = "Cycle backward",
+        { id = "open_backward", label = "Cycle backward", icon = "arrow.uturn.backward",
           description = "Open the window switcher, or cycle backward through windows "
               .. "when it is already open.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "`" },

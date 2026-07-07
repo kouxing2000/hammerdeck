@@ -30,6 +30,8 @@ return {
         fake.pressHotkey("h", { "cmd", "alt", "ctrl" })
         local hch = fake.visibleChooser()
         ok(hch ~= nil and #hch.choices == 2, "history chooser opens, deduped")
+        ok(hch.choices[1].image == "symbol:doc.plaintext",
+            "a text entry row carries the plain-text glyph")
         ok(hch.choices[1].text == "alpha" and hch.choices[2].text == "beta",
             "newest first, re-copy bumped alpha to the front")
 

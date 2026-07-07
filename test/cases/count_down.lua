@@ -16,6 +16,13 @@ return {
         registry.register(require("features.count_down"))
         registry.setEnabled("count_down", true)
 
+        -- Each chord binding carries its action's glyph for the which-key hint
+        -- (resolved action icon -> feature icon, same as the palette/menubar).
+        local chordIcon = {}
+        for _, c in ipairs(fake.chords) do chordIcon[c.follows[1]] = c.icon end
+        ok(chordIcon["c"] == "play.fill" and chordIcon["p"] == "playpause.fill",
+            "chord bindings carry the action glyph for the which-key hint")
+
         fake.fireChord({ "cmd", "alt", "ctrl" }, "c", { "c" })
         local prompt = fake.openTextPrompt()
         ok(prompt ~= nil, "countdown start prompts for minutes")

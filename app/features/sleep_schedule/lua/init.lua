@@ -155,11 +155,12 @@ return {
             -- snoozeLabel held in a local so onChoose compares the chosen label
             -- against it (not an English "^Snooze" prefix) -- works in any locale.
             local snoozeLabel
-            local actions = { ctx.t("action.wrapUp", "OK, I'll wrap up") }
+            local actions = { { label = ctx.t("action.wrapUp", "OK, I'll wrap up"),
+                                icon = "symbol:checkmark.circle" } }
             if not s.snoozed then
                 snoozeLabel = string.format(ctx.t("action.snooze", "Snooze %d minutes (until %s)"),
                     ctx.opt("snoozeMin"), formatTime(snoozeTargetSecs()))
-                actions[#actions + 1] = snoozeLabel
+                actions[#actions + 1] = { label = snoozeLabel, icon = "symbol:zzz" }
             end
 
             dismissWarnDialog()

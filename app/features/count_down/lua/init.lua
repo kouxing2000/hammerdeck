@@ -64,7 +64,7 @@ return {
 
         return {
             {
-                id = "start", label = "Start / cancel countdown",
+                id = "start", label = "Start / cancel countdown", icon = "play.fill",
                 description = "Prompt for minutes and start the countdown, or "
                     .. "cancel the one already running.",
                 defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "c", follows = { "c" } },
@@ -94,7 +94,7 @@ return {
                 end,
             },
             {
-                id = "pause", label = "Pause / resume",
+                id = "pause", label = "Pause / resume", icon = "playpause.fill",
                 description = "Pause the running countdown, or resume it if it is "
                     .. "already paused.",
                 defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "c", follows = { "p" } },

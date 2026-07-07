@@ -342,7 +342,9 @@ local function flashManualFire(m, a)
     -- ctx.confirmAction (below), so the flash reports the RESULT, not mode-entry.
     if m.selfEvident then return end
     if not registry.isEnabled("confirm_shortcut") then return end
-    pcall(adapter.flash, m.icon, commandLabel(m, a))
+    -- Per-action glyph when the action declares one (so a multi-action feature's
+    -- flash matches the palette/menubar/hint), else the feature icon.
+    pcall(adapter.flash, a.icon or m.icon, commandLabel(m, a))
 end
 
 -- The confirm-flash a MODAL feature fires ITSELF at its real-action moment (the
@@ -395,7 +397,10 @@ local function bindAction(b, m, a, spec)
             else
                 flashManualFire(m, a)
             end
-        end, a.label or a.id))
+        -- 4th arg: the which-key hint glyph. Resolve action icon -> feature icon
+        -- (same as the palette's buildCommandList), so an action bound to a chord
+        -- shows the SAME glyph in the hint that it shows in the palette/menubar.
+        end, a.label or a.id, a.icon or m.icon))
 end
 
 -- Find an action by id; with actionId == nil, resolve the feature's sole
@@ -844,6 +849,15 @@ function buildCommandList(selfId)
                     -- single-action features read better as the feature name;
                     -- multi-action ones need the per-action label to disambiguate.
                     label       = (#m.actions > 1) and locActionLabel(m, a) or locName(m),
+                    -- Leading glyph for the palette row: the action's own icon
+                    -- when it declares one (distinct per shortcut for a
+                    -- multi-action feature), else the feature icon. Always set --
+                    -- every feature declares a feature.json `icon`; the literal
+                    -- is the generic Swift shows for an unknown category (see
+                    -- categoryIcon in FeatureChrome.swift), so the list is never
+                    -- ragged even if a future feature omits its icon. A bare SF
+                    -- Symbol name (the palette wraps it as a "symbol:" token).
+                    icon        = a.icon or m.icon or "puzzlepiece.fill",
                     triggerDesc = triggers.describe(triggerFor(m, a)),
                     triggerGlyph = triggers.glyph(triggerFor(m, a)),
                     -- "why this key" hint, only while the default still holds
@@ -876,10 +890,19 @@ function registry.hyperLegend()
             for _, a in ipairs(m.actions) do
                 local t = triggerFor(m, a)
                 if isHyper(t) then
+                    local desc = locActionField(m, a, "description", a.description)
+                    if desc == nil or desc == "" then desc = locDesc(m) end
                     items[#items + 1] = {
                         key = t.key,
                         label = (#m.actions > 1) and locActionLabel(m, a) or locName(m),
                         chord = (t.type == "chord"),
+                        -- Leading glyph for the Hyper cheat-sheet row; resolved
+                        -- action icon -> feature icon, the same glyph the palette
+                        -- / menubar / chord hint show for this action.
+                        icon = a.icon or m.icon,
+                        -- One-line "what it does", shown in the keyboard HUD's
+                        -- hover hint (falls back to the feature description).
+                        desc = desc,
                     }
                 end
             end
@@ -1007,6 +1030,10 @@ function registry.describe()
                 id = a.id, label = locActionLabel(m, a),
                 description = locActionField(m, a, "description", a.description),
                 mnemonic = locActionField(m, a, "mnemonic", a.mnemonic),
+                -- Optional per-action SF Symbol; nil falls back host-side to the
+                -- feature glyph (see actionImage in StatusBar.swift). Same field
+                -- the command palette resolves via buildCommandList.
+                icon = a.icon,
                 automatable = a.automatable == true,
                 trigger = current,
                 defaultTrigger = a.defaultTrigger,

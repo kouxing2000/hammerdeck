@@ -167,6 +167,15 @@ final class CapsHyperTap {
         legendPanel = nil
     }
 
+#if DEBUG
+    /// Show the which-key legend on demand for a visual check (DebugControl
+    /// `@hyperhint`), reading the live catalog -- bypasses the Caps-hold path.
+    func debugPreviewLegend() {
+        legendPanel?.close()
+        legendPanel = HyperHintPanel(rows: legendProvider?() ?? [])
+    }
+#endif
+
     /// Toggle the system Caps Lock state + LED via IOKit (the remap means the key
     /// itself no longer locks, so a double-tap drives the lock programmatically).
     private static func toggleSystemCapsLock() {

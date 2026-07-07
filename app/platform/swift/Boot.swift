@@ -196,7 +196,9 @@ public func hammerdeckMain() {
             guard let d = item as? [String: Any],
                   let key = d["key"] as? String,
                   let label = d["label"] as? String else { return nil }
-            return HyperHintPanel.Row(key: key, label: label, chord: (d["chord"] as? Bool) ?? false)
+            return HyperHintPanel.Row(key: key, label: label, chord: (d["chord"] as? Bool) ?? false,
+                                      icon: (d["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                                      desc: (d["desc"] as? String).flatMap { $0.isEmpty ? nil : $0 })
         }
     }
     CapsHyperPreference.apply()   // start the Caps->Hyper tap if opted in
