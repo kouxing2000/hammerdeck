@@ -927,7 +927,14 @@ local function controllerFor(ctx)
                 st.heroMode = on
                 saveHeroMode(on)
                 ctx.log("hero mode", on and "on" or "off")
-                if not on and st.mode == "focus" then st.dropHero() end
+                -- Flipping ON: promote whatever deck window is focused RIGHT NOW
+                -- into the hero (the widget is a non-activating panel, so the
+                -- click didn't steal focus -- the real front window is still the
+                -- one to zoom). reconcile classifies it as "promote" and plays
+                -- the beat, matching what a fresh focus would have done. OFF:
+                -- drop any current hero back to the grid.
+                if not on and st.mode == "focus" then st.dropHero()
+                elseif on then st.reconcile() end
                 if st.widget then st.widget.setSwitchHint(switchHintFor()) end
             end,
             switcher = {

@@ -595,9 +595,16 @@ return {
                 "with Hero off, focusing a window does not zoom it (pure grid tiler)")
             ok(#fake.liveOutlines("focus") == 1 and #fake.liveOutlines("member") == 3,
                 "with Hero off, the focused window gets a bold FOCUS ring; the rest stay subtle members")
-            w.onToggleHero(true)           -- flip Hero back ON
+            w.onToggleHero(true)           -- flip Hero back ON (window 3 still focused)
             ok(w.switchHint == hintOn, "the hint reverts when Hero is toggled back on")
-            focusWin(3)
+            -- Regression: toggling Hero ON must zoom whatever window is focused
+            -- RIGHT NOW, without waiting for a fresh focus event. It used to only
+            -- set the flag and sit flat until you re-focused something.
+            fake.fireTimers("after")       -- land the promote beat the toggle kicked off
+            fake.fireTimers("after")
+            ok(fake.liveOutline("hero") ~= nil and w.hero ~= 0,
+                "toggling Hero on immediately promotes the already-focused window")
+            focusWin(2)                    -- and a fresh focus still promotes a different window
             ok(fake.liveOutline("hero") ~= nil and w.hero ~= 0,
                 "flipping Hero on restores focus-to-hero")
             -- persistence: off -> exit -> re-enter starts off
