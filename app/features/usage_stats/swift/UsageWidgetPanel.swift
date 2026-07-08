@@ -76,6 +76,12 @@ final class UsageWidgetPanel {
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // The card is ALWAYS a dark card, but the labels use adaptive semantic
+        // colors (.labelColor / .secondaryLabelColor / ...). Pin the widget
+        // subtree to dark appearance so those colors resolve light-on-dark in
+        // BOTH light and system dark mode -- otherwise light mode paints near-
+        // black text on the dark card and it's unreadable.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
         panel.ignoresMouseEvents = true
 
