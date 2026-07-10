@@ -1255,6 +1255,43 @@ local function controllerFor(ctx)
         if st.widget then
             st.widget.reanchor({ x = cur.x + st.widgetDx, y = cur.y + st.widgetDy }, cur)
         end
+        -- Re-tile onto the new geometry. The slots were sized to the OLD screen
+        -- frame at enter (W.tileSlots); a resolution/scale change -- same display,
+        -- new w/h -- leaves every slot stale, so the tiled windows sit off-screen
+        -- or wrong-sized (the "deck stops working after a resolution change" bug).
+        -- Recompute the grid for `cur` and move each member to the slot in the SAME
+        -- cell it already holds: sort members by their OLD slot and the new slots
+        -- both in row-major reading order, then pair them up. That preserves each
+        -- window's cell (no reshuffle, mini-map stays truthful). The hero re-centres
+        -- on the new heroFrame; only its drop-back slot changes.
+        if st.group and #st.group > 0 then
+            settlePending()   -- resolve any in-flight promotion snap before re-tiling
+            local newSlots = W.tileSlots(cur, #st.group, ctx.opt("gutter"))
+            local function rowMajor(af, bf)
+                local ay, by = math.floor((af.y or 0) / 10), math.floor((bf.y or 0) / 10)
+                if ay ~= by then return ay < by end
+                return (af.x or 0) < (bf.x or 0)
+            end
+            table.sort(newSlots, rowMajor)
+            local ordered = {}
+            for _, m in ipairs(st.group) do ordered[#ordered + 1] = m end
+            table.sort(ordered, function(a, b) return rowMajor(a.slot, b.slot) end)
+            local ids = resolveIds()
+            for i, m in ipairs(ordered) do
+                m.slot = newSlots[i] or m.slot
+                if not m.gone and ids[m.key] then
+                    -- Cancel any in-flight hide-until-stable (a user mid-drag when
+                    -- the reconfig fired), so its pending timer can't later re-show
+                    -- the ring at a stale frame -- same guard as st.rearrange.
+                    if st.stable and st.stable[m.key] then
+                        st.stable[m.key].stop(); st.stable[m.key] = nil
+                    end
+                    moveWin(ids[m.key], m, (m.key == st.heroKey) and heroFrame() or m.slot)
+                end
+            end
+            rebuildWidgetOrder()
+            ctx.log("screenChanged: re-tiled", #st.group, "windows on", tostring(cur.name))
+        end
         renderBorders()   -- re-cover the rings + holes onto the (moved) screen
         ctx.log("screenChanged: re-anchored deck to", tostring(cur.name))
     end
