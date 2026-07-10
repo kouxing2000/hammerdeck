@@ -20,38 +20,56 @@ final class MouseLocatorPanel {
 
     init(seconds: TimeInterval, onClose: @escaping () -> Void) {
         self.onClose = onClose
-        // Span the FULL desktop (union of every screen), not just the one screen
-        // the pointer sits on at construction. A warp that hops the pointer to
-        // another display -- locate_pointer's "center on next screen",
-        // window_snap's move-to-next/prev-screen -- has NOT yet updated
-        // NSEvent.mouseLocation when locate fires (CGWarpMouseCursorPosition is
-        // not reflected instantly), so a single-screen panel would pin to the OLD
-        // screen and draw the locator outside its bounds -- invisible on the
-        // screen the pointer actually landed on. A desktop-spanning panel tracks
-        // the pointer wherever it ends up, including a mid-flash screen hop.
-        let union = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
-        let frame = union.isNull
-            ? (NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900))
-            : union
+        // A SMALL panel that FOLLOWS the pointer by repositioning its origin each
+        // frame (in global screen coords), with the halo pinned at its centre.
+        //
+        // The prior design was one giant panel spanning the union of every screen,
+        // mapping the pointer into that panel's own coordinate space. But the union
+        // is as TALL as the tallest display, and a shorter display (a laptop's
+        // built-in screen beside a bigger external) sits at the BOTTOM of it -- so a
+        // pointer on the short screen mapped into the empty band ABOVE it (no pixels
+        // there) and the locator was invisible on that screen. A small follow-panel
+        // has no union and no dead zone: it crosses displays naturally and is immune
+        // to the bottom-vs-top origin flip (the halo is centred, symmetric).
+        // Size the locator to the display it lands on: a fixed point size looks
+        // tiny on a large high-resolution desktop (a big external beside a laptop).
+        let scale = MouseLocatorPanel.locatorScale()
+        view = LocatorView(scale: scale)
+        view.point = NSPoint(x: view.frame.midX, y: view.frame.midY)   // halo centred
 
-        panel = FloatingPanel(contentRect: frame)
-
-        view = LocatorView(frame: NSRect(origin: .zero, size: frame.size))
+        panel = FloatingPanel(contentRect: view.frame)
         panel.contentView = view
+        recenter()                       // sit on the pointer BEFORE first paint
         panel.orderFrontRegardless()
-        track()
 
         followTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { _ in
-            MainActor.assumeIsolated { self.track() }
+            MainActor.assumeIsolated { self.recenter() }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
             MainActor.assumeIsolated { self.close() }
         }
     }
 
-    private func track() {
+    /// Centre the panel on the current pointer, in global (Cocoa, bottom-left)
+    /// screen coords. setFrameOrigin -- unlike setFrame -- skips constrainFrameRect,
+    /// so the panel is free to sit under the menu bar or on a negative-origin
+    /// display without being nudged back onto the primary screen.
+    private func recenter() {
         let p = NSEvent.mouseLocation
-        view.point = NSPoint(x: p.x - panel.frame.minX, y: p.y - panel.frame.minY)
+        let half = panel.frame.width / 2
+        panel.setFrameOrigin(NSPoint(x: p.x - half, y: p.y - half))
+    }
+
+    /// How much to grow the locator, from the height of the display the pointer is
+    /// on versus a ~900pt baseline. Clamped so it never shrinks below the original
+    /// look (>= 1) and never runs away on a very large desktop (<= 3). Points, not
+    /// pixels: a Retina screen already normalises DPI, so this tracks how much
+    /// SCREEN the halo covers, which is what "too small on the big display" is about.
+    private static func locatorScale() -> CGFloat {
+        let p = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(p, $0.frame, false) } ?? NSScreen.main
+        let h = screen?.frame.height ?? 900
+        return min(3.0, max(1.0, h / 900))
     }
 
     func close() {
@@ -81,15 +99,25 @@ final class LocatorView: NSView {
     private let ring1 = CAShapeLayer()
     private let ring2 = CAShapeLayer()
 
-    // A fixed layer box comfortably larger than the biggest ring, so an expanding
-    // ring never clips; `point` centres the box on the pointer.
-    private static let box: CGFloat = 200
-    private static let ringMin: CGFloat = 6
-    private static let ringMax: CGFloat = 74
+    // Every dimension is a base value times `scale` (from MouseLocatorPanel, so the
+    // locator grows on a large high-resolution display). `box` is the layer frame,
+    // kept comfortably larger than the biggest ring so an expanding ring never
+    // clips; `point` centres it on the pointer.
+    static let baseBox: CGFloat = 200
+    private let scale: CGFloat
+    private let box: CGFloat
+    private let ringMin: CGFloat
+    private let ringMax: CGFloat
+    private let haloSize: CGFloat
     private static let color = NSColor.systemGreen
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
+    init(scale: CGFloat) {
+        self.scale = scale
+        self.box = LocatorView.baseBox * scale
+        self.ringMin = 6 * scale
+        self.ringMax = 74 * scale
+        self.haloSize = 86 * scale
+        super.init(frame: NSRect(x: 0, y: 0, width: box, height: box))
         wantsLayer = true
         layer?.masksToBounds = false
         setupHalo()
@@ -124,9 +152,9 @@ final class LocatorView: NSView {
         halo.locations = [0, 1]
         halo.startPoint = CGPoint(x: 0.5, y: 0.5)
         halo.endPoint = CGPoint(x: 1, y: 1)
-        // A ~86px glow (the gradient's own bounds stay small; the ring box is the
+        // A ~86pt glow (the gradient's own bounds stay small; the ring box is the
         // shared coordinate frame, but the halo just needs to centre on `point`).
-        halo.bounds = CGRect(x: 0, y: 0, width: 86, height: 86)
+        halo.bounds = CGRect(x: 0, y: 0, width: haloSize, height: haloSize)
         halo.anchorPoint = CGPoint(x: 0.5, y: 0.5)
 
         let scale = CABasicAnimation(keyPath: "transform.scale")
@@ -145,23 +173,22 @@ final class LocatorView: NSView {
     }
 
     private func setupRing(_ ring: CAShapeLayer, delay: Double) {
-        let b = LocatorView.box
-        ring.bounds = CGRect(x: 0, y: 0, width: b, height: b)
+        ring.bounds = CGRect(x: 0, y: 0, width: box, height: box)
         ring.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         ring.fillColor = NSColor.clear.cgColor
         ring.strokeColor = LocatorView.color.cgColor
-        ring.lineWidth = 2.5
-        ring.path = LocatorView.circle(LocatorView.ringMin)   // static start state
+        ring.lineWidth = 2.5 * scale
+        ring.path = circle(ringMin)   // static start state
 
         let path = CABasicAnimation(keyPath: "path")
-        path.fromValue = LocatorView.circle(LocatorView.ringMin)
-        path.toValue = LocatorView.circle(LocatorView.ringMax)
+        path.fromValue = circle(ringMin)
+        path.toValue = circle(ringMax)
         let op = CABasicAnimation(keyPath: "opacity")
         op.fromValue = 0.95
         op.toValue = 0.0
         let lw = CABasicAnimation(keyPath: "lineWidth")
-        lw.fromValue = 3.0
-        lw.toValue = 0.75
+        lw.fromValue = 3.0 * scale
+        lw.toValue = 0.75 * scale
         let group = CAAnimationGroup()
         group.animations = [path, op, lw]
         group.duration = 1.6
@@ -173,7 +200,7 @@ final class LocatorView: NSView {
 
     /// A circle of radius `r` centred in the box (so `position` = pointer centres
     /// it on the pointer).
-    private static func circle(_ r: CGFloat) -> CGPath {
+    private func circle(_ r: CGFloat) -> CGPath {
         let c = box / 2
         return CGPath(ellipseIn: CGRect(x: c - r, y: c - r, width: 2 * r, height: 2 * r), transform: nil)
     }
