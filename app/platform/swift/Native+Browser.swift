@@ -5,6 +5,20 @@
 import AppKit
 import CLua
 
+// Thread-safe accumulator for runJXA's out-of-process reads. Swift 6 forbids
+// mutating a captured `var` across a @Sendable boundary (the readabilityHandler /
+// terminationHandler run off-thread), so the shared bytes + exit status live here
+// behind a lock. `@unchecked Sendable` because the lock, not the compiler, proves
+// the safety.
+private final class JXABox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    private var status: Int32 = -1
+    func append(_ d: Data) { lock.lock(); data.append(d); lock.unlock() }
+    func setStatus(_ s: Int32) { lock.lock(); status = s; lock.unlock() }
+    func result() -> (Data, Int32) { lock.lock(); defer { lock.unlock() }; return (data, status) }
+}
+
 extension Native {
     // MARK: - Apps / URLs
 
@@ -299,32 +313,95 @@ extension Native {
         return 1
     }
 
+    private static let jxaTimeoutSeconds: TimeInterval = 30  // survive most first-run TCC prompts
+
     // Run a fixed JXA template asynchronously via osascript; cb(stdout|nil).
-    // Out-of-process like the donor's hs.task -- a slow browser cannot hang
-    // the host. The script TEXT is never caller-supplied.
-    private func runJXA(_ script: String, _ ref: Int32) {
+    // Out-of-process like the donor's hs.task -- a slow browser cannot hang the host.
+    // The script TEXT is never caller-supplied.
+    //
+    // Both pipes are DRAINED CONCURRENTLY (readabilityHandler). Reading stdout only
+    // AFTER termination deadlocks once osascript's output exceeds the ~64KB pipe
+    // buffer (hundreds of tabs): it blocks in write(), never exits, and the callback
+    // never fires -- which would wedge tab_switcher's st.refreshing forever. Completion
+    // joins TWO obligations -- stdout EOF AND process exit -- so nothing ever blocks
+    // waiting; a watchdog SIGTERMs a hung process (unanswered Automation prompt,
+    // beachball) so the reads hit EOF and cb(nil) still fires. Exactly one
+    // completion per call (the throw path returns before notify is registered).
+    private func runJXACore(_ script: String, _ completion: @escaping @Sendable (String?) -> Void) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = ["-l", "JavaScript", "-e", script]
-        let out = Pipe()
+        let out = Pipe(), err = Pipe()
         p.standardOutput = out
-        p.standardError = Pipe()
-        p.terminationHandler = { proc in
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            let text = proc.terminationStatus == 0
-                ? String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+        p.standardError = err
+
+        let box = JXABox()
+        let group = DispatchGroup()
+
+        group.enter()   // obligation 1: stdout drained to EOF
+        out.fileHandleForReading.readabilityHandler = { h in
+            let d = h.availableData
+            if d.isEmpty { h.readabilityHandler = nil; group.leave() } else { box.append(d) }
+        }
+        // stderr: drain + discard (an unread stderr can wedge the child too).
+        err.fileHandleForReading.readabilityHandler = { h in
+            if h.availableData.isEmpty { h.readabilityHandler = nil }
+        }
+        group.enter()   // obligation 2: process exit (Process arrives as the param, never captured)
+        p.terminationHandler = { proc in box.setStatus(proc.terminationStatus); group.leave() }
+
+        do { try p.run() } catch {
+            out.fileHandleForReading.readabilityHandler = nil
+            err.fileHandleForReading.readabilityHandler = nil
+            p.terminationHandler = nil
+            group.leave(); group.leave()   // balance the two enters (an entered group traps on dealloc)
+            completion(nil)
+            return                         // notify never registered -> exactly-once holds
+        }
+
+        // Watchdog addresses the child by PID (Int32 is Sendable; Process is not).
+        // ESRCH on an already-exited pid is harmless; the group cancels it in every
+        // completed run.
+        // Watchdog: SIGTERM a hung osascript (unanswered Automation prompt,
+        // beachball) so the reads hit EOF and completion still fires. Addresses the
+        // child by PID (Int32 is Sendable; Process is not) and runs on .main, matching
+        // the notify below -- both inherit this @MainActor method's isolation, so
+        // nothing crosses actor boundaries (a background hop would trap Swift 6's
+        // isolation assertion). Main is free during the out-of-process run, so the
+        // backstop is reliable; notify cancels it in every completed run, so kill only
+        // fires on a still-hung (still-valid) pid.
+        let pid = p.processIdentifier
+        let watchdog = DispatchWorkItem { kill(pid, SIGTERM) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Native.jxaTimeoutSeconds, execute: watchdog)
+
+        group.notify(queue: .main) {
+            watchdog.cancel()   // safe: stdout EOF and process exit have both happened
+            let (data, status) = box.result()
+            let text = status == 0
+                ? String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 : nil
+            completion(text)
+        }
+    }
+
+    // Lua-facing wrapper: run the template, then fire the pinned Lua callback (once).
+    private func runJXA(_ script: String, _ ref: Int32) {
+        runJXACore(script) { text in
             Native.fireCallback(ref) { L in
                 if let text { lua_pushstring(L, text) } else { lua_pushnil(L) }
                 return 1
             }
         }
-        do { try p.run() } catch {
-            lua.callRef(ref) { L in lua_pushnil(L); return 1 }
-            lua.releaseRef(ref)
-        }
     }
+
+    #if DEBUG
+    // Test seam (no browser, no TCC): drive runJXACore with a controlled-size stdout
+    // payload to prove a >64KB result does not deadlock the pipe. The caller supplies
+    // only a byte COUNT -- the script text is fixed here, never caller-controlled.
+    func runJXASelfTest(bytes: Int, _ completion: @escaping @Sendable (Int?) -> Void) {
+        runJXACore("function run(){ return Array(\(bytes + 1)).join('x'); }") { completion($0?.count) }
+    }
+    #endif
 
     // browser_list_tabs(app, cb): cb gets a JSON string
     // {"tabs":[{title,url,winId,tabIndex,visible}...]} or nil. JSON is built
@@ -342,18 +419,30 @@ extension Native {
           for (var wi = 0; wi < wins.length; wi++) {
             var win = wins[wi];
             var winId = 0, visible = true, name = "";
-            try { winId = win.id(); } catch (e) {}
+            // Chrome's JXA returns window/tab ids as STRINGS -- normalize to numbers
+            // so the JSON carries numeric ids (Lua integers) and focus can compare
+            // them numerically. Chrome ids are well under 2^53, so no precision loss.
+            try { winId = Number(win.id()) || 0; } catch (e) {}
             try { visible = win.visible(); } catch (e) {}
             try { name = win.name() || ""; } catch (e) {}
             if (!name || name.length === 0) { visible = false; }
+            // PRIVACY: never enumerate incognito Chrome tabs (mirrors the guard in
+            // browser_active_url). Safari exposes no per-window private flag, so it
+            // cannot be filtered here -- documented as a best-effort gap.
+            var mode = ""; try { mode = win.mode(); } catch (e) {}
+            if (mode === "incognito") { continue; }
             var tabs = [];
             try { tabs = win.tabs(); } catch (e) {}
             for (var ti = 0; ti < tabs.length; ti++) {
-              var tab = tabs[ti], title = "", url = "";
+              var tab = tabs[ti], title = "", url = "", tid = 0;
               try { title = ("\(app)" === "Safari") ? tab.name() : tab.title(); } catch (e) {}
               try { url = tab.url() || ""; } catch (e) {}
+              // Chrome tabs carry a stable id (survives reorder/close/move); Safari
+              // tabs have none, so tab.id() throws and id stays 0 (-> url fallback).
+              // Chrome returns it as a STRING -> Number() (see winId note above).
+              try { tid = Number(tab.id()) || 0; } catch (e) {}
               out.push({ title: title || "", url: url, winId: winId,
-                         tabIndex: ti + 1, visible: visible });
+                         tabIndex: ti + 1, id: tid, visible: visible });
             }
           }
           return JSON.stringify({ tabs: out });
@@ -363,37 +452,85 @@ extension Native {
         return 0
     }
 
-    // browser_focus_tab_at(app, winId, tabIndex, cb): raises the window, makes
-    // the tab active; cb gets {"url": "..."} JSON (the tab's CURRENT url, which
-    // may have drifted since listing) or nil.
-    func browserFocusTabAt(_ L: OpaquePointer?) -> Int32 {
-        guard let app = LuaState.string(L, 1), Native.scriptableBrowsers.contains(app),
-              let winId = LuaState.int(L, 2), let tabIndex = LuaState.int(L, 3) else {
-            return luaError(L, "browser_focus_tab_at: unsupported app or bad indices")
+    // A safe JS string literal (quotes + escaping) for embedding an arbitrary
+    // value -- e.g. a tab url -- into a JXA template. JSON string syntax is valid
+    // JS, so we borrow JSONSerialization and strip the wrapping [ ].
+    private func jsStringLiteral(_ s: String) -> String {
+        if let data = try? JSONSerialization.data(withJSONObject: [s]),
+           let arr = String(data: data, encoding: .utf8), arr.count >= 2 {
+            return String(arr.dropFirst().dropLast())
         }
-        let ref = lua.makeRef(at: 4)
+        return "\"\""
+    }
+
+    // browser_focus_tab(app, tabId, winId, url, cb): re-resolve the tab by STABLE
+    // IDENTITY across ALL windows, then raise its window and activate it. Keys on
+    // `tabId` when > 0 (Chrome's stable tab id -- immune to reorder/close/move),
+    // else on `url` preferring the `winId` hint (Safari / no id). NEVER a positional
+    // index, which drifts on any tab churn. cb gets {"url": "..."} JSON (the landed
+    // tab's CURRENT url) or {} -> nil when the tab is genuinely gone.
+    func browserFocusTab(_ L: OpaquePointer?) -> Int32 {
+        guard let app = LuaState.string(L, 1), Native.scriptableBrowsers.contains(app),
+              let tabId = LuaState.int(L, 2), let winId = LuaState.int(L, 3),
+              let url = LuaState.string(L, 4) else {
+            return luaError(L, "browser_focus_tab: unsupported app or bad args")
+        }
+        let ref = lua.makeRef(at: 5)
+        // Every AX/scripting read is try-guarded (parity with browser_list_tabs) so a
+        // single throwing window/tab degrades to "not found", never a script error.
         let script = """
         function run() {
           var app = Application("\(app)");
           app.activate();
-          var wins = app.windows();
+          var wantId = \(tabId);
+          var wantUrl = \(jsStringLiteral(url));
+          var isSafari = ("\(app)" === "Safari");
+          var fbWin = null, fbTab = null, fbIdx = -1;   // best url match (winId-preferred)
+          function activate(win, tab, idx) {
+            try { win.index = 1; } catch (e) {}    // raise is best-effort
+            try {
+              if (isSafari) { win.currentTab = tab; }
+              else { win.activeTabIndex = idx + 1; }
+            } catch (e) {
+              // Could not make the tab active -- report an HONEST miss (-> "moved")
+              // rather than a false success that stamps MRU while nothing switched.
+              return JSON.stringify({});
+            }
+            var u = "";
+            try { u = tab.url() || ""; } catch (e) {}
+            return JSON.stringify({ url: u });
+          }
+          var wins = [];
+          try { wins = app.windows(); } catch (e) {}
           for (var wi = 0; wi < wins.length; wi++) {
             var win = wins[wi];
-            var id = -1;
-            try { id = win.id(); } catch (e) {}
-            if (id === \(winId)) {
-              win.index = 1;
-              var tabs = win.tabs();
-              if (\(tabIndex) >= 1 && \(tabIndex) <= tabs.length) {
-                var tab = tabs[\(tabIndex) - 1];
-                if ("\(app)" === "Safari") { win.currentTab = tab; }
-                else { win.activeTabIndex = \(tabIndex); }
-                var url = "";
-                try { url = tab.url() || ""; } catch (e) {}
-                return JSON.stringify({ url: url });
+            // PRIVACY (defense in depth): never resolve into an incognito window --
+            // symmetric with browser_list_tabs, which no longer lists those tabs.
+            var m = ""; try { m = win.mode(); } catch (e) {}
+            if (m === "incognito") { continue; }
+            var wid = -1;
+            // Chrome's JXA returns ids as STRINGS -> Number() so === compares to the
+            // numeric wantId / winId (a string would never match a number literal).
+            try { wid = Number(win.id()) || 0; } catch (e) {}
+            var tabs = [];
+            try { tabs = win.tabs(); } catch (e) {}
+            for (var ti = 0; ti < tabs.length; ti++) {
+              var tab = tabs[ti];
+              if (wantId > 0) {
+                var tid = 0;
+                try { tid = Number(tab.id()) || 0; } catch (e) {}
+                if (tid === wantId) { return activate(win, tab, ti); }
+              } else {
+                var u = "";
+                try { u = tab.url() || ""; } catch (e) {}
+                if (u === wantUrl) {
+                  if (wid === \(winId)) { return activate(win, tab, ti); }
+                  if (!fbTab) { fbWin = win; fbTab = tab; fbIdx = ti; }
+                }
               }
             }
           }
+          if (fbTab) { return activate(fbWin, fbTab, fbIdx); }
           return JSON.stringify({});
         }
         """

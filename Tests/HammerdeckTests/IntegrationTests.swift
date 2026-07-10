@@ -3,6 +3,15 @@ import AppKit
 import Carbon.HIToolbox
 @testable import HammerdeckKit
 
+// Thread-safe holder so a @Sendable completion (fired on a background queue) can
+// hand a value back to a test that reads it after `wait(for:)`.
+private final class TestIntBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int?
+    func set(_ v: Int?) { lock.lock(); value = v; lock.unlock() }
+    func get() -> Int? { lock.lock(); defer { lock.unlock() }; return value }
+}
+
 // Integration tests against the REAL stack -- no fake adapter. The Lua
 // platform boots in-process on the actual Native bridge, so these cover the
 // layer the headless Lua suite (test/run.lua) cannot: the Lua<->Swift value
@@ -1232,7 +1241,7 @@ final class IntegrationTests: XCTestCase {
             "return pcall(function() require('platform.adapter').browserListTabs('Evil App', function() end) end)")
         XCTAssertEqual(r1 as? Bool, false, "non-whitelisted app must raise")
         let r2 = try? host.lua.eval(
-            "return pcall(function() require('platform.adapter').browserFocusTab('Evil App', 1, 1, function() end) end)")
+            "return pcall(function() require('platform.adapter').browserFocusTab('Evil App', 0, 1, 'https://x/', function() end) end)")
         XCTAssertEqual(r2 as? Bool, false)
         XCTAssertNil(eval("return require('platform.adapter').browserActiveURL('Evil App')"),
                      "active-url for a non-whitelisted app is nil, not a script run")
@@ -1242,6 +1251,146 @@ final class IntegrationTests: XCTestCase {
 
         // file: icon tokens resolve from disk; a missing path is nil, not a crash.
         XCTAssertNil(ChooserPanel.icon(for: "file:/nonexistent/icon.png"))
+    }
+
+    /// runJXA must DRAIN stdout concurrently. Reading only after termination
+    /// deadlocks once osascript's output passes the ~64KB pipe buffer: it blocks in
+    /// write(), never exits, the callback never fires -> a wedged st.refreshing and
+    /// a switcher stuck on "Loading..." forever. ~200KB is well past the buffer. No
+    /// browser / TCC -- the fixed self-test script just emits N bytes. This HANGS
+    /// (times out) against the old read-after-termination runJXA; it completes here.
+    func testRunJXALargeOutputDoesNotDeadlock() {
+        let done = expectation(description: "runJXA returns a >64KB payload without deadlock")
+        let box = TestIntBox()
+        Native.shared.runJXASelfTest(bytes: 200_000) { n in box.set(n); done.fulfill() }
+        wait(for: [done], timeout: 20)
+        XCTAssertEqual(box.get(), 200_000,
+                       "the full payload returns -- the concurrent pipe drain avoided the deadlock")
+    }
+
+    /// FIDELITY ANCHOR (opt-in, real Chrome): the fast Lua suite models tab focus
+    /// against a FAKE adapter; this proves the real JXA half matches that model --
+    /// id-first re-resolution finds the intended tab and returns its live url, and a
+    /// non-existent id resolves to nil ("moved"). Gated behind HAMMERDECK_UI_TESTS;
+    /// skipped when Chrome is not running / lists no id-bearing tab (it scripts a real
+    /// browser: fronts it + first-run Automation TCC prompt).
+    ///
+    /// The target is chosen ENTIRELY from the bridge's own JXA listing (the same
+    /// source `browser_focus_tab` resolves against), and correctness is asserted by
+    /// the returned live url -- NOT by cross-checking `browserActiveURL`, which reads
+    /// via AppleScript and can disagree with JXA about which windows/tabs exist (Web
+    /// Store popups, externally-scripted windows). We also deliberately do NOT create
+    /// a throwaway window: a window made in a separate AppleScript process is not
+    /// enumerated by a later JXA `app.windows()`. Both quirks bite only test SETUP --
+    /// production lists AND focuses through the one JXA path, so it stays consistent.
+    func testBrowserTabFocusByIdRealChrome() throws {
+        try requireUITests()
+        try XCTSkipUnless(
+            eval("return require('platform.adapter').isAppRunning('Google Chrome')") as? Bool == true,
+            "Google Chrome is not running")
+
+        // List via the bridge; take the first tab that carries a stable Chrome id.
+        eval("""
+            _G.itTabs = nil
+            require('platform.adapter').browserListTabs('Google Chrome', function(tabs)
+              _G.itTabs = require('platform.json').encode(tabs or {})
+            end)
+            return true
+            """)
+        spinRunLoop(3.0)
+        guard let raw = eval("return _G.itTabs") as? String,
+              let data = raw.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              !arr.isEmpty else {
+            return XCTFail("browserListTabs returned no parseable result")
+        }
+        let ids = arr.compactMap { ($0["id"] as? NSNumber)?.intValue }
+        guard let target = arr.first(where: {
+                  (($0["id"] as? NSNumber)?.intValue ?? 0) > 0 && !(($0["url"] as? String) ?? "").isEmpty
+              }),
+              let targetId = (target["id"] as? NSNumber)?.intValue,
+              let targetUrl = target["url"] as? String else {
+            throw XCTSkip("Chrome lists no id-bearing tab to target")
+        }
+
+        // 1. Focus that tab BY ITS ID (url arg is ignored on the id path -> ''): the
+        //    real bridge must resolve to THAT tab and return its live url. A wrong
+        //    resolution (the positional bug) would return a different tab's url.
+        eval("""
+            _G.itFocus = false
+            require('platform.adapter').browserFocusTab('Google Chrome', \(targetId), 0, '',
+              function(u) _G.itFocus = u or false end)
+            return true
+            """)
+        spinRunLoop(2.0)
+        XCTAssertEqual(eval("return _G.itFocus") as? String, targetUrl,
+                       "focus-by-id resolves to the intended tab and returns its live url")
+
+        // 2. Focus an id that cannot exist (max + 1000): no match -> nil ("moved").
+        let bogus = (ids.max() ?? 0) + 1000
+        eval("""
+            _G.itGone = 'unset'
+            require('platform.adapter').browserFocusTab('Google Chrome', \(bogus), 0, '',
+              function(u) _G.itGone = u end)
+            return true
+            """)
+        spinRunLoop(2.0)
+        XCTAssertNil(eval("return _G.itGone"), "a non-existent tab id resolves to nil (moved)")
+
+        eval("_G.itTabs = nil; _G.itFocus = nil; _G.itGone = nil; return true")
+    }
+
+    /// FIDELITY ANCHOR (opt-in, real Safari): Safari tabs have NO stable id, so
+    /// browser_focus_tab resolves by URL (winId is the tie-break hint) and activates
+    /// via `win.currentTab = tab`. This is the ONE path the Chrome anchor can't cover,
+    /// and the "activation honesty" fix now surfaces a `currentTab` quirk LOUDLY as a
+    /// nil ("moved") -- so this test is the guard that Safari jumps actually land.
+    /// Gated; skipped when Safari is not running. Target + focus happen in Lua (no
+    /// url string escaping across the eval boundary).
+    func testBrowserTabFocusByUrlRealSafari() throws {
+        try requireUITests()
+        try XCTSkipUnless(
+            eval("return require('platform.adapter').isAppRunning('Safari')") as? Bool == true,
+            "Safari is not running")
+
+        // List, then (all in Lua) pick the first tab with a url and re-focus it BY URL
+        // -- tabId 0 forces the url path, exactly as a real Safari pick does.
+        eval("""
+            _G.sfTarget = nil
+            _G.sfLanded = 'unset'
+            require('platform.adapter').browserListTabs('Safari', function(tabs)
+              for _, t in ipairs(tabs or {}) do
+                if t.url and t.url ~= '' then
+                  _G.sfTarget = t.url
+                  require('platform.adapter').browserFocusTab('Safari', 0, t.winId or 0, t.url,
+                    function(u) _G.sfLanded = u or false end)
+                  return
+                end
+              end
+            end)
+            return true
+            """)
+        spinRunLoop(3.0)
+        guard let target = eval("return _G.sfTarget") as? String else {
+            throw XCTSkip("Safari lists no tab with a url to target")
+        }
+        // The crux: url-resolution + `win.currentTab = tab` must return the tab's live
+        // url. If currentTab assignment throws, activation honesty returns {} -> nil
+        // here -- catching a fully-broken Safari path.
+        XCTAssertEqual(eval("return _G.sfLanded") as? String, target,
+                       "Safari focus-by-url resolves + activates the tab and returns its url")
+
+        // A url that matches no Safari tab -> nil ("moved").
+        eval("""
+            _G.sfGone = 'unset'
+            require('platform.adapter').browserFocusTab('Safari', 0, 0,
+              'https://hammerdeck-no-such-safari-tab.invalid/', function(u) _G.sfGone = u end)
+            return true
+            """)
+        spinRunLoop(2.0)
+        XCTAssertNil(eval("return _G.sfGone"), "an unmatched url resolves to nil (moved)")
+
+        eval("_G.sfTarget = nil; _G.sfLanded = nil; _G.sfGone = nil; return true")
     }
 
     /// Real Chrome-DB favicon extraction (the donor's mechanism, in Swift):

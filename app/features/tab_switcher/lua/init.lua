@@ -44,8 +44,8 @@ local cyclingChooser = require("platform.cyclingChooser")
 local function jumperFor(ctx)
     local st = {
         mru = {},          -- browser name -> { url -> ts }
-        choices = nil,     -- cached chooser choices (donor's stale-then-refresh)
-        dirty = true,
+        choices = nil,     -- the list currently shown / shown next (stable per open)
+        pending = nil,     -- fresh list staged by a background relist, for the NEXT open
         chooser = nil,
         altTimer = nil,
         lastActive = {},   -- browser name -> last polled url
@@ -98,7 +98,13 @@ local function jumperFor(ctx)
     -- Choices -----------------------------------------------------------------
 
     local function sortChoices(list)
-        table.sort(list, function(a, b) return a.ts > b.ts end)
+        -- MRU-desc, with a stable tie-break by text: Lua's table.sort is NOT stable,
+        -- and now that we re-sort on every show, unstamped tabs (ts == 0) would
+        -- otherwise shuffle order between opens.
+        table.sort(list, function(a, b)
+            if a.ts ~= b.ts then return a.ts > b.ts end
+            return a.text < b.text
+        end)
         return list
     end
 
@@ -121,10 +127,13 @@ local function jumperFor(ctx)
                             text = title,
                             subText = tab.url,
                             image = iconFor(tab.url, b.bundle),
-                            id = b.name .. "|" .. tab.winId .. "|" .. tab.tabIndex,
                             browser = b.name,
+                            -- Stable identity for re-resolution at pick time:
+                            -- Chrome's tab id survives reorder / close-before /
+                            -- window-move; Safari has none (0), so the pick falls
+                            -- back to the url with winId as a tie-break hint.
+                            tabId = tab.id or 0,
                             winId = tab.winId,
-                            tabIndex = tab.tabIndex,
                             ts = st.mru[b.name][tab.url] or 0,
                         }
                     end
@@ -135,17 +144,22 @@ local function jumperFor(ctx)
         end
     end
 
-    local function refreshChoices(done)
+    -- Rebuild the tab list, then hand the fresh choices to `apply`, which decides
+    -- WHERE they land. Two callers, two sinks: the loading path installs them as the
+    -- LIVE list and shows; a background refresh STAGES them in st.pending for the NEXT
+    -- open. A background relist must NEVER setChoices the visible chooser -- that runs
+    -- ChooserPanel.applyFilter -> selectFirstValid, resetting the selection to row 1,
+    -- which would yank release-to-jump onto the wrong tab mid-hold. st.refreshing
+    -- serializes overlapping relists.
+    local function relist(apply)
         if st.refreshing then return end
         st.refreshing = true
         buildChoices(function(choices)
             st.refreshing = false
-            st.choices = choices
-            st.dirty = false
             local urls = {}
             for _, c in ipairs(choices) do urls[#urls + 1] = c.subText end
             fav.prefetch(urls)
-            if done then done() end
+            apply(choices)
         end)
     end
 
@@ -153,22 +167,27 @@ local function jumperFor(ctx)
 
     local function onPick(choice)
         if not choice then return end
-        ctx.browserFocusTab(choice.browser, choice.winId, choice.tabIndex,
+        -- Re-resolve by STABLE IDENTITY (id first, else url + winId hint), searching
+        -- all windows -- never the positional index, which drifts on any tab churn.
+        ctx.browserFocusTab(choice.browser, choice.tabId or 0, choice.winId, choice.subText,
             function(url)
                 if not url then
-                    -- The tab moved or closed since listing: relist and say so.
+                    -- The tab is genuinely gone since listing: stage a relist for the
+                    -- next open and say so. Log the DOMAIN only -- a full url (incognito
+                    -- included) must not land in the on-disk logs.
+                    ctx.log(string.format("jump miss (moved/closed): %s %s",
+                        choice.browser, getDomain(choice.subText) or "?"))
                     ctx.alert(ctx.t("alert.tabMoved", "That tab moved -- try again"))
-                    refreshChoices()
+                    relist(function(choices) st.pending = choices end)
                     return
                 end
-                stamp(choice.browser, url)
-                choice.ts = ctx.now()
-                if getDomain(url) ~= getDomain(choice.subText) then
-                    st.dirty = true   -- the tab navigated away; relist next open
-                else
-                    choice.subText = url
+                ctx.log(string.format("jump ok via %s (%s): %s", choice.browser,
+                    (choice.tabId or 0) ~= 0 and "id" or "url", getDomain(url) or "?"))
+                stamp(choice.browser, url)   -- MRU rank; showChooser re-ranks from it
+                if getDomain(url) == getDomain(choice.subText) then
+                    choice.subText = url   -- same site: refresh the exact url on the row
                 end
-                if st.choices then sortChoices(st.choices) end
+                -- (a domain change is picked up by the next open's background relist)
             end)
     end
 
@@ -184,12 +203,18 @@ local function jumperFor(ctx)
     end
 
     local function showChooser()
-        -- Icons resolve at SHOW time: a favicon that landed after the last
-        -- tab relist upgrades its rows on the next open -- no relist needed
-        -- (otherwise cached choices keep their stale app-icon tokens).
+        -- Icons AND MRU rank resolve at SHOW time, so the order reflects the CURRENT
+        -- state no matter which list is showing (cached, or one promoted from
+        -- st.pending): a favicon that landed since upgrades its row, and the last
+        -- jump's restamp floats that tab to the top. The ts refresh is load-bearing
+        -- for the flick-to-previous gesture -- a promoted list carries the ts values
+        -- from when it was BUILT (possibly pre-jump), so without re-ranking here row
+        -- 2 would not be the tab you were just on.
         for _, c in ipairs(st.choices) do
             c.image = iconFor(c.subText, BUNDLE_BY_NAME[c.browser])
+            c.ts = st.mru[c.browser][c.subText] or 0
         end
+        sortChoices(st.choices)
         st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Search tabs"))
         st.chooser.setChoices(st.choices)
         st.chooser.setQuery(nil)
@@ -223,15 +248,17 @@ local function jumperFor(ctx)
 
         if not st.choices then
             ctx.alert(ctx.t("alert.loading", "Loading tabs..."))
-            refreshChoices(showChooser)
-        elseif st.dirty then
-            -- Show the stale list instantly, refresh behind it (donor UX).
-            showChooser()
-            refreshChoices(function()
-                if st.chooser.isVisible() then st.chooser.setChoices(st.choices) end
-            end)
+            relist(function(choices) st.choices = choices; showChooser() end)
         else
+            -- Promote any completed background relist BEFORE showing, then show the
+            -- cached list -- which stays STABLE for this entire interaction (never
+            -- swapped under the user). Kick a fresh relist for the NEXT open, staged
+            -- into st.pending. So a closed/opened tab self-heals one open later
+            -- WITHOUT ever moving the live selection (stable-id resolution already
+            -- makes a pick from a slightly-stale list land correctly).
+            if st.pending then st.choices = st.pending; st.pending = nil end
             showChooser()
+            relist(function(choices) st.pending = choices end)
         end
     end
 
@@ -246,7 +273,6 @@ local function jumperFor(ctx)
                 if url and url ~= st.lastActive[b.name] then
                     st.lastActive[b.name] = url
                     stamp(b.name, url)
-                    st.dirty = true
                 end
                 return
             end

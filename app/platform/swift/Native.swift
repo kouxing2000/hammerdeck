@@ -225,7 +225,7 @@ final class Native {
             "default_browser_bundle_id": { L in MainActor.assumeIsolated { Native.shared.defaultBrowserBundleId(L) } },
             "app_running":       { L in MainActor.assumeIsolated { Native.shared.appRunning(L) } },
             "browser_list_tabs": { L in MainActor.assumeIsolated { Native.shared.browserListTabs(L) } },
-            "browser_focus_tab_at": { L in MainActor.assumeIsolated { Native.shared.browserFocusTabAt(L) } },
+            "browser_focus_tab": { L in MainActor.assumeIsolated { Native.shared.browserFocusTab(L) } },
             "browser_active_url":   { L in MainActor.assumeIsolated { Native.shared.browserActiveUrl(L) } },
             "extract_favicons":     { L in MainActor.assumeIsolated { Native.shared.extractFavicons(L) } },
         ]

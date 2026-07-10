@@ -36,12 +36,12 @@ return {
         fake.chromeFavicons["github.com"] = true   -- Chrome's icon DB knows github
         fake.browserTabsByApp = {
             ["Google Chrome"] = {
-                { title = "Docs", url = "https://docs.example/d", winId = 1, tabIndex = 1, visible = true },
-                { title = "GitHub", url = "https://github.com/x", winId = 1, tabIndex = 2, visible = true },
-                { title = "Shortcut App", url = "https://app.example/", winId = 7, tabIndex = 1, visible = false },
+                { title = "Docs", url = "https://docs.example/d", winId = 1, tabIndex = 1, id = 101, visible = true },
+                { title = "GitHub", url = "https://github.com/x", winId = 1, tabIndex = 2, id = 102, visible = true },
+                { title = "Shortcut App", url = "https://app.example/", winId = 7, tabIndex = 1, id = 103, visible = false },
             },
-            ["Safari"] = {
-                { title = "Apple", url = "https://apple.com/", winId = 9, tabIndex = 1, visible = true },
+            ["Safari"] = {   -- Safari tabs have no stable id (0) -> url + winId resolution
+                { title = "Apple", url = "https://apple.com/", winId = 9, tabIndex = 1, id = 0, visible = true },
             },
         }
 

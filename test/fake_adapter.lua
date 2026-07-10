@@ -220,6 +220,9 @@ function adapter.chooser(opts)
     local c = {
         opts = opts, visible = false, choices = {}, selectedRow = 0,
         placeholder = nil, query = nil, stopped = false,
+        setChoicesCalls = 0,   -- how many times setChoices ran (native applyFilter =
+                               -- selection reset; a background relist must NOT re-set
+                               -- the live list, so this must not tick for it)
     }
     fake.choosers[#fake.choosers + 1] = c
     alloc()
@@ -228,7 +231,7 @@ function adapter.chooser(opts)
     function h.setTitle(t, symbol, badge)
         c.title = t; c.titleSymbol = symbol; c.titleBadge = badge
     end
-    function h.setChoices(list)   c.choices = list end
+    function h.setChoices(list)   c.choices = list; c.setChoicesCalls = c.setChoicesCalls + 1 end
     function h.show()             c.visible = true end
     function h.hide()
         c.visible = false
@@ -1020,24 +1023,43 @@ end
 
 -- Browser tab enumeration / jumping (tab_switcher) -----------------------------
 
-fake.browserTabsByApp = {}   -- app -> list of {title,url,winId,tabIndex,visible}
-fake.tabJumps  = {}          -- recorded {app, winId, tabIndex}
-fake.jumpUrlOverride = nil   -- set to simulate drift; false = tab gone (nil cb)
+fake.browserTabsByApp = {}   -- app -> list of {title,url,winId,tabIndex,id,visible}
+fake.tabJumps  = {}          -- recorded {app, tabId, winId, url, resolved}
+fake.jumpUrlOverride = nil   -- string = force the LANDED url (in-place navigation
+                             -- drift); false = force "gone"; nil = the resolved url
 
 function adapter.browserListTabs(app, cb)
     cb(fake.browserTabsByApp[app])
 end
 
-function adapter.browserFocusTab(app, winId, tabIndex, cb)
-    fake.tabJumps[#fake.tabJumps + 1] = { app = app, winId = winId, tabIndex = tabIndex }
-    if fake.jumpUrlOverride ~= nil then
-        if fake.jumpUrlOverride == false then return cb(nil) end
-        return cb(fake.jumpUrlOverride)
+-- Mirror the real JXA (Native+Browser.swift browserFocusTab): re-resolve the tab
+-- by STABLE IDENTITY across ALL of the app's windows -- id first (Chrome), else the
+-- url preferring the hinted winId (Safari / no id). No positional index: a reorder /
+-- close-before / cross-window move must still land on the same tab. nil = genuinely
+-- gone. `resolved` records WHICH record we landed on so tests can assert end to end.
+function adapter.browserFocusTab(app, tabId, winId, url, cb)
+    local rec = { app = app, tabId = tabId, winId = winId, url = url }
+    fake.tabJumps[#fake.tabJumps + 1] = rec
+    if fake.jumpUrlOverride == false then return cb(nil) end   -- forced "gone"
+    local tabs = fake.browserTabsByApp[app] or {}
+    local match
+    if tabId and tabId ~= 0 then
+        for _, t in ipairs(tabs) do
+            if t.id == tabId then match = t; break end
+        end
+    else
+        local firstUrl
+        for _, t in ipairs(tabs) do
+            if t.url == url then
+                if t.winId == winId then match = t; break end
+                firstUrl = firstUrl or t
+            end
+        end
+        match = match or firstUrl
     end
-    for _, t in ipairs(fake.browserTabsByApp[app] or {}) do
-        if t.winId == winId and t.tabIndex == tabIndex then return cb(t.url) end
-    end
-    cb(nil)
+    if not match then return cb(nil) end
+    rec.resolved = match
+    cb(fake.jumpUrlOverride or match.url)   -- string override = in-place drift
 end
 
 fake.activeUrls = {}   -- app -> the url its front tab is showing

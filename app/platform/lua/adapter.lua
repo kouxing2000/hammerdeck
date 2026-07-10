@@ -932,8 +932,18 @@ end
 
 local json -- platform.json, loaded lazily (avoids a cost when unused)
 
--- All tabs of a RUNNING browser; cb(tabs|nil) where tabs is a list of
--- { title, url, winId, tabIndex, visible }. Async (out-of-process script).
+---@class BrowserTab
+---@field title string
+---@field url string
+---@field winId integer      window id (stable for the window's life)
+---@field tabIndex integer   1-based slot -- fragile; do NOT key focus on it
+---@field id integer         stable tab id (Chrome); 0 for Safari (no tab id)
+---@field visible boolean
+
+-- All tabs of a RUNNING browser; cb(tabs|nil) where tabs is a list of BrowserTab.
+-- Async (out-of-process script).
+---@param app string             "Google Chrome" | "Safari"
+---@param cb fun(tabs: BrowserTab[]|nil)
 function adapter.browserListTabs(app, cb)
     native.browser_list_tabs(app, function(raw)
         if not raw then return cb(nil) end
@@ -943,10 +953,18 @@ function adapter.browserListTabs(app, cb)
     end)
 end
 
--- Raise the window and activate the tab (ids from browserListTabs);
--- cb(currentUrl|nil) -- nil means the tab moved/closed since listing.
-function adapter.browserFocusTab(app, winId, tabIndex, cb)
-    native.browser_focus_tab_at(app, winId, tabIndex, function(raw)
+-- Raise the window and activate a tab, RE-RESOLVING it by stable identity across
+-- all windows: by `tabId` when non-zero (Chrome), else by `url` preferring the
+-- `winId` hint (Safari / no id). Never keys on a positional index, so a reorder /
+-- close-before / cross-window move still lands. cb(currentUrl|nil) -- nil means the
+-- tab is genuinely gone since listing.
+---@param app string             "Google Chrome" | "Safari"
+---@param tabId integer          stable Chrome tab id, or 0 for "resolve by url"
+---@param winId integer          window-id hint for the url fallback (tie-break)
+---@param url string             the listed url (the url-fallback key)
+---@param cb fun(currentUrl: string|nil)
+function adapter.browserFocusTab(app, tabId, winId, url, cb)
+    native.browser_focus_tab(app, tabId, winId, url, function(raw)
         if not raw then return cb(nil) end
         json = json or require("platform.json")
         local doc = json.decode(raw)
