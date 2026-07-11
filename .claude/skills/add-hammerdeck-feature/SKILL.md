@@ -11,9 +11,9 @@ in is enough for it to appear in Settings/menubar. But "it loads" is not "it's
 done": a feature is only complete when it has tests, the right trigger/automatable
 shape, and (a conscious decision about) a gallery preview card.
 
-Read `CLAUDE.md` (layer map + the one inviolable rule) and `docs/PLUGIN_SYSTEM.md`
-(contract rationale) first if unfamiliar. This skill is the do-not-miss-a-step
-checklist; those are the why.
+Read `CLAUDE.md` first if unfamiliar -- the layer map, the one inviolable rule,
+and the plugin contract. This skill is the do-not-miss-a-step checklist; that is
+the why.
 
 ## The one rule that governs everything
 

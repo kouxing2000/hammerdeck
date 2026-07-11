@@ -24,8 +24,8 @@ shapes what's easy to contribute:
 Only the Swift bridge (`app/platform/swift/LuaState.swift` + `Native.swift`) and
 the Lua seam (`app/platform/lua/adapter.lua`) may touch native / macOS APIs.
 Every feature and platform module reaches the OS *through that seam* (the scoped
-`ctx`), never directly. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
-[`docs/PLUGIN_SYSTEM.md`](docs/PLUGIN_SYSTEM.md).
+`ctx`), never directly. [`CLAUDE.md`](CLAUDE.md) carries the full layer map and
+the plugin contract -- read it before your first PR.
 
 ## Dev setup
 

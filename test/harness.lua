@@ -1,15 +1,11 @@
 -- test/harness.lua -- shared setup + the `t` handle for the headless test suite.
 --
--- Owns what the top of run.lua used to: the co-located loader install, the fake
--- adapter + seam preempt, the real platform requires, the deterministic clock
--- pin, the single assertion counter, and the shared helpers. Both the
--- (transitional) monolith run.lua and each migrating test/cases/<id>.lua source
--- their ok()/fake/registry/helpers from here, so ONE `passed` total spans them
--- all. It also owns the per-case world reset (freshWorld) the runner will call.
---
--- Phase 0 of docs/specs/RUN_LUA_SPLIT_SPEC.md: setup + helpers extracted, no
--- behavior change (the monolith still runs inline). The discover()/runner loop
--- lands in Phase 1.
+-- Owns the co-located loader install, the fake adapter + seam preempt, the real
+-- platform requires, the deterministic clock pin, the single assertion counter,
+-- and the shared helpers. Every test/cases/<id>.lua sources its
+-- ok()/fake/registry/helpers from here, so ONE `passed` total spans them all.
+-- It also owns discover() and the per-case world reset (freshWorld) that run.lua
+-- -- a thin runner, no test bodies of its own -- drives.
 
 package.path = "app/?.lua;app/?/init.lua;test/?.lua;" .. package.path
 require("loader").install()

@@ -36,3 +36,13 @@ Package.resolved
 
 # Personal backlog -- never committed (it names unreleased plans + private paths).
 /TODO.md
+
+# docs-private/ -- an ALIAS (symlink) to the private doc set, which is STORED in the
+# author's separate private repo, never here. Two folders, one rule you can see at a
+# glance: docs/ is public, docs-private/ is not.
+#
+# It must stay ignored: git stores a symlink as its TARGET PATH, so committing this
+# would publish the private repo's location. A doc goes public by being MOVED from
+# docs-private/ into docs/ -- reviewed against the code first, since docs/ has no
+# history to hide in and anything committed there is public for good.
+/docs-private

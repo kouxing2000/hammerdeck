@@ -4,8 +4,6 @@
 -- opens a chooser listing every action of every ENABLED feature; type to
 -- filter (feature name + action label), Enter runs it. It is the menubar's
 -- QUICK TRIGGERS re-rendered as a keyboard-first fuzzy chooser.
--- Design + rationale: docs/archive/COMMAND_PALETTE_SPEC.md (capability gate in
--- docs/PLUGIN_SYSTEM.md).
 --
 -- The cross-feature reach (ctx.commands / ctx.runCommand) exists ONLY because
 -- this feature declares `capabilities = { "commands" }`; the registry injects

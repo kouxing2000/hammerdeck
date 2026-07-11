@@ -49,7 +49,7 @@ only through the seam, never `native.*`.
 > `native.*` table that `Native.swift` injects; `swift run` boots
 > `app/hammerdeck.lua` (features autodiscovered by scanning `app/features/` for a
 > `<id>/lua/init.lua`). Window listing is REAL (AXUIElement; window_switcher
-> prompts for the Accessibility grant when missing). See docs/HANDOVER.md.
+> prompts for the Accessibility grant when missing).
 
 ## Layers (top depends on bottom only)
 
@@ -75,7 +75,7 @@ itself (so it stays OFF the leaf-guard list). **LEAF UTILS** =
 `require` -- `favicons` above is the one require-ful module also allowed; a
 test-suite guard fails if any of them grows a `require`). The `ctx` surface is
 namespaced into domain sub-tables (`ctx.window.*` / `ctx.screen.*` /
-`ctx.mouse.*`) -- Phase 1 of `docs/specs/CTX_DOMAIN_NAMESPACES_SPEC.md`, landed
+`ctx.mouse.*`) -- Phase 1 of the ctx-domain-namespaces work, landed
 2026-06-29. The remaining Phase 2 (porting Hammerspoon's pure-Lua tiling/grid
 algorithms onto `platform.windows` + curated `ctx.window.*` helpers) is still
 pending.
@@ -133,7 +133,7 @@ pending.
   every handle a feature creates is tracked and stopped on disable. A feature
   that declares `capabilities = {"commands"}` gets privileged cross-feature
   reach injected here (`ctx.commands()` / `ctx.runCommand()`, least-privilege --
-  powers the command palette). Contract design: `docs/PLUGIN_SYSTEM.md`.
+  powers the command palette).
 - **app/platform/lua/adapter.lua** -- the seam (Lua side); every binding it returns
   is a handle with `.stop()`.
 - **app/platform/swift/LuaState.swift** -- the bridge mechanics: owns the
@@ -291,7 +291,10 @@ build` warning-free, also add the new feature to `Package.swift`'s
 a feature WITH a `swift/` -> add `"features/<id>/swift"` to `sources` and
 `"features/<id>/lua"` + `"features/<id>/feature.json"` to `exclude`. (SwiftPM
 scans the whole `app/` subtree for resources; skipping the exclude just brings
-back the harmless "N unhandled files" warning -- the feature still loads.) Then cover its
+back the harmless "N unhandled files" warning -- the feature still loads.) Then run
+`scripts/gen-readme-features.py` -- README's feature catalog is GENERATED from every
+`feature.json`, and CI fails if it is stale (the list used to be hand-written and
+rotted badly, never once naming window_deck). Then cover its
 main flow in `test/run.lua` (register it there directly -- the test harness uses
 its own catalog, not disk discovery; a real feature's `feature.json` is read
 from disk via io, so its metadata merges in tests too). If an action is a
@@ -303,17 +306,31 @@ requires `automatable = true` -- manifest.validate rejects the mismatch.
 
 ## Status / roadmap
 
-`docs/HANDOVER.md` is the ONE living status + backlog doc -- read it for the
-truth (its doc map explains which docs are living / reference / archived).
-`docs/ARCHITECTURE.md` is the design rationale.
-Don't duplicate the backlog here.
+Open work lives in the GitHub issue tracker. The author's working status doc and
+design notes are unpublished drafts -- see "Where a document goes" below for
+where they sit and why they aren't here. Don't duplicate the backlog in this
+file.
 
 ## Where a document goes (the repo is going PUBLIC -- this rule is load-bearing)
 
-- **`docs/`** -- PUBLIC docs that ship with the repo: architecture, the plugin
-  contract, specs. They version WITH the code (a doc describing `ctx.window.*`
-  lands in the same commit as the code that adds it), so they must never be split
-  into a separate repo. Nothing private goes here.
+Two folders, told apart by looking -- there is no rules file to decode.
+
+- **`docs/`** -- PUBLIC. Whatever is in here SHIPS. It is currently **EMPTY**, and
+  that is deliberate: `docs/` has no git history (it was rewritten out), so the
+  first file committed here is public forever and removing it later costs another
+  history rewrite. A doc earns its way in ONLY by being checked against the code
+  and found true -- an audit of the existing drafts found most of them asserting
+  things the code no longer does (a dropped backend still described as live, APIs
+  that no longer exist, "not yet built" on features that shipped weeks ago).
+  Publish one at a time, as a visible `mv` into `docs/`; never bulk-import.
+- **`docs-private/`** -- a gitignored ALIAS to the drafts, which are STORED in the
+  author's separate private repo, never here. It must stay ignored: git records a
+  symlink as its TARGET PATH, so committing it would publish that repo's location.
+  Treat anything behind it as unverified until you check it against the code.
+- **No public file may reference a private path.** README and CONTRIBUTING point
+  at `CLAUDE.md` and the issue tracker -- both real for anyone who clones. A
+  `docs-private/...` citation in a shipped file is a dead link for every reader
+  but the author; this rule exists because that mistake was made and caught.
 - **`notes/`** -- LOCAL private scratch (gitignored, never committed) for working
   thinking you want sitting next to the code.
 - **Commercial docs** (what to charge, who we're up against, how we launch) --

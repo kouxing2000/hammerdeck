@@ -7,9 +7,8 @@
 -- Also the home for the ported Hammerspoon pure-Lua window algorithms (the
 -- tiling/grid math -- just arithmetic over screen/window rects). They land here
 -- because they are exactly this module's kind of code: pure rect math, zero
--- require, native only via a frame the caller already fetched. See
--- docs/archive/HAMMERSPOON_EMBEDDING.md ("lift the MIT algorithms, keep the engine
--- ours") and docs/specs/CTX_DOMAIN_NAMESPACES_SPEC.md (Phase 2).
+-- require, native only via a frame the caller already fetched. The strategy:
+-- lift the MIT-licensed algorithms, keep the engine ours.
 
 local M = {}
 

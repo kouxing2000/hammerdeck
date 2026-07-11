@@ -30,6 +30,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # README's feature catalog is GENERATED from each feature.json -- a doc that
+      # restates what the code declares drifts by construction, so the code checks
+      # the doc. Needs no toolchain, so it runs first: fastest possible red.
+      - name: README feature catalog in sync
+        run: scripts/gen-readme-features.py --check
+
       # Package.swift is swift-tools-version 6.0 -> Swift 6 (Xcode 16+). Pick the
       # newest Xcode 16 present so an image-default bump can't silently downgrade us
       # (mirrors release.yml).
