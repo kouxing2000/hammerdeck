@@ -1,8 +1,8 @@
 -- features/tab_switcher
 --
 -- The flagship: a searchable switcher across ALL browser tabs (Chrome +
--- Safari), most-recently-focused first (ported from myHammerSpoon
--- modules/window/tabsJumper.lua). Invoke to open; invoke again to cycle;
+-- Safari), most-recently-focused first (ported from the author's prior
+-- Hammerspoon config). Invoke to open; invoke again to cycle;
 -- release the cycle modifier to jump. Selecting activates the browser,
 -- raises the window, and switches to the tab.
 --

@@ -1,7 +1,7 @@
 -- features/sleep_schedule
 --
--- Respectful quitting-time enforcement (ported from myHammerSpoon
--- modules/timers/sleepSchedule.lua). Forces system sleep at a daily time with
+-- Respectful quitting-time enforcement (ported from the author's prior
+-- Hammerspoon config). Forces system sleep at a daily time with
 -- graduated warnings:
 --   Phase 1 (T-warn1): dismissable dialog with one-time snooze
 --   Phase 2 (T-warn2): undismissable countdown banner

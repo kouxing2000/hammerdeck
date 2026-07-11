@@ -162,8 +162,8 @@ extension Native {
 
     // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
     // Chrome tab whose URL contains `pattern` to front; opens fallbackURL in a
-    // new tab when absent (the donor miscBindings "locate otter" flow,
-    // parameterized). First use triggers the macOS Automation permission prompt
+    // new tab when absent (the donor config's locate-a-site flow, parameterized).
+    // First use triggers the macOS Automation permission prompt
     // ("control Google Chrome").
     func focusBrowserTab(_ L: OpaquePointer?) -> Int32 {
         guard let pattern = LuaState.string(L, 1), let fallback = LuaState.string(L, 2) else {

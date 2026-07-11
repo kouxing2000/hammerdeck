@@ -39,9 +39,9 @@ final class SiteRowTests: XCTestCase {
     }
 
     func testLegacyAppFlagWithoutName() {
-        let rows = SiteRow.decode("otter.ai | app")
+        let rows = SiteRow.decode("example.com | app")
         XCTAssertEqual(rows.count, 1)
-        assertRow(rows[0], name: "", url: "otter.ai", app: true)
+        assertRow(rows[0], name: "", url: "example.com", app: true)
     }
 
     func testLegacyMultilineSkipsBlankLines() {
@@ -75,13 +75,13 @@ final class SiteRowTests: XCTestCase {
 
     func testEncodeRoundTrip() {
         var a = SiteRow()
-        a.name = "Otter"; a.url = "otter.ai"; a.browser = "com.google.Chrome"
+        a.name = "Example"; a.url = "example.com"; a.browser = "com.google.Chrome"
         a.profile = "Profile 2"; a.app = true
         var b = SiteRow(); b.url = "bing.com"
 
         let decoded = SiteRow.decode(SiteRow.encode([a, b]))
         XCTAssertEqual(decoded.count, 2)
-        assertRow(decoded[0], name: "Otter", url: "otter.ai",
+        assertRow(decoded[0], name: "Example", url: "example.com",
                   browser: "com.google.Chrome", profile: "Profile 2", app: true)
         assertRow(decoded[1], name: "", url: "bing.com")
     }

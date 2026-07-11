@@ -1,7 +1,7 @@
 -- features/text_actions
 --
--- Act on the currently SELECTED text in any app (ported from myHammerSpoon
--- modules/input/textActions.lua): synthesize cmd+C to capture the selection,
+-- Act on the currently SELECTED text in any app (ported from the author's
+-- prior Hammerspoon config): synthesize cmd+C to capture the selection,
 -- then either open it (URLs) or offer a picker of transforms that paste the
 -- result back over the selection (cmd+V).
 --

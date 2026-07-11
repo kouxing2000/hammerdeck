@@ -27,3 +27,12 @@ Package.resolved
 
 # Packaged build output
 /dist/
+/image
+
+# Private working notes -- scratch thinking that lives next to the code but NEVER
+# ships. (Business / strategy / pricing docs do not belong in this repo at all --
+# see "Where a document goes" in CLAUDE.md.)
+/notes/
+
+# Personal backlog -- never committed (it names unreleased plans + private paths).
+/TODO.md

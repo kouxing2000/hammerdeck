@@ -305,6 +305,21 @@ requires `automatable = true` -- manifest.validate rejects the mismatch.
 
 `docs/HANDOVER.md` is the ONE living status + backlog doc -- read it for the
 truth (its doc map explains which docs are living / reference / archived).
-`docs/ARCHITECTURE.md` is the design rationale; `docs/actions/` holds the
-per-domain launch + code action lists (index: `docs/actions/README.md`).
+`docs/ARCHITECTURE.md` is the design rationale.
 Don't duplicate the backlog here.
+
+## Where a document goes (the repo is going PUBLIC -- this rule is load-bearing)
+
+- **`docs/`** -- PUBLIC docs that ship with the repo: architecture, the plugin
+  contract, specs. They version WITH the code (a doc describing `ctx.window.*`
+  lands in the same commit as the code that adds it), so they must never be split
+  into a separate repo. Nothing private goes here.
+- **`notes/`** -- LOCAL private scratch (gitignored, never committed) for working
+  thinking you want sitting next to the code.
+- **Commercial docs** (what to charge, who we're up against, how we launch) --
+  NOT in this repo, at any path, ever. They belong in the author's separate
+  private repo. `scripts/hooks/pre-commit` enforces this.
+  **Deleting such a file later does not undo it:** a RENAMED file leaves its
+  content behind at the old path, and a DELETED one survives in history where no
+  check of the working tree can see it. Only a full history rewrite removes it.
+  So the rule is: never commit it in the first place.

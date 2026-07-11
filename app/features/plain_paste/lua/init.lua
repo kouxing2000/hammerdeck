@@ -5,8 +5,8 @@
 -- clipboard_history feature): rewrites the clipboard as trimmed plain text
 -- (which also
 -- strips any rich RTF/HTML formatting, since we read and write the *string*
--- representation), optionally turning newlines into commas. Ported from
--- myHammerSpoon modules/input/clipboardActions.lua -- now in FULL:
+-- representation), optionally turning newlines into commas. Ported from the
+-- author's prior Hammerspoon config -- now in FULL:
 --
 --   main  (cmd+shift+v) paste as plain text: clean the clipboard, then a
 --                       synthesized cmd+v pastes it (the donor's "paste

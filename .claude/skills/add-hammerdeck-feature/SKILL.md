@@ -194,7 +194,7 @@ image. `swift test` is only needed if you changed the seam (you shouldn't have).
 
 ## Step 8 — Loose ends
 
-- If porting from myHammerSpoon: remove the old binding from its `init.lua` (a
+- If porting from the donor Hammerspoon config: remove the old binding from its `init.lua` (a
   duplicate global hotkey in both apps clashes — whichever registers first wins,
   the other fails silently) and move the dead module to `retired/`, with a dated
   head-comment note.

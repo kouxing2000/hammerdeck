@@ -1,7 +1,7 @@
 -- features/window_switcher
 --
 -- Alt-Tab replacement: searchable window switcher ordered by focus recency
--- (ported from myHammerSpoon modules/window/windowsJumper.lua). Invoke once to
+-- (ported from the author's prior Hammerspoon config). Invoke once to
 -- open; invoke again while open to cycle (alt+` cycles backward, donor
 -- parity); release the cycle modifier to pick. Window rows carry the screen
 -- name on multi-display setups.

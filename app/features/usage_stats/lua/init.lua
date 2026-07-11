@@ -1,8 +1,8 @@
 -- features/usage_stats
 --
--- Tracks computer usage to daily CSV files (ported from myHammerSpoon
--- modules/timers/usageTracker.lua + usageWidget.lua -- the widget renders
--- natively from snapshot() data; no HTML/webview):
+-- Tracks computer usage to daily CSV files (ported from the author's prior
+-- Hammerspoon config -- the widget renders natively from snapshot() data; no
+-- HTML/webview):
 --   <dir>/YYYY-MM/YYYY-MM-DD.csv        sessions (wake,sleep,minutes)
 --   <dir>/YYYY-MM/YYYY-MM-DD-apps.csv   per-app focus time (seconds)
 --

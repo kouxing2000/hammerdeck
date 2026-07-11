@@ -4,7 +4,7 @@
 #
 # This is the version-controlled package recipe -- run it locally OR from CI
 # (.github/workflows/release.yml calls this exact script on a v* tag). It is
-# Tier A of docs/DISTRIBUTION.md: a self-contained, AD-HOC-signed .app that runs
+# Tier A (ad-hoc signing): a self-contained, AD-HOC-signed .app that runs
 # on THIS machine. Tier B (Developer ID signing + notarization, so it opens on a
 # stranger's Mac past Gatekeeper) needs the Apple Developer account and is layered
 # on later -- it does not change this script's shape, it adds steps after step 4.
@@ -22,7 +22,6 @@ APP_NAME="Hammerdeck"
 # PLACEHOLDER bundle id. It pins the UserDefaults domain (and later the Sparkle
 # feed), so changing it after real users exist orphans their settings -- finalize
 # it (reverse-DNS under the Apple Developer prefix) before any public release.
-# See docs/DISTRIBUTION.md "Lock these TODAY" #2.
 BUNDLE_ID="${HAMMERDECK_BUNDLE_ID:-com.kouxing.hammerdeck}"
 MIN_MACOS="13.0"   # must match Package.swift `platforms: [.macOS(.v13)]`
 

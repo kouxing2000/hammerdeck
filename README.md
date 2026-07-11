@@ -16,8 +16,8 @@ bridge works end-to-end (Swift runs Lua; Lua calls back into Swift).
 **Platform v2 + MVP features done (2026-06-10)**: the plugin contract
 ([`docs/PLUGIN_SYSTEM.md`](docs/PLUGIN_SYSTEM.md)) is implemented -- manifests
 with `api = 1`, ACTION vs SERVICE features, and a **scoped ctx** that tears down
-everything a feature created when it's disabled. Real features ported from
-myHammerSpoon:
+everything a feature created when it's disabled. Real features ported from the
+author's prior Hammerspoon config:
 
 - **Sleep Schedule** (service) -- forced sleep with graduated warnings, one-time
   snooze, weekend shift.
@@ -96,39 +96,73 @@ adding-a-feature guide in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 The rule that protects every future option: **only the Swift bridge
-(`LuaState.swift` + `Native.swift`) and `lua/platform/adapter.lua` may touch
-native/OS APIs.** Everything else goes through that seam, so the host stays
-swappable and features never see the backend.
+(`app/platform/swift/LuaState.swift` + `Native.swift`) and
+`app/platform/lua/adapter.lua` may touch native/OS APIs.** Everything else goes
+through that seam, so the host stays swappable and features never see the backend.
 
 ## Layout
 
+Everything ships **co-located under `app/`** -- the Lua platform, the host Swift,
+and each feature's three parts live in one tree. SwiftPM's `HammerdeckKit` target
+roots at `app/` and compiles only the `swift/` subdirs; `app/loader.lua` installs
+a `package.searcher` so stable require names (`platform.adapter`,
+`features.<id>.store`) resolve into the `lua/` subfolders unchanged.
+
 ```
-Package.swift              SwiftPM: CLua (engine) + Hammerdeck (host executable)
+Package.swift              SwiftPM targets: CLua (engine) + HammerdeckKit (host,
+                           rooted at app/) + Hammerdeck (launcher) + tests
 Sources/
   CLua/                    vendored Lua 5.4.7 C source (see Sources/CLua/VENDOR.md)
-  HammerdeckKit/           host library (imported by tests)
-    LuaState.swift         the Swift<->Lua bridge -- the seam (Swift side)
-    Native.swift           the native.* table -- the ONLY place OS surface grows
-    Boot / Panels / StatusBar / SettingsView / DebugControl ...
+  HammerdeckNotify/        tiny ObjC shim for permission-free notifications
   Hammerdeck/
     main.swift             thin launcher -> hammerdeckMain()
-lua/                       embedded script payload
-  hammerdeck.lua           entry point: registers the catalog, binds enabled features
+app/                       co-located payload: Lua platform + host Swift + features
+  hammerdeck.lua           entry point: autodiscovers features, binds enabled ones
+  loader.lua               package.searcher: stable require names -> lua/ subfolders
   platform/
-    adapter.lua            THE SEAM (Lua side) -- the only Lua file touching the backend
-    ctx.lua                scoped, curated ctx -- the plugin API features receive
-    manifest.lua           manifest schema + validation (api v1, action|service)
-    triggers.lua           universal trigger layer (hotkey | chord | schedule | event)
-    registry.lua           available/enabled features; lifecycle + scoped teardown
-  features/
-    sleep_schedule/        SERVICE feature: quitting-time enforcement
-    break_reminder/            SERVICE feature: idle-aware rest reminders
-    window_switcher/           ACTION feature: searchable Alt-Tab
+    lua/                   THE LUA PLATFORM
+      adapter.lua          THE SEAM (Lua side) -- the only Lua file touching the backend
+      ctx.lua              scoped, curated ctx -- the plugin API features receive
+      manifest.lua         manifest schema + validation (api v1, action|service)
+      triggers.lua         universal trigger layer (hotkey | chord | schedule | event)
+      registry.lua         available/enabled features; lifecycle + scoped teardown
+      json / urls / windows / hotkeys / ...   leaf utils a feature may require
+    swift/                 THE SWIFT HOST (the HammerdeckKit target compiles this)
+      LuaState.swift       the Swift<->Lua bridge -- the seam (Swift side)
+      Native.swift (+ Native+<domain>.swift)  the native.* table -- OS surface grows here
+      StatusBar / SettingsView / *Panel.swift ...   menubar + config UI + panels
+  features/<id>/           one feature, three co-located parts:
+    feature.json             declarative identity/presentation (name, category, ... no code)
+    lua/init.lua             the manifest table: id + api + behavior
+    swift/                   optional native UI the feature contributes
+                           (one dir per feature: window_switcher, tab_switcher,
+                            usage_stats, window_deck, clipboard_history, ...)
 test/
   fake_adapter.lua         in-memory adapter (controllable clock)
   run.lua                  headless test suite
 docs/
-  HANDOVER.md  ARCHITECTURE.md  PLUGIN_SYSTEM.md  MANUAL_QA.md
-  actions/         per-domain action lists (launch + code)
-  archive/         frozen records (audits, migration, parity, product research, built specs)
+  HANDOVER.md            status + the open backlog (the one living doc)
+  ARCHITECTURE.md        design rationale + adding-a-feature guide
+  PLUGIN_SYSTEM.md       the plugin contract (manifest / ctx / scoped teardown)
+  AUTOMATION_FRAMEWORK.md + AUTOMATION_IDEAS.md   the rules/scenes engine
+  MANUAL_QA.md           the hands-on verification checklist
+  specs/                 design specs (window deck, ctx namespaces, ...)
+  archive/               frozen records: built specs + the Hammerspoon-embedding analysis
 ```
+
+## License
+
+Copyright (C) 2026 kouxing2000.
+
+Hammerdeck is free software, licensed under the **GNU General Public License
+v3.0** -- see [`LICENSE`](LICENSE). You may use, study, modify, and redistribute
+it, but any distributed derivative must also be released under the GPL, with its
+source. Hammerdeck (and anything built from it) stays open; it can't be taken
+closed-source.
+
+### Third-party
+
+- **Lua 5.4.7** (`Sources/CLua/`) -- vendored verbatim under its own **MIT**
+  license (Copyright (C) 1994-2024 Lua.org, PUC-Rio); see
+  [`Sources/CLua/VENDOR.md`](Sources/CLua/VENDOR.md). The GPL covers Hammerdeck's
+  own code; the vendored Lua keeps its MIT terms.

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#
+# pre-commit: refuse to commit business/strategy content into this PUBLIC repo.
+#
+# Why this exists: commercial content (what to charge, who we're up against, how we
+# launch) must never enter a public repo's history. Deleting it later does NOT undo
+# it -- a RENAMED file leaves its content at the old path, and a DELETED one survives
+# in history where no check of the working tree can see it. Only a full history
+# rewrite removes it, so the only reliable fix is to block the commit.
+#
+# Where such content belongs:
+#   - the author's separate private repo
+#   - local scratch:  notes/   (gitignored)
+# See "Where a document goes" in CLAUDE.md.
+#
+# Install:  git config core.hooksPath scripts/hooks
+# Bypass (ONLY for a genuine false positive):  git commit --no-verify
+
+set -uo pipefail
+
+# Unambiguous business-strategy signals. Deliberately EXCLUDES words that carry a
+# common technical meaning here -- e.g. "subscription" (the rules engine is full of
+# event subscriptions) -- so the hook stays quiet enough to be trusted.
+PATTERN='pricing|freemium|monetiz|willingness[- ]to[- ]pay|paywall|go[- ]to[- ]market|revenue|competitor|Show HN|\bmoat\b'
+
+# Files whose JOB is to state this policy -- they necessarily name the banned words
+# and would otherwise trip the hook on every commit. Keep this list tiny: each entry
+# is a file the hook can no longer protect, so it must be one you review by eye.
+EXEMPT=(
+    "scripts/hooks/pre-commit"   # this file: the pattern itself
+    ".gitignore"                 # the notes/ comment explaining what must not ship
+    "CLAUDE.md"                  # the "Where a document goes" rule
+)
+
+is_exempt() {
+    local candidate="$1" e
+    for e in "${EXEMPT[@]}"; do
+        [ "$candidate" = "$e" ] && return 0
+    done
+    return 1
+}
+
+found=0
+
+while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    is_exempt "$f" && continue
+    # Skip binaries (icons, bundles) -- grep on them is noise.
+    if file --mime "$f" 2>/dev/null | grep -q 'charset=binary'; then
+        continue
+    fi
+    matches=$(grep -inE "$PATTERN" -- "$f" 2>/dev/null | head -5)
+    if [ -n "$matches" ]; then
+        if [ "$found" -eq 0 ]; then
+            printf '\n\033[31mBLOCKED\033[0m: business/strategy content in a staged file.\n' >&2
+            printf 'This repo is going PUBLIC -- that content must not enter its history.\n\n' >&2
+            found=1
+        fi
+        printf '  %s\n' "$f" >&2
+        printf '%s\n' "$matches" | sed 's/^/      /' >&2
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+if [ "$found" -eq 1 ]; then
+    printf '\nMove it to your private strategy repo, or to the gitignored notes/ dir.\n' >&2
+    printf 'See "Where a document goes" in CLAUDE.md.\n' >&2
+    printf '\nGenuine false positive? Re-run with:  git commit --no-verify\n\n' >&2
+    exit 1
+fi
+
+exit 0

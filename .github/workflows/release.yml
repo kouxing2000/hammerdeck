@@ -5,7 +5,7 @@ name: Release
 # attaches the zip to a GitHub Release for that tag. The tag IS the version
 # (single source of truth) -- nothing here is hand-edited per release.
 #
-# Tier A (see docs/DISTRIBUTION.md): the artifact is AD-HOC signed -- it runs for
+# Tier A (ad-hoc signing): the artifact is AD-HOC signed -- it runs for
 # YOU (download via the release page / `gh release download`), but Gatekeeper
 # still blocks it on a stranger's Mac. Tier B (Developer ID signing + notarization)
 # layers on later: import the cert from a secret, swap the codesign identity in

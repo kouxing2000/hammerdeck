@@ -1,7 +1,7 @@
 -- features/insert_datetime
 --
--- Type the current date/time into the focused field (ported from the
--- myHammerSpoon "insert data time" binding, cmd+alt+ctrl+D). Pure Lua over
+-- Type the current date/time into the focused field (ported from the author's
+-- prior Hammerspoon "insert data time" binding, cmd+alt+ctrl+D). Pure Lua over
 -- ctx -- no native surface of its own; ctx.typeText synthesizes the keystrokes.
 --
 -- The format is user-selectable: pick one of the presets, or choose "Custom"

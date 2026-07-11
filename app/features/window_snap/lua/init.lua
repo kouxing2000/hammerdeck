@@ -1,7 +1,7 @@
 -- features/window_snap
 --
--- Arrange the focused window (ported from myHammerSpoon
--- modules/window/windowManagement.lua): snap to screen halves, toggle
+-- Arrange the focused window (ported from the author's prior Hammerspoon
+-- config): snap to screen halves, toggle
 -- maximize <-> centered 75%, throw to the next/previous screen with
 -- proportional rescaling + the mouse pointer carried along, and swap ALL
 -- windows between the two displays.

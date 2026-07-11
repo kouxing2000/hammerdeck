@@ -1,7 +1,7 @@
 -- features/display_off
 --
--- Turns the display off after a stretch of no input (ported from myHammerSpoon
--- modules/timers/idleDimmer.lua). Polls idle time; once past the threshold it
+-- Turns the display off after a stretch of no input (ported from the author's
+-- prior Hammerspoon config). Polls idle time; once past the threshold it
 -- shows a one-time warning, then sleeps the display after a short lead time.
 -- Any input wakes the display and re-arms the cycle. macOS still decides
 -- whether to fully sleep based on active processes -- this only turns the

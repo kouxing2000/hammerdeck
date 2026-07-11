@@ -1,7 +1,7 @@
 -- features/window_modal
 --
 -- "Window Mode": a modal keyboard layer for window manipulation (ported from
--- myHammerSpoon modules/window/winWinModal.lua + the WinWin/ModalMgr spoons).
+-- the author's prior Hammerspoon config + the WinWin/ModalMgr spoons).
 -- Enter the mode, then bare keys arrange the focused window until Escape:
 --
 --   W A S D        step-move (screen/N per step)

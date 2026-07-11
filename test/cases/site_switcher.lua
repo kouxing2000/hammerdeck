@@ -21,17 +21,17 @@ return {
 
         -- several sites: the shortcut pops a chooser listing them (domain text, url sub)
         fake.settings["hammerdeck.opt.site_switcher.sites"] =
-            "https://www.otter.ai/\nhttps://github.com/\n"
-        fake.browserTabs = { "https://github.com/x", "https://www.otter.ai/meetings" }
+            "https://www.example.com/\nhttps://github.com/\n"
+        fake.browserTabs = { "https://github.com/x", "https://www.example.com/meetings" }
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
         local ch = fake.visibleChooser()
         ok(ch ~= nil and #ch.choices == 2
-            and ch.choices[1].text == "otter.ai"
-            and ch.choices[1].subText == "https://www.otter.ai/"
+            and ch.choices[1].text == "example.com"
+            and ch.choices[1].subText == "https://www.example.com/"
             and ch.choices[2].text == "github.com",
             "the shortcut pops a chooser of the sites (domain text, url subtext)")
         ch.userSelect(1)
-        ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
+        ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.example.com/meetings",
             "picking row 1 focuses the first site's tab")
         ok(fake.visibleChooser() == nil, "the chooser closes after a pick")
 
@@ -56,10 +56,10 @@ return {
             "one site needs no list -- jumps straight")
 
         -- no match opens the fallback URL in a new tab
-        fake.settings["hammerdeck.opt.site_switcher.sites"] = "https://www.otter.ai/"
+        fake.settings["hammerdeck.opt.site_switcher.sites"] = "https://www.example.com/"
         fake.browserTabs = { "https://github.com/x" }
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
-        ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.otter.ai/",
+        ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.example.com/",
             "no match opens the fallback URL")
 
         -- a scheme-less entry is normalized to https:// so it actually navigates
@@ -72,10 +72,10 @@ return {
 
         -- the legacy single-URL key seeds the one site when the list is empty
         fake.settings["hammerdeck.opt.site_switcher.sites"] = nil
-        fake.settings["hammerdeck.opt.site_switcher.openURL"] = "https://www.otter.ai/"
-        fake.browserTabs = { "https://www.otter.ai/meetings" }
+        fake.settings["hammerdeck.opt.site_switcher.openURL"] = "https://www.example.com/"
+        fake.browserTabs = { "https://www.example.com/meetings" }
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
-        ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.otter.ai/meetings",
+        ok(fake.focusedTabs[#fake.focusedTabs] == "https://www.example.com/meetings",
             "the legacy openURL migrates as the one site when the list is empty")
         fake.settings["hammerdeck.opt.site_switcher.openURL"] = nil
 
@@ -131,21 +131,21 @@ return {
 
         -- JSON storage with per-site browser + Chrome profile routing
         fake.settings["hammerdeck.opt.site_switcher.sites"] =
-            '[{"name":"Otter","url":"otter.ai","browser":"com.google.Chrome","profile":"Profile 2","app":true},'
+            '[{"name":"Example","url":"example.com","browser":"com.google.Chrome","profile":"Profile 2","app":true},'
             .. '{"name":"News","url":"news.ycombinator.com","browser":"org.mozilla.firefox"}]'
         fake.browserTabs = {}
         fake.siteOpens = {}
         fake.appWindows = {}
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
         local jc = fake.visibleChooser()
-        ok(jc ~= nil and jc.choices[1].text == "Otter" and jc.choices[2].text == "News",
+        ok(jc ~= nil and jc.choices[1].text == "Example" and jc.choices[2].text == "News",
             "JSON site records render as named rows")
-        jc.userSelect(1)   -- Otter: Chrome + a non-default profile + app -> routed launch
+        jc.userSelect(1)   -- Example: Chrome + a non-default profile + app -> routed launch
         ok(#fake.siteOpens == 1
             and fake.siteOpens[1].bundleId == "com.google.Chrome"
             and fake.siteOpens[1].profile == "Profile 2"
             and fake.siteOpens[1].app == true
-            and fake.siteOpens[1].url == "https://otter.ai",
+            and fake.siteOpens[1].url == "https://example.com",
             "a Chrome-profile app site routes through openSite with the profile + app flag")
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
         fake.visibleChooser().userSelect(2)   -- News: Firefox (non-scriptable) -> openSite tab

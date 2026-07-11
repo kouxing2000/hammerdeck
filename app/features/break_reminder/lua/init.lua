@@ -1,7 +1,7 @@
 -- features/break_reminder
 --
--- Rest-eyes reminder with idle awareness (ported from myHammerSpoon
--- modules/timers/restTimer.lua). After a work interval, shows a rest dialog
+-- Rest-eyes reminder with idle awareness (ported from the author's prior
+-- Hammerspoon config). After a work interval, shows a rest dialog
 -- (postpone / screensaver / lock / sleep). Going idle pauses the cycle; going
 -- idle WHILE the dialog is open counts as the rest having been taken. Daily
 -- work-time stats persist across restarts. Lock/sleep pauses; unlock/wake

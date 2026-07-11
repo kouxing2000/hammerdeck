@@ -2,7 +2,7 @@
 --
 -- A site JUMPER, not a tab switcher. Each row is a DESTINATION you configured:
 -- focus the browser tab already showing it, or open it when absent (generalized
--- from myHammerSpoon modules/misc/miscBindings.lua "locate otter" -- once a
+-- from a binding in the author's prior Hammerspoon config -- once a
 -- single hardcoded site, now a configurable favorites list). This is why it is
 -- not grouped with Tab/Window Switcher: those pick among LIVE things that
 -- already exist; this one navigates to a fixed favorite, creating it if needed.
