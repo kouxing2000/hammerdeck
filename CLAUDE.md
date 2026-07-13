@@ -98,7 +98,18 @@ pending.
   no `require` of their own), PLUS the pure factory subsystem `platform.favicons`
   -- a sibling category to the leaf utils (it requires only the `urls` leaf util
   and is used via `favicons.new(ctx)`), NOT itself a zero-`require` leaf util, so
-  it must NOT join the leaf-guard list. Get the current time only from
+  it must NOT join the leaf-guard list. **Localize through `ctx`, and let it do the
+  formatting**: `ctx.t(key, "English %1$s source", a, b)` / `ctx.plural(...)` --
+  NEVER `string.format` over a translated template. Only the i18n layer honors a
+  locale's positional specifiers (Lua's own `string.format` cannot reorder
+  arguments and RAISES on `%2$s`) and only it refuses to throw when a translation's
+  slots don't match, so a raw format turns one mistyped placeholder in a catalog
+  into a crash inside a firing rule. A template with **2+ slots must number them**
+  (`%1$s` / `%2$s`) in the English source AND the translation -- plain `%s` makes
+  argument order load-bearing, and no author knows which language needs a different
+  one (Chinese wants "把 <display> 的壁纸设为 <color>"). One slot needs no number.
+  Both rules are GATED (i18n_parity.lua + LocalizationTests), so a new feature that
+  breaks them fails the build. Get the current time only from
   `ctx.now()` (never bare `os.time()`/`os.date()`, which read the uncontrolled
   wall clock and tests can't drive); `os.date`/`os.time` are fine for FORMATTING
   or decomposing a time you already got from `ctx.now()`. (Exception: a

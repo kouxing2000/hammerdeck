@@ -135,6 +135,129 @@ final class LocalizationTests: XCTestCase {
                       + "silently render English:\n  " + missing.joined(separator: "\n  "))
     }
 
+    // PLACEHOLDER PARITY for the chrome. A translation whose format slots don't match its
+    // English source is a bug the runtime cannot fix: String(format:) will read the wrong
+    // argument, print garbage, or crash. Same contract as the Lua half (i18n_parity.lua):
+    // the multiset must match, and the ORDER may only change when the translation says so
+    // with positional markers (%1$@ / %2$@), which String(format:) supports natively.
+    func testEveryChromeTranslationKeepsItsPlaceholders() throws {
+        let root = repoRoot()
+        guard let data = FileManager.default.contents(atPath: root + "/app/i18n/zh-Hans.json"),
+              let catalog = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return XCTFail("missing or invalid zh-Hans.json")
+        }
+        // Strings.t("key", default: "English %@ source")
+        let literal = try NSRegularExpression(
+            pattern: #"Strings\.t\(\s*"([^"\\]+)"\s*,\s*default:\s*"((?:[^"\\]|\\.)*)"#)
+        // Strings.plural("key", n, one: "...", other: "...") has a DIFFERENT signature -- no
+        // `default:` label. Folding it into the regex above as `(?:t|plural)` therefore matched
+        // NOTHING, and every Swift plural template was silently excluded from placeholder
+        // parity and the numbering rule. Match its real shape, and check BOTH forms.
+        let plural = try NSRegularExpression(
+            pattern: #"Strings\.plural\(\s*"([^"\\]+)"\s*,[^)]*?one:\s*"((?:[^"\\]|\\.)*)"\s*,\s*other:\s*"((?:[^"\\]|\\.)*)""#)
+
+        var broken: [String] = [], checked = 0
+        let enumerator = FileManager.default.enumerator(atPath: root + "/app")
+        while let rel = enumerator?.nextObject() as? String {
+            guard rel.hasSuffix(".swift"),
+                  let raw = try? String(contentsOfFile: root + "/app/" + rel, encoding: .utf8)
+            else { continue }
+            let src = codeOnly(raw)
+            let ns = src as NSString
+            for m in literal.matches(in: src, range: NSRange(location: 0, length: ns.length)) {
+                let key = ns.substring(with: m.range(at: 1))
+                let en  = ns.substring(with: m.range(at: 2))
+                checked += 1
+                // HOUSE RULE: 2+ slots must be NUMBERED (%1$@ / %2$@) -- in the source, so a
+                // translator can always reorder, and in the translation, so it stays
+                // reorderable. One slot needs no number: there is nothing to reorder.
+                if let why = unnumbered(en) { broken.append("\(key) (source): \(why)") }
+                guard let zh = catalog[key] as? String else { continue }   // absence is the other test
+                if let why = unnumbered(zh) { broken.append("\(key) (zh): \(why)") }
+                if let why = placeholderMismatch(en, zh) { broken.append("\(key): \(why)") }
+            }
+            // plurals: both English forms must obey the same rules, and each catalog form
+            // (a {one,other} object) must match its own source form.
+            for m in plural.matches(in: src, range: NSRange(location: 0, length: ns.length)) {
+                let key = ns.substring(with: m.range(at: 1))
+                let forms = ["one": ns.substring(with: m.range(at: 2)),
+                             "other": ns.substring(with: m.range(at: 3))]
+                let zhForms = catalog[key] as? [String: String]
+                for (name, en) in forms {
+                    checked += 1
+                    if let why = unnumbered(en) { broken.append("\(key).\(name) (source): \(why)") }
+                    guard let zh = zhForms?[name] else { continue }
+                    if let why = unnumbered(zh) { broken.append("\(key).\(name) (zh): \(why)") }
+                    if let why = placeholderMismatch(en, zh) { broken.append("\(key).\(name): \(why)") }
+                }
+            }
+        }
+        XCTAssertGreaterThan(checked, 0, "no chrome templates were compared")
+        XCTAssertTrue(broken.isEmpty,
+                      "\(broken.count) translation(s) do not match their source's format slots "
+                      + "and will render wrong (or crash String(format:)):\n  "
+                      + broken.joined(separator: "\n  "))
+    }
+
+    /// The conversion specifiers in a format string, in order, plus whether any slot names
+    /// its argument positionally. `%%` is an escape, not a slot.
+    private func formatSpecs(_ s: String) -> (specs: [Character], positional: Bool, plain: Int) {
+        var specs: [Character] = [], positional = false, plain = 0
+        let c = Array(s)
+        var i = 0
+        while i < c.count {
+            guard c[i] == "%" else { i += 1; continue }
+            if i + 1 < c.count, c[i + 1] == "%" { i += 2; continue }     // escaped percent
+            var j = i + 1
+            var digits = ""
+            while j < c.count, c[j].isNumber { digits.append(c[j]); j += 1 }
+            if j < c.count, c[j] == "$", !digits.isEmpty {               // positional marker
+                positional = true
+                j += 1
+            } else {
+                plain += 1                                               // an unnumbered slot
+                j = i + 1                                                // that was width, not a slot
+            }
+            while j < c.count, "-+ #0".contains(c[j]) { j += 1 }         // flags
+            while j < c.count, c[j].isNumber || c[j] == "." { j += 1 }   // width.precision
+            if j < c.count, c[j].isLetter || c[j] == "@" { specs.append(c[j]); j += 1 }
+            i = j
+        }
+        return (specs, positional, plain)
+    }
+
+    /// A template with 2+ slots must number them, so any locale can reorder. With a single
+    /// slot there is nothing to reorder and a number is only noise.
+    private func unnumbered(_ tpl: String) -> String? {
+        let s = formatSpecs(tpl)
+        // MIXED is worse than unnumbered: String(format:) is UNDEFINED with a format string
+        // that mixes positional and non-positional specifiers (it can read the wrong vararg
+        // or crash), and Lua's formatter refuses it outright. Never let one through.
+        if s.positional && s.plain > 0 {
+            return "MIXES positional (%1$@) and plain (%@) specifiers -- number ALL of them"
+        }
+        guard s.specs.count >= 2, !s.positional else { return nil }
+        return "has \(s.specs.count) slots but no positional markers -- write %1$@ / %2$@ "
+             + "so a locale can reorder them"
+    }
+
+    /// nil when `zh` can safely stand in for `en`.
+    private func placeholderMismatch(_ en: String, _ zh: String) -> String? {
+        let e = formatSpecs(en), z = formatSpecs(zh)
+        if e.specs.count != z.specs.count {
+            return "placeholder count \(e.specs.count) -> \(z.specs.count)"
+        }
+        if z.positional {                       // order is explicit -- only the multiset must hold
+            return e.specs.sorted() == z.specs.sorted() ? nil
+                : "positional template changes the placeholder types"
+        }
+        // No markers: String(format:) is sequential, so the ORDER carries meaning.
+        for (a, b) in zip(e.specs, z.specs) where a != b {
+            return "reorders %\(a) and %\(b) without positional markers (use %1$@ / %2$@)"
+        }
+        return nil
+    }
+
     /// Blank out `//` and `/* */` comments, replacing them with spaces so every offset and
     /// line number still lines up with the original. String literals are respected: a `//`
     /// inside "https://..." must NOT start a comment, or real code after it on that line

@@ -125,7 +125,7 @@ local function askAI(ctx, content, systemPrompt)
         ["Authorization"] = "Bearer " .. key,
     }, body, function(status, respBody)
         if status ~= 200 or not respBody then
-            ctx.alert(string.format(ctx.t("alert.aiFailed", "AI request failed (%s)"), tostring(status)))
+            ctx.alert(ctx.t("alert.aiFailed", "AI request failed (%s)", tostring(status)))
             return
         end
         local doc = json.decode(respBody)
@@ -178,12 +178,12 @@ local function runEntry(ctx, content, entry)
         -- the full globals).
         local fn, loadErr = load("return " .. content, "calc", "t", { math = math })
         if not fn then
-            ctx.alert(string.format(ctx.t("alert.notExpr", "Not an expression: %s"), tostring(loadErr)))
+            ctx.alert(ctx.t("alert.notExpr", "Not an expression: %s", tostring(loadErr)))
             return
         end
         local okEval, result = pcall(fn)
         if not okEval then
-            ctx.alert(string.format(ctx.t("alert.calcFailed", "Calculation failed: %s"), tostring(result)))
+            ctx.alert(ctx.t("alert.calcFailed", "Calculation failed: %s", tostring(result)))
             return
         end
         pasteBack(ctx, tostring(result))
@@ -244,7 +244,7 @@ local function actOnSelection(ctx, content)
 
     local snippet = content:sub(1, 24)
     ctx.askChoice {
-        title = string.format(ctx.t("dialog.title", "Action for [%s]"), snippet),
+        title = ctx.t("dialog.title", "Action for [%s]", snippet),
         infos = { snippet },
         actions = actions,
         onChoose = function(choice)

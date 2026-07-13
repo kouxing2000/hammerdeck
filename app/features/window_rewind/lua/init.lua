@@ -46,17 +46,16 @@ return {
                 -- is nothing to restore, so onboard rather than report "nothing to undo".
                 if not ctx.axTrusted() then
                     ctx.axPrompt()
-                    ctx.alert(string.format(
+                    ctx.alert(
                         ctx.t("window.axRequired",
-                            "%s needs the Accessibility permission -- grant %s in System Settings, then try again"),
-                        "Window Rewind", ctx.appName))
+                            "%1$s needs the Accessibility permission -- grant %2$s in System Settings, then try again", "Window Rewind", ctx.appName))
                     return
                 end
                 local n = ctx.window.undoLast()
                 if n > 0 then
-                    ctx.confirmAction(string.format(
+                    ctx.confirmAction(
                         ctx.plural("flash.restored", n,
-                            { one = "Restored %d window", other = "Restored %d windows" }), n))
+                            { one = "Restored %d window", other = "Restored %d windows" }, n))
                     ctx.log("window_rewind: undo -- restored " .. n .. " window(s)")
                 else
                     ctx.confirmAction(ctx.t("flash.nothing", "Nothing to undo"))

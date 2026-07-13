@@ -118,7 +118,7 @@ local function hudFor(ctx, cols, rows, armA)
         end
     end
     return {
-        title   = string.format(ctx.t("hud.title", "%d×%d Grid"), cols, rows),
+        title   = ctx.t("hud.title", "%1$d×%2$d Grid", cols, rows),
         cols    = cols,
         rows    = rows,
         cells   = cells,
@@ -160,8 +160,8 @@ local function controllerFor(ctx)
                 committed = true
                 if st.modal then st.modal.stop() end       -- onExit clears state
                 if a then
-                    ctx.confirmAction(string.format(
-                        ctx.t("flash.placed", "Cell %d of %d"), numOf(cols, a), cols * rows))
+                    ctx.confirmAction(
+                        ctx.t("flash.placed", "Cell %1$d of %2$d", numOf(cols, a), cols * rows))
                 end
             end)
         end
@@ -199,11 +199,11 @@ local function controllerFor(ctx)
                 -- names its size, a 1x1 commit names the cell.
                 if placed then
                     if cell.w > 1 or cell.h > 1 then
-                        ctx.confirmAction(string.format(
-                            ctx.t("flash.span", "%d×%d region"), cell.w, cell.h))
+                        ctx.confirmAction(
+                            ctx.t("flash.span", "%1$d×%2$d region", cell.w, cell.h))
                     else
-                        ctx.confirmAction(string.format(
-                            ctx.t("flash.placed", "Cell %d of %d"), num, cols * rows))
+                        ctx.confirmAction(
+                            ctx.t("flash.placed", "Cell %1$d of %2$d", num, cols * rows))
                     end
                 end
             else                                           -- INVALID: re-pick corner-A

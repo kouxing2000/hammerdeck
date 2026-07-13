@@ -64,7 +64,7 @@ local function formatNow(ctx, fmt, when)
         -- the parenthetical reason (e.g. "invalid conversion specifier '%Q'").
         local msg = tostring(res):gsub("^.-:%d+: ", "")
         local detail = msg:match("%((.-)%)") or msg
-        return nil, string.format(ctx.t("error.invalidFormat", "Invalid format -- %s"), detail)
+        return nil, ctx.t("error.invalidFormat", "Invalid format -- %s", detail)
     end
     if type(res) ~= "string" then
         return nil, ctx.t("error.tableFormat", "That format produces a table, not text (avoid *t)")
@@ -113,7 +113,7 @@ return {
                 return
             end
             local text, err = formatNow(ctx, fmt, ctx.now())
-            ctx.alert(text and string.format(ctx.t("alert.preview", "Preview:  %s"), text) or err)
+            ctx.alert(text and ctx.t("alert.preview", "Preview:  %s", text) or err)
         end,
     },
 

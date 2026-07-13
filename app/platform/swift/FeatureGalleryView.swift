@@ -61,7 +61,7 @@ struct FeatureGalleryView: View {
     private var toolbar: some View {
         HStack {
             Text(Strings.t("gallery.title", default: "Feature Gallery")).font(.headline)
-            Text(String(format: Strings.t("gallery.enabledCount", default: "%d/%d enabled"), enabledCount, store.features.count))
+            Text(String(format: Strings.t("gallery.enabledCount", default: "%1$d/%2$d enabled"), enabledCount, store.features.count))
                 .font(.caption).foregroundStyle(.secondary)
             Spacer()
             HStack(spacing: 4) {

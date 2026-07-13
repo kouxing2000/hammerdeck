@@ -631,11 +631,10 @@ local function controllerFor(ctx)
         if st.active or st.picking then return end
         if not ctx.axTrusted() then
             ctx.axPrompt()
-            ctx.alert(string.format(
+            ctx.alert(
                 ctx.t("alert.axRequired",
                     "%s needs the Accessibility permission to arrange windows -- "
-                    .. "grant it in System Settings, then try again."),
-                ctx.appName))
+                    .. "grant it in System Settings, then try again.", ctx.appName))
             return
         end
         local screens = ctx.screen.frames()
@@ -689,13 +688,11 @@ local function controllerFor(ctx)
         local restoreLabel
         if restore then
             if #restore.matched >= restore.total then
-                restoreLabel = string.format(
-                    ctx.t("pick.restoreAll", "Restore last deck (%d windows)"),
-                    restore.total)
+                restoreLabel =
+                    ctx.t("pick.restoreAll", "Restore last deck (%d windows)", restore.total)
             else
-                restoreLabel = string.format(
-                    ctx.t("pick.restoreSome", "Restore last deck (%d of %d available)"),
-                    #restore.matched, restore.total)
+                restoreLabel =
+                    ctx.t("pick.restoreSome", "Restore last deck (%1$d of %2$d available)", #restore.matched, restore.total)
             end
         end
         local h

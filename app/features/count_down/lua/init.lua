@@ -44,8 +44,8 @@ return {
                     local minutes = s.minutes
                     local ctx = s.ctx
                     cancel(s)
-                    ctx.notify(string.format(ctx.t("notify.up.title", "Time (%d min) is up!"), minutes),
-                        string.format(ctx.t("notify.up.body", "Now is %s"), os.date("%X", ctx.now())))
+                    ctx.notify(ctx.t("notify.up.title", "Time (%d min) is up!", minutes),
+                        ctx.t("notify.up.body", "Now is %s", os.date("%X", ctx.now())))
                 else
                     s.bar.setProgress(s.elapsed / s.total)
                 end
@@ -87,7 +87,7 @@ return {
                             if minutes and minutes > 0 then
                                 beginCountdown(s, minutes)
                             elseif text and text ~= "" then
-                                ctx.alert(string.format(ctx.t("alert.nan", "Not a number of minutes: %s"), text))
+                                ctx.alert(ctx.t("alert.nan", "Not a number of minutes: %s", text))
                             end
                         end,
                     }

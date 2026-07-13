@@ -67,7 +67,7 @@ local function generate(ctx)
 
     local pw = build(ctx, length, pools)
     ctx.pasteboardWrite(pw)
-    ctx.notify(ctx.t("notify.copied.title", "Password copied"), string.format(ctx.t("notify.copied.body", "%d-character password is on the clipboard"), length))
+    ctx.notify(ctx.t("notify.copied.title", "Password copied"), ctx.t("notify.copied.body", "%d-character password is on the clipboard", length))
     ctx.log("generated a", length, "char password (", #pools, "char classes)")
     return pw   -- returned for tests; ignored by the trigger path
 end

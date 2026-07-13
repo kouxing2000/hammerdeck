@@ -116,8 +116,7 @@ return {
         end
 
         local function showCountdown(secsLeft)
-            local text = string.format(ctx.t("banner.countdown", "System sleep in %s  --  Save your work!"),
-                formatCountdown(secsLeft))
+            local text = ctx.t("banner.countdown", "System sleep in %s  --  Save your work!", formatCountdown(secsLeft))
             if s.banner then s.banner.setText(text) else s.banner = ctx.banner(text) end
         end
 
@@ -144,12 +143,10 @@ return {
 
         local function showWarning(secsLeft)
             local infos = {
-                string.format(ctx.t("info.sleepAt", "Sleep at %s (%d min left)"),
-                    formatTime(effectiveSleepSecs()), math.floor(secsLeft / 60)),
+                ctx.t("info.sleepAt", "Sleep at %1$s (%2$d min left)", formatTime(effectiveSleepSecs()), math.floor(secsLeft / 60)),
             }
             if isWeekendNight(ctx.now()) then
-                infos[#infos + 1] = string.format(ctx.t("info.weekendShift", "Weekend schedule (+%dmin)"),
-                    ctx.opt("weekendShiftMin"))
+                infos[#infos + 1] = ctx.t("info.weekendShift", "Weekend schedule (+%dmin)", ctx.opt("weekendShiftMin"))
             end
 
             -- snoozeLabel held in a local so onChoose compares the chosen label
@@ -158,8 +155,7 @@ return {
             local actions = { { label = ctx.t("action.wrapUp", "OK, I'll wrap up"),
                                 icon = "symbol:checkmark.circle" } }
             if not s.snoozed then
-                snoozeLabel = string.format(ctx.t("action.snooze", "Snooze %d minutes (until %s)"),
-                    ctx.opt("snoozeMin"), formatTime(snoozeTargetSecs()))
+                snoozeLabel = ctx.t("action.snooze", "Snooze %1$d minutes (until %2$s)", ctx.opt("snoozeMin"), formatTime(snoozeTargetSecs()))
                 actions[#actions + 1] = { label = snoozeLabel, icon = "symbol:zzz" }
             end
 

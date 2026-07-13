@@ -37,7 +37,7 @@ local function jump(ctx, actionId, backward)
         -- no preview-on-open step); armRelease self-gates on the modifier.
         local mod = cycleModifier(ctx.actionTrigger(actionId))
         st.chooser.setPlaceholder(mod
-            and string.format(ctx.t("chooser.release", "Release %s to switch"), mod)
+            and ctx.t("chooser.release", "Release %s to switch", mod)
             or ctx.t("chooser.pressEnter", "Press Enter to switch"))
         cyclingChooser.cycle(st.chooser, backward, #st.lastChoices)
         cyclingChooser.armRelease(ctx, st.chooser, st, mod)
@@ -48,9 +48,8 @@ local function jump(ctx, actionId, backward)
                 -- Accessibility onboarding: fire the system prompt and
                 -- explain; the user re-triggers once granted.
                 ctx.axPrompt()
-                ctx.alert(string.format(ctx.t("alert.axRequired",
-                    "Window Jump needs the Accessibility permission -- enable %s under System Settings > Privacy & Security > Accessibility, then try again"),
-                    ctx.appName))
+                ctx.alert(ctx.t("alert.axRequired",
+                    "Window Jump needs the Accessibility permission -- enable %s under System Settings > Privacy & Security > Accessibility, then try again", ctx.appName))
             else
                 ctx.alert(ctx.t("alert.noWindows", "No windows to switch between"))
             end
@@ -68,8 +67,8 @@ local function jump(ctx, actionId, backward)
             -- `> 0` guards the seam: 0 is truthy in Lua, so a future native
             -- change that emitted 0 would otherwise render "0 tabs".
             if w.tabCount and w.tabCount > 0 then
-                parts[#parts + 1] = string.format(ctx.plural("chooser.tabs", w.tabCount,
-                    { one = "%d tab", other = "%d tabs" }), w.tabCount)
+                parts[#parts + 1] = ctx.plural("chooser.tabs", w.tabCount,
+                    { one = "%d tab", other = "%d tabs" }, w.tabCount)
             end
             if w.screenName then parts[#parts + 1] = w.screenName end
             choices[#choices + 1] = {
@@ -82,8 +81,8 @@ local function jump(ctx, actionId, backward)
         st.lastChoices = choices
         local count = #choices
         st.chooser.setTitle(ctx.t("chooser.title", "Switch Window"), "macwindow.on.rectangle",
-            string.format(ctx.plural("chooser.count", count,
-                { one = "%d window", other = "%d windows" }), count))
+            ctx.plural("chooser.count", count,
+                { one = "%d window", other = "%d windows" }, count))
         st.chooser.setPlaceholder(ctx.t("chooser.search", "Search windows"))
         st.chooser.setChoices(choices)
         st.chooser.setQuery(nil)

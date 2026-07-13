@@ -924,7 +924,7 @@ end
 local function describeTrigger(m)
     if m.start then return i18n.t("trigger.alwaysOn", "always-on service") end
     if #m.actions == 1 then return triggers.describe(triggerFor(m, m.actions[1])) end
-    return string.format(i18n.t("trigger.actions", "%d actions"), #m.actions)
+    return i18n.format("trigger.actions", "%d actions", #m.actions)
 end
 
 -- Normalize one entry returned by a feature's schedule(ctx) descriptor into a

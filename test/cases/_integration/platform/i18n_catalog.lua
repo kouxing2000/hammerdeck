@@ -27,14 +27,16 @@ return {
             ok(i18n.t("missing.key") == "missing.key",
                 "i18n.t falls back to the key itself when no default is given")
 
-            -- the template is localized; the caller interpolates -- placeholders are
-            -- identical across locales, so string.format fills both %s the same way.
-            local msg = string.format(
-                i18n.t("window.axRequired", "%s needs Accessibility -- grant %s"),
-                "Window Mode", "Hammerdeck")
+            -- The template is localized and i18n.format interpolates -- NOT a raw
+            -- string.format over i18n.t, which is precisely the bug this line used to be:
+            -- a 2+-slot template is now positional ("%1$s ... %2$s", so a locale may
+            -- reorder), and Lua's own string.format RAISES on "%1$s". The formatting layer
+            -- is the only thing that may render a translated template.
+            local msg = i18n.format("window.axRequired",
+                "%1$s needs Accessibility -- grant %2$s", "Window Mode", "Hammerdeck")
             ok(msg:find("Window Mode", 1, true) and msg:find("Hammerdeck", 1, true)
                 and msg:find("辅助功能", 1, true),
-                "i18n template interpolates caller args into the zh-Hans string")
+                "i18n.format interpolates caller args into the zh-Hans string")
 
             ok(i18n.category(1) == "other" and i18n.category(5) == "other",
                 "zh-Hans plural category collapses to other")
@@ -51,7 +53,13 @@ return {
                 axPrompt  = function() end,
                 alert     = function(s) alerted = s end,
                 appName   = "Hammerdeck",
-                t         = function(k, d) return i18n.tFeature("window_modal", k, d) end,
+                -- mirrors the REAL ctx.t contract (platform/ctx.lua): a bare lookup returns
+                -- the template; passing args formats it safely (positional-aware). A fake
+                -- that drops the varargs would let a leaf's formatting go untested.
+                t         = function(k, d, ...)
+                    if select("#", ...) == 0 then return i18n.tFeature("window_modal", k, d) end
+                    return i18n.formatFeature("window_modal", k, d, ...)
+                end,
             }
             windows.focusedOrAlert(fakeCtx, "Window Mode")
             ok(alerted and alerted:find("辅助功能", 1, true) and alerted:find("Hammerdeck", 1, true),

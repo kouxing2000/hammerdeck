@@ -373,25 +373,22 @@ end
 function triggers.describe(spec)
     if not spec then return i18n.t("trigger.none", "no trigger") end
     if spec.type == "hotkey" then
-        return string.format(i18n.t("trigger.hotkey", "hotkey: %s"),
-            table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key))
+        return i18n.format("trigger.hotkey", "hotkey: %s", table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key))
     elseif spec.type == "chord" then
         local prefix = table.concat(spec.mods or {}, "+") .. "+" .. tostring(spec.key)
-        return string.format(i18n.t("trigger.chord", "chord: %s then %s"),
-            prefix, table.concat(spec.follows or {}, " "))
+        return i18n.format("trigger.chord", "chord: %1$s then %2$s", prefix, table.concat(spec.follows or {}, " "))
     elseif spec.type == "schedule" then
         if spec.everyMin then
-            return string.format(i18n.t("trigger.scheduleEvery", "schedule: every %d min"), spec.everyMin)
+            return i18n.format("trigger.scheduleEvery", "schedule: every %d min", spec.everyMin)
         end
-        return string.format(i18n.t("trigger.scheduleAt", "schedule: daily at %s"), tostring(spec.at))
+        return i18n.format("trigger.scheduleAt", "schedule: daily at %s", tostring(spec.at))
     elseif spec.type == "event" then
-        return string.format(i18n.t("trigger.event", "event: %s"), tostring(spec.event))
+        return i18n.format("trigger.event", "event: %s", tostring(spec.event))
     elseif spec.type == "state" then
         local enter = spec.becomes ~= nil
         local val
         if enter then val = spec.becomes else val = spec.leaves end
-        return string.format(i18n.t("trigger.state", "state: %s %s %s"),
-            tostring(spec.signal),
+        return i18n.format("trigger.state", "state: %1$s %2$s %3$s", tostring(spec.signal),
             enter and i18n.t("trigger.becomes", "becomes") or i18n.t("trigger.leaves", "leaves"),
             tostring(val))
     end

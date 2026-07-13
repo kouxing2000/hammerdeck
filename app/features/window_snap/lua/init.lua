@@ -194,10 +194,9 @@ local function arranger(ctx)
         -- and (on 3+ displays) open a picker showing "0 windows" everywhere.
         if not ctx.axTrusted() then
             ctx.axPrompt()
-            ctx.alert(string.format(
+            ctx.alert(
                 ctx.t("window.axRequired",
-                    "%s needs the Accessibility permission -- grant %s in System Settings, then try again"),
-                "Window Arrange", ctx.appName))
+                    "%1$s needs the Accessibility permission -- grant %2$s in System Settings, then try again", "Window Arrange", ctx.appName))
             return
         end
         -- The active display: the focused window's screen, else the pointer's,

@@ -98,7 +98,7 @@ local function openPalette(ctx)
                 ctx.afterSeconds(0, function()
                     local ok, err = ctx.runCommand(choice.id, choice.actionId)
                     if not ok then
-                        ctx.alert(string.format(ctx.t("alert.failed", "Command failed: %s"), tostring(err)))
+                        ctx.alert(ctx.t("alert.failed", "Command failed: %s", tostring(err)))
                     end
                 end)
             end,

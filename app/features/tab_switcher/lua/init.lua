@@ -122,7 +122,7 @@ local function jumperFor(ctx)
                 for _, tab in ipairs(tabs or {}) do
                     if tab.visible ~= false and tab.url and tab.url ~= "" then
                         local title = tab.title ~= "" and tab.title or tab.url
-                        if b.name == "Safari" then title = string.format(ctx.t("row.safariPrefix", "[Safari] %s"), title) end
+                        if b.name == "Safari" then title = ctx.t("row.safariPrefix", "[Safari] %s", title) end
                         out[#out + 1] = {
                             text = title,
                             subText = tab.url,
@@ -239,7 +239,7 @@ local function jumperFor(ctx)
         if st.chooser.isVisible() then
             -- Repeat invocation: cycle (wrap against the visible rows).
             st.chooser.setPlaceholder(st.cycleMod
-                and string.format(ctx.t("chooser.releaseToJump", "Release %s to jump"), st.cycleMod)
+                and ctx.t("chooser.releaseToJump", "Release %s to jump", st.cycleMod)
                 or ctx.t("chooser.pressEnter", "Press Enter to jump"))
             cyclingChooser.cycle(st.chooser, backward, #st.choices)
             armAutoJump()

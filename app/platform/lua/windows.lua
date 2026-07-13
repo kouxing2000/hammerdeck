@@ -463,9 +463,11 @@ function M.focusedOrAlert(ctx, featureName)
     if f then return f end
     if not ctx.axTrusted() then
         ctx.axPrompt()
-        ctx.alert(string.format(
-            ctx.t("window.axRequired",
-                "%s needs the Accessibility permission -- grant %s in System Settings, then try again"),
+        -- ctx.t does the formatting (never a raw string.format over a translated template):
+        -- the slots are numbered, so a locale may reorder them, and Lua's string.format
+        -- would RAISE on "%1$s". This leaf reaches i18n only through the ctx handed to it.
+        ctx.alert(ctx.t("window.axRequired",
+            "%1$s needs the Accessibility permission -- grant %2$s in System Settings, then try again",
             featureName, ctx.appName))
     else
         ctx.alert(ctx.t("window.noFocused", "No focused window"))

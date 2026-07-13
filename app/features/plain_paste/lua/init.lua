@@ -83,8 +83,8 @@ return {
               if not text then return end
               if not ctx.axTrusted() then
                   ctx.axPrompt()
-                  ctx.alert(string.format(ctx.t("alert.axRequired",
-                      "Typing needs the Accessibility permission -- grant %s in System Settings, then try again"), ctx.appName))
+                  ctx.alert(ctx.t("alert.axRequired",
+                      "Typing needs the Accessibility permission -- grant %s in System Settings, then try again", ctx.appName))
                   return
               end
               ctx.typeText(text)

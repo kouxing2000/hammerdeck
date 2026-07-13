@@ -269,7 +269,7 @@ struct UsageReportView: View {
     private func appDrillCard(_ row: UsageAppRow) -> some View {
         DashCard(title: row.app, icon: "chevron.left.circle.fill", tint: .indigo,
                  onTitleTap: { selectedApp = nil }) {
-            Text(String(format: Strings.t("usage.ofTrackedTime", default: "%@ · %d%% of tracked time"),
+            Text(String(format: Strings.t("usage.ofTrackedTime", default: "%1$@ · %2$d%% of tracked time"),
                         usageTimeString(row.secs), Int((row.share * 100).rounded())))
                 .font(.caption).foregroundStyle(.secondary)
             if row.contexts.isEmpty {
@@ -428,7 +428,7 @@ struct UsageReportView: View {
                                      days.count)
                 let longestStr = usageTimeString(Double(data.longestSessionMin * 60))
                 Text(String(format: Strings.t("usage.rhythmCaption",
-                                              default: "When the machine was awake, by day. %@ across %@; longest %@."),
+                                              default: "When the machine was awake, by day. %1$@ across %2$@; longest %3$@."),
                             sessionsStr, daysStr, longestStr))
                     .font(.caption).foregroundStyle(.secondary)
                 // 0–24h scale, shown once and aligned to the track column.

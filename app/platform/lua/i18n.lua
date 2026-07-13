@@ -39,6 +39,9 @@ local locale       = "en"
 local globalCat    = {}    -- resolved-locale chrome/platform catalog
 local featureCats  = {}    -- id -> catalog table | false (false = checked, absent)
 local appdir               -- resolved from loader, overridable for tests
+local logger               -- optional sink for bad-template warnings, INJECTED at boot
+                           -- (this module never touches the seam, so it cannot log itself)
+local warnedTemplates = {} -- key -> true: a broken template warns ONCE, not per render
 
 local function readCatalog(path)
     local f = io.open(path, "r")
@@ -61,6 +64,9 @@ function M.configure(opts)
     appdir      = opts.appdir or require("loader").appdir
     globalCat   = {}
     featureCats = {}
+    -- The log sink SURVIVES a reconfigure (a locale switch re-reads the catalogs but
+    -- must not go silent); pass it once at boot.
+    if opts.log ~= nil then logger = opts.log end
     if locale ~= "en" then
         globalCat = readCatalog(appdir .. "/i18n/" .. locale .. ".json") or {}
     end
@@ -157,7 +163,200 @@ function M.plural(key, count, forms, id)
     if type(entry) == "string" then return entry end
     if type(entry) ~= "table" then return key end
     local c = M.category(count)
-    return entry[c] or entry.other or entry.one or key
+    local picked = entry[c] or entry.other or entry.one
+    -- Type-check the catalog value, exactly as M.t/M.tFeature do. A translator can typo a
+    -- form as a JSON number ("other": 3) or a bool, and handing that to a formatter that
+    -- expects a string is a crash, not a translation bug. An untyped form falls back to the
+    -- inline English `forms`, which is authored in-repo and trustworthy.
+    if type(picked) ~= "string" then
+        if type(forms) == "string" then return forms end
+        if type(forms) == "table" then
+            local en = forms[c] or forms.other or forms.one
+            if type(en) == "string" then return en end
+        end
+        return key
+    end
+    return picked
 end
+
+-- ---------------------------------------------------------------------------
+-- FORMATTING. Lua's string.format has NO positional specifiers: `%2$s` raises
+-- "invalid conversion '%2$' to 'format'" (Sources/CLua/lstrlib.c checkformat --
+-- flags, width, precision, then an ALPHA conversion char; '$' can never appear),
+-- and it consumes arguments strictly in order. A 2009 patch to add the POSIX
+-- extension was never accepted upstream, so every solution lives above format().
+--
+-- That limitation is a localization bug, because word order is not universal:
+-- "Set wallpaper <color> on <display>" has to become "把 <display> 的壁纸设为
+-- <color>" in some languages, and a translator handed only `%s %s` cannot say so.
+-- Worse, `%1$s` is exactly what a translator WILL write -- Apple .strings, gettext,
+-- and the Swift half of this very catalog (String(format:)) all support it -- and in
+-- Lua it does not degrade, it THROWS, from inside a firing rule.
+--
+-- So this layer owns formatting:
+--   * it accepts `%1$s` / `%2$s` and reorders the arguments before string.format;
+--   * it NEVER throws -- a broken template (bad spec, too many slots, positional
+--     mixed with plain) falls back to the ENGLISH source and warns once.
+-- A malformed translation is then a cosmetic bug, never a crash.
+
+--- Rewrite "%2$s ... %1$s" into "%s ... %s" plus the argument order it implies.
+--- Returns (template, order) for a positional template, (template, nil) for a plain
+--- one, or (nil, reason) when the two styles are MIXED -- which POSIX leaves
+--- undefined and we refuse rather than guess.
+---@param tpl string
+---@return string|nil template  nil when the template is unusable
+---@return integer[]|nil order  the argument order, when the template is positional
+---@return string|nil reason    why the template is unusable
+local function expandPositional(tpl)
+    -- No cheap `find` pre-check: "100%%1$ off %s" contains the bytes of a positional
+    -- specifier but they belong to an ESCAPED percent, and a naive pre-check would send a
+    -- perfectly plain template down the positional path and get it refused as "mixed".
+    -- The scanner below is the only thing that knows the difference.
+    local out, order, plain = {}, {}, 0
+    local i, n = 1, #tpl
+    while i <= n do
+        local c = tpl:sub(i, i)
+        if c ~= "%" then
+            out[#out + 1] = c
+            i = i + 1
+        elseif tpl:sub(i + 1, i + 1) == "%" then
+            out[#out + 1] = "%%"                            -- an escaped percent
+            i = i + 2
+        else
+            local num = tpl:match("^(%d+)%$", i + 1)
+            if num then
+                order[#order + 1] = tonumber(num)
+                out[#out + 1] = "%"
+                i = i + 1 + #num + 1                        -- skip "%", digits, "$"
+            else
+                plain = plain + 1                           -- a plain conversion
+                out[#out + 1] = "%"
+                i = i + 1
+            end
+        end
+    end
+    if #order == 0 then return tpl, nil, nil end        -- a plain template: hand it back as-is
+    if plain > 0 then
+        return nil, nil, "mixes positional (%1$s) and plain (%s) specifiers"
+    end
+    return table.concat(out), order, nil
+end
+
+--- Format `tpl`, honouring positional specifiers, and NEVER raise: on any failure
+--- fall back to `fallback` (the English source), warn once under `key`, and if even
+--- that fails, return the raw fallback text. Returns the formatted string.
+local function safeFormat(key, tpl, fallback, ...)
+    local args = table.pack(...)
+    -- NEVER RAISE means never -- for the TEMPLATE (a mistyped catalog value that slipped past
+    -- a lookup: `"other": 3`) and for the FALLBACK alike. Either one reaching the scanner as
+    -- a non-string blows up on `#tpl`, and a crash from a bad translation inside a firing
+    -- rule is the exact class this layer exists to make impossible.
+    if type(tpl) ~= "string" then tpl = nil end
+    if type(fallback) ~= "string" then fallback = tostring(fallback) end
+    -- Key the once-per-template warning by the TEMPLATE too, not just the key: several
+    -- features share a key name (three declare "alert.axRequired"), and a plural has two
+    -- forms under one key -- keying by name alone would let the first broken one silence
+    -- every other.
+    local warnKey = tostring(key) .. "\0" .. tostring(tpl)
+    local function warn(why)
+        if not warnedTemplates[warnKey] then
+            warnedTemplates[warnKey] = true
+            if logger then
+                logger("i18n: bad template for '" .. key .. "' (" .. why ..
+                    ") -- falling back to English: " .. tostring(tpl))
+            end
+        end
+    end
+
+    local form, order, reason
+    if tpl == nil then
+        reason = "template is not a string"
+    else
+        form, order, reason = expandPositional(tpl)
+    end
+    local okFmt, res
+    if form == nil then
+        warn(tostring(reason))
+    elseif order then
+        local reordered, bad = {}, false
+        for slot, argIndex in ipairs(order) do
+            if argIndex < 1 or argIndex > args.n then bad = true break end
+            reordered[slot] = args[argIndex]
+        end
+        if bad then
+            warn("a positional slot has no matching argument")
+        else
+            okFmt, res = pcall(string.format, form, table.unpack(reordered, 1, #order))
+            if not okFmt then warn(tostring(res)) end
+        end
+    else
+        okFmt, res = pcall(string.format, form, table.unpack(args, 1, args.n))
+        if not okFmt then warn(tostring(res)) end
+    end
+    if okFmt then return res end
+
+    -- The English source is authored in-repo (not by a translator), so it is the
+    -- trustworthy fallback -- but it is ALSO positional ("Move %1$s to %2$s" is the house
+    -- style for any multi-slot template), so it needs the same expansion. Guard it too:
+    -- the fallback path must never trade one throw for another.
+    local enForm, enOrder = expandPositional(fallback)
+    local okEn, en
+    if enForm and enOrder then
+        local reordered, bad = {}, false
+        for slot, argIndex in ipairs(enOrder) do
+            -- same bounds check as the primary path: without it a broken English source
+            -- ("%3$s" with two args) formats `nil` into the string instead of failing over
+            -- to the raw text.
+            if argIndex < 1 or argIndex > args.n then bad = true break end
+            reordered[slot] = args[argIndex]
+        end
+        if not bad then
+            okEn, en = pcall(string.format, enForm, table.unpack(reordered, 1, #enOrder))
+        end
+    elseif enForm then
+        okEn, en = pcall(string.format, enForm, table.unpack(args, 1, args.n))
+    end
+    return okEn and en or tostring(fallback)
+end
+
+--- Look up `key` and format it with `...`. `en` is the inline English source, used
+--- both as the missing-key default and as the fallback if the translation's template
+--- is broken. THE call for any string with a placeholder.
+---@param key string
+---@param en string English source template
+---@return string
+function M.format(key, en, ...)
+    return safeFormat(key, M.t(key, en), en, ...)
+end
+
+--- The feature-scoped twin of M.format (resolves against features/<id>/i18n/<locale>.json,
+--- then the global catalog). Backs ctx.t(key, default, ...) -- the ONLY formatting path a
+--- feature should use, so a feature's translations get positional support and the
+--- never-throws guarantee exactly like the platform's do.
+---@param id string feature id
+---@param key string
+---@param en string English source template
+---@return string
+function M.formatFeature(id, key, en, ...)
+    return safeFormat(key, M.tFeature(id, key, en), en, ...)
+end
+
+--- The plural twin: pick the template for `count` (catalog or inline `forms`), then
+--- format it the same safe way. `forms` is { one=, other= } (or a string).
+---@param key string
+---@param count number
+---@param forms table|string
+---@param id string? feature id -> a feature-scoped key
+---@return string
+function M.formatPlural(key, count, forms, id, ...)
+    local tpl = M.plural(key, count, forms, id)
+    local en  = type(forms) == "table"
+        and (forms[count == 1 and "one" or "other"] or forms.other or forms.one or key)
+        or tostring(forms)
+    return safeFormat(key, tpl, en, ...)
+end
+
+--- Test seam: forget which templates have already warned (they warn once per process).
+function M.resetTemplateWarnings() warnedTemplates = {} end
 
 return M

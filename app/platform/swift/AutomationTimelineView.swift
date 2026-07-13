@@ -76,7 +76,7 @@ private func fmtHM(_ minutes: Int) -> String {
 
 private func fmtEvery(_ min: Int) -> String {
     if min % 60 == 0 { return String(format: Strings.t("timeline.everyH", default: "every %dh"), min / 60) }
-    if min > 60 { return String(format: Strings.t("timeline.everyHM", default: "every %dh%dm"), min / 60, min % 60) }
+    if min > 60 { return String(format: Strings.t("timeline.everyHM", default: "every %1$dh%2$dm"), min / 60, min % 60) }
     return String(format: Strings.t("timeline.everyM", default: "every %dm"), min)
 }
 
@@ -469,7 +469,7 @@ private struct AgendaView: View {
     private func relative(_ mins: Int) -> String {
         if mins == 0 { return Strings.t("timeline.now", default: "now") }
         if mins < 60 { return String(format: Strings.t("timeline.inMin", default: "in %d min"), mins) }
-        return String(format: Strings.t("timeline.inHM", default: "in %dh %dm"), mins / 60, mins % 60)
+        return String(format: Strings.t("timeline.inHM", default: "in %1$dh %2$dm"), mins / 60, mins % 60)
     }
 
     var body: some View {

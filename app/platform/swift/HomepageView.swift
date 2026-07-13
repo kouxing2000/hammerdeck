@@ -362,7 +362,7 @@ struct DashboardView: View {
             let enabled = store.features.filter { $0.enabled }.count
             let failed = store.features.filter { $0.failed }
             statusRow("checkmark.circle.fill", .green,
-                      String(format: Strings.t("home.features_enabled", default: "%d of %d features enabled"), enabled, total))
+                      String(format: Strings.t("home.features_enabled", default: "%1$d of %2$d features enabled"), enabled, total))
             if conflicts.isEmpty {
                 statusRow("checkmark.circle.fill", .green, Strings.t("home.no_conflicts", default: "No shortcut conflicts"))
             } else {
@@ -379,7 +379,7 @@ struct DashboardView: View {
             } else {
                 Button { openSettings() } label: {
                     statusRow("xmark.octagon.fill", .red,
-                              String(format: Strings.t("home.failed_list", default: "%d failed: %@"),
+                              String(format: Strings.t("home.failed_list", default: "%1$d failed: %2$@"),
                                      failed.count, failed.map { $0.name }.joined(separator: ", ")))
                 }
                 .buttonStyle(.plain)
@@ -484,7 +484,7 @@ struct DashboardView: View {
     static func relative(_ mins: Int) -> String {
         if mins == 0 { return Strings.t("home.relative_now", default: "now") }
         if mins < 60 { return String(format: Strings.t("home.relative_in_min", default: "in %d min"), mins) }
-        return String(format: Strings.t("home.relative_in_hm", default: "in %dh %dm"), mins / 60, mins % 60)
+        return String(format: Strings.t("home.relative_in_hm", default: "in %1$dh %2$dm"), mins / 60, mins % 60)
     }
 
     private func fmtHM(_ minutes: Int) -> String {

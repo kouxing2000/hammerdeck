@@ -29,6 +29,7 @@ local signals  = require("platform.signals")
 local adapter  = require("platform.adapter")
 local json     = require("platform.json")
 local windows  = require("platform.windows")
+local i18n     = require("platform.i18n")
 
 local rules = {}
 
@@ -575,7 +576,11 @@ local EVENT_PHRASES = {
     screenLock = "the screen locks", screenUnlock = "the screen unlocks",
     screenChanged = "the displays change",
 }
-local function eventPhrase(ev) return EVENT_PHRASES[ev] or tostring(ev) end
+local function eventPhrase(ev)
+    local en = EVENT_PHRASES[ev]
+    if not en then return tostring(ev) end
+    return i18n.t("rules.event." .. ev, en)
+end
 
 --- A plain-language read-back of a rule spec, e.g. "When Slack loses focus,
 --- minimize it." Composed HERE (not in triggers.describe) because natural phrasing
@@ -601,34 +606,61 @@ function rules.sentence(spec)
     end
     local effectClause = lowerFirst(effects.describe(spec.effect, { pronoun = true }))
     if effectClause == "" then return "" end
+    -- The GRAMMAR is a template, not concatenation. English wants an article and
+    -- subject-verb-object ("When the power source becomes battery, lock the screen.");
+    -- Chinese wants neither the article nor that order. Hardcoding `"the " .. label`
+    -- hands a translator a sentence they cannot fix -- so the clause and the sentence
+    -- are each ONE format string a locale owns end to end.
     local on = spec.on
     if on.type == "state" then
-        local m = signals.meta(on.signal) or {}
+        local m = signals.meta(on.signal) or {}     -- already localized (signals.meta)
         local enter = on.becomes ~= nil
         local value = enter and on.becomes or on.leaves
         if value == nil or value == "" then return "" end
-        local verb = enter and (m.enterVerb or "becomes")
-                            or (m.leaveVerb or "leaves")
+        -- The fallback verb is resolved UNCONDITIONALLY, not short-circuited behind
+        -- `m.enterVerb or ...`. Every shipped signal declares its verbs, so a lazy `or`
+        -- would mean these keys are never looked up -- and a key nothing ever looks up is a
+        -- key no gate can see: rules.word.becomes/leaves could be deleted from the catalog
+        -- and the suite stayed green, until the day a signal omits its verbs and the
+        -- sentence quietly turns English. A table index is free; a blind spot is not.
+        local fallbackVerb = enter and i18n.t("rules.word.becomes", "becomes")
+                                    or i18n.t("rules.word.leaves", "leaves")
+        -- Written as an if, NOT `(enter and m.enterVerb or m.leaveVerb) or fallbackVerb`:
+        -- that chain reads fine and is wrong. For an ENTER condition on a signal that
+        -- declares only `leaveVerb`, `enter and nil` is nil, so the `or` falls through to
+        -- the LEAVE verb -- and the read-back sentence then says the opposite of what the
+        -- rule does ("When Slack loses focus, ..." for a rule that fires when it GAINS
+        -- focus). An `and/or` chain cannot express "pick this side, else the default".
+        local verb
+        if enter then verb = m.enterVerb or fallbackVerb
+        else            verb = m.leaveVerb or fallbackVerb end
         local clause
         if m.provides then
-            clause = tostring(value) .. " " .. verb               -- "Slack loses focus"
+            -- the ENTITY is the subject: "Slack loses focus"
+            clause = i18n.format("rules.clause.entity", "%1$s %2$s", tostring(value), verb)
         else
-            clause = "the " .. lowerFirst(m.label or on.signal)   -- "the power source becomes battery"
-                .. " " .. verb .. " " .. tostring(value)
+            -- a PROPERTY of the machine: "the power source becomes battery".
+            -- lowerFirst is ENGLISH morphology applied to a LOCALIZED label: a no-op for zh
+            -- (no letter case), but a German noun must stay capitalized -- when a cased
+            -- locale ships, this belongs in the template, not around it.
+            clause = i18n.format("rules.clause.property", "the %1$s %2$s %3$s",
+                lowerFirst(m.label or on.signal), verb, tostring(value))
         end
-        return string.format("When %s, %s.",clause, effectClause)
+        return i18n.format("rules.sentence.when", "When %1$s, %2$s.", clause, effectClause)
     elseif on.type == "event" then
-        return string.format("When %s, %s.",eventPhrase(on.event), effectClause)
+        return i18n.format("rules.sentence.when", "When %1$s, %2$s.",
+            eventPhrase(on.event), effectClause)
     elseif on.type == "schedule" then
         local clause
         if on.everyMin then
-            clause = string.format("Every %d minutes", on.everyMin)
+            clause = i18n.formatPlural("rules.clause.everyMin", on.everyMin,
+                { one = "Every %d minute", other = "Every %d minutes" }, nil, on.everyMin)
         elseif on.at then
-            clause = string.format("Every day at %s", tostring(on.at))
+            clause = i18n.format("rules.clause.dailyAt", "Every day at %s", tostring(on.at))
         else
             return ""
         end
-        return string.format("%s, %s.", clause, effectClause)
+        return i18n.format("rules.sentence.schedule", "%1$s, %2$s.", clause, effectClause)
     end
     return ""
 end
@@ -667,9 +699,12 @@ function rules.formOptions()
         end
     end
     -- The named snap positions (id + label) for the layout editor's position picker.
+    -- platform.windows is a LEAF util (zero require -- it cannot reach i18n), so its
+    -- English labels are localized HERE, where they cross to the host.
     local positions = {}
     for _, key in ipairs(windows.POSITION_ORDER) do
-        positions[#positions + 1] = { id = key, label = windows.POSITION_LABELS[key] or key }
+        local en = windows.POSITION_LABELS[key] or key
+        positions[#positions + 1] = { id = key, label = i18n.t("rules.position." .. key, en) }
     end
     return {
         triggerTypes     = { "state", "event", "schedule" },

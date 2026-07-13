@@ -135,8 +135,22 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- catalog first, then the shared global catalog, then the inline English
     -- `default`. Interpolate with string.format over the result (placeholders
     -- stay identical across locales). ctx.plural picks a one/other template.
-    function ctx.t(key, default)        return i18n.tFeature(m.id, key, default) end
-    function ctx.plural(key, count, forms) return i18n.plural(key, count, forms, m.id) end
+    -- ctx.t(key, default)            -> the template, unformatted (a plain string)
+    -- ctx.t(key, default, a, b, ...)  -> localized AND formatted, safely.
+    --
+    -- Pass the arguments HERE rather than doing string.format(ctx.t(...)) yourself: only
+    -- this path honours a locale's positional specifiers ("把 %2$s 移到 %1$s" -- Lua's
+    -- string.format cannot reorder, and RAISES on "%2$s"), and only this path refuses to
+    -- throw when a translation's slots don't match. A raw string.format over a translated
+    -- template turns one mistyped placeholder in a catalog into a crash in your feature.
+    function ctx.t(key, default, ...)
+        if select("#", ...) == 0 then return i18n.tFeature(m.id, key, default) end
+        return i18n.formatFeature(m.id, key, default, ...)
+    end
+    function ctx.plural(key, count, forms, ...)
+        if select("#", ...) == 0 then return i18n.plural(key, count, forms, m.id) end
+        return i18n.formatPlural(key, count, forms, m.id, ...)
+    end
 
     -- logging / notifications -------------------------------------------------
     function ctx.log(...) adapter.log("[" .. m.id .. "]", ...) end

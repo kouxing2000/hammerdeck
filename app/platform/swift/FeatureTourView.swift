@@ -65,7 +65,7 @@ struct FeatureTourView: View {
                 Text(Strings.t("tour.title", default: "Discover Features")).font(.headline)
                 Spacer()
                 if !deck.isEmpty {
-                    Text(String(format: Strings.t("tour.progress", default: "%d of %d"), min(index + 1, deck.count), deck.count))
+                    Text(String(format: Strings.t("tour.progress", default: "%1$d of %2$d"), min(index + 1, deck.count), deck.count))
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Button { onClose() } label: {

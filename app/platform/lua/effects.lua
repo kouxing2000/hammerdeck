@@ -40,6 +40,7 @@
 local registry = require("platform.registry")
 local adapter  = require("platform.adapter")
 local windows  = require("platform.windows")
+local i18n     = require("platform.i18n")
 
 local effects = {}
 
@@ -97,13 +98,25 @@ end
 -- Friendly names for the wallpaper presets the rule editor offers, so describe()
 -- (the list row + the fire log + the read-back sentence) reads "white" instead of
 -- "#FFFFFF". A custom hex falls back to itself.
+--
+-- Every user-facing word in this file is VOCABULARY the read-back sentence is built
+-- from, so each one is looked up (English inline as the source, per the i18n contract)
+-- rather than concatenated raw -- the whole rules sentence used to be English even in
+-- a zh build, because none of it ever passed through i18n.
 local COLOR_NAMES = {
     ["#FFFFFF"] = "white", ["#F2F2F2"] = "light gray",
     ["#808080"] = "mid gray", ["#000000"] = "black",
 }
+local COLOR_KEYS = {
+    ["#FFFFFF"] = "white", ["#F2F2F2"] = "lightGray",
+    ["#808080"] = "midGray", ["#000000"] = "black",
+}
 local function colorName(hex)
     if type(hex) ~= "string" then return "?" end
-    return COLOR_NAMES[hex:upper()] or hex
+    local up = hex:upper()
+    local en = COLOR_NAMES[up]
+    if not en then return hex end                    -- a custom hex names itself
+    return i18n.t("rules.color." .. COLOR_KEYS[up], en)
 end
 
 -- The file NAME of a path, so describe() reads "Set wallpaper sunset.jpg" rather
@@ -119,25 +132,52 @@ local DISPLAY_TARGETS = {
     all = "all displays", external = "external displays", primary = "the main display",
 }
 
--- describe(): render a DISPLAY param -- "it" (pronoun read-back) or "the
--- triggering <field>" for a from-trigger ref, a friendly category, else the
--- literal name. Shared by every effect that names a display.
-local function displayWhere(value, pronoun)
-    local f = triggerField(value)
-    return f and (pronoun and "it" or ("the triggering " .. f))
-        or DISPLAY_TARGETS[value] or tostring(value or "")
+-- describe(): a from-trigger param ("@trigger:app") reads as the pronoun "it" in the
+-- sentence read-back, or names the field in the compact form. The field NOUN is the
+-- same one the trigger picker shows (rules.triggerField.*), so both surfaces agree.
+local function triggerRef(field, pronoun)
+    if pronoun then return i18n.t("rules.word.it", "it") end
+    return i18n.format("rules.word.triggering", "the triggering %s",
+        i18n.t("rules.triggerField." .. field, field))
 end
 
--- describe(): render an APP param the same way (no friendly-category map).
+-- describe(): render a DISPLAY param -- the pronoun / "the triggering <field>" for a
+-- from-trigger ref, a friendly category, else the literal monitor name (data, not
+-- vocabulary -- never translated). Shared by every effect that names a display.
+local function displayWhere(value, pronoun)
+    local f = triggerField(value)
+    if f then return triggerRef(f, pronoun) end
+    local en = DISPLAY_TARGETS[value]
+    if en then return i18n.t("rules.display." .. tostring(value), en) end
+    return tostring(value or "")
+end
+
+-- describe(): render an APP param the same way (no friendly-category map -- an app
+-- name is data).
 local function appWho(value, pronoun)
     local f = triggerField(value)
-    return f and (pronoun and "it" or ("the triggering " .. f)) or tostring(value or "")
+    if f then return triggerRef(f, pronoun) end
+    return tostring(value or "")
 end
 
 -- Lowercase only the first character (so a step reads mid-sentence: "Notify ..."
 -- -> "notify ..."). Used by the chain read-back, where every step after the
 -- first joins as a lowercase clause. Shared with rules.lua via platform.text.
+-- English morphology, and a no-op on a script without letter case (zh), which is
+-- exactly the right behaviour there -- Chinese needs no lowercasing to read mid-
+-- sentence.
 local lowerFirst = require("platform.text").lowerFirst
+
+--- One effect's read-back clause, as a TEMPLATE rather than concatenated words --
+--- so a locale can reorder the parts ("Set wallpaper %s on %s" vs "在 %s 上设置壁纸 %s")
+--- instead of being handed English word order it cannot fix. `kind` keys the string
+--- (rules.effectDesc.<kind>); `en` is the English source, inline as always.
+local function desc(kind, en, ...)
+    -- i18n.format, not string.format: it honours a locale's positional specifiers
+    -- ("把 %2$s 的壁纸设为 %1$s") and never throws on a broken translation -- this
+    -- clause is rendered while a rule FIRES, so a raise here would take the rule with it.
+    return i18n.format("rules.effectDesc." .. kind, en, ...)
+end
 
 -- Run an app-target effect (minimize / hide / quit): resolve its `app` (the
 -- readable name, a literal or "@trigger:app") and apply `fn(target)`. One helper
@@ -343,7 +383,11 @@ local function appTargetKind(verb, displayVerb, fn, label)
                 node.kind .. " effect needs an app (a name or '" .. effects.TRIGGER_APP .. "')")
         end,
         run = function(node, context) return appAction(node, context, fn, verb) end,
-        describe = function(node, pronoun) return displayVerb .. " " .. appWho(node.app, pronoun) end,
+        -- node.kind keys the template (minimizeApp / hideApp / quitApp), so the three
+        -- kinds the factory builds still get one translatable clause each.
+        describe = function(node, pronoun)
+            return desc(node.kind, displayVerb .. " %s", appWho(node.app, pronoun))
+        end,
         contextFree = true,
         label = label,
     }
@@ -365,11 +409,12 @@ EFFECT_KINDS = {
             -- loaded this boot (a parked rule). The label is feature-localized DATA --
             -- the same class as a notify title / app name / display name already shown
             -- verbatim -- NOT English glue, so it echoes the localized dropdown label
-            -- (Chinese in a zh-Hans build); the glue ("Run") stays English.
+            -- (Chinese in a zh-Hans build). The glue ("Run %s") is a template, so the
+            -- verb and its object can swap places where a locale needs them to.
             local label = registry.actionLabel(node.feature, node.action)
-            if label then return "Run " .. label end
-            return "Run " .. tostring(node.feature)
-                .. (node.action and ("." .. node.action) or "")
+            if label then return desc("command", "Run %s", label) end
+            return desc("command", "Run %s", tostring(node.feature)
+                .. (node.action and ("." .. node.action) or ""))
         end,
         -- An unknown command target (a typo'd feature/action) reads as
         -- context-dependent -- the safe default.
@@ -402,7 +447,7 @@ EFFECT_KINDS = {
             if not ok then return false, tostring(err) end
             return true
         end,
-        describe = function(node) return 'Notify "' .. tostring(node.title or "") .. '"' end,
+        describe = function(node) return desc("notify", 'Notify "%s"', tostring(node.title or "")) end,
         contextFree = true,
         label = "Notify (banner)",
     },
@@ -432,7 +477,9 @@ EFFECT_KINDS = {
         end,
         describe = function(node)
             local n = (type(node.placements) == "table") and #node.placements or 0
-            return "Arrange " .. n .. (n == 1 and " window" or " windows")
+            -- a real plural, not "window" .. "s": zh has one form, en has two
+            return i18n.formatPlural("rules.effectDesc.layout", n,
+                { one = "Arrange %d window", other = "Arrange %d windows" }, nil, n)
         end,
         contextFree = true,
         label = "Arrange windows (layout)",
@@ -447,7 +494,7 @@ EFFECT_KINDS = {
             if not ok then return false, tostring(err) end
             return true
         end,
-        describe = function(node) return 'Run Shortcut "' .. tostring(node.name or "") .. '"' end,
+        describe = function(node) return desc("runShortcut", 'Run Shortcut "%s"', tostring(node.name or "")) end,
         contextFree = true,
         label = "Run a Shortcut",
     },
@@ -461,7 +508,7 @@ EFFECT_KINDS = {
             if not ok then return false, tostring(err) end
             return true
         end,
-        describe = function(node) return "Open " .. tostring(node.url or "") end,
+        describe = function(node) return desc("openURL", "Open %s", tostring(node.url or "")) end,
         contextFree = true,
         label = "Open a URL",
     },
@@ -485,7 +532,8 @@ EFFECT_KINDS = {
             return true
         end,
         describe = function(node, pronoun)
-            return "Set wallpaper " .. colorName(node.color) .. " on " .. displayWhere(node.display, pronoun)
+            return desc("solidWallpaper", "Set wallpaper %1$s on %2$s",
+                colorName(node.color), displayWhere(node.display, pronoun))
         end,
         contextFree = true,
         label = "Set solid wallpaper",
@@ -509,7 +557,8 @@ EFFECT_KINDS = {
             return true
         end,
         describe = function(node, pronoun)
-            return "Set wallpaper " .. baseName(node.image) .. " on " .. displayWhere(node.display, pronoun)
+            return desc("setWallpaperImage", "Set wallpaper %1$s on %2$s",
+                baseName(node.image), displayWhere(node.display, pronoun))
         end,
         contextFree = true,
         label = "Set wallpaper image",
@@ -542,7 +591,7 @@ EFFECT_KINDS = {
             if not res then return false, "no installed app: " .. tostring(node.app) end
             return true
         end,
-        describe = function(node) return "Open " .. tostring(node.app or "") end,
+        describe = function(node) return desc("launchApp", "Open %s", tostring(node.app or "")) end,
         contextFree = true,
         label = "Open an app",
     },
@@ -559,7 +608,8 @@ EFFECT_KINDS = {
             return res, reason
         end,
         describe = function(node, pronoun)
-            return "Move " .. appWho(node.app, pronoun) .. " to " .. displayWhere(node.display, pronoun)
+            return desc("moveAppToDisplay", "Move %1$s to %2$s",
+                appWho(node.app, pronoun), displayWhere(node.display, pronoun))
         end,
         contextFree = true,
         label = "Move an app to a display",
@@ -574,7 +624,7 @@ EFFECT_KINDS = {
             if not ok then return false, tostring(err) end
             return true
         end,
-        describe = function(node) return 'Say "' .. tostring(node.text or "") .. '"' end,
+        describe = function(node) return desc("speak", 'Say "%s"', tostring(node.text or "")) end,
         contextFree = true,
         label = "Speak text aloud",
     },
@@ -584,7 +634,7 @@ EFFECT_KINDS = {
             if not ok then return false, tostring(err) end
             return true
         end,
-        describe = function() return "Lock the screen" end,
+        describe = function() return desc("lockScreen", "Lock the screen") end,
         contextFree = true,
         label = "Lock the screen",
     },
@@ -594,7 +644,7 @@ EFFECT_KINDS = {
             if not ok then return false, tostring(err) end
             return true
         end,
-        describe = function() return "Start the screensaver" end,
+        describe = function() return desc("startScreensaver", "Start the screensaver") end,
         contextFree = true,
         label = "Start the screensaver",
     },
@@ -612,7 +662,7 @@ EFFECT_KINDS = {
             end
             return true   -- the Trash was already empty
         end,
-        describe = function() return "Empty the Trash" end,
+        describe = function() return desc("emptyTrash", "Empty the Trash") end,
         contextFree = true,
         label = "Empty the Trash",
     },
@@ -626,7 +676,7 @@ EFFECT_KINDS = {
             end
             return true   -- no external disks connected
         end,
-        describe = function() return "Eject external disks" end,
+        describe = function() return desc("eject", "Eject external disks") end,
         contextFree = true,
         label = "Eject external disks",
     },
@@ -650,9 +700,9 @@ EFFECT_KINDS = {
             return true
         end,
         describe = function(node)
-            if node.mode == "dark" then return "Switch to dark" end
-            if node.mode == "light" then return "Switch to light" end
-            return "Toggle dark mode"
+            if node.mode == "dark"  then return desc("setAppearance.dark",  "Switch to dark") end
+            if node.mode == "light" then return desc("setAppearance.light", "Switch to light") end
+            return desc("setAppearance.toggle", "Toggle dark mode")
         end,
         contextFree = true,
         label = "Set appearance",
@@ -678,9 +728,9 @@ EFFECT_KINDS = {
             return true
         end,
         describe = function(node)
-            if node.op == "up" then return "Volume up" end
-            if node.op == "down" then return "Volume down" end
-            return "Toggle mute"
+            if node.op == "up"   then return desc("volume.up",   "Volume up") end
+            if node.op == "down" then return desc("volume.down", "Volume down") end
+            return desc("volume.mute", "Toggle mute")
         end,
         contextFree = true,
         label = "Volume",
@@ -696,9 +746,9 @@ EFFECT_KINDS = {
             return true
         end,
         describe = function(node)
-            if node.key == "next" then return "Next track" end
-            if node.key == "previous" then return "Previous track" end
-            return "Play / Pause"
+            if node.key == "next"     then return desc("mediaKey.next", "Next track") end
+            if node.key == "previous" then return desc("mediaKey.previous", "Previous track") end
+            return desc("mediaKey.playpause", "Play / Pause")
         end,
         contextFree = true,
         label = "Media key",
@@ -728,16 +778,21 @@ EFFECT_KINDS = {
                 end
             end
             local n = #parts
-            if n == 0 then return "Chain (empty)" end
+            if n == 0 then return desc("chain.empty", "Chain (empty)") end
             if pronoun then
                 -- Read-back SENTENCE form: "minimize it, then notify ...". The outer
                 -- rules.sentence lowercases the first char; lowercase each SUBSEQUENT
                 -- step so the joined steps stay one flowing sentence (vs the compact
-                -- "N steps: A -> B" the list row / fire log keep below).
+                -- "N steps: A -> B" the list row / fire log keep below). The JOINER is
+                -- grammar, so it is translated too (zh joins with ", 然后 ").
                 for i = 2, n do parts[i] = lowerFirst(parts[i]) end
-                return table.concat(parts, ", then ")
+                return table.concat(parts, i18n.t("rules.word.thenJoin", ", then "))
             end
-            return n .. (n == 1 and " step: " or " steps: ") .. table.concat(parts, " -> ")
+            -- "2 steps: A -> B" -- the count is a real plural, and the label/arrow
+            -- around it is grammar, not punctuation to hardcode.
+            return i18n.formatPlural("rules.effectDesc.chain", n,
+                { one = "%1$d step: %2$s", other = "%1$d steps: %2$s" }, nil,
+                n, table.concat(parts, i18n.t("rules.word.stepArrow", " -> ")))
         end,
         -- A chain is context-free only if EVERY step is -- so a chain on an automated
         -- trigger is allowed iff none of its steps needs live context.
@@ -829,13 +884,17 @@ function effects.catalog(automatedOnly)
     -- context-free atoms, and validate is the backstop, so it's safe to list here.)
     local out = {}
     for _, kind in ipairs(CATALOG_ORDER) do
-        out[#out + 1] = { kind = kind, label = EFFECT_KINDS[kind].label }
+        -- The dropdown label, localized here at the single point the catalog is built.
+        out[#out + 1] = { kind = kind,
+                          label = i18n.t("rules.effectKind." .. kind, EFFECT_KINDS[kind].label) }
     end
     for _, a in ipairs(registry.enabledActions()) do
         if (not automatedOnly) or a.automatable then
             out[#out + 1] = {
                 kind = "command", feature = a.featureId, action = a.actionId,
-                label = "Run: " .. a.label,
+                -- a.label is already feature-localized DATA; only the "Run:" glue is
+                -- ours to translate, and it is a template so the object can move.
+                label = i18n.format("rules.effectKind.commandRun", "Run: %s", a.label),
             }
         end
     end

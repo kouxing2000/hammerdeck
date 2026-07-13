@@ -10,11 +10,20 @@
 -- M1 ships ONE signal -- frontmostApp -- push-backed by adapter.onAppActivated.
 -- displaysPresent / onAC / battery follow the same shape (later milestones).
 --
--- Leaf-ish module: requires only the adapter. No state machine of its own beyond
--- fan-out bookkeeping -- one underlying watcher per signal, shared across all
--- subscribers, released when the last unsubscribes.
+-- Leaf-ish module: requires the adapter, plus i18n for its UI vocabulary. No state
+-- machine of its own beyond fan-out bookkeeping -- one underlying watcher per signal,
+-- shared across all subscribers, released when the last unsubscribes.
+--
+-- The `meta` table below is the rules UI's VOCABULARY -- the noun and the verbs the
+-- trigger picker and the read-back sentence are built from ("Frontmost app",
+-- "gains focus"). The English lives inline as the source, exactly like every other
+-- string in this codebase, and meta() localizes it on the way out (keys:
+-- rules.signal.<name>.<field>). Localizing HERE, at the single read point, means every
+-- consumer -- formOptions' picker, rules.sentence's clause -- gets it for free and
+-- none of them can forget.
 
 local adapter = require("platform.adapter")
+local i18n    = require("platform.i18n")
 
 local signals = {}
 
@@ -250,8 +259,19 @@ end
 function signals.meta(name)
     local sig = REGISTRY[name]
     if not sig or not sig.meta then return nil end
+    -- Mixed-value bag (bundleIdMatch is a boolean, the vocabulary fields are strings),
+    -- so it is typed as such -- otherwise the first field pins the table's value type.
+    ---@type table<string, any>
     local m = { bundleIdMatch = sig.bundleIdMatch or false }
     for k, v in pairs(sig.meta) do m[k] = v end
+    -- Localize the VOCABULARY fields (and only those): `provides` is a field id the
+    -- host matches on, and `example` is a literal signal VALUE ("dark", "battery") the
+    -- engine compares against -- translating either would break matching, not the UI.
+    for _, f in ipairs({ "label", "valueLabel", "enterVerb", "leaveVerb" }) do
+        if type(m[f]) == "string" then
+            m[f] = i18n.t("rules.signal." .. name .. "." .. f, m[f])
+        end
+    end
     return m
 end
 

@@ -179,8 +179,8 @@ private struct RulePageRow: View {
                                           : Strings.t("rules.verbFired", default: "fired")
             let ago = Self.relativeAgo(at)
             return rule.lastFiredOk
-                ? (String(format: Strings.t("rules.fireStatus", default: "%@ %@"), verb, ago), .secondary)
-                : (String(format: Strings.t("rules.fireStatusFailed", default: "%@ %@ -- failed"), verb, ago), .orange)
+                ? (String(format: Strings.t("rules.fireStatus", default: "%1$@ %2$@"), verb, ago), .secondary)
+                : (String(format: Strings.t("rules.fireStatusFailed", default: "%1$@ %2$@ -- failed"), verb, ago), .orange)
         }
         return rule.enabled ? (Strings.t("rules.notFiredYet", default: "not fired yet"), .secondary) : nil
     }
@@ -829,7 +829,14 @@ private struct AddRuleForm: View {
                 triggerValuePill          // entity: "<value> <verb>"
                 verbPill
             } else {
-                sentenceWord("the " + (meta?.label ?? signal).lowercased())   // property
+                // "the <label>" is ENGLISH GRAMMAR -- an article this language needs and
+                // Chinese does not. Concatenating it here hands a translator a sentence
+                // they cannot fix (they would get "the 外观"), so the article lives in a
+                // template the locale owns. `.lowercased()` is English morphology and a
+                // no-op on a caseless script, which is the correct behaviour there.
+                // Mirrors rules.clause.property, the engine-side authority.
+                sentenceWord(String(format: Strings.t("rules.token.theProperty", default: "the %@"),
+                                    (meta?.label ?? signal).lowercased()))
                 verbPill
                 triggerValuePill          // "the <label> <verb> <value>"
             }
@@ -1129,14 +1136,14 @@ private struct AddRuleForm: View {
     }
 
     private var wallpaperSummary: String {
-        String(format: Strings.t("rules.token.wallpaperSummary", default: "%@ on %@"), colorLabel(solidColor), wallpaperWhere)
+        String(format: Strings.t("rules.token.wallpaperSummary", default: "%1$@ on %2$@"), colorLabel(solidColor), wallpaperWhere)
     }
 
     private var imageWallpaperSummary: String {
         let name = wallpaperImage.isEmpty
             ? Strings.t("rules.token.anImage", default: "an image")
             : URL(fileURLWithPath: wallpaperImage).lastPathComponent
-        return String(format: Strings.t("rules.token.wallpaperSummary", default: "%@ on %@"), name, wallpaperWhere)
+        return String(format: Strings.t("rules.token.wallpaperSummary", default: "%1$@ on %2$@"), name, wallpaperWhere)
     }
 
     private var valueTokenPlaceholder: String {
@@ -1605,7 +1612,7 @@ private struct AddRuleForm: View {
     private var valuePlaceholder: String {
         let label = meta?.valueLabel ?? Strings.t("rules.value", default: "Value")
         let ex = meta?.example ?? ""
-        return ex.isEmpty ? label : String(format: Strings.t("rules.valueExample", default: "%@ (e.g. %@)"), label, ex)
+        return ex.isEmpty ? label : String(format: Strings.t("rules.valueExample", default: "%1$@ (e.g. %2$@)"), label, ex)
     }
 
     // The layout editor's app picker draws from the running apps -- sourced directly

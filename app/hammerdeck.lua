@@ -30,7 +30,10 @@ local registry = require("platform.registry")
 -- Localization: resolve the UI locale ONCE (the Swift LocaleResolver is the
 -- authority, surfaced via adapter.locale()) and hand it to the i18n catalog, so
 -- registry.describe() metadata and every ctx.t localize against the same code.
-require("platform.i18n").configure({ locale = adapter.locale() })
+-- `log` is the sink i18n warns through when a TRANSLATION's template is broken
+-- (a bad placeholder). i18n is a platform module and never touches the seam, so
+-- the sink is injected here, at the one place that already holds the adapter.
+require("platform.i18n").configure({ locale = adapter.locale(), log = adapter.log })
 
 -- ---------------------------------------------------------------------------
 -- Feature catalog: autodiscovered by scanning lua/features/ (drop in a folder,

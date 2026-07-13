@@ -144,7 +144,7 @@ end
 local function jump(ctx, site)
     local pattern = siteName(site.url)
     if pattern == "" then
-        ctx.alert(string.format(ctx.t("alert.invalidURL", "Not a valid site URL: %s"), site.url))
+        ctx.alert(ctx.t("alert.invalidURL", "Not a valid site URL: %s", site.url))
         return
     end
     local browser = (site.browser and site.browser ~= "") and site.browser

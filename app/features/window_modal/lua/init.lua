@@ -124,7 +124,7 @@ local function arrangerFor(ctx)
                     end
                 end
                 if not best then
-                    ctx.alert(string.format(ctx.t("alert.noScreen", "No screen %s"), dir))
+                    ctx.alert(ctx.t("alert.noScreen", "No screen %s", dir))
                     return nil
                 end
                 target = best.t
