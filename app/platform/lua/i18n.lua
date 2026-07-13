@@ -10,7 +10,16 @@
 -- `default` argument. Only non-English locales ship a JSON catalog, so:
 --   * when the resolved locale is "en", every lookup returns its inline default
 --     (no file is read at all), and
---   * an English-only feature needs no catalog file -- it just ships its folder.
+--   * MECHANICALLY, a feature with no catalog file still runs -- every lookup just
+--     falls back to English.
+--
+-- That fallback is deliberate (a missing string must never surface a raw dotted key)
+-- but it makes a MISSING translation invisible at runtime: the zh UI simply speaks
+-- English and nothing fails. So the suite, not the engine, holds the line -- a SHIPPED
+-- feature must carry a zh-Hans catalog covering every string it can render, and
+-- test/cases/_integration/platform/i18n_parity.lua fails the build otherwise (the Swift
+-- chrome's half is LocalizationTests.testEveryChromeStringIsTranslated). Ship a new
+-- feature's zh-Hans.json with it; an untranslated string is a red suite, not a shrug.
 --
 -- Catalogs are flat JSON objects (dotted string keys -> string values; a value
 -- may instead be a {one=,other=} object for a plural). Two scopes:

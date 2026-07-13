@@ -108,6 +108,11 @@ return {
                 end
             end
 
+            -- (Mnemonics, action labels, option strings and the runtime ctx.t/ctx.plural
+            -- keys are all guarded wholesale by i18n_parity.lua -- the localization GATE,
+            -- which diffs describe() across locales instead of hand-listing keys. The
+            -- sweep above stays as a fast, readable canary on specific strings.)
+
             -- RESET to the source language for the rest of the suite.
             i18n.configure({ locale = "en" })
             ok(i18n.t("window.noFocused", "No focused window") == "No focused window",

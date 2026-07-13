@@ -2,6 +2,8 @@
   "name": "密码生成器",
   "description": "生成一个强随机密码并复制到剪贴板.",
 
+  "action.main.mnemonic": "P 代表密码 (Password)",
+
   "option.length.label": "长度",
   "option.lowercase.label": "包含小写字母",
   "option.uppercase.label": "包含大写字母",

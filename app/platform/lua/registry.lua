@@ -56,7 +56,16 @@ local function locDesc(m)
     return i18n.tFeature(m.id, "description", m.description)
 end
 local function locActionLabel(m, a)
-    return i18n.tFeature(m.id, "action." .. a.id .. ".label", a.label or a.id)
+    -- `labelFromName` (set by manifest.lua's single-action sugar) says this label is
+    -- a COPY of the feature name, frozen to the ENGLISH name because register()
+    -- overlays feature.json before validate runs. Falling back to that copy would
+    -- print "Password Generator" in an otherwise-Chinese menubar while the translated
+    -- name ("密码生成器") sits right there unused -- so fall back to the LOCALIZED name
+    -- instead. An action with a label of its OWN is untouched: it looks up its own key
+    -- and falls back to its own English source. (Same convention the palette and
+    -- hyper-hints apply one screen down: a single-action feature IS its feature.)
+    local src = a.labelFromName and locName(m) or (a.label or a.id)
+    return i18n.tFeature(m.id, "action." .. a.id .. ".label", src)
 end
 -- The user-facing label for one action, the single command-surface convention:
 -- a multi-action feature disambiguates as "Feature -- Action"; a single-action

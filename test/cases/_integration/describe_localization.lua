@@ -47,11 +47,29 @@ return {
         ok(modeOpt and modeOpt.labels[1] == "纯文本" and modeOpt.labels[2] == "换行转逗号",
             "describe() localizes enum value labels (parallel to values)")
 
-        -- field-level fallback: password_generator's NAME is translated, but it ships
-        -- no action.<id>.label key, so the action label stays the English source.
+        -- The single-action sugar synthesizes the action's label FROM the feature name
+        -- (manifest.lua), and register() overlays feature.json BEFORE validate -- so the
+        -- stored label is the ENGLISH name. It must still describe as the LOCALIZED name:
+        -- a single-action feature IS its feature. This used to assert the opposite --
+        -- "Password Generator" -- codifying the leak that put an English label in an
+        -- otherwise-Chinese menubar (StatusBar renders action.label). password_generator
+        -- ships no action.main.label key, and needs none: the name IS the label.
         ok(byId.password_generator and byId.password_generator.name == "密码生成器"
-            and byId.password_generator.actions[1].label == "Password Generator",
-            "describe() falls back per-field to inline English for untranslated keys")
+            and byId.password_generator.actions[1].label == "密码生成器",
+            "describe() localizes a sugar action's label via the feature name")
+
+        -- Per-field fallback still holds where a field is genuinely its own: an action
+        -- with a DECLARED label and no translation keeps its English source. (No shipped
+        -- feature can show this any more -- i18n_parity.lua fails the build on an
+        -- untranslated string -- so prove it on a throwaway manifest with no catalog.)
+        registry.register({ api = 1, id = "loc_probe", name = "Loc Probe",
+            actions = { { id = "go", label = "Do The Thing", run = function() end } } })
+        local probe
+        for _, d in ipairs(registry.describe()) do
+            if d.id == "loc_probe" then probe = d end
+        end
+        ok(probe and probe.actions[1].label == "Do The Thing",
+            "describe() falls back per-field to inline English for an untranslated declared label")
 
         -- Phase 3: runtime strings (the ctx.t call sites in features) resolve from
         -- the SAME per-feature catalogs, including interpolation placeholders.

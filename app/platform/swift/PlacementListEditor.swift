@@ -125,6 +125,12 @@ struct PlacementListEditor: View {
         .init(id: "center",               en: "Center",              x: 0.25,  y: 0.25, w: 0.5,     h: 0.5),
     ]
 
+    /// The catalog keys the chips above resolve at runtime (`Strings.t("recipe.<id>")`).
+    /// Built from an INTERPOLATED key, so the source-scanning half of the localization
+    /// gate cannot see them -- it checks this list instead, and a shape added without a
+    /// translation fails there. Exposes only the keys, not the private Shape type.
+    static var recipeStringKeys: [String] { shapes.map { "recipe.\($0.id)" } }
+
     // The in-progress new placement.
     @State private var fineness: Fineness = .g6x4
     @State private var cornerA: GridCell? = nil

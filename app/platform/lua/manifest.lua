@@ -201,8 +201,16 @@ function manifest.validate(m)
     end
 
     -- Normalize the sugar, then validate the (possibly synthesized) list.
+    -- labelFromName MARKS the label as a copy of the feature name rather than a
+    -- label of its own. It matters at localization time: register() overlays
+    -- feature.json BEFORE this runs, so `m.name` here is the ENGLISH name, and a
+    -- describe() under zh must fall back to the LOCALIZED name -- not to this frozen
+    -- English copy (which once put "Password Generator" in an all-Chinese menubar).
+    -- The marker lets registry.locActionLabel READ that intent instead of inferring
+    -- it from `a.label == m.name`, which is true only by coincidence.
     if hasAction then
-        m.actions = { { id = "main", label = m.name, mnemonic = m.mnemonic,
+        m.actions = { { id = "main", label = m.name, labelFromName = true,
+                        mnemonic = m.mnemonic,
                         defaultTrigger = m.defaultTrigger, run = m.action } }
     end
     m.actions = m.actions or {}
