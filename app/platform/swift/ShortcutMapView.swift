@@ -9,6 +9,11 @@ import AppKit
 // Status cell that lights up the conflict tier (green clean /
 // amber soft system-or-app collision / red hard in-app conflict).
 //
+// There is deliberately NO rendered-shortcut column: the mod cells + Key + Then
+// ARE the shortcut, so a glyph preview beside them prints the same fact twice.
+// Drag-to-swap therefore hangs off the NAME cell -- the row IS the handle --
+// rather than off a column that existed only to be dragged.
+//
 // A plugin with several actions (e.g. Window Snap's 7) becomes a collapsible
 // group header with its actions as indented child rows; single-action plugins
 // render as one flat row. Pure services (no rebindable action) sit in a muted
@@ -26,7 +31,7 @@ private let kMods: [(id: String, glyph: String)] =
 private let kModW: CGFloat = 34
 private let kKeyW: CGFloat = 132
 private let kThenW: CGFloat = 92
-private let kPreviewW: CGFloat = 96
+private let kBadgeW: CGFloat = 26
 private let kStatusW: CGFloat = 208
 
 // keyGlyph / modGlyphs / shortcutGlyph live in FeatureChrome.swift -- shared
@@ -60,7 +65,7 @@ struct ShortcutMapView: View {
     private var footerHint: some View {
         HStack(spacing: 6) {
             Image(systemName: "arrow.left.arrow.right")
-            Text(Strings.t("shortcuts.tip", default: "Tip: drag a shortcut pill onto another row to swap the two bindings."))
+            Text(Strings.t("shortcuts.tip", default: "Tip: drag a row's name onto another row to swap the two shortcuts."))
             Spacer()
         }
         .font(.caption)
@@ -105,7 +110,9 @@ struct ShortcutMapView: View {
             }
             Text(Strings.t("shortcuts.colKey", default: "Key")).frame(width: kKeyW)
             Text(Strings.t("shortcuts.colThen", default: "Then")).frame(width: kThenW)
-            Text(Strings.t("shortcuts.colShortcut", default: "Shortcut")).frame(width: kPreviewW)
+            // The badge column is glyph-only (💡 / ✏️) -- a header word would say
+            // less than the glyphs and their tooltips already do.
+            Color.clear.frame(width: kBadgeW, height: 1)
             Text(Strings.t("shortcuts.colStatus", default: "Status")).frame(width: kStatusW, alignment: .leading)
         }
         .font(.caption.weight(.semibold))
@@ -186,7 +193,7 @@ struct ShortcutMapView: View {
                     ForEach(kMods, id: \.id) { _ in Text("").frame(width: kModW) }
                     Text("--").foregroundStyle(.secondary).frame(width: kKeyW)
                     Text("--").foregroundStyle(.secondary).frame(width: kThenW)
-                    Text("--").foregroundStyle(.secondary).frame(width: kPreviewW)
+                    Color.clear.frame(width: kBadgeW, height: 1)
                     Text(Strings.t("shortcuts.alwaysOnService", default: "always-on service")).foregroundStyle(.secondary)
                         .frame(width: kStatusW, alignment: .leading)
                 }
@@ -222,7 +229,7 @@ private struct BindingRow: View {
     @State private var capturing = false
     @State private var monitor: Any?
     @State private var isDropTarget = false
-    @State private var pillHover = false
+    @State private var nameHover = false
     @FocusState private var focusedField: Field?
     private enum Field: Hashable { case key, then }
 
@@ -258,7 +265,7 @@ private struct BindingRow: View {
             ForEach(kMods, id: \.id) { m in modCell(m.id, m.glyph) }
             keyCell
             thenCell
-            previewCell
+            badgeCell
             statusCell
         }
         .padding(.horizontal, 14).padding(.vertical, 5)
@@ -287,45 +294,6 @@ private struct BindingRow: View {
         editable && !key.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// The Shortcut column: a compact glyph that doubles as the drag handle.
-    /// Drag it onto another swappable row to exchange the two shortcuts.
-    @ViewBuilder private var previewCell: some View {
-        let glyph = shortcutGlyph(action.trigger)
-        let label = glyph.isEmpty ? "--" : glyph
-        Group {
-            if swappable {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.left.arrow.right")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(pillHover ? Color.accentColor : .secondary)
-                    Text(label)
-                        .font(.system(.caption, design: .rounded).weight(.medium))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 7).padding(.vertical, 3)
-                .background(RoundedRectangle(cornerRadius: 6)
-                    .fill(pillHover ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.12)))
-                .overlay(RoundedRectangle(cornerRadius: 6)
-                    .stroke(pillHover ? Color.accentColor.opacity(0.5) : .secondary.opacity(0.25)))
-                .shadow(color: .black.opacity(pillHover ? 0.18 : 0), radius: 2, y: 1)
-                .draggable("\(feature.id)\t\(action.id)") {
-                    Text(label).padding(6).background(.thinMaterial)
-                }
-                // NSCursor.set() (not push/pop): idempotent, so a swap that
-                // tears down this row mid-hover -- onHover(false) never fires on
-                // the destroyed view -- can't leak a stuck cursor onto the stack.
-                .onHover { h in
-                    pillHover = h
-                    if h { NSCursor.openHand.set() } else { NSCursor.arrow.set() }
-                }
-                .help(Strings.t("shortcuts.swapHelp", default: "Drag onto another row to swap shortcuts"))
-            } else {
-                Text(label).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .frame(width: kPreviewW)
-    }
-
     /// A dropped row id ("featureId\tactionId") swaps that action's shortcut
     /// with this row's. Ignores a drop onto itself or onto a non-swappable row.
     private func handleDrop(_ items: [String]) -> Bool {
@@ -338,21 +306,71 @@ private struct BindingRow: View {
         return true
     }
 
-    private var nameCell: some View {
-        HStack(spacing: 6) {
+    /// The name cell is the row's drag handle, and NOTHING else: drag it onto
+    /// another row to swap the two shortcuts. It carries exactly one tooltip.
+    ///
+    /// The binding badges (💡/✏️) deliberately do NOT live here. They explain the
+    /// KEY, not the action, so they sit in their own column beside it -- and a
+    /// second `.help` in this cell would be blanketed by the drag handle's own
+    /// (a cell-wide tooltip rect wins over a child's), which is exactly how the
+    /// mnemonic became unreachable once. One cell, one tooltip.
+    @ViewBuilder private var nameCell: some View {
+        let cell = HStack(spacing: 6) {
             if indent > 0 { Spacer().frame(width: 18) }
+            // The handle's slot is reserved on EVERY row, not just swappable ones --
+            // a row with no hotkey to trade (a schedule-triggered action, an unbound
+            // one) would otherwise start its title 16pt left of its neighbours and
+            // ragged the whole column. Reserved always, inked only on hover.
+            Image(systemName: "arrow.left.arrow.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(swappable && nameHover ? Color.accentColor : .clear)
+                .frame(width: 10)
             Text(title)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+
+        if swappable {
+            cell
+                .draggable("\(feature.id)\t\(action.id)") {
+                    let glyph = shortcutGlyph(action.trigger)
+                    Text(glyph.isEmpty ? title : glyph).padding(6).background(.thinMaterial)
+                }
+                // NSCursor.set() (not push/pop): idempotent, so a swap that tears
+                // down this row mid-hover -- onHover(false) never fires on the
+                // destroyed view -- can't leak a stuck cursor on the stack.
+                .onHover { h in
+                    nameHover = h
+                    (h ? NSCursor.openHand : NSCursor.arrow).set()
+                }
+                .help(Strings.t("shortcuts.swapHelp", default: "Drag onto another row to swap shortcuts"))
+        } else {
+            cell
+        }
+    }
+
+    /// The badge column: what to know about THIS binding, next to the binding.
+    /// 💡 = still on its default key, hover for the mnemonic ("why this key").
+    /// ✏️ = you've rebound it (the registry drops the mnemonic on override, since
+    /// it describes the default choice -- so the two are mutually exclusive).
+    /// An action with neither badge (no mnemonic, still on its default) renders the
+    /// same empty spacer the header and service rows use -- an EmptyView with a
+    /// .frame is not a reliable way to hold a column open, and a row that dropped the
+    /// 26pt would shove its Status cell out of line with every other row.
+    @ViewBuilder private var badgeCell: some View {
+        Group {
             if action.triggerOverridden {
                 Image(systemName: "pencil").font(.caption2).foregroundStyle(.secondary)
                     .help(Strings.t("shortcuts.customHelp", default: "Custom shortcut (overrides the default)"))
             } else if !action.mnemonic.isEmpty {
-                // "Why this key" hint for the default -- hover to read. Hidden
-                // once overridden (the mnemonic describes the default choice).
                 Image(systemName: "lightbulb").font(.caption2).foregroundStyle(.tertiary)
                     .help(action.mnemonic)
+            } else {
+                Color.clear.frame(width: 1, height: 1)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: kBadgeW)
     }
 
     /// A modifier cell rendered as the modifier GLYPH: filled-blue with the
