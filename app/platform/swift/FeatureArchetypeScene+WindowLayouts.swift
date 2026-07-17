@@ -1,11 +1,12 @@
 import SwiftUI
 
 // Window-LAYOUT archetypes: the focused window landing in a GRID CELL
-// (window_grid) and a screen's windows tiling with one lifted to a centered HERO
-// (window_deck). Distinct from FeatureArchetypeScene+WindowArrange, which springs
-// ONE window's rect through snap/modal states -- these show a MULTI-CELL layout
-// (a numbered grid; a deck of tiles), so they earn their own scene. Core enum +
-// dispatch live in FeatureArchetypeAnimation.swift.
+// (window_grid), a screen's windows tiling with one lifted to a centered HERO
+// (window_deck), and scattered windows gathering into the diamond-ring STACK
+// (window_stack). Distinct from FeatureArchetypeScene+WindowArrange, which
+// springs ONE window's rect through snap/modal states -- these show a MULTI-
+// WINDOW layout (a numbered grid; a deck of tiles; a ringed pile), so they earn
+// their own scene. Core enum + dispatch live in FeatureArchetypeAnimation.swift.
 
 /// window_grid: a desktop under a visible 3x3 numbered grid; the focused window
 /// (accent) hops from cell to cell, landing squarely in each -- the feature's
@@ -189,5 +190,115 @@ struct WindowDeckArchetypeScene: View {
         .overlay(RoundedRectangle(cornerRadius: 4)
             .stroke(active ? Color.accentColor.opacity(0.85) : Color.secondary.opacity(0.3), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+/// window_stack: a screen's scattered windows FAN out against the screen edges
+/// (platform.windows.fanSlots) -- each becomes a slab flush against its own
+/// segment of an edge, so every window keeps a full colored EDGE STRIP that no
+/// other window can cover, in its own slice of the border. The focused window
+/// sits on top. Alternates scattered <-> fanned; at rest it shows the fan (the
+/// calm frame). Positions mirror the real round-robin T,B,L,R assignment.
+struct WindowStackArchetypeScene: View {
+    let playing: Bool
+
+    // SOLE source of `loopDuration`, as in the grid/deck scenes. nonisolated for
+    // the same reason: read by the nonisolated FeatureArchetype.loopDuration.
+    nonisolated static let heartbeat = 1.6
+    /// One visible loop = scattered + fanned.
+    nonisolated static let loopDuration = heartbeat * 2
+
+    @State private var fanned = true
+
+    private enum Side { case top, bottom, left, right }
+
+    // Feature palette head (deck colors). Round-robin T,B,L,R,T -> the 5 windows'
+    // sides (index 0 = the focused window, on top). `seg`/`of` place same-side
+    // windows into disjoint segments, exactly as fanSlots does.
+    private static let colors: [Color] = [
+        Color(red: 0.30, green: 0.55, blue: 1.00), Color(red: 0.20, green: 0.78, blue: 0.35),
+        Color(red: 1.00, green: 0.62, blue: 0.04), Color(red: 0.69, green: 0.32, blue: 0.87),
+        Color(red: 1.00, green: 0.22, blue: 0.37),
+    ]
+    private static let layout: [(side: Side, seg: Int, of: Int)] = [
+        (.top, 0, 2), (.bottom, 0, 1), (.left, 0, 1), (.right, 0, 1), (.top, 1, 2),
+    ]
+    private static let scatter: [(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat)] = [
+        (0.28, 0.22, 0.44, 0.46), (0.04, 0.06, 0.42, 0.40), (0.54, 0.02, 0.44, 0.38),
+        (0.56, 0.50, 0.40, 0.46), (0.05, 0.52, 0.40, 0.42),
+    ]
+
+    // The fanned slab rect for window `i` on a `w`x`h` canvas, edge thickness `e`.
+    private func slab(_ i: Int, _ w: CGFloat, _ h: CGFloat, _ e: CGFloat) -> CGRect {
+        let L = Self.layout[i]
+        let gap: CGFloat = 3
+        func seg(_ run0: CGFloat, _ runLen: CGFloat) -> (CGFloat, CGFloat) {
+            let len = (runLen - CGFloat(L.of - 1) * gap) / CGFloat(L.of)
+            return (run0 + CGFloat(L.seg) * (len + gap), len)
+        }
+        switch L.side {
+        case .top:    let (a, len) = seg(e, w - 2 * e); return CGRect(x: a, y: 0, width: len, height: h - e)
+        case .bottom: let (a, len) = seg(e, w - 2 * e); return CGRect(x: a, y: e, width: len, height: h - e)
+        case .left:   let (a, len) = seg(e, h - 2 * e); return CGRect(x: 0, y: a, width: w - e, height: len)
+        case .right:  let (a, len) = seg(e, h - 2 * e); return CGRect(x: e, y: a, width: w - e, height: len)
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let e = min(w, h) * 0.15                        // the edge-strip thickness
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 6).fill(.secondary.opacity(0.06))
+                ForEach(0..<5, id: \.self) { i in
+                    let front = i == 0
+                    let s = Self.scatter[i]
+                    let r = fanned ? slab(i, w, h, e)
+                        : CGRect(x: s.x * w, y: s.y * h, width: s.w * w, height: s.h * h)
+                    window(color: Self.colors[i], side: Self.layout[i].side, e: e,
+                           fanned: fanned, front: front)
+                        .frame(width: max(0, r.width), height: max(0, r.height))
+                        .offset(x: r.minX, y: r.minY)
+                        .zIndex(front ? 1 : 0)          // the focused window rides on top
+                        .animation(.spring(response: 0.5, dampingFraction: 0.78), value: fanned)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .scaleEffect(playing ? 1 : 0.98)
+            .opacity(playing ? 1 : 0.9)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
+        }
+        .heartbeat(Self.heartbeat, active: playing) { fanned.toggle() }
+        .onChange(of: playing) { isOn in
+            if !isOn { fanned = true }   // rest on the fan (the calm frame)
+        }
+    }
+
+    // A slab: opaque body (so a front window occludes those behind), a colored
+    // border, and -- when fanned -- a solid colored STRIP on its anchored edge
+    // (the guaranteed-visible grabbable edge).
+    private func window(color: Color, side: Side, e: CGFloat, fanned: Bool, front: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 4).fill(Color(white: front ? 0.20 : 0.15))
+            .overlay(alignment: stripAlignment(side)) {
+                if fanned {
+                    Rectangle().fill(color.opacity(front ? 0.95 : 0.8))
+                        .frame(width: isVertical(side) ? e : nil,
+                               height: isVertical(side) ? nil : e)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 4)
+                .stroke(color.opacity(fanned ? 0.95 : 0.5), lineWidth: front ? 2.5 : 1.5))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .shadow(color: .black.opacity(front ? 0.18 : 0.1), radius: 2, y: 1)
+    }
+
+    private func isVertical(_ s: Side) -> Bool { s == .left || s == .right }
+    private func stripAlignment(_ s: Side) -> Alignment {
+        switch s {
+        case .top: return .top
+        case .bottom: return .bottom
+        case .left: return .leading
+        case .right: return .trailing
+        }
     }
 }

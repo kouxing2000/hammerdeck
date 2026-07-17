@@ -79,6 +79,7 @@ let package = Package(
                 "features/window_modal",
                 "features/window_rewind",
                 "features/window_snap",
+                "features/window_stack",
                 "features/window_switcher",
             ],
             sources: [

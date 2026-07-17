@@ -501,6 +501,31 @@ extension Native {
         return 0
     }
 
+    func outlineSetFilled(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) {
+            outlines[id]?.setFilled(LuaState.bool(L, 2) ?? false)
+        }
+        return 0
+    }
+
+    // outline_set_clip(id, {{x,y,w,h}, ...}) -- draw only inside these top-left
+    // global rects (Auto Stack's visible-region occlusion).
+    func outlineSetClip(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let panel = outlines[id] else { return 0 }
+        let rects = LuaState.dictArray(L, 2).compactMap { d -> NSRect? in
+            guard let x = d["x"] as? Double, let y = d["y"] as? Double,
+                  let w = d["w"] as? Double, let h = d["h"] as? Double else { return nil }
+            return flipToAppKit(x, y, w, h)
+        }
+        panel.setClipRects(rects)
+        return 0
+    }
+
+    func outlineClearClip(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init) { outlines[id]?.clearClip() }
+        return 0
+    }
+
     func outlineAnimateFrame(_ L: OpaquePointer?) -> Int32 {
         guard let id = LuaState.int(L, 1).map(Int32.init), let panel = outlines[id],
               let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),

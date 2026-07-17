@@ -297,6 +297,126 @@ function M.centeredRect(s, pct)
 end
 
 -- ---------------------------------------------------------------------------
+-- Border-anchored SLAB FAN (Auto Stack's "handles around the rim"). The layout
+-- that gives EVERY window a full, always-visible, grabbable edge -- with NO
+-- z-order management (macOS won't let us reorder other apps' windows anyway) and
+-- NO repositioning when focus changes. Each window is a slab flush against ONE
+-- side of the screen, occupying its own SEGMENT of that side, extending across
+-- the screen to within `s` of the opposite side and inset `s` from the two
+-- perpendicular sides. Its designated edge (a full-length `s`-thick strip on its
+-- anchored side) then lives in a slice of the screen border that NO OTHER
+-- window's rectangle reaches -- so the strip is visible under ANY stacking order
+-- (raising one window covers other BODIES, never a strip). This beats the old
+-- diamond ring's 40x40 corner: a full edge, still zero repair. The price (a
+-- theorem, not a knob): permanent z-independent full edges force windows thin in
+-- one dimension -- slab shapes, acceptable for a transient switcher.
+--
+-- Capacity: same-side edges must not overlap, so each side holds
+-- floor(sideLen / minEdge) windows; ~16 on a 1600x1000 at s=40. Round-robin
+-- T,B,L,R assignment naturally biases the long (horizontal) sides.
+-- ---------------------------------------------------------------------------
+
+--- Slab-fan slots for `n` windows: each { x,y,w,h, side, strip = {x,y,w,h} }
+--- where `side` is "T"/"B"/"L"/"R" and `strip` is that window's guaranteed-
+--- visible full edge. Pure rect math; hand each slot to ctx.window.setFrameFor
+--- and mark/label each `strip`.
+---@param screen {x:number,y:number,w:number,h:number} screen visible frame
+---@param n integer window count (>= 1)
+---@param s number strip thickness (px) = each window's grabbable edge depth
+---@param gap number|nil gap between same-side segments (px); default 8
+---@return {x:number,y:number,w:number,h:number,side:string,strip:table}[] slots
+function M.fanSlots(screen, n, s, gap)
+    assert(n and n >= 1, "fanSlots: n must be >= 1")
+    gap = gap or 8
+    local order = { "T", "B", "L", "R" }
+    -- Round-robin assignment: window i -> side order[(i-1) % 4]. Biases T/B.
+    local counts = { T = 0, B = 0, L = 0, R = 0 }
+    local sideOf = {}
+    for i = 1, n do
+        local sd = order[((i - 1) % 4) + 1]
+        sideOf[i] = sd
+        counts[sd] = counts[sd] + 1
+    end
+    local hRun0, hRunLen = screen.x + s, screen.w - 2 * s   -- T/B horizontal run
+    local vRun0, vRunLen = screen.y + s, screen.h - 2 * s   -- L/R vertical run
+    local sx, sw, sy, sh = screen.x, screen.w, screen.y, screen.h
+    local idx = { T = 0, B = 0, L = 0, R = 0 }
+    -- The k-th segment (0-based) of `cnt` equal segments spanning [run0, run0+runLen].
+    local function segment(run0, runLen, cnt, k)
+        local segLen = (runLen - (cnt - 1) * gap) / cnt
+        return run0 + k * (segLen + gap), segLen
+    end
+    local slots = {}
+    for i = 1, n do
+        local sd = sideOf[i]
+        local k = idx[sd]; idx[sd] = k + 1
+        local slot
+        if sd == "T" then
+            local a, len = segment(hRun0, hRunLen, counts.T, k)
+            slot = { x = a, y = sy, w = len, h = sh - s, side = "T",
+                     strip = { x = a, y = sy, w = len, h = s } }
+        elseif sd == "B" then
+            local a, len = segment(hRun0, hRunLen, counts.B, k)
+            slot = { x = a, y = sy + s, w = len, h = sh - s, side = "B",
+                     strip = { x = a, y = sy + sh - s, w = len, h = s } }
+        elseif sd == "L" then
+            local a, len = segment(vRun0, vRunLen, counts.L, k)
+            slot = { x = sx, y = a, w = sw - s, h = len, side = "L",
+                     strip = { x = sx, y = a, w = s, h = len } }
+        else -- R
+            local a, len = segment(vRun0, vRunLen, counts.R, k)
+            slot = { x = sx + s, y = a, w = sw - s, h = len, side = "R",
+                     strip = { x = sx + sw - s, y = a, w = s, h = len } }
+        end
+        slots[#slots + 1] = slot
+    end
+    return slots
+end
+
+--- Subtract rect `s` from rect `r`: the part of `r` NOT covered by `s`, as up to
+--- four DISJOINT rects (top + bottom full-width strips, then left + right middle
+--- strips). No overlap with `s`, no overlap among the pieces -- so a caller can
+--- fill them without even-odd surprises. Empty when `s` fully covers `r`; `{r}`
+--- when they don't overlap. Top-left-origin coords (orientation-agnostic math).
+---@param r {x:number,y:number,w:number,h:number}
+---@param s {x:number,y:number,w:number,h:number}
+---@return {x:number,y:number,w:number,h:number}[]
+function M.rectSubtract(r, s)
+    local ix, iy = math.max(r.x, s.x), math.max(r.y, s.y)
+    local ix2 = math.min(r.x + r.w, s.x + s.w)
+    local iy2 = math.min(r.y + r.h, s.y + s.h)
+    if ix2 <= ix or iy2 <= iy then return { r } end        -- no overlap
+    local out = {}
+    if iy > r.y then out[#out + 1] = { x = r.x, y = r.y, w = r.w, h = iy - r.y } end
+    if iy2 < r.y + r.h then out[#out + 1] = { x = r.x, y = iy2, w = r.w, h = (r.y + r.h) - iy2 } end
+    if ix > r.x then out[#out + 1] = { x = r.x, y = iy, w = ix - r.x, h = iy2 - iy } end
+    if ix2 < r.x + r.w then out[#out + 1] = { x = ix2, y = iy, w = (r.x + r.w) - ix2, h = iy2 - iy } end
+    return out
+end
+
+--- The VISIBLE part of `r` after subtracting every rect in `subs`, as a set of
+--- disjoint rects (`r` minus the union of `subs`). Auto Stack feeds this the
+--- frames of the windows IN FRONT of a given window (from the z-ordered list),
+--- so a window's border/fill is drawn only where nothing covers it -- the
+--- occlusion that makes a floating border hug the window's real visible edges.
+--- Empty when `r` is fully covered.
+---@param r {x:number,y:number,w:number,h:number}
+---@param subs {x:number,y:number,w:number,h:number}[]
+---@return {x:number,y:number,w:number,h:number}[]
+function M.rectMinus(r, subs)
+    local pieces = { r }
+    for _, s in ipairs(subs or {}) do
+        local next = {}
+        for _, p in ipairs(pieces) do
+            for _, q in ipairs(M.rectSubtract(p, s)) do next[#next + 1] = q end
+        end
+        pieces = next
+        if #pieces == 0 then break end
+    end
+    return pieces
+end
+
+-- ---------------------------------------------------------------------------
 -- Window-layout helpers (the rules engine's `layout` effect). All pure: given
 -- a window list + screen list (from the adapter), decide what goes where.
 -- ---------------------------------------------------------------------------
@@ -380,6 +500,20 @@ function M.resolveScreen(screens, name)
         if (s.name or "") == name then return s end
     end
     return nil
+end
+
+--- Is rect `w`'s CENTRE inside screen rect `s`? Pure geometry -- the robust way
+--- to test "is this window on this screen" across the SEPARATE native calls that
+--- produce window frames vs screen frames: their screen tables are different
+--- objects, so a `rawequal` identity compare is silently always-false in the
+--- real host (it only "works" against a fake that returns one stable table).
+---@param w {x:number,y:number,w:number,h:number} a window rect
+---@param s {x:number,y:number,w:number,h:number} a screen visible frame
+---@return boolean
+function M.onScreen(w, s)
+    local mx, my = w.x + w.w / 2, w.y + w.h / 2
+    return mx >= s.x and mx < s.x + s.w
+       and my >= s.y and my < s.y + s.h
 end
 
 --- The screen a frame sits on: the one whose visible frame contains the frame's

@@ -30,7 +30,15 @@ final class OutlinePanel {
     private let ring = CAShapeLayer()
     private var style: OutlineStyle
     private var baseColor: NSColor
+    private var filled = false            // translucent interior fill (Auto Stack's tab)
     private var screenHole: NSRect?      // AppKit screen coords; the stroke never paints inside
+    private var clipRects: [NSRect]?     // AppKit screen coords; nil = no clip, else draw ONLY
+                                         // inside the union of these (Auto Stack's occlusion:
+                                         // a window's border shows only where nothing covers it)
+
+    // Alpha of the interior fill when `filled` -- a soft tint that reads as a
+    // solid colored tab without hiding what's under the (always-visible) cell.
+    private static let fillAlpha: CGFloat = 0.22
 
     init(kind: String, colorHex: String) {
         style = OutlineStyle.forKind(kind)
@@ -58,7 +66,16 @@ final class OutlinePanel {
         baseColor = NSColor(hexRGB: colorHex) ?? .controlAccentColor
         withoutImplicitAnimation {
             ring.strokeColor = baseColor.withAlphaComponent(style.alpha).cgColor
+            ring.fillColor = filled ? baseColor.withAlphaComponent(Self.fillAlpha).cgColor : nil
         }
+    }
+
+    /// Fill the interior with a translucent tint (or clear it). Auto Stack fills a
+    /// window's exclusive CORNER CELL so it reads as a solid colored tab; the
+    /// focused window's full ring stays unfilled (a plain border).
+    func setFilled(_ on: Bool) {
+        filled = on
+        withoutImplicitAnimation { applyStyle() }
     }
 
     /// Position the ring at `rect` (AppKit bottom-left screen coords) and show it.
@@ -118,6 +135,21 @@ final class OutlinePanel {
         rebuildMask()
     }
 
+    /// Clip the border/fill to the UNION of `rects` (AppKit screen coords) -- it
+    /// shows only inside them. Auto Stack passes a window's VISIBLE rects (its
+    /// frame minus everything in front), so the floating border hugs the real
+    /// visible edges instead of painting on top. An empty array hides it; call
+    /// `clearClip()` to remove the clip entirely (a full, unclipped border).
+    func setClipRects(_ rects: [NSRect]) {
+        clipRects = rects
+        rebuildMask()
+    }
+
+    func clearClip() {
+        clipRects = nil
+        rebuildMask()
+    }
+
     /// Hide without destroying -- the next place()/animateTo() re-shows. Window
     /// Deck hides a ring while the USER drags/resizes its window (live AX
     /// tracking would visibly trail the drag), then re-shows it at the real
@@ -174,6 +206,7 @@ final class OutlinePanel {
         ring.lineWidth = style.width
         ring.lineDashPattern = style.dashed ? [6, 4] : nil
         ring.strokeColor = baseColor.withAlphaComponent(style.alpha).cgColor
+        ring.fillColor = filled ? baseColor.withAlphaComponent(Self.fillAlpha).cgColor : nil
         ring.path = ringPath(ring.bounds.size)
     }
 
@@ -181,11 +214,24 @@ final class OutlinePanel {
     /// the panel's coverage changes; nil hole drops the mask entirely.
     private func rebuildMask() {
         guard let layer = host.layer else { return }
+        let bounds = CGRect(origin: .zero, size: panel.frame.size)
+        // Clip-to-visible (Auto Stack): the mask IS the union of the clip rects,
+        // so the border shows only inside them. Disjoint by construction (the
+        // caller passes rectMinus output), so a plain nonZero union is exact.
+        if let clip = clipRects {
+            let mask = CAShapeLayer()
+            mask.frame = bounds
+            let path = CGMutablePath()
+            for r in clip { path.addRect(local(r)) }
+            mask.path = path
+            withoutImplicitAnimation { layer.mask = mask }
+            return
+        }
+        // Single-hole subtract (Window Deck): bounds minus the hero rect.
         guard let hole = screenHole else {
             withoutImplicitAnimation { layer.mask = nil }
             return
         }
-        let bounds = CGRect(origin: .zero, size: panel.frame.size)
         let path = CGMutablePath()
         path.addRect(bounds)
         path.addRect(local(hole))

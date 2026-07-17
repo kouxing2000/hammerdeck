@@ -408,6 +408,13 @@ function adapter.outline(kind, color)
         end,
         setStyle = function(k) native.outline_set_style(id, k) end,
         setColor = function(c) native.outline_set_color(id, c) end,
+        -- Fill the interior translucently (Auto Stack's tab) or clear it.
+        setFilled = function(on) native.outline_set_filled(id, on and true or false) end,
+        -- Occlusion: draw only inside these visible rects (top-left global), or
+        -- clearClip() for a full unclipped border. Auto Stack passes a window's
+        -- frame minus everything in front of it.
+        setClip   = function(rects) native.outline_set_clip(id, rects or {}) end,
+        clearClip = function() native.outline_clear_clip(id) end,
         -- Hide without destroying; the next setFrame/animateFrame re-shows.
         -- (Window Deck hides a ring while the user drags its window -- live
         -- tracking would trail the drag -- and re-shows it once stable.)

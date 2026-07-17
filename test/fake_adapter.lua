@@ -396,6 +396,9 @@ function adapter.outline(kind, color)
         end,
         setStyle = function(k) o.kind = k end,
         setColor = function(c) o.color = c end,
+        setFilled = function(on) o.filled = on and true or false end,
+        setClip  = function(rects) o.clip = rects; o.clipped = true end,
+        clearClip = function() o.clip = nil; o.clipped = false end,
         setHole  = function(f) o.hole = f end,
         -- hide without destroying; setFrame/animateFrame re-show (matches the
         -- real panel: orderOut vs the next place/animate's orderFront)
@@ -621,7 +624,21 @@ fake.windowFrameSets = {}   -- recorded setWindowFrame(id, f) calls: {id, x, y, 
 fake.fullscreenSets = {}    -- recorded setFocusedWindowFullscreen calls
 fake.mousePos       = { x = 0, y = 0 }
 
-function adapter.screenFrames() return fake.screenList end
+-- Return a FRESH copy (new array, new row tables) on every call, exactly as the
+-- real host does (native.screen_frames() builds new tables each time). Returning
+-- the one stored table would let a caller that identity-compares screen rows
+-- (rawequal against another frames() call, or against ctx.window.frame().screen)
+-- pass in tests yet silently match NOTHING in production -- a masked bug this
+-- harness must not hide. Callers only read row fields, so the copy is transparent.
+function adapter.screenFrames()
+    local out = {}
+    for i, s in ipairs(fake.screenList) do
+        local row = {}
+        for k, v in pairs(s) do row[k] = v end
+        out[i] = row
+    end
+    return out
+end
 
 function adapter.focusedWindowFrame()
     local w = fake.focusedWindow

@@ -110,5 +110,129 @@ return {
             d = W.gridDimsForScreen(5, port); ok(d.w == 1 and d.h == 5, "gridDimsForScreen(5, portrait) = 1x5 (prime)")
             d = W.gridDimsForScreen(1, land); ok(d.w == 1 and d.h == 1, "gridDimsForScreen(1) = 1x1")
         end
+
+        -- onScreen: centre-in-rect membership -- the SANCTIONED "is this window on
+        -- this screen" test. Never identity-compare ctx.screen.frames() rows: the
+        -- real host builds fresh tables each call, so rawequal is silently
+        -- always-false in production (it only "passes" against a fake that returns
+        -- one stable table). A straddling window belongs to whichever screen holds
+        -- its CENTRE, so the seam is decided crisply, never double-counted.
+        do
+            local s1 = { x = 0, y = 0, w = 1000, h = 800 }
+            local s2 = { x = 1000, y = 0, w = 1000, h = 800 }
+            ok(W.onScreen({ x = 100, y = 100, w = 400, h = 300 }, s1), "onScreen: window inside s1")
+            ok(not W.onScreen({ x = 100, y = 100, w = 400, h = 300 }, s2), "onScreen: that window is not on s2")
+            ok(W.onScreen({ x = 700, y = 100, w = 400, h = 300 }, s1),
+                "onScreen: straddler with centre 900 -> s1")
+            ok(not W.onScreen({ x = 900, y = 100, w = 400, h = 300 }, s1),
+                "onScreen: straddler with centre 1100 -> not s1")
+            ok(W.onScreen({ x = 900, y = 100, w = 400, h = 300 }, s2),
+                "onScreen: ...and yes on s2 (crisp seam, no double-count)")
+        end
+
+        -- fanSlots (Auto Stack's border-anchored slab fan). The CORE invariant is
+        -- strip-exclusivity: each window's designated edge strip is disjoint from
+        -- EVERY OTHER window's frame -- from which z-order-independence follows with
+        -- no z-simulation (raising any window covers bodies, never a strip). Also:
+        -- the strip spans exactly its frame's designated edge, same-side frames are
+        -- pairwise disjoint, everything sits inside the screen, and strips are the
+        -- full `s` thick.
+        do
+            local SCREEN = { x = 0, y = 0, w = 1600, h = 1000 }
+            local S, GAP = 40, 8
+            local function overlap(a, b)
+                return a.x < b.x + b.w and b.x < a.x + a.w
+                    and a.y < b.y + b.h and b.y < a.y + a.h
+            end
+            for n = 1, 14 do
+                local slots = W.fanSlots(SCREEN, n, S, GAP)
+                ok(#slots == n, "fanSlots(" .. n .. "): n slots")
+                local exclusive, spans, thick, inside = true, true, true, true
+                local sameSideDisjoint = true
+                for i, si in ipairs(slots) do
+                    -- strip disjoint from every OTHER frame (the z-independence core)
+                    for j, sj in ipairs(slots) do
+                        if i ~= j and overlap(si.strip, sj) then exclusive = false end
+                    end
+                    -- the strip is the full designated edge of its own frame
+                    local st, f = si.strip, si
+                    local onEdge =
+                        (si.side == "T" and st.x == f.x and st.y == f.y and st.w == f.w and st.h == S) or
+                        (si.side == "B" and st.x == f.x and st.y == f.y + f.h - S and st.w == f.w and st.h == S) or
+                        (si.side == "L" and st.x == f.x and st.y == f.y and st.w == S and st.h == f.h) or
+                        (si.side == "R" and st.x == f.x + f.w - S and st.y == f.y and st.w == S and st.h == f.h)
+                    if not onEdge then spans = false end
+                    if not (st.h == S or st.w == S) then thick = false end
+                    if f.x < SCREEN.x or f.y < SCREEN.y
+                        or f.x + f.w > SCREEN.x + SCREEN.w
+                        or f.y + f.h > SCREEN.y + SCREEN.h then inside = false end
+                    -- same-side frames pairwise disjoint
+                    for j = i + 1, #slots do
+                        if slots[j].side == si.side and overlap(si, slots[j]) then
+                            sameSideDisjoint = false
+                        end
+                    end
+                end
+                ok(exclusive, "fanSlots(" .. n .. "): every strip is disjoint from every other frame (z-independent)")
+                ok(spans, "fanSlots(" .. n .. "): each strip spans its full designated edge")
+                ok(thick and inside, "fanSlots(" .. n .. "): strips are s-thick, all frames inside the screen")
+                ok(sameSideDisjoint, "fanSlots(" .. n .. "): same-side frames are pairwise disjoint")
+            end
+            -- The N=6 split the oracle gave: T=2, B=2, L=1, R=1 (round-robin T,B,L,R).
+            local six = W.fanSlots(SCREEN, 6, S, GAP)
+            local perSide = { T = 0, B = 0, L = 0, R = 0 }
+            for _, s in ipairs(six) do perSide[s.side] = perSide[s.side] + 1 end
+            ok(perSide.T == 2 and perSide.B == 2 and perSide.L == 1 and perSide.R == 1,
+                "fanSlots(6): sides split T=2 B=2 L=1 R=1")
+            -- L/R slabs span nearly the whole width (a full edge that beats a corner).
+            local wideOne = nil
+            for _, s in ipairs(six) do if s.side == "L" then wideOne = s end end
+            ok(wideOne.w == 1600 - S, "fanSlots(6): an L slab spans the screen minus one strip")
+        end
+
+        -- rectSubtract / rectMinus (Auto Stack's occlusion): a window's border is
+        -- clipped to its frame MINUS everything in front. Disjoint pieces, exact
+        -- area accounting (integer inputs keep it exact), covering the corner cases.
+        do
+            local function area(rects)
+                local a = 0
+                for _, r in ipairs(rects) do a = a + r.w * r.h end
+                return a
+            end
+            local function disjoint(rects)
+                for i = 1, #rects do
+                    for j = i + 1, #rects do
+                        local a, b = rects[i], rects[j]
+                        if a.x < b.x + b.w and b.x < a.x + a.w
+                            and a.y < b.y + b.h and b.y < a.y + a.h then return false end
+                    end
+                end
+                return true
+            end
+            local R = { x = 0, y = 0, w = 100, h = 100 }
+            -- no overlap -> the whole rect back, untouched.
+            local none = W.rectSubtract(R, { x = 200, y = 200, w = 50, h = 50 })
+            ok(#none == 1 and area(none) == 10000, "rectSubtract: no overlap returns the whole rect")
+            -- full cover -> nothing.
+            ok(#W.rectSubtract(R, { x = -10, y = -10, w = 200, h = 200 }) == 0,
+                "rectSubtract: full cover returns nothing")
+            -- a bite out of one corner: remaining area = 100*100 - 40*40, disjoint.
+            local corner = W.rectSubtract(R, { x = 60, y = 60, w = 80, h = 80 })   -- covers 60..100 sq
+            ok(area(corner) == 10000 - 40 * 40 and disjoint(corner),
+                "rectSubtract: a corner bite leaves the L-region (disjoint, exact area)")
+            -- a middle vertical slice splits into left + right, disjoint.
+            local slit = W.rectSubtract(R, { x = 40, y = -10, w = 20, h = 200 })
+            ok(area(slit) == 10000 - 20 * 100 and disjoint(slit) and #slit == 2,
+                "rectSubtract: a through-slice splits into two disjoint pieces")
+            -- rectMinus over TWO overlapping fronts: the union is subtracted once
+            -- (no double-count), result disjoint. Fronts overlap in [50,60]x[50,60].
+            local vis = W.rectMinus(R, {
+                { x = 50, y = 0, w = 60, h = 60 },    -- within R: x[50,100]xy[0,60]  = 50*60
+                { x = 0, y = 50, w = 60, h = 60 },    -- within R: x[0,60]xy[50,100]  = 60*50
+            })
+            -- covered union = 3000 + 3000 - 100 (the 10x10 overlap counted once) = 5900.
+            ok(area(vis) == 10000 - 5900 and disjoint(vis),
+                "rectMinus: overlapping fronts subtract as a union (no double-count), disjoint")
+        end
     end,
 }
