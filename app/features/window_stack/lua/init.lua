@@ -460,16 +460,49 @@ local function controllerFor(ctx)
         st.restacking = false
     end
 
-    -- The membership check the event triggers (app-activation) and the loose poll
-    -- share: re-fan only if the stackable set on the mode's screen actually changed.
-    -- A plain app switch or a click among the SAME windows leaves the signature
-    -- untouched, so this is a no-op then -- it never re-fans on mere focus churn.
+    -- The loose poll's membership backstop: re-fan only if the stackable set on the
+    -- mode's screen actually changed. A plain app switch or a click among the SAME
+    -- windows leaves the signature untouched, so this is a no-op then -- it never
+    -- re-fans on mere focus churn. (Focus MOVES are handled by syncFocus below, not
+    -- here; the poll only catches a silent drag-IN completing.)
     local function reconcile(source)
         if not st.active or st.restacking then return end
         if currentSig() ~= st.memberSig then
             ctx.log("stack: window set changed (" .. source .. ") -- restacking")
             restack()
         end
+    end
+
+    -- Focus MAY have moved: re-read who is focused now, move the bold border + the
+    -- widget highlight to them, and re-fan if the member set ALSO changed. Shared by
+    -- the two genuine focus signals -- onFocusChanged AND onAppActivated. The
+    -- app-activation path is load-bearing: the native focused-window observer only
+    -- sees the frontmost app's OWN (within-app, e.g. cmd+`) switches, so a CROSS-app
+    -- switch -- to or from ANY other app, very much including Hammerdeck's OWN window
+    -- (a different app from the ones being stacked) -- reaches us ONLY as an
+    -- app-activation. Routing it here (not through membership-only reconcile) is what
+    -- keeps the highlight from STICKING on the last window when focus crosses apps
+    -- (the "our own app is special, the focus switch isn't detected" bug).
+    local function syncFocus(source)
+        if not st.active or st.restacking then return end
+        -- Trust a RESOLVED focus only. focusedWid() returns 0 when the newly-active
+        -- app has no resolvable focused window (a windowless / menubar app, or one
+        -- whose windows are all minimized or on another Space). Clobbering with that
+        -- 0 would clear the bold border + widget highlight with NO self-heal -- the
+        -- poll never re-reads focus and an app-activation fires no focus pulse -- so
+        -- keep the last known focus on a 0, the same "0 = unresolved, don't trust it"
+        -- rule place() and restack() already follow. A real non-member focus (a
+        -- window we don't stack, wid ~= 0) still clears the highlight, as before.
+        local w = ctx.window.focusedWid()
+        if w ~= 0 then st.focusedWid = w end
+        refreshFromList()          -- the switch changed the stacking order
+        if currentSig() ~= st.memberSig then
+            ctx.log("stack: window set changed (" .. source .. ") -- restacking")
+            restack()
+        else
+            drawOcclusion()
+        end
+        updateWidget()             -- move the widget's highlight to the new focus
     end
 
     -- Tear down every live-mode handle (widget + borders + observers + timers).
@@ -570,23 +603,17 @@ local function controllerFor(ctx)
 
         -- Keep the borders honest AND the fan complete. Three triggers, all live
         -- for the mode's life (teardown() stops them):
-        --   * onFocusChanged -- a click re-reads the real z-order (the OS raised the
-        --     clicked window) and prunes gone windows; if that revealed a member-set
-        --     change (a window opened and took focus, or the focused one closed),
-        --     re-fan, else just re-clip.
-        --   * onAppActivated -- a NEW app's window activates its app (and a drag's
-        --     start clicks a window, activating its app): an instant, event-driven
-        --     membership trigger with no focus dependency.
-        --   * the loose poll -- the reconcile backstop for a drag-IN completing, the
+        --   * onFocusChanged -- a WITHIN-app switch (cmd+`): re-reads the real z-order
+        --     (the OS raised the focused window), moves the highlight, prunes gone
+        --     windows; re-fans if the member set changed, else just re-clips.
+        --   * onAppActivated -- a CROSS-app switch (clicking another app's window, incl.
+        --     Hammerdeck's own), which the focused-window observer never sees: it drives
+        --     the SAME focus sync (so the highlight follows focus across apps), and takes
+        --     in a NEW app's window / a drag's start when that changed the set.
+        --   * the loose poll -- the membership backstop for a drag-IN completing, the
         --     one change no event we hear reports.
-        st.focusWatch = ctx.window.onFocusChanged(function()
-            if not st.active then return end
-            st.focusedWid = ctx.window.focusedWid()
-            refreshFromList()          -- the click changed the stacking order
-            if currentSig() ~= st.memberSig then restack() else drawOcclusion() end
-            updateWidget()             -- move the widget's highlight to the new focus
-        end)
-        st.appWatch = ctx.onAppActivated(function() reconcile("app-activated") end)
+        st.focusWatch = ctx.window.onFocusChanged(function() syncFocus("focus") end)
+        st.appWatch = ctx.onAppActivated(function() syncFocus("app-activated") end)
         st.pollTimer = ctx.everySeconds(RECONCILE_SECONDS, function() reconcile("poll") end)
         -- Display reconfig (monitor plugged/unplugged, resolution or arrangement
         -- change): the fan's slots were sized to the OLD screen frame, so a resize

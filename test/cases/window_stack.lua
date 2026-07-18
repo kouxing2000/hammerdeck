@@ -316,6 +316,73 @@ return {
             fake.pressHotkey("s", HYP)                 -- leave
         end
 
+        -- ===== CROSS-APP FOCUS FOLLOWS (regression): switching focus to ANOTHER
+        -- app's window (SAME member set, so NOT a re-fan) reaches us ONLY as an
+        -- app-activation -- the focused-window observer sees within-app switches
+        -- only. The bold border + widget highlight must follow focus across apps.
+        -- Before the fix, onAppActivated was membership-only, so the highlight stuck
+        -- on the last window whenever focus crossed apps (the reported "our own app
+        -- is special, focus not detected" bug).
+        do
+            fake.windows = freshWindows()
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("s", HYP)                 -- enter (5 windows), focus on 101
+            ok(borderFor(101) and borderFor(101).kind == "focus",
+                "the initially-focused window (101, app 'Code') is bold")
+
+            -- The user CLICKS Mail's window (wid 103, a DIFFERENT app): the OS raised
+            -- it, so reorder row 1 = 103, point focus at it, and fire ONLY the
+            -- app-activation (a cross-app switch fires no within-app focus pulse).
+            local reordered, mail = {}, nil
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 103 then mail = w else reordered[#reordered + 1] = w end
+            end
+            table.insert(reordered, 1, mail)
+            fake.windows = reordered
+            fake.focusedWid = 103
+            local before = #fake.windowFrameSets
+            fake.activateApp("Mail", "com.mail")       -- cross-app switch, SAME set
+
+            ok(#fake.windowFrameSets == before, "no re-fan (the member set did not change)")
+            ok(#fake.liveOutlines("focus") == 1, "still exactly one bold (focused) border")
+            ok(borderFor(103) and borderFor(103).kind == "focus",
+                "the cross-app focus moved the bold border to the newly-focused window")
+            ok(borderFor(101) and borderFor(101).kind == "member",
+                "the previously-focused window is no longer bold")
+            local wdg = fake.liveStackWidget()
+            local focusedTitle
+            for _, r in ipairs(wdg.rows) do if r.focused then focusedTitle = r.title end end
+            ok(focusedTitle == "Mail",
+                "the widget highlight followed focus across apps (Mail, not the stale Editor)")
+            fake.pressHotkey("s", HYP)                 -- leave
+        end
+
+        -- ===== UNRESOLVED FOCUS ON ACTIVATION (regression for the 0-clobber):
+        -- activating a WINDOWLESS / menubar app resolves focusedWid to 0. syncFocus
+        -- must NOT clear the highlight with that 0 -- there is no self-heal (the poll
+        -- never re-reads focus, activation fires no focus pulse), so it keeps the last
+        -- known focus, matching place()/restack()'s "0 = don't trust" rule. (A real
+        -- non-member focus, wid ~= 0, still clears it -- covered by the block above.)
+        do
+            fake.windows = freshWindows()
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("s", HYP)                 -- enter (5 windows), focus on 101
+            ok(borderFor(101) and borderFor(101).kind == "focus",
+                "the focused window (101) is bold before the windowless-app switch")
+
+            -- a windowless app activates: focus is UNRESOLVED (wid 0), same window set.
+            fake.focusedWid = 0
+            local before = #fake.windowFrameSets
+            fake.activateApp("Menubar", "com.menubar")
+
+            ok(#fake.windowFrameSets == before, "no re-fan (the member set did not change)")
+            ok(#fake.liveOutlines("focus") == 1 and borderFor(101) and borderFor(101).kind == "focus",
+                "an unresolved (0) focus KEEPS the last highlight, it does not clear it")
+            fake.pressHotkey("s", HYP)                 -- leave
+        end
+
         -- ===== AUTO-RESTACK (loose poll backstop): a window DRAGGED in from another
         -- screen COMPLETES with no activation/focus pulse -- an AX window-move on an
         -- app we may not observe. The reconcile poll is the sole backstop for it. Add
