@@ -481,6 +481,128 @@ return {
             ok(registry.liveHandleCount() == 0, "clean after the chrome-peek test")
         end
 
+        -- T-WD-occlusion: BORDER HONESTY. A peek then a bare return does NOT
+        -- re-order windows (that is the "return blink" we refuse) -- so a member
+        -- still sitting behind the ex-peek would, naively, get a ring drawn OVER
+        -- that foreign window. renderBorders instead detects the occlusion from
+        -- the CG z-order (list order) + geometry and draws no ring for it. Only
+        -- the returned-to hero (on top via the user's click, per AX) keeps its
+        -- ring; the beat that later re-raises the deck restores the rest.
+        -- Helper: classify the live deck-member rings (skip the ghost/scrim).
+        local function ringVisibility()
+            local heroVisible, otherShown, otherHidden = false, 0, 0
+            for _, o in ipairs(fake.liveOutlines()) do
+                if o.kind == "hero" then
+                    if not o.hidden then heroVisible = true end
+                elseif o.kind == "member" or o.kind == "focus" then
+                    if o.hidden then otherHidden = otherHidden + 1 else otherShown = otherShown + 1 end
+                end
+            end
+            return heroVisible, otherShown, otherHidden
+        end
+        do
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = nil   -- explicit: Hero ON (default)
+            fake.screenList = { SCREEN }   -- single-screen fast path (no display picker)
+            fake.mousePos = { x = 10, y = 10 }
+            fake.windows = quadWindows()
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            focusWin(2)                    -- promote TL -> hero (on top)
+            -- a full-screen foreign window now covers the whole deck, listed in
+            -- FRONT (row 1 == frontmost). A real cmd-tab'd window, unlike the tiny
+            -- placeholders elsewhere, actually covers the member slots.
+            table.insert(fake.windows, 1,
+                { id = 99, title = "Cover", appName = "Cover", bundleID = "com.cover",
+                  x = 0, y = 0, w = 1440, h = 900 })
+            focusWin(99)                   -- peek: chrome hidden
+            focusWin(2)                    -- return to the hero (still row 3, behind the cover in CG)
+            do
+                local heroVisible, otherShown, otherHidden = ringVisibility()
+                ok(heroVisible,
+                    "peek-return: the hero keeps its ring (AX says it is frontmost, even as CG lags)")
+                ok(otherHidden == 3 and otherShown == 0,
+                    "peek-return: members still behind the ex-peek draw NO ring (border honesty, no re-order)")
+            end
+            -- the ex-peek slots get no scrim hole either -- dimmed, not revealed
+            ok(#fake.liveScrim().holes == 1,
+                "an occluded member punches no hole (the hero's is the only cutout)")
+            -- a beat re-raises the deck -> peek cleared -> every ring/hole restored
+            focusWin(3)                    -- swap -> beat -> landHero -> reclean
+            do
+                local _, otherShown, otherHidden = ringVisibility()
+                ok(otherShown >= 1 and otherHidden == 0,
+                    "the beat's reclean restores every hidden ring (deck back on top)")
+            end
+            fake.pressHotkey("k", HYP)     -- exit
+            registry.setEnabled("window_deck", false)
+            ok(registry.liveHandleCount() == 0, "clean after the occlusion test")
+        end
+
+        -- T-WD-occlusion-grid: Hero-OFF grid mode has NO beat to ever reclean, so
+        -- a peeked window would bleed through the grid forever. Border honesty is
+        -- the whole fix here: the focused tile keeps its (bold) ring; every other
+        -- tile still behind the ex-peek draws none.
+        do
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = "off"
+            fake.screenList = { SCREEN }   -- single-screen fast path (no display picker)
+            fake.mousePos = { x = 10, y = 10 }
+            fake.windows = quadWindows()
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            focusWin(2)                    -- grid focus: no hero, TL gets the bold ring
+            table.insert(fake.windows, 1,
+                { id = 98, title = "Cover", appName = "Cover", bundleID = "com.cov2",
+                  x = 0, y = 0, w = 1440, h = 900 })
+            focusWin(98)                   -- peek: chrome hidden
+            focusWin(2)                    -- back to the grid tile (behind the cover in CG)
+            do
+                local shown, hidden = 0, 0
+                for _, o in ipairs(fake.liveOutlines()) do
+                    if o.kind == "member" or o.kind == "focus" then
+                        if o.hidden then hidden = hidden + 1 else shown = shown + 1 end
+                    end
+                end
+                ok(shown == 1 and hidden == 3,
+                    "grid peek-return: only the focused tile keeps its ring; the occluded three draw none")
+            end
+            fake.pressHotkey("k", HYP)     -- exit
+            registry.setEnabled("window_deck", false)
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = nil
+            ok(registry.liveHandleCount() == 0, "clean after the grid-occlusion test")
+        end
+
+        -- T-WD-occlusion-reenter: the occlusion set must NOT leak across decks. The
+        -- controller is memoized for the whole enablement (init.lua "one controller
+        -- per enablement"), so a deck left with members occluded (grid mode, where
+        -- st.peeked never clears) must reset st.occluded on exit -- else the NEXT
+        -- deck's commit -> syncScrim reads the stale set and skips punching holes
+        -- for live members (dimming them until the first focus event). This drives
+        -- the real toggle-off/toggle-on path (one enablement), which every other
+        -- case sidesteps by disabling the feature (which discards the controller).
+        do
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = "off"   -- grid: peeked never self-clears
+            fake.screenList = { SCREEN }
+            fake.mousePos = { x = 10, y = 10 }
+            fake.windows = quadWindows()
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            focusWin(2)                    -- grid focus a tile
+            table.insert(fake.windows, 1,
+                { id = 97, title = "Cover", appName = "Cover", bundleID = "com.cov3",
+                  x = 0, y = 0, w = 1440, h = 900 })
+            focusWin(97)                   -- peek: chrome hidden
+            focusWin(2)                    -- occlusion set: the three non-focused tiles
+            fake.pressHotkey("k", HYP)     -- toggle OFF -> exitDeck (must clear st.occluded)
+            table.remove(fake.windows, 1)  -- the peeked window is gone before the next deck
+            enterDeck()                    -- toggle ON again -- SAME controller, fresh deck
+            ok(#fake.liveScrim().holes == 4,
+                "re-enter after an occluded exit punches a hole for EVERY member (no stale occlusion leak)")
+            fake.pressHotkey("k", HYP)     -- exit
+            registry.setEnabled("window_deck", false)
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = nil
+            ok(registry.liveHandleCount() == 0, "clean after the occlusion-reenter test")
+        end
+
         -- T-WD-widget-drag: dragging the indicator persists its position as an
         -- OFFSET from the deck screen, so it returns there on the next deck.
         do

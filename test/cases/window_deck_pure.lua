@@ -128,6 +128,48 @@ return {
                 { { bundleID = "com.a", title = "", wid = 0 } },
                 { { id = 1, bundleID = "com.a", title = "", wid = 0 } }) == 0,
                 "matchMembers: an unidentifiable (no wid, no title) member never matches")
+
+            -- occludedMembers: which deck rings must NOT draw because a FOREIGN
+            -- window sits in front of the member and over its centre. `list` is
+            -- front-to-back (row 1 == frontmost); `rects` = member key -> frame.
+            do
+                local m1 = ident.widKey("com.a", 1)   -- a member at 0,0 100x100
+                local m2 = ident.widKey("com.b", 2)   -- a member at 200,0 100x100
+                local rects = { [m1] = { x = 0, y = 0, w = 100, h = 100 },
+                                [m2] = { x = 200, y = 0, w = 100, h = 100 } }
+                -- a foreign window in FRONT covering m1's centre -> m1 occluded, m2 not
+                local occ = ident.occludedMembers({
+                    { bundleID = "com.x", wid = 9, x = 0, y = 0, w = 150, h = 150 },   -- foreign, front
+                    { bundleID = "com.a", wid = 1, x = 0, y = 0, w = 100, h = 100 },   -- m1
+                    { bundleID = "com.b", wid = 2, x = 200, y = 0, w = 100, h = 100 }, -- m2
+                }, rects)
+                ok(occ[m1] and not occ[m2],
+                    "occludedMembers: a foreign window in front over a member's centre occludes it (only that one)")
+                -- the SAME foreign window listed BEHIND the members occludes neither
+                local behind = ident.occludedMembers({
+                    { bundleID = "com.a", wid = 1, x = 0, y = 0, w = 100, h = 100 },   -- m1 (front)
+                    { bundleID = "com.b", wid = 2, x = 200, y = 0, w = 100, h = 100 }, -- m2
+                    { bundleID = "com.x", wid = 9, x = 0, y = 0, w = 150, h = 150 },   -- foreign, BEHIND
+                }, rects)
+                ok(not behind[m1] and not behind[m2],
+                    "occludedMembers: a foreign window BEHIND the members occludes nothing (z-order respected)")
+                -- a foreign window in front that only GRAZES an edge (misses the
+                -- centre) leaves the ring meaningful -> not occluded
+                local graze = ident.occludedMembers({
+                    { bundleID = "com.x", wid = 9, x = -60, y = 0, w = 100, h = 100 }, -- covers x<40 only
+                    { bundleID = "com.a", wid = 1, x = 0, y = 0, w = 100, h = 100 },
+                }, { [m1] = rects[m1] })
+                ok(not graze[m1],
+                    "occludedMembers: a front window grazing an edge (not the centre) does not occlude")
+                -- ANOTHER deck member in front never occludes (that is the hero's
+                -- job, handled by the scrim hole, not by hiding the ring)
+                local sibling = ident.occludedMembers({
+                    { bundleID = "com.b", wid = 2, x = 0, y = 0, w = 150, h = 150 },   -- m2, in front, over m1
+                    { bundleID = "com.a", wid = 1, x = 0, y = 0, w = 100, h = 100 },   -- m1
+                }, rects)
+                ok(not sibling[m1],
+                    "occludedMembers: a fellow deck member in front never occludes (only foreign windows do)")
+            end
         end
 
         -- the last-deck round-trip: PROVE the PRIMARY wid identity flows through

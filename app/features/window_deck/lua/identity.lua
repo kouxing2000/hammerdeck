@@ -130,4 +130,46 @@ function M.matchMembers(saved, live)
     return matched
 end
 
+-- Which deck members are HIDDEN behind a FOREIGN (non-member) window? Given the
+-- front-to-back window list (ctx.window.list() order == the CG z-order) and each
+-- present member's current rect keyed by keyOf, a member is OCCLUDED iff some
+-- NON-member window sits IN FRONT of it (earlier in `list`) and covers the
+-- member's CENTRE. Pure -- the render shell passes the freshly-listed windows
+-- plus the members' own frames, so "is this deck window actually the visible one
+-- at its slot, or is a foreign window over it?" is decided (and unit-tested)
+-- without a live screen. This is what lets a ring hide itself instead of drawing
+-- over a peeked window, WITHOUT re-ordering any window (which would blink).
+--
+-- CENTRE-coverage, not any-overlap: a foreign window merely grazing a member's
+-- edge leaves it substantially visible, so its ring still means something; only a
+-- window over the member's middle really hides it. The caller (init.lua) trusts
+-- AX -- not this -- for who is FRONTMOST (the CG list lags the focus event), so it
+-- drops the just-focused key from the result; this only decides the stable
+-- foreign-over-the-others relationship, which the list reports reliably.
+---@param list table[] front-to-back window rows (.wid/.bundleID/.title/.x/.y/.w/.h)
+---@param rects table<string, table> present member key -> its rect {x,y,w,h}
+---@return table<string, boolean> member keys occluded by a foreign window in front
+function M.occludedMembers(list, rects)
+    local rank = {}                            -- member key -> its own front-rank
+    for i, w in ipairs(list) do
+        local k = M.keyOf(w)
+        if rects[k] and not rank[k] then rank[k] = i end
+    end
+    local occluded = {}
+    for i, w in ipairs(list) do
+        if not rects[M.keyOf(w)] then          -- a FOREIGN window at front-rank i
+            for k, r in pairs(rects) do
+                if not occluded[k] and rank[k] and i < rank[k] then
+                    local cx, cy = r.x + r.w / 2, r.y + r.h / 2
+                    if w.x <= cx and cx <= w.x + w.w
+                        and w.y <= cy and cy <= w.y + w.h then
+                        occluded[k] = true     -- foreign window in front covers its centre
+                    end
+                end
+            end
+        end
+    end
+    return occluded
+end
+
 return M

@@ -40,15 +40,19 @@
 -- whose ring flights + window motion cover the raise churn. The bare return to
 -- the hero raises NOTHING: the user's own click/cmd-tab already fronted the
 -- hero, and any AXRaise to an app that activates-on-raise (VSCode, Chrome) can
--- front a member over the hero for a beat -- the "return blink". Until that
--- next beat the ex-peek may overlap the member margins -- the same visual
--- state as during the peek itself, just a little longer. When the reclean does
--- run, raiseDeck raises the non-hero members with ctx.window.raise (surgical
--- AXRaise) then lifts the HERO on top with ctx.window.focus (a real activation
--- -- a surgical raise can't beat an app that activated itself when raised),
--- gated on the hero actually holding focus; a settle guard absorbs the
--- raise/activation echoes so they never re-enter reconcile and make the hero
--- and a peek fight for front. Focus is the only "tell".
+-- front a member over the hero for a beat -- the "return blink". Because that
+-- next beat is NOT guaranteed (return to the hero and keep working; or Hero-off
+-- grid mode, which has no beat at all), the chrome does NOT wait for it to be
+-- honest: renderBorders detects which members are still BEHIND the ex-peek (CG
+-- z-order + geometry, identity.occludedMembers) and draws no ring / no scrim
+-- hole over them -- so a ring never floats over a foreign window even while the
+-- windows stay put. No re-order, so no blink. When the reclean DOES run,
+-- raiseDeck raises the non-hero members with ctx.window.raise (surgical AXRaise)
+-- then lifts the HERO on top with ctx.window.focus (a real activation -- a
+-- surgical raise can't beat an app that activated itself when raised), gated on
+-- the hero actually holding focus; a settle guard absorbs the raise/activation
+-- echoes so they never re-enter reconcile and make the hero and a peek fight
+-- for front. Focus is the only "tell".
 --
 -- A SERVICE (start builds the idle controller; stop restores if the deck is live
 -- on disable) with one rebindable action (the toggle). Reuses the pure tiling
@@ -76,6 +80,7 @@ local HYPER = { "cmd", "alt", "ctrl" }
 -- controller body below reads unchanged.
 local widKey, titleKey, keyOf = identity.widKey, identity.titleKey, identity.keyOf
 local onScreen, atFrame, frameFar = identity.onScreen, identity.atFrame, identity.frameFar
+local occludedMembers = identity.occludedMembers
 local PALETTE = colors.PALETTE
 
 -- Ring-flight duration (seconds): how long a border ring flies between a grid
@@ -243,10 +248,14 @@ local function controllerFor(ctx)
     -- bound, so the bright cutouts track the windows. Includes members hidden
     -- mid-drag (st.stable) at their last frame -- a hole is just a reveal, it
     -- has no ring to trail the drag.
+    -- A member hidden behind a peeked window (st.occluded, set by renderBorders)
+    -- gets NO hole either: revealing it would show the foreign window through the
+    -- cutout, right where the ring was just suppressed -- so leave the scrim to
+    -- DIM that region until the member is actually on top again.
     local function deckHoles()
         local holes = {}
         for _, m in ipairs(st.group or {}) do
-            if not m.gone then
+            if not m.gone and not (st.occluded and st.occluded[m.key]) then
                 local f = m.cur
                     or (m.key == st.heroKey and heroFrame() or m.slot)
                 if f then holes[#holes + 1] = { x = f.x, y = f.y, w = f.w, h = f.h } end
@@ -381,11 +390,39 @@ local function controllerFor(ctx)
         -- window), the member holding focus gets a BOLDER ring so you can see which
         -- tiled window is focused as you cmd-tab / click around. In hero mode the
         -- hero already signals focus, so this stays off (and never fights it).
-        local focusKey = nil
-        if not st.heroMode then
+        -- The focused member's key: drives the grid-mode bold ring, and (below)
+        -- the occlusion override. Only read when actually needed (grid mode, or a
+        -- peek is outstanding) -- it costs an AX round-trip, not a window list().
+        local focusedKey = nil
+        if (not st.heroMode) or st.peeked then
             local _, fk = focusedMember()
-            focusKey = fk
+            focusedKey = fk
         end
+        local focusKey = (not st.heroMode) and focusedKey or nil
+
+        -- Border honesty: while a peek is outstanding (a foreign window took front
+        -- and we did NOT re-raise the deck -- see recleanIfPeeked), a member still
+        -- sitting BEHIND that window must draw NO ring over it. Detect it from the
+        -- CG z-order (list order) + geometry, NOT by re-ordering any window (that
+        -- is the "return blink" we refuse to reintroduce). The FRONTMOST window is
+        -- read from AX (focusedKey) because the CG list LAGS the focus event, so
+        -- the just-focused window is dropped from the occluded set -- it is on top
+        -- by definition. Cleared when a beat re-raises the deck: st.peeked false ->
+        -- the whole deck is on top -> every ring valid, so occlusion is skipped
+        -- (and never flickers a freshly-entered or freshly-raised deck).
+        local occluded = nil
+        if st.peeked then
+            local rects = {}
+            for _, m in ipairs(st.group) do
+                if not m.gone then
+                    rects[m.key] = (m.key == st.heroKey) and (hole or m.slot) or (m.cur or m.slot)
+                end
+            end
+            occluded = occludedMembers(ctx.window.list(), rects)
+            if focusedKey then occluded[focusedKey] = nil end
+        end
+        st.occluded = occluded   -- deckHoles reads it (dim, don't reveal, a hidden slot)
+
         for _, m in ipairs(st.group) do
             if m.gone then
                 if st.borders[m.key] then st.borders[m.key].stop(); st.borders[m.key] = nil end
@@ -394,6 +431,11 @@ local function controllerFor(ctx)
                 -- setFrame here would re-show the hidden ring at a lagging
                 -- frame -- leave it alone; the stable timer's own render
                 -- re-places it once the window settles
+            elseif occluded and occluded[m.key] then
+                -- hidden behind a peeked foreign window: no ring over it (the next
+                -- render with st.peeked cleared, or after the member climbs back on
+                -- top, re-shows it via the setFrame path below)
+                if st.borders[m.key] then st.borders[m.key].hide() end
             else
                 local b = st.borders[m.key]
                 if not b then b = ctx.outline("member", m.color); st.borders[m.key] = b end
@@ -544,6 +586,7 @@ local function controllerFor(ctx)
         ctx.log("reclean deck (a peek left a non-deck window on top)")
         beginSettle()
         raiseDeck()
+        renderBorders()   -- st.peeked now false: re-show every ring/hole the peek hid (deck is back on top)
     end
 
     -- A member window moved or resized. Our own AX moves echo here too --
@@ -1304,6 +1347,9 @@ local function controllerFor(ctx)
         settlePending()
         st.settling = false
         st.peeked = false
+        st.occluded = nil   -- the controller is memoized per-enablement; a stale
+                            -- occlusion set would make the NEXT deck's syncScrim
+                            -- skip holes (dim live members) until the first focus
         clearBorders()
         if st.frameWatcher then st.frameWatcher.stop(); st.frameWatcher = nil end
         if st.screenWatcher then st.screenWatcher.stop(); st.screenWatcher = nil end
