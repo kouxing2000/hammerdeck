@@ -15,6 +15,44 @@ local cycleModifier = require("platform.hotkeys").cycleModifier
 -- Shared cycle-with-wrap + release-to-pick mechanics (also drives tab_switcher).
 local cyclingChooser = require("platform.cyclingChooser")
 
+-- 1-based index of the screen whose VISIBLE frame contains point (cx, cy), or
+-- nil (a minimized / off-screen window can map to none). `screens` are
+-- ctx.screen.frames() rows in index order, so the array position IS the index.
+local function screenIndexAt(screens, cx, cy)
+    for i, s in ipairs(screens) do
+        if cx >= s.x and cx < s.x + s.w and cy >= s.y and cy < s.y + s.h then
+            return i
+        end
+    end
+    return nil
+end
+
+-- Cross-screen arrival cue: when the picked window lives on a DIFFERENT display
+-- than the one that currently has focus, pulse an accent border (grown from an
+-- inset -> the full screen) around the destination screen so the eye knows
+-- where to look before the window fronts. Multi-display only. Reuses the
+-- outline overlay -- the same primitive as Auto Stack's rings -- so it floats
+-- above every app's windows and needs no z-reordering; afterSeconds tears it
+-- down. The handles live on `st` so a rapid second pick replaces the prior
+-- pulse instead of leaking a second overlay.
+local function pulseScreen(ctx, st, frame)
+    if st.screenGlow then st.screenGlow.stop() end
+    if st.glowTimer then st.glowTimer.stop() end
+    local o = ctx.outline("hero")          -- bold, system-accent border
+    o.setFilled(true)                      -- + a soft tint that reads as a flash
+    local inset = 48
+    o.setFrame({ x = frame.x + inset, y = frame.y + inset,
+                 w = frame.w - 2 * inset, h = frame.h - 2 * inset })
+    o.animateFrame(frame, 0.16)            -- grow to the screen edge == a pulse
+    st.screenGlow = o
+    st.glowTimer = ctx.afterSeconds(0.5, function()
+        if st.screenGlow then st.screenGlow.stop(); st.screenGlow = nil end
+        st.glowTimer = nil
+    end)
+    ctx.log("cross-screen switch -- pulsed destination screen "
+        .. tostring(frame.index) .. " (" .. tostring(frame.name) .. ")")
+end
+
 local function jump(ctx, actionId, backward)
     -- Per-enable state, memoized on the ctx (shared across both actions).
     local st = ctx.perEnable(function() return { chooser = nil, altTimer = nil } end)
@@ -25,7 +63,14 @@ local function jump(ctx, actionId, backward)
             onHide = function() cyclingChooser.stop(st) end,
             onSelect = function(choice)
                 cyclingChooser.stop(st)
-                if choice then ctx.window.focus(choice.id) end
+                if not choice then return end
+                -- Highlight the destination display first when it is NOT the one
+                -- the focused window is already on (multi-display only).
+                if st.screens and #st.screens > 1 and st.sourceScreen
+                    and choice.screenIndex and choice.screenIndex ~= st.sourceScreen then
+                    pulseScreen(ctx, st, st.screens[choice.screenIndex])
+                end
+                ctx.window.focus(choice.id)
             end,
         }
     end
@@ -61,6 +106,16 @@ local function jump(ctx, actionId, backward)
         -- may be absent; when both are nil the subText collapses the row back to
         -- one line. The app name is dropped on purpose -- the leading icon
         -- already identifies the app.
+        -- Screen geometry for the cross-screen arrival cue (multi-display only).
+        -- Source = the screen the currently-focused window is on; windows[1] is
+        -- the front (z-ordered) window, i.e. the one that has focus right now.
+        local screens = ctx.screen.frames()
+        st.screens = screens
+        st.sourceScreen = (#screens > 1 and windows[1])
+            and screenIndexAt(screens, windows[1].x + windows[1].w / 2,
+                              windows[1].y + windows[1].h / 2)
+            or nil
+
         local choices = {}
         for _, w in ipairs(windows) do
             local parts = {}
@@ -76,6 +131,8 @@ local function jump(ctx, actionId, backward)
                 subText = parts[1] and table.concat(parts, " · ") or nil,
                 image = w.icon or ctx.appIcon(w.bundleID),
                 id = w.id,
+                screenIndex = (#screens > 1)
+                    and screenIndexAt(screens, w.x + w.w / 2, w.y + w.h / 2) or nil,
             }
         end
         st.lastChoices = choices
