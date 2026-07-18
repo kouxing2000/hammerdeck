@@ -524,6 +524,33 @@ function adapter.usageWidget(screenIndex)
     }
 end
 
+-- Auto Stack's DRAGGABLE switcher card: a floating list of the fan's windows, each
+-- row an edge-swatch (color + exposed side) + app icon + title, the focused one lit.
+-- opts = { title, count (strings); pos = {x,y} top-left global; screen = {x,y,w,h};
+-- rows = { {color, side, title, bundleID, focused}, ... };
+-- onMove(x,y), onExit(), onSwitch(i) }. Returns { setRows(rows, count),
+-- reanchor(pos, screen), stop() }.
+function adapter.stackWidget(opts)
+    opts = opts or {}
+    local pos, scr = opts.pos or {}, opts.screen or {}
+    local id = native.stack_widget_show({
+        title = opts.title or "", count = opts.count or "",
+        x = pos.x or 40, y = pos.y or 60,
+        sx = scr.x or 0, sy = scr.y or 0, sw = scr.w or 1440, sh = scr.h or 900,
+        rows = opts.rows or {},
+        onMove = opts.onMove or function() end,
+        onExit = opts.onExit or function() end,
+        onSwitch = opts.onSwitch or function() end,
+    })
+    return {
+        setRows = function(rows, count) native.stack_widget_set(id, rows or {}, count or "") end,
+        reanchor = function(p, s)
+            native.stack_widget_reanchor(id, p.x, p.y, s.x, s.y, s.w, s.h)
+        end,
+        stop = function() native.stop(id) end,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Windows / apps
 -- ---------------------------------------------------------------------------

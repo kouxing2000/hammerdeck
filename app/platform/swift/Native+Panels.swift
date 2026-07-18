@@ -760,6 +760,97 @@ extension Native {
         return 0
     }
 
+    // MARK: - Auto Stack switcher widget
+
+    // Read a `rows` array-of-tables at stack index `at` into [StackWidgetPanel.Row].
+    // Each row = { color, side, title, bundleID, focused }.
+    private func stackWidgetRows(_ L: OpaquePointer?, at: Int32) -> [StackWidgetPanel.Row] {
+        var out: [StackWidgetPanel.Row] = []
+        guard lua_type(L, at) == LUA_TTABLE else { return out }
+        let n = lua_rawlen(L, at)
+        guard n > 0 else { return out }
+        func f(_ k: String) -> String {   // field of the row table now at stack top
+            lua_getfield(L, -1, k); defer { lua_settop(L, -2) }; return LuaState.string(L, -1) ?? ""
+        }
+        func fb(_ k: String) -> Bool {
+            lua_getfield(L, -1, k); defer { lua_settop(L, -2) }; return LuaState.bool(L, -1)
+        }
+        for i in 1...n {
+            lua_rawgeti(L, at, lua_Integer(i))
+            if lua_type(L, -1) == LUA_TTABLE {
+                out.append(StackWidgetPanel.Row(color: f("color"), side: f("side"),
+                    title: f("title"), bundleID: f("bundleID"), focused: fb("focused")))
+            }
+            lua_settop(L, -2)
+        }
+        return out
+    }
+
+    // stack_widget_show(opts) -- opts is a single table: title, count (both strings);
+    // x, y (top-left global corner); sx, sy, sw, sh (screen frame, for the drag clamp);
+    // rows (array of {color, side, title, bundleID, focused}); onMove(x,y) / onExit() /
+    // onSwitch(i) callbacks. Returns a resource id (stop() closes + releases the refs).
+    func stackWidgetShow(_ L: OpaquePointer?) -> Int32 {
+        func str(_ k: String) -> String {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.string(L, -1) ?? ""
+        }
+        func dbl(_ k: String, _ d: Double) -> Double {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.double(L, -1) ?? d
+        }
+        func ref(_ k: String) -> Int32 {
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return lua.makeRef(at: -1)
+        }
+        lua_getfield(L, 1, "rows")
+        let rows = stackWidgetRows(L, at: lua_gettop(L))
+        lua_settop(L, -2)
+
+        let moveRef = ref("onMove"), exitRef = ref("onExit"), switchRef = ref("onSwitch")
+        let widget = StackWidgetPanel(
+            title: str("title"), count: str("count"), rows: rows,
+            topLeft: CGPoint(x: dbl("x", 40), y: dbl("y", 60)),
+            screen: flipToAppKit(dbl("sx", 0), dbl("sy", 0), dbl("sw", 1440), dbl("sh", 900)),
+            onMove: { nx, ny in
+                Native.shared.lua.callRef(moveRef) { L in
+                    lua_pushnumber(L, nx); lua_pushnumber(L, ny); return 2
+                }
+            },
+            onExit: { Native.shared.lua.callRef(exitRef) },
+            onSwitch: { idx in
+                Native.shared.lua.callRef(switchRef) { L in
+                    lua_pushinteger(L, lua_Integer(idx)); return 1
+                }
+            })
+        let id = registerResource {
+            Native.shared.lua.releaseRef(moveRef)
+            Native.shared.lua.releaseRef(exitRef)
+            Native.shared.lua.releaseRef(switchRef)
+            widget.close()
+        }
+        stackWidgets[id] = widget
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    // stack_widget_set(id, rows, count) -- rebuild the list + header count.
+    func stackWidgetSet(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let w = stackWidgets[id] else { return 0 }
+        let rows = stackWidgetRows(L, at: 2)
+        w.setRows(rows, count: LuaState.string(L, 3) ?? "")
+        return 0
+    }
+
+    // stack_widget_reanchor(id, x, y, sx, sy, sw, sh) -- reposition + re-clamp.
+    func stackWidgetReanchor(_ L: OpaquePointer?) -> Int32 {
+        if let id = LuaState.int(L, 1).map(Int32.init),
+           let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
+           let sx = LuaState.double(L, 4), let sy = LuaState.double(L, 5),
+           let sw = LuaState.double(L, 6), let sh = LuaState.double(L, 7) {
+            stackWidgets[id]?.reanchor(topLeft: CGPoint(x: x, y: y),
+                                       screen: flipToAppKit(sx, sy, sw, sh))
+        }
+        return 0
+    }
+
     // MARK: - Progress strip
 
     func progressShow(_ L: OpaquePointer?) -> Int32 {

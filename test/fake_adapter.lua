@@ -539,6 +539,31 @@ function adapter.usageWidget(screenIndex)
     }
 end
 
+fake.stackWidgets = {}   -- {title, count, rows, pos, screen, onSwitch, onExit, onMove, stopped}
+function adapter.stackWidget(opts)
+    opts = opts or {}
+    local w = { title = opts.title, count = opts.count, rows = opts.rows or {},
+                pos = opts.pos, screen = opts.screen,
+                onSwitch = opts.onSwitch, onExit = opts.onExit, onMove = opts.onMove,
+                stopped = false }
+    fake.stackWidgets[#fake.stackWidgets + 1] = w
+    alloc()
+    return {
+        -- drive w.onSwitch(i)/w.onExit()/w.onMove(x,y) from a test.
+        setRows  = function(rows, count) w.rows = rows or {}; w.count = count end,
+        reanchor = function(p, s) w.pos, w.screen = p, s end,
+        stop     = function() freeOnce(w) end,
+    }
+end
+
+-- The most-recent live (non-stopped) Auto Stack widget, nil if none.
+function fake.liveStackWidget()
+    for i = #fake.stackWidgets, 1, -1 do
+        if not fake.stackWidgets[i].stopped then return fake.stackWidgets[i] end
+    end
+    return nil
+end
+
 function fake.liveUsageWidget()
     for i = #fake.usageWidgets, 1, -1 do
         if not fake.usageWidgets[i].stopped then return fake.usageWidgets[i] end

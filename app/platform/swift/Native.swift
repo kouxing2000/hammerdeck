@@ -29,6 +29,7 @@ final class Native {
     var outlines: [Int32: OutlinePanel] = [:]
     var scrims: [Int32: ScrimPanel] = [:]
     var deckWidgets: [Int32: DeckWidgetPanel] = [:]
+    var stackWidgets: [Int32: StackWidgetPanel] = [:]
     var progresses: [Int32: ProgressPanel] = [:]
     var askTexts: [Int32: AskTextPanel] = [:]
     var widgets: [Int32: UsageWidgetPanel] = [:]
@@ -66,6 +67,7 @@ final class Native {
         outlines[id] = nil
         scrims[id] = nil
         deckWidgets[id] = nil
+        stackWidgets[id] = nil
         progresses[id] = nil
         askTexts[id] = nil
         widgets[id] = nil
@@ -152,6 +154,9 @@ final class Native {
             "deck_widget_reanchor":   { L in MainActor.assumeIsolated { Native.shared.deckWidgetReanchor(L) } },
             "deck_widget_hide":       { L in MainActor.assumeIsolated { Native.shared.deckWidgetHide(L) } },
             "deck_widget_show_again": { L in MainActor.assumeIsolated { Native.shared.deckWidgetShowAgain(L) } },
+            "stack_widget_show":      { L in MainActor.assumeIsolated { Native.shared.stackWidgetShow(L) } },
+            "stack_widget_set":       { L in MainActor.assumeIsolated { Native.shared.stackWidgetSet(L) } },
+            "stack_widget_reanchor":  { L in MainActor.assumeIsolated { Native.shared.stackWidgetReanchor(L) } },
             "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
             "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
             "usage_widget_show": { L in MainActor.assumeIsolated { Native.shared.usageWidgetShow(L) } },
