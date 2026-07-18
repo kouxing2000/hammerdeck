@@ -183,6 +183,17 @@ scripts/test-lua.sh  # SAME suite on the vendored 5.4.7 (exact embedded engine) 
 swift test           # integration tests on the REAL bridge (run after Swift/seam changes)
 ```
 
+**After a code change, restart the app FOR the user, then WAIT for them to
+verify.** When a change is ready to try (a completed edit or logical batch, NOT
+after every single tool call), run `./scripts/restart.sh` yourself -- it stops,
+rebuilds, and relaunches Hammerdeck so the user never has to restart by hand --
+then STOP and let the user verify the behavior in the live app before moving on
+(and, as always, before committing -- the restart is a verify convenience, not a
+commit signal). The user has standing opt-in to this restart, so it overrides the
+"ask before restarting the running instance" caution below for the normal
+change-verify loop; still avoid restarting mid-way through work the user is
+actively watching without a heads-up.
+
 `swift test` is QUIET by default: the tests that show real panels, synthesize
 system keystrokes, or touch the login Keychain are SKIPPED (all gated behind the
 `requireUITests()` opt-in) -- otherwise they flash dialogs, type into whatever
