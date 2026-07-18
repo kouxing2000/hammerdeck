@@ -32,10 +32,12 @@ extension Native {
     // MARK: - Windows / apps (AXUIElement)
 
     // list_windows() -> Lua window handles, MRU-first. The Lua side never sees
-    // an AXUIElement: each call rebuilds `axWindowCache` (id -> {element, wid},
+    // an AXUIElement: each call refreshes `axWindowCache` (id -> {element, wid},
     // stored on the class -- see Native.swift) and focus_window(id) resolves from
-    // it -- window_switcher always lists right before focusing, so a one-listing
-    // cache is exactly the right lifetime.
+    // it. A window KEEPS its id across listings (keyed by the stable CGWindowID),
+    // so a handle a feature holds across a chooser session stays valid even when
+    // another feature (window_stack) re-lists in between -- see the rebuild in
+    // listWindows for why the naive one-listing cache was a switch-window bug.
 
     /// Real window enumeration: AXUIElement per app for titles + elements
     /// (Accessibility permission only -- no Screen Recording, which CGWindowList
@@ -44,11 +46,28 @@ extension Native {
     /// gives the donor). Returns {} when the permission is missing -- features
     /// check ax_trusted/ax_prompt to onboard.
     func listWindows(_ L: OpaquePointer?) -> Int32 {
-        axWindowCache.removeAll()
         guard AXIsProcessTrusted() else {
+            axWindowCache.removeAll()
             lua_createtable(L, 0, 0)
             return 1
         }
+        // A window keeps the SAME id across listings (keyed by its stable
+        // CGWindowID), so a handle a feature is HOLDING survives an intervening
+        // list_windows from ANOTHER feature. window_switcher / tab_switcher list,
+        // show a chooser, then focus on the user's pick many seconds later --
+        // meanwhile window_stack (Auto Stack) re-lists on every poll / activation.
+        // The old removeAll() + fresh-id-per-listing silently invalidated those
+        // held handles, so focus_window(id) resolved nothing and no-oped (the
+        // "can't switch windows" bug -- worse when cycling deep for a same-app
+        // window, which keeps the chooser open longer). Only a genuinely new or
+        // wid-unresolved window draws a fresh id. (Tradeoff: macOS may RECYCLE a
+        // CGWindowID after a window closes, so in the sub-second between a
+        // listing and a pick a held id could in theory rebind to a different
+        // window that reused the wid -- vanishingly rare, and strictly better
+        // than the old guaranteed no-op.)
+        var widToId: [CGWindowID: Int] = [:]
+        for (id, ref) in axWindowCache where ref.wid != 0 { widToId[ref.wid] = id }
+        var freshCache: [Int: AXWindowRef] = [:]
 
         // Z-ordered (front to back) on-screen normal-layer windows.
         let cgList = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
@@ -132,9 +151,14 @@ extension Native {
                     $0.rect.contains(CGPoint(x: frame.midX, y: frame.midY))
                 }?.name
 
-                let id = nextWindowId
-                nextWindowId += 1
-                axWindowCache[id] = AXWindowRef(element: win, wid: wid)
+                let id: Int
+                if wid != 0, let existing = widToId[wid] {
+                    id = existing            // stable window -> keep held handles valid
+                } else {
+                    id = nextWindowId
+                    nextWindowId += 1
+                }
+                freshCache[id] = AXWindowRef(element: win, wid: wid)
                 // Use bundleID for installed apps; fall back to pid for processes
                 // without a .app bundle (e.g. the app itself under `swift run`).
                 let iconToken = bundleID.isEmpty ? "appiconpid:\(pid)" : "appicon:\(bundleID)"
@@ -149,6 +173,9 @@ extension Native {
                                 minimized: minimized, fullscreen: fullscreen))
             }
         }
+        // Swap in the rebuilt cache atomically: entries for windows that closed
+        // since the last listing drop out; still-present windows kept their id.
+        axWindowCache = freshCache
         rows.sort { $0.z < $1.z }
 
         lua_createtable(L, Int32(rows.count), 0)

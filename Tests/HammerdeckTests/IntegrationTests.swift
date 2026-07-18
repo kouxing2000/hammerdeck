@@ -1154,6 +1154,53 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(eval("return require('platform.adapter').focusWindow(999999)") as? Bool, false)
     }
 
+    /// Regression (2026-07-18): a window keeps the SAME handle id across
+    /// successive list_windows() calls -- keyed by its stable CGWindowID -- so a
+    /// feature that LISTS, shows a chooser, then focuses on the user's pick still
+    /// resolves that pick even though ANOTHER feature (Auto Stack) re-lists
+    /// windows in between. The old cache wiped itself and reassigned ids on every
+    /// listing, so the held id silently no-oped focus_window -- the "window
+    /// switcher can't switch (esp. same-app) windows" bug. Asserts the invariant
+    /// the fix restores (stable, wid-keyed ids), not an implementation detail.
+    func testWindowIdStableAcrossListings() throws {
+        try XCTSkipUnless(AXIsProcessTrusted(),
+            "needs Accessibility (grant it to the terminal running `swift test`)")
+        try XCTSkipUnless(!sessionLocked(),
+            "screen is locked; AX lists no windows behind the lock")
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
+            "CI session has no real desktop windows to list")
+
+        func listRows() -> [[String: Any]] {
+            let raw = eval("return require('platform.adapter').listWindows()") as? [Any]
+            return raw?.compactMap { $0 as? [String: Any] } ?? []
+        }
+
+        // Listing #1 == the switcher's "open" pass. Hold a handle to the FRONTMOST
+        // window (row 1): it must have a resolved wid (the fix keys stability on
+        // it), and re-focusing the front window at the end is a visual no-op.
+        let rows1 = listRows()
+        guard let target = rows1.first,
+              (target["wid"] as? Double ?? 0) != 0,
+              let targetId = (target["id"] as? Double).map(Int.init),
+              let targetWid = (target["wid"] as? Double).map(Int.init) else {
+            throw XCTSkip("frontmost window has no resolved CGWindowID to key identity on")
+        }
+
+        // Another feature (Auto Stack) re-lists windows while the chooser is open.
+        let rows2 = listRows()
+
+        // The SAME window (matched by its stable wid) must keep the SAME id...
+        let same = rows2.first { ($0["wid"] as? Double).map(Int.init) == targetWid }
+        XCTAssertNotNil(same, "the window is still present in the second listing")
+        XCTAssertEqual((same?["id"] as? Double).map(Int.init), targetId,
+            "a window keeps its handle id across listings (stable, wid-keyed)")
+
+        // ...and the handle held from listing #1 still resolves: focus succeeds
+        // instead of no-oping (pre-fix this returned false against a wiped cache).
+        XCTAssertEqual(eval("return require('platform.adapter').focusWindow(\(targetId))") as? Bool,
+                       true, "a handle held across another feature's re-list still focuses")
+    }
+
     /// Closed-loop typing synthesis: type_text + key_stroke are posted system-
     /// wide, and our own AskTextPanel (keyable) is frontmost -- so the text we
     /// synthesize lands in OUR field and Enter submits it back through the
