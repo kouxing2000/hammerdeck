@@ -290,8 +290,9 @@ private struct FeatureDetail: View {
             Section {
                 Text(feature.description)
                     .foregroundStyle(.secondary)
+                // No "Kind" row: it only ever duplicated this Trigger summary
+                // ("always-on service" for a pure service, a trigger otherwise).
                 LabeledContent(Strings.t("settings.trigger", default: "Trigger"), value: feature.triggerDesc)
-                LabeledContent(Strings.t("settings.kind", default: "Kind"), value: feature.kind == "service" ? Strings.t("settings.always_on_service", default: "Always-on service") : Strings.t("settings.triggered_action", default: "Triggered action"))
                 if !feature.version.isEmpty {
                     LabeledContent(Strings.t("settings.version", default: "Version"), value: feature.version)
                 }

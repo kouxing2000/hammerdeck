@@ -67,8 +67,8 @@ return {
             and multiDesc.actions[2].trigger.key == "3"
             and multiDesc.actions[2].triggerOverridden == true,
             "describe exports per-action trigger state")
-        ok(multiDesc.kind == "service" and multiDesc.triggerDesc == "always-on service",
-            "service+actions still reads as a service in the list")
+        ok(multiDesc.kind == "service" and multiDesc.triggerDesc == "2 actions",
+            "a service + actions hybrid summarizes its ACTIONS in the list, not 'always-on service'")
 
         -- legacy stored key (pre-multi-action) is honored for single-action sugar
         package.loaded["features._legacy"] = {

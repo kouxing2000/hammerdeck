@@ -922,9 +922,23 @@ function registry.hyperLegend()
 end
 
 local function describeTrigger(m)
-    if m.start then return i18n.t("trigger.alwaysOn", "always-on service") end
-    if #m.actions == 1 then return triggers.describe(triggerFor(m, m.actions[1])) end
-    return i18n.format("trigger.actions", "%d actions", #m.actions)
+    -- Actions first: a service that ALSO declares actions (window_deck,
+    -- window_fan, bing_daily, ...) is, from the user's side, TRIGGERED -- its
+    -- start() is plumbing (an idle controller so disable can tear down /
+    -- restore), not what this summary should read. Only a PURE service (no
+    -- actions: sleep_schedule, pointer_follows_window, ...) is truly always-on.
+    local n = #m.actions
+    if n == 1 then
+        -- A DORMANT single action (no stored trigger, no defaultTrigger -- the
+        -- "no uninvited hotkey grabs" shape) describes as "no trigger", which
+        -- would read as "does nothing" for a feature whose start() runs the
+        -- whole time. Fall through to the always-on label instead.
+        local spec = triggerFor(m, m.actions[1])
+        if spec or not m.start then return triggers.describe(spec) end
+    elseif n > 1 then
+        return i18n.format("trigger.actions", "%d actions", n)
+    end
+    return i18n.t("trigger.alwaysOn", "always-on service")
 end
 
 -- Normalize one entry returned by a feature's schedule(ctx) descriptor into a

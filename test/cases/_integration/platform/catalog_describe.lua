@@ -61,8 +61,64 @@ return {
         registry.unregister("enum_probe")
         local sleepDesc = desc[2]
         ok(sleepDesc.kind == "service" and sleepDesc.triggerDesc == "always-on service",
-            "service features described as always-on")
+            "a PURE service (no actions) is described as always-on")
         ok(#sleepDesc.options == 6, "sleep_schedule exports all 6 options")
         ok(sleepDesc.enabled == false, "describe reflects enabled state")
+
+        -- ===== SERVICE TRIGGER SUMMARIES (guard for the "always-on service"
+        -- mislabel): a service that ALSO declares actions (the deck/fan class)
+        -- is TRIGGERED from the user's side -- its start() is plumbing (an idle
+        -- controller so disable can tear down / restore), so describe() must
+        -- summarize its ACTIONS and never fall back to the always-on label.
+        -- Only a PURE service (sleepDesc above) reads "always-on service".
+        -- Guarded at the registry level, so the Settings header, the feature
+        -- list, and the shortcut map all inherit the truth.
+        do
+            package.loaded["features._hybrid_probe"] = {
+                api = 1, id = "hybrid_probe", name = "Hybrid Probe",
+                start = function() end,
+                actions = {
+                    { id = "one", label = "One", run = function() end,
+                      defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "1" } },
+                    { id = "two", label = "Two", run = function() end },
+                },
+            }
+            package.loaded["features._hybrid_single_probe"] = {
+                api = 1, id = "hybrid_single_probe", name = "Hybrid Single Probe",
+                start = function() end,
+                actions = {
+                    { id = "only", label = "Only", run = function() end,
+                      defaultTrigger = { type = "hotkey", mods = { "ctrl" }, key = "2" } },
+                },
+            }
+            -- A hybrid whose single action ships DORMANT (no defaultTrigger --
+            -- the "no uninvited hotkey grabs" shape): describing it by its
+            -- (absent) trigger would read "no trigger" = "does nothing", though
+            -- its start() runs the whole time. It falls back to always-on.
+            package.loaded["features._hybrid_dormant_probe"] = {
+                api = 1, id = "hybrid_dormant_probe", name = "Hybrid Dormant Probe",
+                start = function() end,
+                actions = { { id = "only", label = "Only", run = function() end } },
+            }
+            registry.load("features._hybrid_probe")
+            registry.load("features._hybrid_single_probe")
+            registry.load("features._hybrid_dormant_probe")
+            local hybrid, single, dormant
+            for _, e in ipairs(registry.describe()) do
+                if e.id == "hybrid_probe" then hybrid = e end
+                if e.id == "hybrid_single_probe" then single = e end
+                if e.id == "hybrid_dormant_probe" then dormant = e end
+            end
+            ok(dormant and dormant.triggerDesc == "always-on service",
+                "a hybrid with a DORMANT single action reads always-on, never 'no trigger'")
+            ok(hybrid and hybrid.kind == "service" and hybrid.triggerDesc == "2 actions",
+                "a service + actions hybrid summarizes its ACTIONS, never 'always-on service'")
+            ok(single and single.triggerDesc ~= "always-on service"
+                and single.triggerDesc:find("ctrl", 1, true) ~= nil,
+                "a single-action hybrid shows that action's real trigger")
+            registry.unregister("hybrid_probe")
+            registry.unregister("hybrid_single_probe")
+            registry.unregister("hybrid_dormant_probe")
+        end
     end,
 }
