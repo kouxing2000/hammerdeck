@@ -1,6 +1,6 @@
--- features/window_stack
+-- features/window_fan
 --
--- "Auto Stack": a persistent WINDOW-SWITCHER MODE. One trigger gathers every
+-- "Window Fan": a persistent WINDOW-SWITCHER MODE. One trigger gathers every
 -- window on the FOCUSED screen into a BORDER-ANCHORED SLAB FAN
 -- (platform.windows.fanSlots): each window is a large slab flush against its own
 -- segment of the screen's edge, so EVERY window keeps a full, always-visible,
@@ -45,19 +45,19 @@
 --
 -- The borders are PERSISTENT and TRACKED, not a flash: they live for the mode's
 -- whole lifetime. This is deck's service shape and its border/tracking
--- primitives -- but none of its widget/scrim/hero/pick machinery: Auto Stack has
--- ONE state (in the mode), so a switcher panel would be redundant.
+-- primitives -- but none of its scrim/hero/pick machinery: Window Fan has ONE
+-- state (in the mode), plus its OWN switcher widget (the draggable card below).
 --
 -- A LIGHT STATEFUL MODE via ctx.perEnable (deck's pattern): entering CAPTURES
 -- each window's original frame; leaving restores every window (matched by stable
 -- wid across the re-list). stop() leaves a live mode on disable. Every placement
--- rides ctx.window.setFrameFor, so Window Rewind also undoes a stack.
+-- rides ctx.window.setFrameFor, so Window Rewind also undoes a fan.
 --
 -- Needs Accessibility (window enumeration, by-id frame setting, the observers).
 
 local W = require("platform.windows")
 
-local NAME = "Auto Stack"
+local NAME = "Window Fan"
 local HYPER = { "cmd", "alt", "ctrl" }
 
 -- Gutter between the ring and the screen edge (px), the deck's visual rhythm.
@@ -69,29 +69,9 @@ local PAD = 8
 -- app we may not be observing, which fires no event we hear. Hence loose.
 local RECONCILE_SECONDS = 2.0
 
--- Window Deck's member-ring palette (a feature cannot require another feature's
--- module, so the values are mirrored; drift is cosmetic only).
-local PALETTE = {
-    "#4C8DFF", "#34C759", "#FF9F0A", "#AF52DE", "#FF375F",
-    "#5AC8FA", "#FFD60A", "#FF6482", "#30D158",
-}
-
--- The screen to stack: the focused window's, else the mouse's (so the action
--- still resolves when focus is on the desktop). Returns a ctx.screen.frames()
--- row, or nil when no screens are reported.
----@param ctx table the curated feature ctx
----@return table|nil screen a screen row { x,y,w,h,name?,index? }
-local function focusedScreen(ctx)
-    local screens = ctx.screen.frames()
-    if #screens == 0 then return nil end
-    local f = ctx.window.frame()
-    if f and f.screenIndex and screens[f.screenIndex] then
-        return screens[f.screenIndex]
-    end
-    local m = ctx.mouse.position()
-    return W.screenOfFrame(screens, { x = m.x, y = m.y, w = 0, h = 0 })
-        or screens[1]
-end
+-- The member-ring palette shared with Window Deck (platform.windows owns it,
+-- so the two window modes never drift apart on their shared visual language).
+local PALETTE = W.RING_PALETTE
 
 -- The per-enable controller: holds the live mode state (borders, tracking
 -- subscriptions, captured originals) and the enter/leave lifecycle. Built once
@@ -104,18 +84,18 @@ local function controllerFor(ctx)
     -- a move-out-and-back):
     --   slot:      wid -> slot INDEX (1-based) in the fan; fixed once assigned.
     --   color:     wid -> border color; fixed once assigned.
-    --   originals: wid -> pre-stack frame, so leaving restores it.
+    --   originals: wid -> pre-fan frame, so leaving restores it.
     -- A window MOVED off-screen keeps all three (reserved); only a CLOSED window
     -- (gone from the whole window list) frees them back to the pool. borders holds
     -- only the ACTIVE (on-screen) windows' overlays. order: ALL on-screen wids front-
     -- to-back; frames: wid -> frame for every wid in `order`. screen: the bound
     -- screen. memberSig: signature of the arranged active set (change detection).
-    -- active gates the toggle; restacking guards re-entry. Occlusion clips a border
-    -- against EVERY window in front of it -- stacked or not -- so a window we didn't
+    -- active gates the toggle; refanning guards re-entry. Occlusion clips a border
+    -- against EVERY window in front of it -- fanned or not -- so a window we didn't
     -- gather still clips it.
     local st = { active = false, slot = {}, color = {}, side = {}, originals = {},
                  borders = {}, order = {}, frames = {}, focusedWid = nil, screen = nil,
-                 memberSig = nil, restacking = false, widget = nil, widgetOrder = {} }
+                 memberSig = nil, refanning = false, widget = nil, widgetOrder = {} }
 
     -- Re-draw every border for the current z-order + frames: each window's full
     -- border, CLIPPED to the part of it that nothing IN FRONT covers. The FOCUSED
@@ -158,8 +138,8 @@ local function controllerFor(ctx)
     -- PRUNE: a bordered window that has left the list (closed, minimized, moved to
     -- another screen) loses its border here, so no ghost border lingers. A window
     -- that newly appears shows up in `order`/`frames` (so it clips the borders
-    -- behind it like any other window in front) -- it is TAKEN into the stack
-    -- separately, by restack(), once the member-set change is detected.
+    -- behind it like any other window in front) -- it is TAKEN into the fan
+    -- separately, by refan(), once the member-set change is detected.
     local function refreshFromList()
         local order, frames, live = {}, {}, {}
         for _, w in ipairs(ctx.window.list()) do
@@ -173,7 +153,7 @@ local function controllerFor(ctx)
             if not live[wid] then                       -- window gone -> drop its border
                 b.o.stop()
                 st.borders[wid] = nil
-                ctx.log("stack: window " .. wid .. " gone -- border dropped")
+                ctx.log("fan: window " .. wid .. " gone -- border dropped")
             end
         end
         -- The focused window is the one the user just brought FORWARD (a real click,
@@ -194,17 +174,15 @@ local function controllerFor(ctx)
         st.order, st.frames = order, frames
     end
 
-    -- The stackable windows on `screen`, MRU order (window_deck's predicate):
-    -- sized, not minimized, not fullscreen. Membership is PURE GEOMETRY
+    -- The fannable windows on `screen`, MRU order: W.arrangeable (the mode
+    -- predicate shared with Window Deck) + membership by PURE GEOMETRY
     -- (W.onScreen: centre-in-rect) -- window frames and screen frames come from
     -- separate native calls whose tables are never the same object, so an
     -- identity compare would silently match nothing in the real host.
-    local function stackable(screen)
+    local function fannable(screen)
         local out = {}
         for _, w in ipairs(ctx.window.list()) do
-            local sized = w.w and w.h and w.w > 0 and w.h > 0
-            if sized and not w.minimized and not w.fullscreen
-                and W.onScreen(w, screen) then
+            if W.arrangeable(w) and W.onScreen(w, screen) then
                 out[#out + 1] = w
             end
         end
@@ -220,9 +198,9 @@ local function controllerFor(ctx)
         return table.concat(ids, ",")
     end
 
-    -- The current stackable set on the mode's screen, as a signature.
+    -- The current fannable set on the mode's screen, as a signature.
     local function currentSig()
-        return sigOf(stackable(st.screen))
+        return sigOf(fannable(st.screen))
     end
 
     -- The lowest slot INDEX not held by any known window (active or reserved). Fills
@@ -299,14 +277,14 @@ local function controllerFor(ctx)
     end
 
     -- Place the ACTIVE `wins` onto their FIXED slot indices, keeping `focusWid`
-    -- frontmost. Shared by enter and restack. Callers assign st.slot / st.color /
-    -- st.originals FIRST (enter via assignNearest for a minimal first jump; restack
+    -- frontmost. Shared by enter and refan. Callers assign st.slot / st.color /
+    -- st.originals FIRST (enter via assignNearest for a minimal first jump; refan
     -- by reserving survivors and dealing newcomers a free index) -- place just reads
     -- them. Fan size N is the HIGH-WATER slot index (active members + reserved
     -- holes), so a reserved window's held index keeps the geometry from re-tiling
     -- while it is gone. Records each slot frame + exposed side, runs the ordered
     -- raise pass + focus hand-back, re-arms observers, refreshes the widget.
-    ---@param reason string a short trace label ("entered" | "restacked")
+    ---@param reason string a short trace label ("entered" | "refanned")
     local function place(wins, screen, focusWid, reason)
         local N = 0
         for _, idx in pairs(st.slot) do if idx > N then N = idx end end
@@ -373,7 +351,7 @@ local function controllerFor(ctx)
                 if s and a and (math.abs(s.x - a.x) > 2 or math.abs(s.y - a.y) > 2
                     or math.abs(s.w - a.w) > 2 or math.abs(s.h - a.h) > 2) then
                     ctx.log(string.format(
-                        "stack: wid %d slot=%.0f,%.0f,%.0fx%.0f actual=%.0f,%.0f,%.0fx%.0f (border realigned)",
+                        "fan: wid %d slot=%.0f,%.0f,%.0fx%.0f actual=%.0f,%.0f,%.0fx%.0f (border realigned)",
                         wid, s.x, s.y, s.w, s.h, a.x, a.y, a.w, a.h))
                 end
             end
@@ -391,7 +369,7 @@ local function controllerFor(ctx)
             bx2 = math.max(bx2, s.x + s.w); by2 = math.max(by2, s.y + s.h)
         end
         ctx.log(string.format(
-            "stack: %s fan -- %d active / %d slots on '%s', edge=%d, margins L=%.0f R=%.0f T=%.0f B=%.0f",
+            "fan: %s fan -- %d active / %d slots on '%s', edge=%d, margins L=%.0f R=%.0f T=%.0f B=%.0f",
             reason, #wins, N, screen.name or "?", ctx.opt("edge") or 40,
             bx1 - screen.x, (screen.x + screen.w) - bx2, by1 - screen.y, (screen.y + screen.h) - by2))
 
@@ -403,12 +381,12 @@ local function controllerFor(ctx)
     -- original; a MOVED-OUT window (still open, just off our screen) keeps all three
     -- reserved so a return reclaims its exact slab; a CLOSED window (gone from the
     -- whole list) frees its slot + color + original; a NEWCOMER is dealt the lowest
-    -- free slot + color, its pre-stack frame captured before it moves. Guarded
+    -- free slot + color, its pre-fan frame captured before it moves. Guarded
     -- against re-entry (our own moves fire the observers but never change the SET, so
-    -- the signature guard already absorbs those echoes -- restacking is belt-and-braces).
-    local function restack()
-        if st.restacking then return end
-        local active = stackable(st.screen)
+    -- the signature guard already absorbs those echoes -- refanning is belt-and-braces).
+    local function refan()
+        if st.refanning then return end
+        local active = fannable(st.screen)
         local activeSet = {}
         for _, w in ipairs(active) do activeSet[w.wid] = true end
         -- The FULL window list (all screens) tells a moved-out window (still exists
@@ -422,7 +400,7 @@ local function controllerFor(ctx)
             if not exists[wid] then
                 st.slot[wid], st.color[wid], st.side[wid], st.originals[wid] = nil, nil, nil, nil
                 if st.borders[wid] then st.borders[wid].o.stop(); st.borders[wid] = nil end
-                ctx.log("stack: window " .. wid .. " closed -- slot + color freed")
+                ctx.log("fan: window " .. wid .. " closed -- slot + color freed")
             end
         end
         -- MOVED-OUT members (exist but off our screen): drop only the border; keep
@@ -430,7 +408,7 @@ local function controllerFor(ctx)
         for wid, b in pairs(st.borders) do
             if not activeSet[wid] then
                 b.o.stop(); st.borders[wid] = nil
-                ctx.log("stack: window " .. wid .. " left screen -- slot " ..
+                ctx.log("fan: window " .. wid .. " left screen -- slot " ..
                     (st.slot[wid] or "?") .. " reserved")
             end
         end
@@ -447,7 +425,7 @@ local function controllerFor(ctx)
             for _, b in pairs(st.borders) do b.o.stop() end
             st.borders, st.order, st.frames, st.memberSig = {}, {}, {}, ""
             updateWidget()
-            ctx.log("stack: no windows left on screen -- fan cleared (mode still on)")
+            ctx.log("fan: no windows left on screen -- fan cleared (mode still on)")
             return
         end
         -- Keep whoever is focused frontmost if they're active; else the first active.
@@ -455,60 +433,62 @@ local function controllerFor(ctx)
         local isMember = false
         for _, w in ipairs(active) do if w.wid == fwid then isMember = true; break end end
         if not isMember then fwid = active[1].wid end
-        st.restacking = true
-        place(active, st.screen, fwid, "restacked")
-        st.restacking = false
+        st.refanning = true
+        place(active, st.screen, fwid, "refanned")
+        st.refanning = false
     end
 
-    -- The loose poll's membership backstop: re-fan only if the stackable set on the
-    -- mode's screen actually changed. A plain app switch or a click among the SAME
-    -- windows leaves the signature untouched, so this is a no-op then -- it never
-    -- re-fans on mere focus churn. (Focus MOVES are handled by syncFocus below, not
-    -- here; the poll only catches a silent drag-IN completing.)
-    local function reconcile(source)
-        if not st.active or st.restacking then return end
-        if currentSig() ~= st.memberSig then
-            ctx.log("stack: window set changed (" .. source .. ") -- restacking")
-            restack()
-        end
-    end
-
-    -- Focus MAY have moved: re-read who is focused now, move the bold border + the
-    -- widget highlight to them, and re-fan if the member set ALSO changed. Shared by
-    -- the two genuine focus signals -- onFocusChanged AND onAppActivated. The
-    -- app-activation path is load-bearing: the native focused-window observer only
-    -- sees the frontmost app's OWN (within-app, e.g. cmd+`) switches, so a CROSS-app
+    -- Reconcile the highlight + occlusion with what is ACTUALLY focused and on top
+    -- RIGHT NOW. Re-read who is focused (a 0 = UNRESOLVED keeps the last known -- a
+    -- windowless / menubar app, or a not-yet-settled AX read; the "0 = don't trust
+    -- it" rule place()/refan() also follow), refresh the z-order, and re-fan if the
+    -- member set ALSO changed else just re-clip. This is the ONE self-heal path,
+    -- shared by every focus signal AND the loose poll, so a stale focus read always
+    -- converges (previously nothing re-read focus after an event, so a stale read
+    -- stuck). Cross-app coverage is load-bearing: the native focused-window observer
+    -- sees the frontmost app's OWN (within-app, cmd+`) switches only, so a CROSS-app
     -- switch -- to or from ANY other app, very much including Hammerdeck's OWN window
-    -- (a different app from the ones being stacked) -- reaches us ONLY as an
-    -- app-activation. Routing it here (not through membership-only reconcile) is what
-    -- keeps the highlight from STICKING on the last window when focus crosses apps
-    -- (the "our own app is special, the focus switch isn't detected" bug).
-    local function syncFocus(source)
-        if not st.active or st.restacking then return end
-        -- Trust a RESOLVED focus only. focusedWid() returns 0 when the newly-active
-        -- app has no resolvable focused window (a windowless / menubar app, or one
-        -- whose windows are all minimized or on another Space). Clobbering with that
-        -- 0 would clear the bold border + widget highlight with NO self-heal -- the
-        -- poll never re-reads focus and an app-activation fires no focus pulse -- so
-        -- keep the last known focus on a 0, the same "0 = unresolved, don't trust it"
-        -- rule place() and restack() already follow. A real non-member focus (a
-        -- window we don't stack, wid ~= 0) still clears the highlight, as before.
+    -- -- reaches us ONLY as an app-activation; routing it here (not a membership-only
+    -- check) is what keeps the highlight from STICKING on the last window when focus
+    -- crosses apps.
+    ---@param source string a short trace label
+    local function resyncFocus(source)
+        if not st.active or st.refanning then return end
         local w = ctx.window.focusedWid()
         if w ~= 0 then st.focusedWid = w end
         refreshFromList()          -- the switch changed the stacking order
         if currentSig() ~= st.memberSig then
-            ctx.log("stack: window set changed (" .. source .. ") -- restacking")
-            restack()
+            ctx.log("fan: window set changed (" .. source .. ") -- refanning")
+            refan()
         else
             drawOcclusion()
         end
         updateWidget()             -- move the widget's highlight to the new focus
     end
 
+    -- A genuine focus signal (onFocusChanged / onAppActivated): reconcile NOW, then
+    -- schedule ONE short deferred re-read. A cross-app activation can fire BEFORE the
+    -- newly-active app's AX focused window resolves (focusedWid -> 0, or briefly the
+    -- OLD app's window) AND/OR before CGWindowList reflects the raise -- leaving
+    -- st.focusedWid stale. refreshFromList then HOISTS that stale window over the one
+    -- the user actually clicked, so drawOcclusion clips + TINTS the real front with
+    -- the translucent member fill (the reported "the focused window has a transparent
+    -- color area, as if it isn't the focused one" bug). The deferred pass converges
+    -- once AX + z-order settle -- the same async gap place() cures with its settle
+    -- timer; a genuinely-unresolved focus (windowless app) just stays kept, and the
+    -- 2s poll is the final backstop if even the deferred read fired too early.
+    local function syncFocus(source)
+        if not st.active or st.refanning then return end
+        resyncFocus(source)
+        if st.focusSettle then st.focusSettle.stop() end
+        st.focusSettle = ctx.afterSeconds(0.12, function() resyncFocus(source .. "-settle") end)
+    end
+
     -- Tear down every live-mode handle (widget + borders + observers + timers).
     -- Idempotent.
     local function teardown()
         if st.settleTimer then st.settleTimer.stop(); st.settleTimer = nil end
+        if st.focusSettle then st.focusSettle.stop(); st.focusSettle = nil end
         if st.pollTimer then st.pollTimer.stop(); st.pollTimer = nil end
         if st.appWatch then st.appWatch.stop(); st.appWatch = nil end
         if st.screenWatcher then st.screenWatcher.stop(); st.screenWatcher = nil end
@@ -523,27 +503,27 @@ local function controllerFor(ctx)
     function st.enter()
         if not ctx.axTrusted() then
             ctx.axPrompt()
-            ctx.alert(ctx.t("stack.axRequired",
+            ctx.alert(ctx.t("fan.axRequired",
                 "%1$s needs the Accessibility permission -- grant %2$s in System Settings, then try again",
                 NAME, ctx.appName))
             return
         end
-        local screen = focusedScreen(ctx)
+        local screen = W.focusedScreen(ctx)
         if not screen then return end
 
         -- Read focus BEFORE anything moves: a self-activating app fronting itself
         -- mid-pass must not change who we hand focus back to.
         local fwid = ctx.window.focusedWid()
-        local wins = stackable(screen)
+        local wins = fannable(screen)
         if #wins == 0 then
-            ctx.alert(ctx.t("stack.none", "No windows to stack on this screen"))
+            ctx.alert(ctx.t("fan.none", "No windows to fan on this screen"))
             return
         end
 
         -- Fresh slot / color / original maps for this mode session. assignNearest
         -- gives each window the slot NEAREST its current position, so the first
         -- arrangement is the least jarring jump; colors are dealt lowest-free in
-        -- window order. Restack keeps these fixed and only fills in newcomers.
+        -- window order. Refan keeps these fixed and only fills in newcomers.
         -- (Originals are captured by VALUE -- setFrameFor mutates the live rows.)
         st.slot, st.color, st.side, st.originals = {}, {}, {}, {}
         local slots = W.fanSlots(screen, #wins, ctx.opt("edge") or 40, PAD)
@@ -569,7 +549,7 @@ local function controllerFor(ctx)
             -- move) and kept in st so onScreenChanged can re-anchor to the new frame.
             st.widgetDx = ctx.getState("widgetDx", math.max(0, math.floor(screen.w / 2 - 170)))
             st.widgetDy = ctx.getState("widgetDy", math.floor(screen.h * 0.26))
-            st.widget = ctx.stackWidget({
+            st.widget = ctx.fanWidget({
                 title = ctx.t("widget.title", NAME),
                 count = ctx.plural("widget.count", #wins,
                     { one = "%d window", other = "%d windows" }, #wins),
@@ -610,11 +590,13 @@ local function controllerFor(ctx)
         --     Hammerdeck's own), which the focused-window observer never sees: it drives
         --     the SAME focus sync (so the highlight follows focus across apps), and takes
         --     in a NEW app's window / a drag's start when that changed the set.
-        --   * the loose poll -- the membership backstop for a drag-IN completing, the
-        --     one change no event we hear reports.
+        --   * the loose poll -- the backstop that RE-READS focus + membership: it
+        --     catches a silent drag-IN completing (the one change no event reports),
+        --     AND heals a focus read stale during a racy activation if the deferred
+        --     re-read was itself still too early.
         st.focusWatch = ctx.window.onFocusChanged(function() syncFocus("focus") end)
         st.appWatch = ctx.onAppActivated(function() syncFocus("app-activated") end)
-        st.pollTimer = ctx.everySeconds(RECONCILE_SECONDS, function() reconcile("poll") end)
+        st.pollTimer = ctx.everySeconds(RECONCILE_SECONDS, function() resyncFocus("poll") end)
         -- Display reconfig (monitor plugged/unplugged, resolution or arrangement
         -- change): the fan's slots were sized to the OLD screen frame, so a resize
         -- leaves every slab stale, and a moved display leaves the widget adrift.
@@ -626,13 +608,13 @@ local function controllerFor(ctx)
     -- Leave the mode: tear down borders + observers, then put every captured
     -- window back where it was. Re-list ONCE (ids churn) and match by stable wid;
     -- a window that has since closed is simply skipped. `skipRestore` leaves the
-    -- windows where they are (onScreenChanged uses it when the stacked display
+    -- windows where they are (onScreenChanged uses it when the fanned display
     -- vanished -- the captured originals were on the gone screen, so re-applying
     -- them would fling the windows off into nowhere).
     ---@param skipRestore boolean|nil
     function st.leave(skipRestore)
         if not st.active then
-            ctx.alert(ctx.t("stack.nothing", "No stack to restore"))
+            ctx.alert(ctx.t("fan.nothing", "No fan to restore"))
             return
         end
         -- Snapshot the ACTIVE members BEFORE teardown clears the borders: only
@@ -659,7 +641,7 @@ local function controllerFor(ctx)
         end
         st.active = false
         st.slot, st.color, st.side, st.originals = {}, {}, {}, {}
-        ctx.log("stack: left mode -- " .. (skipRestore
+        ctx.log("fan: left mode -- " .. (skipRestore
             and (#members .. " windows left in place (screen gone)")
             or ("restored " .. restored .. " windows" ..
                 (gone > 0 and (" (" .. gone .. " gone)") or ""))))
@@ -669,7 +651,7 @@ local function controllerFor(ctx)
     -- mode's screen across the reconfig by NAME (the index can shuffle; name is the
     -- stable-ish key, same as Window Deck). GONE -> leave WITHOUT restore. Merely
     -- moved/resized -> re-anchor the widget and re-fan onto the new geometry (via
-    -- restack, which also reconciles any window macOS relocated off this display).
+    -- refan, which also reconciles any window macOS relocated off this display).
     function st.onScreenChanged()
         if not st.active or not st.screen then return end
         local want = st.screen.name
@@ -678,7 +660,7 @@ local function controllerFor(ctx)
             if f.name == want then cur = f; break end
         end
         if not cur then
-            ctx.log("stack: screenChanged -- screen '" .. tostring(want) ..
+            ctx.log("fan: screenChanged -- screen '" .. tostring(want) ..
                 "' gone, leaving (no restore)")
             st.leave(true)
             return
@@ -688,7 +670,7 @@ local function controllerFor(ctx)
             st.widget.reanchor({ x = cur.x + st.widgetDx, y = cur.y + st.widgetDy }, cur)
         end
         -- Re-fan the KNOWN members onto the new geometry. Crucially do NOT re-derive
-        -- membership by geometry (restack does, via stackable/onScreen): the members
+        -- membership by geometry (refan does, via fannable/onScreen): the members
         -- are still sitting in their OLD slabs, so on a SHRINK or an origin move their
         -- centres can fall OUTSIDE the new frame -- a geometry filter would then wrongly
         -- "reserve" them, stranding a window off the new screen with no border (the
@@ -708,16 +690,16 @@ local function controllerFor(ctx)
         if #members == 0 then
             st.order, st.frames, st.memberSig = {}, {}, ""
             updateWidget()
-            ctx.log("stack: screenChanged -- no members left on '" .. tostring(cur.name) .. "'")
+            ctx.log("fan: screenChanged -- no members left on '" .. tostring(cur.name) .. "'")
             return
         end
         local fwid = ctx.window.focusedWid()
         local isMember = false
         for _, w in ipairs(members) do if w.wid == fwid then isMember = true; break end end
         if not isMember then fwid = members[1].wid end
-        st.restacking = true
+        st.refanning = true
         place(members, cur, fwid, "screenChanged")   -- place logs the geometry
-        st.restacking = false
+        st.refanning = false
     end
 
     function st.toggle()
@@ -737,7 +719,7 @@ local function with(ctx) return ctx.perEnable(controllerFor) end
 
 return {
     api = 1,
-    id  = "window_stack",
+    id  = "window_fan",
 
     options = {
         { key = "edge", type = "int", default = 40, min = 24, max = 80,
@@ -755,16 +737,16 @@ return {
     actions = {
         {
             id = "arrange",
-            label = "Stack arrange",
-            description = "Enter Auto Stack mode: fan the focused screen's windows against the screen edges, each keeping a live colored border and a full always-visible edge no other window can cover. Windows that open or are dragged onto the screen are taken into the fan automatically. Press again to leave and restore the original layout.",
-            defaultTrigger = { type = "hotkey", mods = HYPER, key = "s" },
-            mnemonic = "Hyper+S -- S for Stack",
+            label = "Fan windows",
+            description = "Enter Window Fan mode: fan the focused screen's windows against the screen edges, each keeping a live colored border and a full always-visible edge no other window can cover. Windows that open or are dragged onto the screen are taken into the fan automatically. Press again to leave and restore the original layout.",
+            defaultTrigger = { type = "hotkey", mods = HYPER, key = "f" },
+            mnemonic = "Hyper+F -- F for Fan",
             run = function(ctx) with(ctx).toggle() end,
         },
         {
             id = "restore",
             label = "Restore layout",
-            description = "Leave Auto Stack mode and put every window back where it was.",
+            description = "Leave Window Fan mode and put every window back where it was.",
             run = function(ctx) with(ctx).leave() end,
         },
     },

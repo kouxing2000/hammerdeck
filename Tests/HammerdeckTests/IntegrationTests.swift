@@ -1157,7 +1157,7 @@ final class IntegrationTests: XCTestCase {
     /// Regression (2026-07-18): a window keeps the SAME handle id across
     /// successive list_windows() calls -- keyed by its stable CGWindowID -- so a
     /// feature that LISTS, shows a chooser, then focuses on the user's pick still
-    /// resolves that pick even though ANOTHER feature (Auto Stack) re-lists
+    /// resolves that pick even though ANOTHER feature (Window Fan) re-lists
     /// windows in between. The old cache wiped itself and reassigned ids on every
     /// listing, so the held id silently no-oped focus_window -- the "window
     /// switcher can't switch (esp. same-app) windows" bug. Asserts the invariant
@@ -1186,7 +1186,7 @@ final class IntegrationTests: XCTestCase {
             throw XCTSkip("frontmost window has no resolved CGWindowID to key identity on")
         }
 
-        // Another feature (Auto Stack) re-lists windows while the chooser is open.
+        // Another feature (Window Fan) re-lists windows while the chooser is open.
         let rows2 = listRows()
 
         // The SAME window (matched by its stable wid) must keep the SAME id...

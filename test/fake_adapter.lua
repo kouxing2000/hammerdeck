@@ -539,14 +539,14 @@ function adapter.usageWidget(screenIndex)
     }
 end
 
-fake.stackWidgets = {}   -- {title, count, rows, pos, screen, onSwitch, onExit, onMove, stopped}
-function adapter.stackWidget(opts)
+fake.fanWidgets = {}   -- {title, count, rows, pos, screen, onSwitch, onExit, onMove, stopped}
+function adapter.fanWidget(opts)
     opts = opts or {}
     local w = { title = opts.title, count = opts.count, rows = opts.rows or {},
                 pos = opts.pos, screen = opts.screen,
                 onSwitch = opts.onSwitch, onExit = opts.onExit, onMove = opts.onMove,
                 stopped = false }
-    fake.stackWidgets[#fake.stackWidgets + 1] = w
+    fake.fanWidgets[#fake.fanWidgets + 1] = w
     alloc()
     return {
         -- drive w.onSwitch(i)/w.onExit()/w.onMove(x,y) from a test.
@@ -556,10 +556,10 @@ function adapter.stackWidget(opts)
     }
 end
 
--- The most-recent live (non-stopped) Auto Stack widget, nil if none.
-function fake.liveStackWidget()
-    for i = #fake.stackWidgets, 1, -1 do
-        if not fake.stackWidgets[i].stopped then return fake.stackWidgets[i] end
+-- The most-recent live (non-stopped) Window Fan widget, nil if none.
+function fake.liveFanWidget()
+    for i = #fake.fanWidgets, 1, -1 do
+        if not fake.fanWidgets[i].stopped then return fake.fanWidgets[i] end
     end
     return nil
 end

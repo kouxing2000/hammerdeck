@@ -1,5 +1,5 @@
 {
-  "name": "Auto Stack",
+  "name": "Window Fan",
   "version": "1.0.0",
   "description": "A window-switcher mode: fan every window on the focused screen against the screen's edges so each keeps a full, always-visible edge no other window can cover -- whatever is on top. Stay in the mode with every window live-bordered (the focused one bold) and click any to switch; press again to leave and restore. Any number of windows.",
   "category": "productivity",

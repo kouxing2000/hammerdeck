@@ -130,7 +130,7 @@ return {
                 "onScreen: ...and yes on s2 (crisp seam, no double-count)")
         end
 
-        -- fanSlots (Auto Stack's border-anchored slab fan). The CORE invariant is
+        -- fanSlots (Window Fan's border-anchored slab fan). The CORE invariant is
         -- strip-exclusivity: each window's designated edge strip is disjoint from
         -- EVERY OTHER window's frame -- from which z-order-independence follows with
         -- no z-simulation (raising any window covers bodies, never a strip). Also:
@@ -190,7 +190,7 @@ return {
             ok(wideOne.w == 1600 - S, "fanSlots(6): an L slab spans the screen minus one strip")
         end
 
-        -- rectSubtract / rectMinus (Auto Stack's occlusion): a window's border is
+        -- rectSubtract / rectMinus (Window Fan's occlusion): a window's border is
         -- clipped to its frame MINUS everything in front. Disjoint pieces, exact
         -- area accounting (integer inputs keep it exact), covering the corner cases.
         do

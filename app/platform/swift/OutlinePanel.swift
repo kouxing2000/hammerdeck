@@ -30,10 +30,10 @@ final class OutlinePanel {
     private let ring = CAShapeLayer()
     private var style: OutlineStyle
     private var baseColor: NSColor
-    private var filled = false            // translucent interior fill (Auto Stack's tab)
+    private var filled = false            // translucent interior fill (Window Fan's tab)
     private var screenHole: NSRect?      // AppKit screen coords; the stroke never paints inside
     private var clipRects: [NSRect]?     // AppKit screen coords; nil = no clip, else draw ONLY
-                                         // inside the union of these (Auto Stack's occlusion:
+                                         // inside the union of these (Window Fan's occlusion:
                                          // a window's border shows only where nothing covers it)
 
     // Alpha of the interior fill when `filled` -- a soft tint that reads as a
@@ -70,7 +70,7 @@ final class OutlinePanel {
         }
     }
 
-    /// Fill the interior with a translucent tint (or clear it). Auto Stack fills a
+    /// Fill the interior with a translucent tint (or clear it). Window Fan fills a
     /// window's exclusive CORNER CELL so it reads as a solid colored tab; the
     /// focused window's full ring stays unfilled (a plain border).
     func setFilled(_ on: Bool) {
@@ -136,7 +136,7 @@ final class OutlinePanel {
     }
 
     /// Clip the border/fill to the UNION of `rects` (AppKit screen coords) -- it
-    /// shows only inside them. Auto Stack passes a window's VISIBLE rects (its
+    /// shows only inside them. Window Fan passes a window's VISIBLE rects (its
     /// frame minus everything in front), so the floating border hugs the real
     /// visible edges instead of painting on top. An empty array hides it; call
     /// `clearClip()` to remove the clip entirely (a full, unclipped border).
@@ -215,7 +215,7 @@ final class OutlinePanel {
     private func rebuildMask() {
         guard let layer = host.layer else { return }
         let bounds = CGRect(origin: .zero, size: panel.frame.size)
-        // Clip-to-visible (Auto Stack): the mask IS the union of the clip rects,
+        // Clip-to-visible (Window Fan): the mask IS the union of the clip rects,
         // so the border shows only inside them. Disjoint by construction (the
         // caller passes rectMinus output), so a plain nonZero union is exact.
         if let clip = clipRects {

@@ -2,8 +2,8 @@ import SwiftUI
 
 // Window-LAYOUT archetypes: the focused window landing in a GRID CELL
 // (window_grid), a screen's windows tiling with one lifted to a centered HERO
-// (window_deck), and scattered windows gathering into the diamond-ring STACK
-// (window_stack). Distinct from FeatureArchetypeScene+WindowArrange, which
+// (window_deck), and scattered windows gathering into the diamond-ring FAN
+// (window_fan). Distinct from FeatureArchetypeScene+WindowArrange, which
 // springs ONE window's rect through snap/modal states -- these show a MULTI-
 // WINDOW layout (a numbered grid; a deck of tiles; a ringed pile), so they earn
 // their own scene. Core enum + dispatch live in FeatureArchetypeAnimation.swift.
@@ -193,13 +193,13 @@ struct WindowDeckArchetypeScene: View {
     }
 }
 
-/// window_stack: a screen's scattered windows FAN out against the screen edges
+/// window_fan: a screen's scattered windows FAN out against the screen edges
 /// (platform.windows.fanSlots) -- each becomes a slab flush against its own
 /// segment of an edge, so every window keeps a full colored EDGE STRIP that no
 /// other window can cover, in its own slice of the border. The focused window
 /// sits on top. Alternates scattered <-> fanned; at rest it shows the fan (the
 /// calm frame). Positions mirror the real round-robin T,B,L,R assignment.
-struct WindowStackArchetypeScene: View {
+struct WindowFanArchetypeScene: View {
     let playing: Bool
 
     // SOLE source of `loopDuration`, as in the grid/deck scenes. nonisolated for

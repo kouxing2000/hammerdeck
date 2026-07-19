@@ -26,7 +26,6 @@ Lua. Toggle a feature on, set its options, and bind it to a **shortcut, a chord*
 
 ### Productivity
 
-- **Auto Stack** -- A window-switcher mode: fan every window on the focused screen against the screen's edges so each keeps a full, always-visible edge no other window can cover -- whatever is on top. Stay in the mode with every window live-bordered (the focused one bold) and click any to switch; press again to leave and restore. Any number of windows.
 - **Clipboard History** -- Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded.
 - **Countdown** -- Ask for minutes, then run a thin progress strip along the bottom of the screen; notifies when time is up.
 - **Insert Date/Time** -- Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern).
@@ -39,6 +38,7 @@ Lua. Toggle a feature on, set its options, and bind it to a **shortcut, a chord*
 - **Text Actions** -- Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- refine/translate/summarize via AI. Results paste back in place.
 - **Usage Stats** -- Tracks wake/sleep sessions and per-app focus time to daily CSV files (idle time excluded), with an optional desktop widget.
 - **Window Deck** -- Tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.
+- **Window Fan** -- A window-switcher mode: fan every window on the focused screen against the screen's edges so each keeps a full, always-visible edge no other window can cover -- whatever is on top. Stay in the mode with every window live-bordered (the focused one bold) and click any to switch; press again to leave and restore. Any number of windows.
 - **Window Grid** -- Place the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle. Pairs with Window Snap and Window Mode.
 - **Window Mode** -- A modal keyboard layer for finer arranging -- move/resize/corners/center/undo under one key until Escape. Best when you want control without many global hotkeys. Pairs with Window Snap.
 - **Window Rewind** -- Undo the last window layout change -- one hotkey (Hyper+Z) restores every window a snap, screen-swap, grid, or deck move just repositioned, and returns the pointer with them. Single-step: it rewinds the most recent change.

@@ -31,7 +31,7 @@ end
 -- than the one that currently has focus, pulse an accent border (grown from an
 -- inset -> the full screen) around the destination screen so the eye knows
 -- where to look before the window fronts. Multi-display only. Reuses the
--- outline overlay -- the same primitive as Auto Stack's rings -- so it floats
+-- outline overlay -- the same primitive as Window Fan's rings -- so it floats
 -- above every app's windows and needs no z-reordering; afterSeconds tears it
 -- down. The handles live on `st` so a rapid second pick replaces the prior
 -- pulse instead of leaking a second overlay.

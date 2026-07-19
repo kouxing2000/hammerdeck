@@ -3,18 +3,20 @@
 -- PURE LEAF: the deck's border-color palette and the positional dealing that
 -- previews each window's color in the picker. No state -- the persisted per-app
 -- colors are passed IN (the `stored` map), so the dealing algorithm is a pure,
--- unit-testable function of (windows, stored).
+-- unit-testable function of (windows, stored). Its one require is the
+-- platform.windows leaf (allowed for feature code) for the shared palette.
+
+local W = require("platform.windows")
 
 local M = {}
 
--- Distinct per-window border colors ("#RRGGBB"). Positional by default; the
--- picker previews each window's color as a dot the user can click to recolor
--- (cycling this palette), and the chosen color persists per APP (bundle id) so
--- decks look stable session to session.
-M.PALETTE = {
-    "#4C8DFF", "#34C759", "#FF9F0A", "#AF52DE", "#FF375F",
-    "#5AC8FA", "#FFD60A", "#FF6482", "#30D158",
-}
+-- Distinct per-window border colors ("#RRGGBB") -- the ring palette shared
+-- with Window Fan, owned by platform.windows so the two window modes never
+-- drift apart. Positional by default; the picker previews each window's color
+-- as a dot the user can click to recolor (cycling this palette), and the
+-- chosen color persists per APP (bundle id) so decks look stable session to
+-- session.
+M.PALETTE = W.RING_PALETTE
 
 -- Preview colors for the pick list: an app the user has recolored keeps its
 -- stored color (its first window), everyone else takes the next free palette

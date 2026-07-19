@@ -28,7 +28,7 @@ enum FeatureArchetype {
     case windowArrange(WindowArrangeSample) // a window rect rearranges: snap / resize / center (snap AND modal)
     case windowGrid                         // the focused window drops into a cell of a visible N×N grid (window_grid)
     case windowDeck                         // a screen's windows tile into a grid; one lifts to a centered hero (window_deck)
-    case windowStack                        // a screen's windows fan against the screen edges, each keeping a full always-visible edge (window_stack)
+    case windowFan                        // a screen's windows fan against the screen edges, each keeping a full always-visible edge (window_fan)
     case windowRewind                       // a window springs back to its prior frame, undo-arrow badge + ghost (window_rewind)
     case banner(BannerSample)               // a notification/legend pill slides in from the top edge
     // Archetypes preview the visible EFFECT, not the trigger. A clock/ring would
@@ -60,7 +60,7 @@ enum FeatureArchetype {
         case "window_modal":      return .windowArrange(.windowMode)
         case "window_grid":       return .windowGrid
         case "window_deck":       return .windowDeck
-        case "window_stack":      return .windowStack
+        case "window_fan":      return .windowFan
         case "window_rewind":     return .windowRewind
         case "confirm_shortcut":  return .banner(.confirmShortcut)
         case "notify_on_trigger": return .banner(.notifyOnTrigger)
@@ -89,7 +89,7 @@ enum FeatureArchetype {
         case .windowArrange(let s): return 0.95 * Double(max(1, s.moves.count))  // step per move
         case .windowGrid:           return WindowGridArchetypeScene.loopDuration  // heartbeat x cells
         case .windowDeck:           return WindowDeckArchetypeScene.loopDuration  // heartbeat x heroes
-        case .windowStack:          return WindowStackArchetypeScene.loopDuration // scattered <-> stacked
+        case .windowFan:          return WindowFanArchetypeScene.loopDuration // scattered <-> fanned
         case .windowRewind:         return WindowRewindArchetypeScene.loopDuration  // away <-> home
         case .banner:               return 1.3 * 2     // slide in + out
         case .screenOff:            return 1.4 * 2     // dark + lit
@@ -112,7 +112,7 @@ enum FeatureArchetype {
         case .windowArrange(let sample):  WindowArrangeArchetypeScene(sample: sample, playing: playing)
         case .windowGrid:                 WindowGridArchetypeScene(playing: playing)
         case .windowDeck:                 WindowDeckArchetypeScene(playing: playing)
-        case .windowStack:                WindowStackArchetypeScene(playing: playing)
+        case .windowFan:                WindowFanArchetypeScene(playing: playing)
         case .windowRewind:               WindowRewindArchetypeScene(playing: playing)
         case .banner(let sample):         BannerArchetypeScene(sample: sample, playing: playing)
         case .screenOff(let sample): ScreenOffArchetypeScene(sample: sample, playing: playing)

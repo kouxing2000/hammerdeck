@@ -1,5 +1,5 @@
--- test/cases/window_stack.lua -- window_stack (Auto Stack): a persistent window-
--- switcher MODE. Hyper+S gathers the focused screen's windows into the border-
+-- test/cases/window_fan.lua -- window_fan (Window Fan): a persistent window-
+-- switcher MODE. Hyper+F gathers the focused screen's windows into the border-
 -- anchored slab FAN, captures each original frame, and gives every window a
 -- PERSISTENT colored border (the focused one bold). The borders STAY for the
 -- mode's life: they re-anchor when a window moves (onFramesChanged) and re-style
@@ -10,22 +10,22 @@
 -- border + observer and restoring each window to its captured frame (matched by
 -- stable wid across the id churn).
 --
--- Covers the stackable predicate, the placement bijection, border PERSISTENCE
--- (no flash timer), frame tracking, focus highlight, AUTO-RESTACK on both the
+-- Covers the fannable predicate, the placement bijection, border PERSISTENCE
+-- (no flash timer), frame tracking, focus highlight, AUTO-REFAN on both the
 -- focus and poll paths, the leave/restore paths, restore across id churn, the
 -- alerts, and leave-on-disable cleanliness.
 --
 -- The geometric handle-exclusivity invariant is in windows_geometry.lua.
 
 return {
-    id = "window_stack",
+    id = "window_fan",
     ---@param t Harness
     run = function(t)
         local ok, fake, registry, W = t.ok, t.fake, t.registry, t.W
         local HYP = { "cmd", "alt", "ctrl" }
 
-        registry.register(require("features.window_stack"))
-        registry.setEnabled("window_stack", true)   -- service: start builds the controller
+        registry.register(require("features.window_fan"))
+        registry.setEnabled("window_fan", true)   -- service: start builds the controller
 
         local SCREEN  = { x = 0, y = 0, w = 1600, h = 1000, name = "Main", index = 1 }
         local SCREEN2 = { x = 1600, y = 0, w = 1280, h = 800, name = "Side", index = 2 }
@@ -92,7 +92,7 @@ return {
         -- part nothing in front covers. The frontmost (focused) window is a full,
         -- unclipped border; the ones behind are clipped to their visible region.
         do
-            fake.pressHotkey("s", HYP)
+            fake.pressHotkey("f", HYP)
 
             ok(#fake.windowFrameSets == 5, "five windows placed (excluded ones skipped)")
             ok(sortedKeys(fake.windowFrameSets) == sortedKeys(SLOTS), "placed frames == the fanSlots set")
@@ -137,17 +137,17 @@ return {
         end
 
         -- ===== FOCUS OFF-SCREEN: focusing a window on ANOTHER screen must NOT
-        -- overlay the frontmost stacked window with a full-frame fill. A window
+        -- overlay the frontmost fanned window with a full-frame fill. A window
         -- that nothing ACTUALLY covers (the off-screen window is "in front" in
         -- z-order but doesn't overlap it) stays a full unfilled border.
         do
             table.insert(fake.windows, 1, { id = 900, wid = 999, title = "Other",
                 appName = "Z", bundleID = "com.z", x = 1700, y = 100, w = 600, h = 400 })
-            fake.focusedWid = 999          -- a window on screen 2, not in the stack
+            fake.focusedWid = 999          -- a window on screen 2, not in the fan
             fake.focusWindowChanged()
             local f101 = borderFor(101)    -- was frontmost on screen 1; nothing covers it
             ok(f101 ~= nil and f101.clipped == false and f101.filled == false,
-                "off-screen focus leaves the uncovered stacked window a full UNFILLED border (no overlay)")
+                "off-screen focus leaves the uncovered fanned window a full UNFILLED border (no overlay)")
             -- restore state for the next block
             table.remove(fake.windows, 1)
             fake.focusedWid = 101
@@ -194,7 +194,7 @@ return {
             fake.focusWindowChanged()
         end
 
-        -- ===== AUTO-RESTACK (focus path): a stacked window CLOSES and a NEW window
+        -- ===== AUTO-REFAN (focus path): a fanned window CLOSES and a NEW window
         -- OPENS on the screen (taking focus). The mode keeps every window grabbable,
         -- so the whole screen re-fans: the closed window's border is pruned, and the
         -- newcomer is TAKEN into the fan (bordered, moved onto a slab), never left
@@ -229,13 +229,13 @@ return {
             for _, s in ipairs(SLOTS5) do
                 if n.x == s.x and n.y == s.y and n.w == s.w and n.h == s.h then onASlot = true end
             end
-            ok(onASlot, "the newly-opened window sits on a fan slot (auto-taken into the stack)")
+            ok(onASlot, "the newly-opened window sits on a fan slot (auto-taken into the fan)")
         end
 
         -- ===== LEAVE (toggle off): borders + observers torn down, windows restored.
         do
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)
+            fake.pressHotkey("f", HYP)
             ok(#fake.liveOutlines() == 0, "leaving tears down every border")
             local restoredOk = true
             for id, o in pairs(ORIG) do
@@ -253,9 +253,9 @@ return {
         -- ===== RESTORE MATCHES ACROSS ID CHURN via the menubar "restore" action.
         do
             fake.windows = freshWindows()
-            fake.pressHotkey("s", HYP)                       -- enter
+            fake.pressHotkey("f", HYP)                       -- enter
             for _, w in ipairs(fake.windows) do w.id = w.id + 100 end   -- ids churn, wids stable
-            registry.runAction("window_stack", "restore")    -- the menubar click-to-quit
+            registry.runAction("window_fan", "restore")    -- the menubar click-to-quit
             local restoredOk = true
             for id, o in pairs(ORIG) do
                 local w = frameOf(id + 100)
@@ -270,18 +270,18 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.settings["hammerdeck.opt.window_stack.edge"] = 64   -- thicker edge than the default 40
+            fake.settings["hammerdeck.opt.window_fan.edge"] = 64   -- thicker edge than the default 40
             local before = #fake.windowFrameSets
-            fake.pressHotkey("s", HYP)                               -- enter with edge=64
+            fake.pressHotkey("f", HYP)                               -- enter with edge=64
             local placed = {}
             for i = before + 1, #fake.windowFrameSets do placed[#placed + 1] = fake.windowFrameSets[i] end
             ok(sortedKeys(placed) == sortedKeys(W.fanSlots(SCREEN, 5, 64, 8)),
                 "the Edge thickness option is read live (edge=64 slabs, not the default 40)")
-            fake.pressHotkey("s", HYP)                               -- leave
-            fake.settings["hammerdeck.opt.window_stack.edge"] = nil  -- reset for later blocks
+            fake.pressHotkey("f", HYP)                               -- leave
+            fake.settings["hammerdeck.opt.window_fan.edge"] = nil  -- reset for later blocks
         end
 
-        -- ===== AUTO-RESTACK (event path, no poll): a NEW app's window activates its
+        -- ===== AUTO-REFAN (event path, no poll): a NEW app's window activates its
         -- app -- an instant membership trigger with no focus dependency. Add a sized
         -- window on the screen and fire onAppActivated; it must be taken in WITHOUT
         -- ticking the reconcile poll. Also proves activating an OFF-screen app (a
@@ -290,7 +290,7 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                 -- enter (5 windows)
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows)
             ok(#fake.liveOutlines() == 5, "entered with five windows")
 
             -- a new app opens a window on screen 1 and its app activates (no focus
@@ -313,7 +313,7 @@ return {
             local steady = #fake.windowFrameSets
             fake.activateApp("Other", "com.other")
             ok(#fake.windowFrameSets == steady, "activating an off-screen app does not re-fan (no set change)")
-            fake.pressHotkey("s", HYP)                 -- leave
+            fake.pressHotkey("f", HYP)                 -- leave
         end
 
         -- ===== CROSS-APP FOCUS FOLLOWS (regression): switching focus to ANOTHER
@@ -327,7 +327,7 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                 -- enter (5 windows), focus on 101
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows), focus on 101
             ok(borderFor(101) and borderFor(101).kind == "focus",
                 "the initially-focused window (101, app 'Code') is bold")
 
@@ -350,25 +350,25 @@ return {
                 "the cross-app focus moved the bold border to the newly-focused window")
             ok(borderFor(101) and borderFor(101).kind == "member",
                 "the previously-focused window is no longer bold")
-            local wdg = fake.liveStackWidget()
+            local wdg = fake.liveFanWidget()
             local focusedTitle
             for _, r in ipairs(wdg.rows) do if r.focused then focusedTitle = r.title end end
             ok(focusedTitle == "Mail",
                 "the widget highlight followed focus across apps (Mail, not the stale Editor)")
-            fake.pressHotkey("s", HYP)                 -- leave
+            fake.pressHotkey("f", HYP)                 -- leave
         end
 
         -- ===== UNRESOLVED FOCUS ON ACTIVATION (regression for the 0-clobber):
         -- activating a WINDOWLESS / menubar app resolves focusedWid to 0. syncFocus
         -- must NOT clear the highlight with that 0 -- there is no self-heal (the poll
         -- never re-reads focus, activation fires no focus pulse), so it keeps the last
-        -- known focus, matching place()/restack()'s "0 = don't trust" rule. (A real
+        -- known focus, matching place()/refan()'s "0 = don't trust" rule. (A real
         -- non-member focus, wid ~= 0, still clears it -- covered by the block above.)
         do
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                 -- enter (5 windows), focus on 101
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows), focus on 101
             ok(borderFor(101) and borderFor(101).kind == "focus",
                 "the focused window (101) is bold before the windowless-app switch")
 
@@ -380,10 +380,53 @@ return {
             ok(#fake.windowFrameSets == before, "no re-fan (the member set did not change)")
             ok(#fake.liveOutlines("focus") == 1 and borderFor(101) and borderFor(101).kind == "focus",
                 "an unresolved (0) focus KEEPS the last highlight, it does not clear it")
-            fake.pressHotkey("s", HYP)                 -- leave
+            fake.pressHotkey("f", HYP)                 -- leave
         end
 
-        -- ===== AUTO-RESTACK (loose poll backstop): a window DRAGGED in from another
+        -- ===== FOCUS SELF-HEAL (regression for the "focused window is tinted" bug):
+        -- a cross-app click RAISES the clicked window (z-order shows it front), but
+        -- the app-activation can fire BEFORE the new app's AX focused window resolves,
+        -- so focusedWid races to 0. syncFocus keeps the STALE focus and refreshFromList
+        -- HOISTS it over the real front -- so the window the user just focused is drawn
+        -- as a clipped, TINTED member (not bold), exactly as reported. A short deferred
+        -- re-read (fired here via the "after" timer once AX settles) must CONVERGE: the
+        -- real front becomes bold + unfilled + unclipped, the stale one a plain member.
+        do
+            fake.windows = freshWindows()
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows), focus 101
+            ok(borderFor(101) and borderFor(101).kind == "focus", "101 bold on enter")
+
+            -- The user clicks Mail (103, another app): the OS raised it, so z-order
+            -- row 1 = 103 -- but the new app's AX focus is not yet readable, so the
+            -- activation resolves focusedWid to 0 (the race).
+            local reordered, mail = {}, nil
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 103 then mail = w else reordered[#reordered + 1] = w end
+            end
+            table.insert(reordered, 1, mail)
+            fake.windows = reordered
+            fake.focusedWid = 0                        -- unresolved at activation time
+            fake.activateApp("Mail", "com.mail")       -- cross-app switch, SAME set
+
+            -- Immediate pass: stale focus (101) is kept and hoisted over the real
+            -- front (103), so 103 is drawn as a plain (non-bold) member -- the bug.
+            ok(borderFor(103) and borderFor(103).kind == "member",
+                "pre-heal: the real front is wrongly a plain member (stale focus hoisted over it)")
+
+            -- AX settles: the deferred re-read now resolves focus to 103.
+            fake.focusedWid = 103
+            fake.fireTimers("after")                   -- the deferred focus re-read
+            local m = borderFor(103)
+            ok(m and m.kind == "focus" and m.filled == false and m.clipped == false,
+                "the deferred re-read heals it: the real front is bold + unfilled (not tinted)")
+            ok(borderFor(101) and borderFor(101).kind == "member",
+                "the previously-focused window is no longer bold after the heal")
+            fake.pressHotkey("f", HYP)                 -- leave
+        end
+
+        -- ===== AUTO-REFAN (loose poll backstop): a window DRAGGED in from another
         -- screen COMPLETES with no activation/focus pulse -- an AX window-move on an
         -- app we may not observe. The reconcile poll is the sole backstop for it. Add
         -- a sized window WITHOUT firing any event, tick the poll, and it is taken in.
@@ -391,7 +434,7 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                 -- enter (5 windows)
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows)
             ok(#fake.liveOutlines() == 5, "entered with five windows")
 
             -- a window finishes a drag onto screen 1 -- no focus and no app-activation.
@@ -414,7 +457,7 @@ return {
             local steady = #fake.windowFrameSets
             fake.fireTimers("every", 2.0)
             ok(#fake.windowFrameSets == steady, "a steady poll with no set change does not re-fan")
-            fake.pressHotkey("s", HYP)                 -- leave
+            fake.pressHotkey("f", HYP)                 -- leave
         end
 
         -- ===== MOVE OUT AND BACK: a window dragged to ANOTHER screen RESERVES its
@@ -426,7 +469,7 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                 -- enter (5 windows)
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows)
 
             local aSlot  = { frameOf(3).x, frameOf(3).y, frameOf(3).w, frameOf(3).h }  -- wid 103's slab
             local aColor = borderFor(103).color
@@ -469,7 +512,7 @@ return {
             ok(stillOk, "the OTHER windows STILL did not move when it returned")
 
             -- leaving restores 103 to its TRUE pre-stack original (reserved through the trip).
-            fake.pressHotkey("s", HYP)
+            fake.pressHotkey("f", HYP)
             ok(frameOf(3).x == ORIG[3].x and frameOf(3).y == ORIG[3].y,
                 "leaving restores the round-tripped window to its true original position")
         end
@@ -480,21 +523,21 @@ return {
         -- must survive fractional slot values (both format sites fire here).
         do
             fake.windows = {}
-            for i = 1, 9 do            -- 9 stackable -> T=3, segLen = 1504/3 = 501.33 (fractional)
+            for i = 1, 9 do            -- 9 fannable -> T=3, segLen = 1504/3 = 501.33 (fractional)
                 fake.windows[i] = { id = 300 + i, wid = 400 + i, title = "W" .. i,
                     appName = "App" .. i, bundleID = "com.w" .. i,
                     x = (i * 130) % 1300, y = (i * 90) % 700, w = 500, h = 400 }
             end
             fake.focusedWindow = { x = 0, y = 0, w = 500, h = 400, screenIndex = 1 }
             fake.focusedWid = 401
-            fake.pressHotkey("s", HYP)                 -- enter log formats fractional margins
+            fake.pressHotkey("f", HYP)                 -- enter log formats fractional margins
             ok(#fake.liveOutlines() == 9, "entered with 9 windows (fractional fan segments), no format crash")
             -- shift the ACTUAL frames off their slots so the settle callback logs a
             -- realignment -- its format runs on fractional slot dims.
             for _, w in ipairs(fake.windows) do w.x = w.x + 50 end
             fake.fireTimers("after")                   -- settle: realign log + re-clip, fractional-safe
             ok(#fake.liveOutlines() == 9, "the settle pass survives fractional slot dims (no format crash)")
-            fake.pressHotkey("s", HYP)                 -- leave
+            fake.pressHotkey("f", HYP)                 -- leave
         end
 
         -- ===== SWITCHER WIDGET: a draggable card listing the fan's windows -- a row
@@ -505,9 +548,9 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                 -- enter (5 windows)
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows)
 
-            local wdg = fake.liveStackWidget()
+            local wdg = fake.liveFanWidget()
             ok(wdg ~= nil, "the switcher widget is shown on enter")
             ok(wdg and #wdg.rows == 5, "one widget row per window")
             local sides, shaped = { T = true, B = true, L = true, R = true }, true
@@ -530,13 +573,13 @@ return {
             -- a new window is taken in -> the widget grows to six rows
             table.insert(fake.windows, 1, { id = 10, wid = 110, title = "Fresh", appName = "X",
                 bundleID = "com.x", x = 300, y = 300, w = 600, h = 450 })
-            fake.activateApp("X", "com.x")             -- onAppActivated -> restack -> updateWidget
-            ok(fake.liveStackWidget() and #fake.liveStackWidget().rows == 6,
+            fake.activateApp("X", "com.x")             -- onAppActivated -> refan -> updateWidget
+            ok(fake.liveFanWidget() and #fake.liveFanWidget().rows == 6,
                 "the widget row list tracks membership (six rows after a window opens)")
 
             -- the widget's Exit button leaves the mode
-            fake.liveStackWidget().onExit()
-            ok(fake.liveStackWidget() == nil, "Exit tears down the widget")
+            fake.liveFanWidget().onExit()
+            ok(fake.liveFanWidget() == nil, "Exit tears down the widget")
             ok(#fake.liveOutlines() == 0, "Exit leaves the mode (borders gone)")
         end
 
@@ -546,12 +589,12 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.settings["hammerdeck.opt.window_stack.widget"] = false
-            fake.pressHotkey("s", HYP)                 -- enter with the widget off
-            ok(fake.liveStackWidget() == nil, "widget option off -> no widget shown")
+            fake.settings["hammerdeck.opt.window_fan.widget"] = false
+            fake.pressHotkey("f", HYP)                 -- enter with the widget off
+            ok(fake.liveFanWidget() == nil, "widget option off -> no widget shown")
             ok(#fake.liveOutlines() == 5, "the mode still fans the windows without the widget")
-            fake.pressHotkey("s", HYP)                 -- leave
-            fake.settings["hammerdeck.opt.window_stack.widget"] = nil
+            fake.pressHotkey("f", HYP)                 -- leave
+            fake.settings["hammerdeck.opt.window_fan.widget"] = nil
         end
 
         -- ===== SCREEN RECONFIG: a display RESIZE re-fans onto the new geometry and
@@ -563,9 +606,9 @@ return {
             fake.screenList = { SCREEN, SCREEN2 }
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                 -- enter on SCREEN (1600x1000)
+            fake.pressHotkey("f", HYP)                 -- enter on SCREEN (1600x1000)
             ok(#fake.liveOutlines() == 5, "entered on the main screen")
-            local wdx = fake.liveStackWidget().pos.x - SCREEN.x   -- widget offset from screen origin
+            local wdx = fake.liveFanWidget().pos.x - SCREEN.x   -- widget offset from screen origin
 
             -- SCREEN both SHRINKS and MOVES (same name "Main"). The members are still in
             -- their OLD (larger) slabs, so their centres now fall OUTSIDE the new frame --
@@ -579,30 +622,30 @@ return {
             for i = before + 1, #fake.windowFrameSets do placed[#placed + 1] = fake.windowFrameSets[i] end
             ok(sortedKeys(placed) == sortedKeys(W.fanSlots(SMALL, 5, 40, 8)),
                 "the fan re-placed onto the NEW (shrunk, moved) geometry")
-            ok(fake.liveStackWidget() and fake.liveStackWidget().pos.x == SMALL.x + wdx,
+            ok(fake.liveFanWidget() and fake.liveFanWidget().pos.x == SMALL.x + wdx,
                 "the widget re-anchored to the new origin, offset preserved")
 
-            -- The stacked display VANISHES -> leave without restore; windows stay put.
+            -- The fanned display VANISHES -> leave without restore; windows stay put.
             local pre = { frameOf(1).x, frameOf(1).y }
             fake.screenList = { SCREEN2 }              -- "Main" is gone
             fake.systemEvent("screenChanged")
-            ok(#fake.liveOutlines() == 0, "the vanished stacked display leaves the mode")
-            ok(fake.liveStackWidget() == nil, "the widget is torn down when the screen vanishes")
+            ok(#fake.liveOutlines() == 0, "the vanished fanned display leaves the mode")
+            ok(fake.liveFanWidget() == nil, "the widget is torn down when the screen vanishes")
             ok(frameOf(1).x == pre[1] and frameOf(1).y == pre[2],
                 "windows are left in place, NOT restored to originals on the gone display")
             fake.screenList = { SCREEN, SCREEN2 }      -- reset for later blocks
         end
 
-        -- ===== ALERTS: nothing stackable, and nothing to restore.
+        -- ===== ALERTS: nothing fannable, and nothing to restore.
         do
             fake.windows = {}
             fake.focusedWindow = nil
             fake.focusedWid = nil
             fake.mousePos = { x = 100, y = 100 }
             local a = #fake.alerts
-            fake.pressHotkey("s", HYP)
-            ok(#fake.alerts == a + 1, "no stackable windows -> alert, not active")
-            registry.runAction("window_stack", "restore")
+            fake.pressHotkey("f", HYP)
+            ok(#fake.alerts == a + 1, "no fannable windows -> alert, not active")
+            registry.runAction("window_fan", "restore")
             ok(#fake.alerts == a + 2, "restore with no live mode -> 'nothing' alert")
         end
 
@@ -611,15 +654,15 @@ return {
             fake.windows = freshWindows()
             fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
             fake.focusedWid = 101
-            fake.pressHotkey("s", HYP)                        -- enter
+            fake.pressHotkey("f", HYP)                        -- enter
             ok(#fake.liveOutlines() == 5 and frameOf(1).x ~= ORIG[1].x, "in the mode (bordered, moved)")
-            registry.setEnabled("window_stack", false)        -- stop -> forceExit -> leave
+            registry.setEnabled("window_fan", false)        -- stop -> forceExit -> leave
             ok(#fake.liveOutlines() == 0, "disable tears down the borders")
             ok(frameOf(1).x == ORIG[1].x and frameOf(1).y == ORIG[1].y,
                 "window 1 is back at its origin after the disable-restore")
         end
 
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
-            "clean after window_stack test (no leaked border or observer)")
+            "clean after window_fan test (no leaked border or observer)")
     end,
 }

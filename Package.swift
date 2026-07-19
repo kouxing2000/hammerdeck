@@ -79,16 +79,16 @@ let package = Package(
                 "features/window_modal",
                 "features/window_rewind",
                 "features/window_snap",
-                "features/window_stack/lua",
-                "features/window_stack/feature.json",
-                "features/window_stack/i18n",
+                "features/window_fan/lua",
+                "features/window_fan/feature.json",
+                "features/window_fan/i18n",
                 "features/window_switcher",
             ],
             sources: [
                 "platform/swift",
                 "features/usage_stats/swift",
                 "features/window_deck/swift",
-                "features/window_stack/swift",
+                "features/window_fan/swift",
             ]
         ),
         // Thin launcher: top-level code only (executable targets cannot be

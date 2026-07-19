@@ -408,10 +408,10 @@ function adapter.outline(kind, color)
         end,
         setStyle = function(k) native.outline_set_style(id, k) end,
         setColor = function(c) native.outline_set_color(id, c) end,
-        -- Fill the interior translucently (Auto Stack's tab) or clear it.
+        -- Fill the interior translucently (Window Fan's tab) or clear it.
         setFilled = function(on) native.outline_set_filled(id, on and true or false) end,
         -- Occlusion: draw only inside these visible rects (top-left global), or
-        -- clearClip() for a full unclipped border. Auto Stack passes a window's
+        -- clearClip() for a full unclipped border. Window Fan passes a window's
         -- frame minus everything in front of it.
         setClip   = function(rects) native.outline_set_clip(id, rects or {}) end,
         clearClip = function() native.outline_clear_clip(id) end,
@@ -524,16 +524,16 @@ function adapter.usageWidget(screenIndex)
     }
 end
 
--- Auto Stack's DRAGGABLE switcher card: a floating list of the fan's windows, each
+-- Window Fan's DRAGGABLE switcher card: a floating list of the fan's windows, each
 -- row an edge-swatch (color + exposed side) + app icon + title, the focused one lit.
 -- opts = { title, count (strings); pos = {x,y} top-left global; screen = {x,y,w,h};
 -- rows = { {color, side, title, bundleID, focused}, ... };
 -- onMove(x,y), onExit(), onSwitch(i) }. Returns { setRows(rows, count),
 -- reanchor(pos, screen), stop() }.
-function adapter.stackWidget(opts)
+function adapter.fanWidget(opts)
     opts = opts or {}
     local pos, scr = opts.pos or {}, opts.screen or {}
-    local id = native.stack_widget_show({
+    local id = native.fan_widget_show({
         title = opts.title or "", count = opts.count or "",
         x = pos.x or 40, y = pos.y or 60,
         sx = scr.x or 0, sy = scr.y or 0, sw = scr.w or 1440, sh = scr.h or 900,
@@ -543,9 +543,9 @@ function adapter.stackWidget(opts)
         onSwitch = opts.onSwitch or function() end,
     })
     return {
-        setRows = function(rows, count) native.stack_widget_set(id, rows or {}, count or "") end,
+        setRows = function(rows, count) native.fan_widget_set(id, rows or {}, count or "") end,
         reanchor = function(p, s)
-            native.stack_widget_reanchor(id, p.x, p.y, s.x, s.y, s.w, s.h)
+            native.fan_widget_reanchor(id, p.x, p.y, s.x, s.y, s.w, s.h)
         end,
         stop = function() native.stop(id) end,
     }

@@ -36,7 +36,7 @@ extension Native {
     // stored on the class -- see Native.swift) and focus_window(id) resolves from
     // it. A window KEEPS its id across listings (keyed by the stable CGWindowID),
     // so a handle a feature holds across a chooser session stays valid even when
-    // another feature (window_stack) re-lists in between -- see the rebuild in
+    // another feature (window_fan) re-lists in between -- see the rebuild in
     // listWindows for why the naive one-listing cache was a switch-window bug.
 
     /// Real window enumeration: AXUIElement per app for titles + elements
@@ -55,7 +55,7 @@ extension Native {
         // CGWindowID), so a handle a feature is HOLDING survives an intervening
         // list_windows from ANOTHER feature. window_switcher / tab_switcher list,
         // show a chooser, then focus on the user's pick many seconds later --
-        // meanwhile window_stack (Auto Stack) re-lists on every poll / activation.
+        // meanwhile window_fan (Window Fan) re-lists on every poll / activation.
         // The old removeAll() + fresh-id-per-listing silently invalidated those
         // held handles, so focus_window(id) resolved nothing and no-oped (the
         // "can't switch windows" bug -- worse when cycling deep for a same-app

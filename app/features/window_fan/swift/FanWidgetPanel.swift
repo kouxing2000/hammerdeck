@@ -1,9 +1,9 @@
-// window_stack's CONTRIBUTED native UI (co-located under the feature's swift/, like
+// window_fan's CONTRIBUTED native UI (co-located under the feature's swift/, like
 // window_deck's DeckWidgetPanel and usage_stats' UsageWidgetPanel): bespoke to this
-// feature, driven only through the thin `stack_widget_*` seam in Native+Panels.swift
+// feature, driven only through the thin `fan_widget_*` seam in Native+Panels.swift
 // -- NOT a shared platform panel. See Panels.swift for the shared FloatingPanel base.
 //
-// The Auto Stack switcher card: a small DRAGGABLE floating panel that lists the
+// The Window Fan switcher card: a small DRAGGABLE floating panel that lists the
 // windows in the fan. A header (title + live count + a round Exit button) sits over a
 // vertical list of ROWS -- each row is an EDGE SWATCH (a mini window-glyph with a
 // colored bar on the very edge that window exposes: top / bottom / left / right, tinted
@@ -12,14 +12,14 @@
 // that window; the Exit button leaves the mode.
 //
 // Like DeckWidgetPanel it is mouse-OPAQUE, non-activating, and never key -- so dragging
-// or clicking it never steals focus from a stacked window (the click switches the
+// or clicking it never steals focus from a fanned window (the click switches the
 // TARGET window, not the widget). The row list is fully rebuilt on setRows as the fan
 // gains/loses windows or focus moves.
 
 import AppKit
 
 @MainActor
-final class StackWidgetPanel {
+final class FanWidgetPanel {
     /// One window's row, as it crosses the seam.
     struct Row {
         let color: String      // hex, matches the window's border
@@ -200,7 +200,7 @@ private final class RowView: NSView {
     var onClick: (() -> Void)?
     private let focused: Bool
 
-    init(index: Int, row: StackWidgetPanel.Row) {
+    init(index: Int, row: FanWidgetPanel.Row) {
         self.focused = row.focused
         super.init(frame: .zero)
         wantsLayer = true

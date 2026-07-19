@@ -509,7 +509,7 @@ extension Native {
     }
 
     // outline_set_clip(id, {{x,y,w,h}, ...}) -- draw only inside these top-left
-    // global rects (Auto Stack's visible-region occlusion).
+    // global rects (Window Fan's visible-region occlusion).
     func outlineSetClip(_ L: OpaquePointer?) -> Int32 {
         guard let id = LuaState.int(L, 1).map(Int32.init), let panel = outlines[id] else { return 0 }
         let rects = LuaState.dictArray(L, 2).compactMap { d -> NSRect? in
@@ -760,12 +760,12 @@ extension Native {
         return 0
     }
 
-    // MARK: - Auto Stack switcher widget
+    // MARK: - Window Fan switcher widget
 
-    // Read a `rows` array-of-tables at stack index `at` into [StackWidgetPanel.Row].
+    // Read a `rows` array-of-tables at stack index `at` into [FanWidgetPanel.Row].
     // Each row = { color, side, title, bundleID, focused }.
-    private func stackWidgetRows(_ L: OpaquePointer?, at: Int32) -> [StackWidgetPanel.Row] {
-        var out: [StackWidgetPanel.Row] = []
+    private func fanWidgetRows(_ L: OpaquePointer?, at: Int32) -> [FanWidgetPanel.Row] {
+        var out: [FanWidgetPanel.Row] = []
         guard lua_type(L, at) == LUA_TTABLE else { return out }
         let n = lua_rawlen(L, at)
         guard n > 0 else { return out }
@@ -778,7 +778,7 @@ extension Native {
         for i in 1...n {
             lua_rawgeti(L, at, lua_Integer(i))
             if lua_type(L, -1) == LUA_TTABLE {
-                out.append(StackWidgetPanel.Row(color: f("color"), side: f("side"),
+                out.append(FanWidgetPanel.Row(color: f("color"), side: f("side"),
                     title: f("title"), bundleID: f("bundleID"), focused: fb("focused")))
             }
             lua_settop(L, -2)
@@ -786,11 +786,11 @@ extension Native {
         return out
     }
 
-    // stack_widget_show(opts) -- opts is a single table: title, count (both strings);
+    // fan_widget_show(opts) -- opts is a single table: title, count (both strings);
     // x, y (top-left global corner); sx, sy, sw, sh (screen frame, for the drag clamp);
     // rows (array of {color, side, title, bundleID, focused}); onMove(x,y) / onExit() /
     // onSwitch(i) callbacks. Returns a resource id (stop() closes + releases the refs).
-    func stackWidgetShow(_ L: OpaquePointer?) -> Int32 {
+    func fanWidgetShow(_ L: OpaquePointer?) -> Int32 {
         func str(_ k: String) -> String {
             lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.string(L, -1) ?? ""
         }
@@ -801,11 +801,11 @@ extension Native {
             lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return lua.makeRef(at: -1)
         }
         lua_getfield(L, 1, "rows")
-        let rows = stackWidgetRows(L, at: lua_gettop(L))
+        let rows = fanWidgetRows(L, at: lua_gettop(L))
         lua_settop(L, -2)
 
         let moveRef = ref("onMove"), exitRef = ref("onExit"), switchRef = ref("onSwitch")
-        let widget = StackWidgetPanel(
+        let widget = FanWidgetPanel(
             title: str("title"), count: str("count"), rows: rows,
             topLeft: CGPoint(x: dbl("x", 40), y: dbl("y", 60)),
             screen: flipToAppKit(dbl("sx", 0), dbl("sy", 0), dbl("sw", 1440), dbl("sh", 900)),
@@ -826,26 +826,26 @@ extension Native {
             Native.shared.lua.releaseRef(switchRef)
             widget.close()
         }
-        stackWidgets[id] = widget
+        fanWidgets[id] = widget
         lua_pushinteger(L, lua_Integer(id))
         return 1
     }
 
-    // stack_widget_set(id, rows, count) -- rebuild the list + header count.
-    func stackWidgetSet(_ L: OpaquePointer?) -> Int32 {
-        guard let id = LuaState.int(L, 1).map(Int32.init), let w = stackWidgets[id] else { return 0 }
-        let rows = stackWidgetRows(L, at: 2)
+    // fan_widget_set(id, rows, count) -- rebuild the list + header count.
+    func fanWidgetSet(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let w = fanWidgets[id] else { return 0 }
+        let rows = fanWidgetRows(L, at: 2)
         w.setRows(rows, count: LuaState.string(L, 3) ?? "")
         return 0
     }
 
-    // stack_widget_reanchor(id, x, y, sx, sy, sw, sh) -- reposition + re-clamp.
-    func stackWidgetReanchor(_ L: OpaquePointer?) -> Int32 {
+    // fan_widget_reanchor(id, x, y, sx, sy, sw, sh) -- reposition + re-clamp.
+    func fanWidgetReanchor(_ L: OpaquePointer?) -> Int32 {
         if let id = LuaState.int(L, 1).map(Int32.init),
            let x = LuaState.double(L, 2), let y = LuaState.double(L, 3),
            let sx = LuaState.double(L, 4), let sy = LuaState.double(L, 5),
            let sw = LuaState.double(L, 6), let sh = LuaState.double(L, 7) {
-            stackWidgets[id]?.reanchor(topLeft: CGPoint(x: x, y: y),
+            fanWidgets[id]?.reanchor(topLeft: CGPoint(x: x, y: y),
                                        screen: flipToAppKit(sx, sy, sw, sh))
         }
         return 0

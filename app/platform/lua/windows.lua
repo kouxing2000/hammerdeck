@@ -23,6 +23,17 @@ M.DIR = {
     PREV = "prev",
 }
 
+--- The member-ring palette ("#RRGGBB") shared by the window MODES (Window
+--- Deck's and Window Fan's border rings). Data, not geometry -- but this leaf
+--- is the modes' one shared home (a feature cannot require another feature's
+--- module), and a shared table is what keeps their visual language identical
+--- instead of two mirrored copies drifting apart.
+---@type string[]
+M.RING_PALETTE = {
+    "#4C8DFF", "#34C759", "#FF9F0A", "#AF52DE", "#FF375F",
+    "#5AC8FA", "#FFD60A", "#FF6482", "#30D158",
+}
+
 --- A screen-ratio rect: x/y offset and w/h size as fractions of the screen
 --- visible frame (the donor's positionWindow).
 ---@param s {x:number,y:number,w:number,h:number} screen visible frame
@@ -297,7 +308,7 @@ function M.centeredRect(s, pct)
 end
 
 -- ---------------------------------------------------------------------------
--- Border-anchored SLAB FAN (Auto Stack's "handles around the rim"). The layout
+-- Border-anchored SLAB FAN (Window Fan's "handles around the rim"). The layout
 -- that gives EVERY window a full, always-visible, grabbable edge -- with NO
 -- z-order management (macOS won't let us reorder other apps' windows anyway) and
 -- NO repositioning when focus changes. Each window is a slab flush against ONE
@@ -395,7 +406,7 @@ function M.rectSubtract(r, s)
 end
 
 --- The VISIBLE part of `r` after subtracting every rect in `subs`, as a set of
---- disjoint rects (`r` minus the union of `subs`). Auto Stack feeds this the
+--- disjoint rects (`r` minus the union of `subs`). Window Fan feeds this the
 --- frames of the windows IN FRONT of a given window (from the z-ordered list),
 --- so a window's border/fill is drawn only where nothing covers it -- the
 --- occlusion that makes a floating border hug the window's real visible edges.
