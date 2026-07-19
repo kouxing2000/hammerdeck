@@ -6,9 +6,12 @@
 -- segment of the screen's edge, so EVERY window keeps a full, always-visible,
 -- grabbable edge strip in its own slice of the screen border. You STAY in the
 -- mode: every window wears a live colored border, and clicking any window
--- switches to it. Press the toggle again -- or "Restore layout" (the menubar
--- exit) -- to leave the mode and put every window back where it was (slab shapes
--- are a switcher-only cost; leaving restores the real layout).
+-- switches to it. Press the toggle again -- or the widget's Exit -- to leave
+-- the mode and put every window back where it was (slab shapes are a
+-- switcher-only cost; leaving restores the real layout). Deliberately ONE
+-- action, like Window Deck: the toggle already exits from the menubar and the
+-- hotkey, so a separate "restore" action only added a Settings editor and a
+-- menubar row for a duplicate exit path (removed 2026-07-19).
 --
 -- WHY THE FAN. macOS won't let us reorder OTHER apps' windows (AXRaise is
 -- top-only; some apps steal focus on raise), so we cannot "manage layers". The
@@ -613,10 +616,7 @@ local function controllerFor(ctx)
     -- them would fling the windows off into nowhere).
     ---@param skipRestore boolean|nil
     function st.leave(skipRestore)
-        if not st.active then
-            ctx.alert(ctx.t("fan.nothing", "No fan to restore"))
-            return
-        end
+        if not st.active then return end   -- every caller guards; belt-and-braces
         -- Snapshot the ACTIVE members BEFORE teardown clears the borders: only
         -- windows currently in the fan are restored. A window MOVED off-screen
         -- (reserved) is left where the user put it -- restoring it would yank it back.
@@ -737,17 +737,15 @@ return {
     actions = {
         {
             id = "arrange",
-            label = "Fan windows",
+            -- "Toggle", like Window Deck's sole action: this row is also the
+            -- menubar EXIT while the mode is live, so the label must not read
+            -- as a one-way enter. (id stays "arrange" -- a stored trigger
+            -- override is keyed by it.)
+            label = "Toggle Window Fan",
             description = "Enter Window Fan mode: fan the focused screen's windows against the screen edges, each keeping a live colored border and a full always-visible edge no other window can cover. Windows that open or are dragged onto the screen are taken into the fan automatically. Press again to leave and restore the original layout.",
             defaultTrigger = { type = "hotkey", mods = HYPER, key = "f" },
             mnemonic = "Hyper+F -- F for Fan",
             run = function(ctx) with(ctx).toggle() end,
-        },
-        {
-            id = "restore",
-            label = "Restore layout",
-            description = "Leave Window Fan mode and put every window back where it was.",
-            run = function(ctx) with(ctx).leave() end,
         },
     },
 }

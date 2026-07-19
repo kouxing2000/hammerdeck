@@ -6,7 +6,7 @@
 -- when focus changes (onFocusChanged). The fan stays COMPLETE: a window that
 -- opens (focus path) or is dragged in (poll path) is TAKEN into the fan, and a
 -- closed / moved-out window is dropped and the survivors re-fan. Pressing again
--- (or the "restore" action, or a disable) LEAVES the mode -- tearing down every
+-- (or the menubar toggle, or a disable) LEAVES the mode -- tearing down every
 -- border + observer and restoring each window to its captured frame (matched by
 -- stable wid across the id churn).
 --
@@ -250,12 +250,14 @@ return {
             ok(#fake.liveOutlines() == 0, "the frame observer was stopped on leave")
         end
 
-        -- ===== RESTORE MATCHES ACROSS ID CHURN via the menubar "restore" action.
+        -- ===== RESTORE MATCHES ACROSS ID CHURN via the menubar toggle action
+        -- (clicking "Fan windows" in the menubar while the mode is on exits it --
+        -- the toggle IS the menubar click-to-quit; there is no separate action).
         do
             fake.windows = freshWindows()
             fake.pressHotkey("f", HYP)                       -- enter
             for _, w in ipairs(fake.windows) do w.id = w.id + 100 end   -- ids churn, wids stable
-            registry.runAction("window_fan", "restore")    -- the menubar click-to-quit
+            registry.runAction("window_fan", "arrange")    -- the menubar click-to-quit
             local restoredOk = true
             for id, o in pairs(ORIG) do
                 local w = frameOf(id + 100)
@@ -645,8 +647,6 @@ return {
             local a = #fake.alerts
             fake.pressHotkey("f", HYP)
             ok(#fake.alerts == a + 1, "no fannable windows -> alert, not active")
-            registry.runAction("window_fan", "restore")
-            ok(#fake.alerts == a + 2, "restore with no live mode -> 'nothing' alert")
         end
 
         -- ===== LEAVE ON DISABLE: a live mode is torn down + restored on stop.
