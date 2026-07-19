@@ -502,6 +502,19 @@ function M.resolveScreen(screens, name)
     return nil
 end
 
+--- The "arrangeable window" predicate shared by the window MODES (Window
+--- Deck's deckable, Window Fan's fannable): SIZED (w/h present and positive),
+--- not minimized, not fullscreen. One definition so the modes never drift on
+--- which windows they manage. (window_snap's display counts deliberately skip
+--- only minimized/fullscreen -- a picker count, not an arrange -- so that
+--- predicate stays local to snap.)
+---@param w {w?:number,h?:number,minimized?:boolean,fullscreen?:boolean} a window row
+---@return boolean
+function M.arrangeable(w)
+    return (w.w and w.h and w.w > 0 and w.h > 0
+        and not w.minimized and not w.fullscreen) and true or false
+end
+
 --- Is rect `w`'s CENTRE inside screen rect `s`? Pure geometry -- the robust way
 --- to test "is this window on this screen" across the SEPARATE native calls that
 --- produce window frames vs screen frames: their screen tables are different
@@ -530,6 +543,25 @@ function M.screenOfFrame(screens, f)
         end
     end
     return screens and screens[1] or nil
+end
+
+--- The screen to act on: the FOCUSED window's, else the one under the mouse
+--- (so an action still resolves when focus is on the desktop or a windowless
+--- app), else the first -- screenOfFrame's own fallback. Shared by the window
+--- modes (Deck's pick entry, Fan's gather). Native only via the ctx passed in
+--- (the leaf-util rule); a stale screenIndex that no longer resolves falls
+--- through to the mouse path rather than being returned blind.
+---@param ctx table the curated feature ctx
+---@return table|nil screen a ctx.screen.frames() row { x,y,w,h,name?,index? }, nil when no screens
+function M.focusedScreen(ctx)
+    local screens = ctx.screen.frames()
+    if #screens == 0 then return nil end
+    local f = ctx.window.frame()
+    if f and f.screenIndex and screens[f.screenIndex] then
+        return screens[f.screenIndex]
+    end
+    local m = ctx.mouse.position()
+    return M.screenOfFrame(screens, { x = m.x, y = m.y, w = 0, h = 0 })
 end
 
 --- 1-based index of the screen (in `frames`) whose visible frame contains the

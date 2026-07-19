@@ -97,19 +97,18 @@ local function controllerFor(ctx)
     local st = { active = false, picking = false, settling = false, peeked = false }
 
     -- The INDEX of the screen to deck by default: the focused window's, else the
-    -- one under the cursor. (An index, not the screen table -- ctx.window.frame()
-    -- .screen and ctx.screen.frames() rows are different objects, so identity
-    -- comparison is wrong; screens are matched by their stable `index`.)
+    -- one under the cursor (W.focusedScreen, shared with Window Fan). An index,
+    -- not the screen table -- ctx.window.frame().screen and ctx.screen.frames()
+    -- rows are different objects, so identity comparison is wrong; screens are
+    -- matched by their stable `index`.
     local function activeScreenIndex()
-        local f = ctx.window.frame()
-        if f and f.screenIndex then return f.screenIndex end
-        local m = ctx.mouse.position()
-        local s = W.screenOfFrame(ctx.screen.frames(), { x = m.x, y = m.y, w = 0, h = 0 })
+        local s = W.focusedScreen(ctx)
         return s and s.index or nil
     end
 
-    -- The deckable windows on `screen`, MRU order: visible, sized, not
-    -- fullscreen. Capped at `limit` (default 9 -- the deck size cap for the
+    -- The deckable windows on `screen`, MRU order: W.arrangeable (the mode
+    -- predicate shared with Window Fan) on that screen.
+    -- Capped at `limit` (default 9 -- the deck size cap for the
     -- PICK path). Restore matching passes a bigger limit: the saved template is
     -- already <= 9, but its members may sit PAST the top-9 in MRU order among
     -- many open windows, and truncating the candidate set there would report an
@@ -119,9 +118,7 @@ local function controllerFor(ctx)
         limit = limit or 9
         local out = {}
         for _, w in ipairs(ctx.window.list()) do
-            local sized = w.w and w.h and w.w > 0 and w.h > 0
-            if sized and not w.minimized and not w.fullscreen
-                and onScreen(w, screen) then
+            if W.arrangeable(w) and onScreen(w, screen) then
                 out[#out + 1] = w
                 if #out >= limit then break end
             end
@@ -706,12 +703,11 @@ local function controllerFor(ctx)
         -- Deckable-window count per screen in ONE list() pass -- the AX window
         -- listing is dear (see groupWindows), so bucket rather than call
         -- groupWindows per screen (window_snap's displaysWithCounts does the same).
-        -- Same deckable predicate: sized, not minimized/fullscreen, on that screen.
+        -- Same deckable predicate (W.arrangeable), bucketed by screen.
         local counts = {}
         for i = 1, #screens do counts[i] = 0 end
         for _, w in ipairs(ctx.window.list()) do
-            if w.w and w.h and w.w > 0 and w.h > 0
-                and not w.minimized and not w.fullscreen then
+            if W.arrangeable(w) then
                 for i, s in ipairs(screens) do
                     if onScreen(w, s) then counts[i] = counts[i] + 1; break end
                 end
@@ -846,9 +842,8 @@ local function controllerFor(ctx)
         if st.active then return end
         local wins = {}
         for _, w in ipairs(ctx.window.list()) do
-            local sized = w.w and w.h and w.w > 0 and w.h > 0
-            if sized and not w.minimized and not w.fullscreen
-                and onScreen(w, screen) and chosenKeys[keyOf(w)] then
+            if W.arrangeable(w) and onScreen(w, screen)
+                and chosenKeys[keyOf(w)] then
                 wins[#wins + 1] = w
                 if #wins >= 9 then break end
             end
