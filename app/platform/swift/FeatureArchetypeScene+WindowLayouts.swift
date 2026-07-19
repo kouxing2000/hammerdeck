@@ -197,8 +197,10 @@ struct WindowDeckArchetypeScene: View {
 /// (platform.windows.fanSlots) -- each becomes a slab flush against its own
 /// segment of an edge, so every window keeps a full colored EDGE STRIP that no
 /// other window can cover, in its own slice of the border. The focused window
-/// sits on top. Alternates scattered <-> fanned; at rest it shows the fan (the
-/// calm frame). Positions mirror the real round-robin T,B,L,R assignment.
+/// sits on top. Alternates scattered <-> fanned, and playback STARTS from
+/// scattered (snapped, unanimated) so the first visible beat is the GATHER --
+/// the feature's story, not its undo. At rest it shows the fan (the calm
+/// frame). Positions mirror the real round-robin T,B,L,R assignment.
 struct WindowFanArchetypeScene: View {
     let playing: Bool
 
@@ -260,7 +262,6 @@ struct WindowFanArchetypeScene: View {
                         .frame(width: max(0, r.width), height: max(0, r.height))
                         .offset(x: r.minX, y: r.minY)
                         .zIndex(front ? 1 : 0)          // the focused window rides on top
-                        .animation(.spring(response: 0.5, dampingFraction: 0.78), value: fanned)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -268,9 +269,22 @@ struct WindowFanArchetypeScene: View {
             .opacity(playing ? 1 : 0.9)
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
         }
-        .heartbeat(Self.heartbeat, active: playing) { fanned.toggle() }
+        // The scatter<->fan spring lives HERE, at the tick, not in an
+        // .animation(_:value: fanned) modifier -- so a bare `fanned` assignment
+        // (the jump-cuts below) is silent BY CONSTRUCTION. A value-driven
+        // .animation() would animate those too, and whether a
+        // disablesAnimations transaction overrides it is undocumented.
+        .heartbeat(Self.heartbeat, active: playing) {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) { fanned.toggle() }
+        }
+        // Start scattered so the FIRST beat GATHERS into the fan (the story);
+        // a visible fan->scatter explosion would be the story played backwards.
+        // onAppear is load-bearing, not belt-and-braces: the Feature Tour passes
+        // a CONSTANT playing:true, so onChange never fires there -- and the
+        // gallery re-seeds @State whenever a hovered card is recycled.
+        .onAppear { if playing { fanned = false } }
         .onChange(of: playing) { isOn in
-            if !isOn { fanned = true }   // rest on the fan (the calm frame)
+            fanned = !isOn   // playing -> scattered (gather next); at rest -> the fan (calm frame)
         }
     }
 
