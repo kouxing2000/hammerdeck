@@ -135,6 +135,84 @@ final class LocalizationTests: XCTestCase {
                       + "silently render English:\n  " + missing.joined(separator: "\n  "))
     }
 
+    // THE OTHER DIRECTION: a catalog key nothing asks for any more. The test above scans
+    // call site -> catalog (a missing translation silently speaks English); nothing scanned
+    // catalog -> call site, so a key outlived its call site invisibly. That is not
+    // cosmetic: a dead key is a string a translator spends time on, and it makes the
+    // catalog a poor answer to "what does this app actually say". Six such keys were
+    // removed by hand in one 2026-07 session (a deleted Settings row and a deleted feature
+    // action) -- by hand, because no gate could see them.
+    //
+    // The global catalog serves BOTH hosts, so both source trees are scanned: Swift's
+    // `Strings.t/plural`, and Lua's `i18n.t/format/plural` (platform modules) plus `ctx.t /
+    // ctx.plural` (a feature may reach a DOTTED global key -- see i18n.tFeature's fallback).
+    // A key is also live when it matches a CONCATENATED prefix ("rules.signal." .. name) --
+    // the same dynamic families the scan above resolves from the other side.
+    func testCatalogHasNoOrphanedKeys() throws {
+        let root = repoRoot()
+        guard let data = FileManager.default.contents(atPath: root + "/app/i18n/zh-Hans.json"),
+              let catalog = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return XCTFail("missing or invalid zh-Hans.json")
+        }
+        let swiftLiteral = try NSRegularExpression(pattern: #"Strings\.(?:t|plural)\(\s*"([^"\\]+)"\s*,"#)
+        let swiftPrefix  = try NSRegularExpression(pattern: #"Strings\.(?:t|plural)\(\s*"([^"]*?)(?:\\\(|"\s*\+)"#)
+        // `tFeature`/`formatFeature` are deliberately ABSENT: they take the
+        // feature id FIRST, so matching their leading literal would capture an
+        // id as if it were a key (and miss the real one). Every call site passes
+        // a variable id today, so they contribute no literals either way.
+        // `formatPlural` IS key-first, so it belongs here.
+        let luaLiteral   = try NSRegularExpression(
+            pattern: #"(?:i18n\.(?:t|format|plural|formatPlural)|ctx\.(?:t|plural))\(\s*"([^"]+)""#)
+        let luaPrefix    = try NSRegularExpression(
+            pattern: #"(?:i18n\.(?:t|format|plural)|ctx\.(?:t|plural))\(\s*"([^"]*?)"\s*\.\."#)
+
+        var referenced = Set<String>(), prefixes = Set<String>()
+        var scannedSwift = 0, scannedLua = 0
+        let enumerator = FileManager.default.enumerator(atPath: root + "/app")
+        while let rel = enumerator?.nextObject() as? String {
+            let isSwift = rel.hasSuffix(".swift"), isLua = rel.hasSuffix(".lua")
+            guard isSwift || isLua,
+                  let raw = try? String(contentsOfFile: root + "/app/" + rel, encoding: .utf8)
+            else { continue }
+            // Swift comments are blanked (this file documents key shapes in prose); Lua
+            // comments are left as-is -- codeOnly understands `//`, not `--`, and a key
+            // named only inside a Lua comment still counts as documented, not orphaned.
+            let src = isSwift ? codeOnly(raw) : raw
+            let ns = src as NSString
+            let all = NSRange(location: 0, length: ns.length)
+            if isSwift { scannedSwift += 1 } else { scannedLua += 1 }
+            for m in (isSwift ? swiftLiteral : luaLiteral).matches(in: src, range: all) {
+                referenced.insert(ns.substring(with: m.range(at: 1)))
+            }
+            for m in (isSwift ? swiftPrefix : luaPrefix).matches(in: src, range: all) {
+                let p = ns.substring(with: m.range(at: 1))
+                if !p.isEmpty { prefixes.insert(p) }
+            }
+        }
+
+        let orphans = catalog.keys
+            .filter { !referenced.contains($0) && !prefixes.contains(where: $0.hasPrefix) }
+            .sorted()
+
+        // A vacuous scan (no sources, no keys) would pass while checking nothing.
+        XCTAssertGreaterThan(scannedSwift, 0, "scanned no Swift sources under \(root)/app")
+        XCTAssertGreaterThan(scannedLua, 0, "scanned no Lua sources under \(root)/app")
+        XCTAssertGreaterThan(referenced.count, 0, "resolved no localization keys at all")
+        // The scan reads `ctx.t("x")` -- a FEATURE-relative key -- as a global
+        // reference too. That can only mask a global orphan if some global key
+        // is spelled exactly like a feature key, and i18n.tFeature falls back to
+        // the global catalog ONLY for dotted keys. Welding that shut: every
+        // global key is dotted, so no bare feature key can ever shadow one.
+        XCTAssertTrue(catalog.keys.allSatisfy { $0.contains(".") },
+                      "every global catalog key must be dotted -- an undotted key could be "
+                      + "masked by a same-named feature-relative ctx.t call: "
+                      + catalog.keys.filter { !$0.contains(".") }.sorted().joined(separator: ", "))
+        XCTAssertTrue(orphans.isEmpty,
+                      "\(orphans.count) zh-Hans key(s) no source asks for -- delete them, or "
+                      + "restore the call site that was meant to use them:\n  "
+                      + orphans.joined(separator: "\n  "))
+    }
+
     // PLACEHOLDER PARITY for the chrome. A translation whose format slots don't match its
     // English source is a bug the runtime cannot fix: String(format:) will read the wrong
     // argument, print garbage, or crash. Same contract as the Lua half (i18n_parity.lua):
