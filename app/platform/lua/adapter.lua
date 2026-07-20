@@ -213,6 +213,11 @@ function adapter.chooser(opts)
     function h.isVisible()        return native.chooser_visible(id) end
     function h.getSelectedRow()   return native.chooser_selected_row(id) end
     function h.setSelectedRow(n)  native.chooser_set_selected_row(id, n) end
+    -- Step the selection by delta over the VISIBLE (filtered) rows: wraps at
+    -- either end and skips non-selectable info rows -- the same move the
+    -- panel's own tab / option-arrow keys make. Prefer this over hand-rolled
+    -- setSelectedRow wrap math, which cannot see the filtered row count.
+    function h.step(delta)        native.chooser_step(id, delta) end
     function h.select(n)          native.chooser_select(id, n) end
     function h.setQuery(q)        native.chooser_set_query(id, q) end
     function h.stop()             native.stop(id) end

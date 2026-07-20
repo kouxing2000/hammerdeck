@@ -124,6 +124,7 @@ final class Native {
             "chooser_visible": { L in MainActor.assumeIsolated { Native.shared.chooserVisible(L) } },
             "chooser_selected_row": { L in MainActor.assumeIsolated { Native.shared.chooserSelectedRow(L) } },
             "chooser_set_selected_row": { L in MainActor.assumeIsolated { Native.shared.chooserSetSelectedRow(L) } },
+            "chooser_step": { L in MainActor.assumeIsolated { Native.shared.chooserStep(L) } },
             "chooser_select": { L in MainActor.assumeIsolated { Native.shared.chooserSelect(L) } },
             "ask_choice":   { L in MainActor.assumeIsolated { Native.shared.askChoice(L) } },
             "display_picker": { L in MainActor.assumeIsolated { Native.shared.displayPicker(L) } },

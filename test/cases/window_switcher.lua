@@ -43,17 +43,43 @@ return {
         fake.fireTimers("every", 0.1)                  -- modifier poll sees release
         ok(fake.focused[#fake.focused] == 33, "releasing the modifier picks the row")
 
-        -- backward cycling (the donor's alt+`): wraps at the top
+        -- backward turn-around: shift+tab / option+arrows land in the panel's
+        -- own step (userStep models the key monitor); wraps at the top, and
+        -- release-to-pick (armed by the forward cycle) still fires after it.
         fake.modifiers.alt = true
         fake.pressHotkey("tab")                        -- reopen (row 2)
-        fake.pressHotkey("`")                          -- backward -> row 1
+        fake.pressHotkey("tab")                        -- cycle -> row 3 (arms release)
         ch = fake.visibleChooser()
-        ok(ch.selectedRow == 1, "backward action cycles up")
-        fake.pressHotkey("`")                          -- backward from 1 -> wrap to last
-        ok(ch.selectedRow == 3, "backward wraps to the bottom")
+        ch.userStep(-1)                                -- shift+tab -> row 2
+        ok(ch.selectedRow == 2, "shift+tab steps the selection back")
+        ch.userStep(-1); ch.userStep(-1)               -- past the top -> wrap
+        ok(ch.selectedRow == 3, "backward stepping wraps to the bottom")
         fake.modifiers.alt = false
         fake.fireTimers("every", 0.1)
-        ok(fake.focused[#fake.focused] == 33, "release still picks after backward cycling")
+        ok(fake.focused[#fake.focused] == 33, "release still picks after stepping back")
+
+        -- stepping against a FILTERED list: the panel owns the wrap (chooser.step
+        -- moves over the VISIBLE rows). The old Lua-side wrap passed the FULL
+        -- choice count to setSelectedRow -- which rejects rows beyond the
+        -- filtered list -- so backward wrap jammed at row 1 the moment a query
+        -- narrowed the list. Repro was: open, type a query, step back at the top.
+        fake.windows = {
+            { id = 44, title = "Alpha",    appName = "AppA", bundleID = "com.a" },
+            { id = 55, title = "Beta One", appName = "AppB", bundleID = "com.b" },
+            { id = 66, title = "Beta Two", appName = "AppC", bundleID = "com.c" },
+        }
+        fake.modifiers.alt = true
+        fake.pressHotkey("tab")                        -- open (row 2 preselected)
+        ch = fake.visibleChooser()
+        ch.userType("beta")                            -- narrows 3 rows -> the two Betas
+        ok(ch.selectedRow == 1, "typing a query reselects the first visible row")
+        ch.userStep(-1)                                -- shift+tab from the top
+        ok(ch.selectedRow == 2, "backward wrap stays within the FILTERED rows")
+        fake.pressHotkey("tab")                        -- forward from the bottom
+        ok(ch.selectedRow == 1, "forward wrap stays within the filtered rows")
+        fake.modifiers.alt = false
+        fake.fireTimers("every", 0.1)
+        ok(fake.focused[#fake.focused] == 55, "release picks the FILTERED row's choice")
 
         -- subtext = browser tab count and/or screen name (app name dropped -- the icon
         -- carries it); screen name only when the display is reported (native reports it

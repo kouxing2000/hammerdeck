@@ -239,9 +239,9 @@ local function jumperFor(ctx)
         if st.chooser.isVisible() then
             -- Repeat invocation: cycle (wrap against the visible rows).
             st.chooser.setPlaceholder(st.cycleMod
-                and ctx.t("chooser.releaseToJump", "Release %s to jump", st.cycleMod)
+                and ctx.t("chooser.releaseToJump", "Release %s to jump · ⇧⇥ back", st.cycleMod)
                 or ctx.t("chooser.pressEnter", "Press Enter to jump"))
-            cyclingChooser.cycle(st.chooser, backward, #st.choices)
+            cyclingChooser.cycle(st.chooser, backward)
             armAutoJump()
             return
         end

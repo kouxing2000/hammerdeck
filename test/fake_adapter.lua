@@ -226,12 +226,40 @@ function adapter.chooser(opts)
     }
     fake.choosers[#fake.choosers + 1] = c
     alloc()
+    -- Visible = query-filtered choices, mirroring the native panel: every row
+    -- number the handle speaks is an index into THIS list, not the full set.
+    -- The match mirrors applyFilter exactly -- an order-preserving,
+    -- case-insensitive substring filter over text, plus subText when
+    -- searchSubText is on (the real panel does no ranking either).
+    local function visible()
+        if not c.query or c.query == "" then return c.choices end
+        local out, q = {}, c.query:lower()
+        for _, choice in ipairs(c.choices) do
+            local hay = tostring(choice.text or ""):lower()
+            if opts.searchSubText and choice.subText then
+                hay = hay .. "\n" .. tostring(choice.subText):lower()
+            end
+            if hay:find(q, 1, true) then out[#out + 1] = choice end
+        end
+        return out
+    end
+    local function selectFirstValid()
+        for i, choice in ipairs(visible()) do
+            if choice.valid ~= false then c.selectedRow = i; return end
+        end
+        c.selectedRow = 0
+    end
     local h = {}
     function h.setPlaceholder(t)  c.placeholder = t end
     function h.setTitle(t, symbol, badge)
         c.title = t; c.titleSymbol = symbol; c.titleBadge = badge
     end
-    function h.setChoices(list)   c.choices = list; c.setChoicesCalls = c.setChoicesCalls + 1 end
+    function h.setChoices(list)
+        -- Mirror the native chooser: setChoices re-filters and reselects the
+        -- first valid visible row (setChoices -> applyFilter -> selectFirstValid).
+        c.choices = list; c.setChoicesCalls = c.setChoicesCalls + 1
+        selectFirstValid()
+    end
     function h.show()             c.visible = true end
     function h.hide()
         c.visible = false
@@ -240,21 +268,48 @@ function adapter.chooser(opts)
     function h.isVisible()        return c.visible end
     function h.getSelectedRow()   return c.selectedRow end
     function h.setSelectedRow(n)
-        -- Mirror the native chooser: out-of-range rows are rejected.
-        if n >= 1 and n <= #c.choices then c.selectedRow = n end
+        -- Mirror the native chooser: rows beyond the VISIBLE list are rejected.
+        if n >= 1 and n <= #visible() then c.selectedRow = n end
+    end
+    function h.step(delta)
+        -- Mirror the native panel's moveSelection: step over the visible rows,
+        -- wrapping at either end and skipping non-selectable (valid == false)
+        -- rows; an empty list is a no-op.
+        local v = visible()
+        local row = c.selectedRow >= 1 and c.selectedRow or (1 - delta)
+        for _ = 1, #v do
+            row = row + delta
+            if row < 1 then row = #v end
+            if row > #v then row = 1 end
+            if v[row].valid ~= false then c.selectedRow = row; return end
+        end
     end
     function h.select(n)
-        -- Mirror the native chooser: selecting fires onSelect then onHide.
+        -- Mirror the native chooser: selecting fires onSelect then onHide; the
+        -- row indexes the VISIBLE list, delivering that filtered row's choice
+        -- (out-of-range n delivers nil, as the panel's finish(nil) does).
+        local v = visible()
         c.visible = false
-        if opts.onSelect then opts.onSelect(c.choices[n]) end
+        if opts.onSelect then opts.onSelect(v[n]) end
         if opts.onHide then opts.onHide() end
     end
-    function h.setQuery(q)        c.query = q end
+    function h.setQuery(q)
+        -- Mirror the native panel: a query change re-filters and reselects the
+        -- first valid visible row (applyFilter -> selectFirstValid).
+        c.query = q
+        selectFirstValid()
+    end
     -- Mirror the native chooser: close() orders the panel out, so a stopped
     -- chooser is never "visible".
     function h.stop()             c.visible = false; freeOnce(c) end
     -- test-side driver: pick row n as the user would
     function c.userSelect(n)      h.select(n) end
+    -- test-side driver: type a query as the user would (real typing lands in
+    -- the same applyFilter -> reselect path setQuery takes)
+    function c.userType(q)        h.setQuery(q) end
+    -- test-side driver: step the selection as the panel's own keys would
+    -- (tab / shift+tab / option+arrows all land in the same moveSelection)
+    function c.userStep(delta)    h.step(delta) end
     return h
 end
 

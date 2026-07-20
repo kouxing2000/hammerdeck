@@ -13,6 +13,6 @@
   "alert.tabMoved": "该标签页移动了 -- 重试",
   "alert.loading": "加载标签页中...",
   "chooser.placeholder": "搜索标签页",
-  "chooser.releaseToJump": "松开 %s 跳转",
+  "chooser.releaseToJump": "松开 %s 跳转 · ⇧⇥ 后退",
   "chooser.pressEnter": "按回车跳转"
 }

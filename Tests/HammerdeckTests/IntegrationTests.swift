@@ -1249,6 +1249,73 @@ final class IntegrationTests: XCTestCase {
         eval("_G.itPrompt.stop(); _G.itPrompt = nil; _G.itTyped = nil; return true")
     }
 
+    /// Closed-loop chooser navigation: tab / shift+tab / option+arrows step the
+    /// selection via the panel's local key monitor -- the mid-cycle turn-around
+    /// path. These MUST be monitor-handled (not field-editor selectors): with a
+    /// switcher's cycle modifier held, option+arrows arrive as paragraph-
+    /// movement selectors (never moveUp:/moveDown:), and releasing the modifier
+    /// to recover would commit the pick. Same closed loop as
+    /// testTypeTextSynthesisIntoOwnPanel: our own panel is key, so the
+    /// synthesized keys land on it.
+    func testChooserTabSteppingSynthesis() throws {
+        try requireUITests()
+        try XCTSkipUnless(canDeliverSynthesizedHotkeys(),
+            "this environment cannot deliver synthesized events")
+
+        eval("""
+        _G.itNav = require('platform.adapter').chooser { onSelect = function() end }
+        _G.itNav.setPlaceholder('IT Nav Probe')
+        _G.itNav.setChoices({ { text = 'one' }, { text = 'two' }, { text = 'three' } })
+        _G.itNav.show()
+        return true
+        """)
+        NSApp.activate(ignoringOtherApps: true)
+        pumpAppEvents(0.4)   // let the panel become key
+
+        // Same SAFETY GATE as testTypeTextSynthesisIntoOwnPanel: synthesize only
+        // when the system agrees OUR panel holds keyboard focus.
+        guard NSRunningApplication.current.isActive, NSApp.keyWindow is FloatingPanel else {
+            eval("_G.itNav.stop(); _G.itNav = nil; return true")
+            throw XCTSkip("test runner cannot take system keyboard focus here; "
+                + "refusing to type into another app (covered by "
+                + "testGlobalHotkeySynthesis's shared posting path)")
+        }
+
+        func row() -> Int {
+            (eval("return _G.itNav.getSelectedRow()") as? NSNumber)?.intValue ?? -1
+        }
+        func stroke(_ mods: String, _ key: String) {
+            eval("require('platform.adapter').keyStroke({\(mods)}, '\(key)'); return true")
+            pumpAppEvents(0.25)
+        }
+
+        XCTAssertEqual(row(), 1, "show() preselects the first valid row")
+        stroke("", "tab")
+        XCTAssertEqual(row(), 2, "tab steps the selection down")
+        stroke("'shift'", "tab")
+        XCTAssertEqual(row(), 1, "shift+tab steps back up")
+        stroke("'shift'", "tab")
+        XCTAssertEqual(row(), 3, "shift+tab wraps from the top row to the bottom")
+        stroke("'alt'", "down")
+        XCTAssertEqual(row(), 1, "option+down steps (and wraps) while option is held")
+        stroke("'alt'", "up")
+        XCTAssertEqual(row(), 3, "option+up steps back while option is held")
+
+        // chooser_step over a FILTERED list -- the seam the switchers' hotkey
+        // cycle rides. Regression: a Lua-side wrap against the full choice
+        // count jammed at row 1 here (setSelectedRow rejects rows beyond the
+        // filtered list, including the wrap target).
+        func step(_ d: Int) { eval("_G.itNav.step(\(d)); return true") }
+        eval("_G.itNav.setQuery('t'); return true")   // matches "two", "three"
+        XCTAssertEqual(row(), 1, "applyFilter reselects the first visible row")
+        step(-1)
+        XCTAssertEqual(row(), 2, "step(-1) wraps within the FILTERED rows")
+        step(1)
+        XCTAssertEqual(row(), 1, "step(+1) wraps forward within the filtered rows")
+
+        eval("_G.itNav.stop(); _G.itNav = nil; return true")
+    }
+
     /// READ-ONLY pass over the window-frame surface: never sets a frame (that
     /// would rearrange whatever window the user has focused). Geometry sanity:
     /// everything crosses the seam in ONE coordinate system (top-left origin).

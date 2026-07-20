@@ -41,7 +41,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private let onHide: () -> Void
     private let badgePill = NSView()          // inline pill wrapping the badge text
     private let headerBackground = NSView()   // tinted accent band behind the header
-    private var keyMonitor: Any?              // cmd+1..9 quick-pick, live while shown
+    private var keyMonitor: Any?              // quick keys: digit pick + tab/⌥-arrow stepping, live while shown
     // Re-entrancy guard for the close cascade: any deliberate teardown
     // (finish/select/hide/close) sets this before orderOut so the resulting
     // windowDidResignKey doesn't loop back into a second dismiss. Re-armed
@@ -260,7 +260,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         onHide()
     }
 
-    // MARK: quick-pick (a digit fires the Nth visible row)
+    // MARK: quick keys (digit pick + tab/option-arrow stepping)
 
     /// While the chooser is key, a gutter digit selects/triggers that row of the
     /// CURRENT (filtered) list. With a search field visible the digit must stay
@@ -269,17 +269,35 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     /// typing is swallowed, since the off-screen field must not invisibly filter
     /// the choices. A local monitor (not a keyEquivalent) keeps this from
     /// colliding with the field editor.
+    ///
+    /// The monitor also owns tab / shift+tab (step selection forward / back --
+    /// the universal "shift reverses" convention) and option+arrows. These
+    /// CANNOT live in the field editor's doCommandBy: with a cycling switcher's
+    /// modifier held (release-to-pick), option+up/down arrive as paragraph-
+    /// movement selectors -- never moveUp:/moveDown: -- and tab as focus
+    /// traversal, so they died exactly when they were the only way to turn
+    /// around mid-cycle (releasing the modifier to reach arrows or search
+    /// COMMITS the pick). Overshoot, ⇧⇥ back one.
     private func installQuickKeys() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.panel.isVisible, self.panel.isKeyWindow else { return event }
             let cmd = event.modifierFlags.contains(.command)
             let ch = event.charactersIgnoringModifiers
+            if event.keyCode == 48 {  // tab -- forward; shift+tab -- back
+                self.moveSelection(event.modifierFlags.contains(.shift) ? -1 : 1)
+                return nil
+            }
+            if event.modifierFlags.contains(.option),
+               event.keyCode == 125 || event.keyCode == 126 {
+                self.moveSelection(event.keyCode == 126 ? -1 : 1)  // option+up / down
+                return nil
+            }
             if self.searchHidden {
                 if let ch, let d = Int(ch), d >= 1, d <= 9 { self.quickPick(d); return nil }
                 // Swallow ordinary printable typing (0x20..<0xF700, no cmd) so the
-                // hidden field can't filter; let control keys (return/esc/tab),
-                // the function-key block (arrows), and cmd-combos pass through.
+                // hidden field can't filter; let control keys (return/esc), the
+                // function-key block (arrows), and cmd-combos pass through.
                 if !cmd, let s = ch?.unicodeScalars.first, s.value >= 0x20, s.value < 0xF700 {
                     return nil
                 }
@@ -727,7 +745,12 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         }
     }
 
-    private func moveSelection(_ delta: Int) {
+    /// Step the selection by `delta` over the visible (filtered) rows, wrapping
+    /// at either end and skipping non-selectable rows. Shared by the field
+    /// editor's arrows, the key monitor's tab / option-arrow stepping, AND the
+    /// `chooser_step` seam call the switchers' hotkey cycle rides -- ONE wrap
+    /// implementation, so the in-panel keys and the hotkey cycle cannot drift.
+    func moveSelection(_ delta: Int) {
         guard !filtered.isEmpty else { return }
         var row = (tableView.selectedRow >= 0 ? tableView.selectedRow : -delta)
         for _ in 0..<filtered.count {

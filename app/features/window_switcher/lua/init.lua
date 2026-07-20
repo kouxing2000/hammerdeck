@@ -3,8 +3,11 @@
 -- Alt-Tab replacement: searchable window switcher ordered by focus recency
 -- (ported from the author's prior Hammerspoon config). Invoke once to
 -- open; invoke again while open to cycle (alt+` cycles backward, donor
--- parity); release the cycle modifier to pick. Window rows carry the screen
--- name on multi-display setups.
+-- parity); release the cycle modifier to pick. Mid-cycle turn-around --
+-- overshot by a row -- is shift+tab / option+arrows, handled by the chooser
+-- panel itself (ChooserPanel's key monitor), so it works whatever key the
+-- trigger is bound to. Window rows carry the screen name on multi-display
+-- setups.
 --
 -- Deliberately NOT ported from the donor: browser favicon composites and
 -- URL-domain subtext -- tab-level switching is tab_switcher's job now.
@@ -76,15 +79,15 @@ local function jump(ctx, actionId, backward)
     end
 
     if st.chooser.isVisible() then
-        -- Repeat invocation while open: cycle selection (either direction).
-        -- Wrap against the VISIBLE rows (a search query may have filtered the
-        -- list). Release-to-pick arms ONLY while cycling here (the switcher has
-        -- no preview-on-open step); armRelease self-gates on the modifier.
+        -- Repeat invocation while open: cycle selection (either direction);
+        -- the panel wraps against the visible rows. Release-to-pick arms ONLY
+        -- while cycling here (the switcher has no preview-on-open step);
+        -- armRelease self-gates on the modifier.
         local mod = cycleModifier(ctx.actionTrigger(actionId))
         st.chooser.setPlaceholder(mod
-            and ctx.t("chooser.release", "Release %s to switch", mod)
+            and ctx.t("chooser.release", "Release %s to switch · ⇧⇥ back", mod)
             or ctx.t("chooser.pressEnter", "Press Enter to switch"))
-        cyclingChooser.cycle(st.chooser, backward, #st.lastChoices)
+        cyclingChooser.cycle(st.chooser, backward)
         cyclingChooser.armRelease(ctx, st.chooser, st, mod)
     else
         local windows = ctx.window.list()
@@ -135,7 +138,6 @@ local function jump(ctx, actionId, backward)
                     and screenIndexAt(screens, w.x + w.w / 2, w.y + w.h / 2) or nil,
             }
         end
-        st.lastChoices = choices
         local count = #choices
         st.chooser.setTitle(ctx.t("chooser.title", "Switch Window"), "macwindow.on.rectangle",
             ctx.plural("chooser.count", count,

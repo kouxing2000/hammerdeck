@@ -10,23 +10,22 @@
 -- handle, and the feature's own state table are passed in -- the same contract
 -- platform.windows uses. Each feature keeps its own ARM POLICY (WHEN to start
 -- release-to-pick -- window_switcher arms only while cycling; tab_switcher arms
--- on open too, gated on the modifier being held); this owns the wrap math, the
--- poll-loop body, and the timer's lifecycle (stored in `state.altTimer`).
+-- on open too, gated on the modifier being held); this owns the poll-loop body
+-- and the timer's lifecycle (stored in `state.altTimer`). The wrap math lives
+-- in the panel itself (chooser.step) -- shared with its tab / option-arrow
+-- keys, so the hotkey cycle and the in-panel keys can never disagree.
 
 local M = {}
 
--- Step the selection one row (backward=true -> up), wrapping against `count`
--- currently-visible rows. The chooser clamps an out-of-range row (the selected
--- row stays unchanged), which we detect to wrap to the far end.
+-- Step the selection one row (backward=true -> up). Delegates to chooser.step:
+-- the panel wraps against the VISIBLE rows and skips non-selectable info rows.
+-- (A Lua-side wrap against the FULL choice count used to jam at row 1 whenever
+-- a search query had narrowed the list -- setSelectedRow rejects rows beyond
+-- the filtered list, including the wrap target itself.)
 ---@param chooser table a ctx.chooser handle
 ---@param backward boolean step up instead of down
----@param count integer rows to wrap against (the visible/current choices)
-function M.cycle(chooser, backward, count)
-    local row = chooser.getSelectedRow() + (backward and -1 or 1)
-    chooser.setSelectedRow(row)
-    if chooser.getSelectedRow() ~= row then
-        chooser.setSelectedRow(backward and count or 1)
-    end
+function M.cycle(chooser, backward)
+    chooser.step(backward and -1 or 1)
 end
 
 -- Arm release-to-pick: poll `mod` every 0.1s and, once it is no longer held,

@@ -13,7 +13,7 @@
   "chooser.count": { "one": "%d 个窗口", "other": "%d 个窗口" },
   "chooser.tabs": { "one": "%d 个标签页", "other": "%d 个标签页" },
   "chooser.search": "搜索窗口",
-  "chooser.release": "松开 %s 切换",
+  "chooser.release": "松开 %s 切换 · ⇧⇥ 后退",
   "chooser.pressEnter": "按 Enter 切换",
 
   "alert.axRequired": "窗口跳转需要辅助功能权限 -- 请在系统设置 > 隐私与安全性 > 辅助功能中启用 %s, 然后重试",

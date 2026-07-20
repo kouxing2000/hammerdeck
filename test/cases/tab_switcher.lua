@@ -99,8 +99,8 @@ return {
         local rowBefore = tch.selectedRow
         fake.pressHotkey("tab", { "ctrl", "alt" })
         ok(tch.selectedRow == rowBefore + 1, "repeat invocation cycles forward")
-        fake.pressHotkey("`", { "ctrl", "alt" })
-        ok(tch.selectedRow == rowBefore, "the backward action cycles back")
+        tch.userStep(-1)                               -- shift+tab in the panel
+        ok(tch.selectedRow == rowBefore, "shift+tab steps back")
 
         -- a drifted/closed tab alerts and triggers a relist
         fake.jumpUrlOverride = false

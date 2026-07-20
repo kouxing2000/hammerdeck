@@ -160,6 +160,16 @@ extension Native {
         return 0
     }
 
+    /// Step the selection by a delta (chooser_step): the panel wraps against
+    /// the VISIBLE rows and skips info rows. The switchers' hotkey cycle rides
+    /// this instead of hand-rolled setSelectedRow wrap math, which jammed at
+    /// row 1 when a search query had narrowed the list (setSelectedRow rejects
+    /// rows beyond the filtered list).
+    func chooserStep(_ L: OpaquePointer?) -> Int32 {
+        if let d = LuaState.int(L, 2) { chooser(L)?.moveSelection(d) }
+        return 0
+    }
+
     func chooserSelect(_ L: OpaquePointer?) -> Int32 {
         if let n = LuaState.int(L, 2) { chooser(L)?.select(n) }
         return 0
