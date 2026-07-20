@@ -1143,6 +1143,7 @@ fake.downloads     = {}   -- recorded { url, path }
 fake.downloadOk    = true
 fake.wallpapers    = {}   -- recorded setWallpaper paths
 fake.wallpaperModes = {}  -- recorded setWallpaper modes (parallel to wallpapers)
+fake.wallpaperOk   = true -- setWallpaper's return: false = no target display / missing file
 fake.wallpaperColors = {} -- recorded setWallpaperColor { hex=, target= }
 
 function adapter.httpGet(url, headers, cb)
@@ -1171,7 +1172,7 @@ end
 function adapter.setWallpaper(path, mode)
     fake.wallpapers[#fake.wallpapers + 1] = path
     fake.wallpaperModes[#fake.wallpaperModes + 1] = mode
-    return true
+    return fake.wallpaperOk
 end
 
 function adapter.setWallpaperColor(hex, target)
@@ -1384,6 +1385,7 @@ function fake.reset()
     fake.failWindowFrameIds = {}
     fake.minimizeOk    = true
     fake.downloadOk    = true
+    fake.wallpaperOk   = true
     fake.volumeReturn  = nil
     fake.systemNotifyDelivers = true
 
