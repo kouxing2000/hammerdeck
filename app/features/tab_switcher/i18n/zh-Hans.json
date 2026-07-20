@@ -3,11 +3,8 @@
   "description": "跨所有 Chrome + Safari 标签页的可搜索切换器, 按最近使用排序, 带网站图标.",
 
   "action.open.label": "切换到标签页",
-  "action.open.description": "打开标签页切换器, 已打开时则向前循环切换标签页.",
+  "action.open.description": "打开标签页切换器, 已打开时则向前循环切换标签页. ⇧Tab 向后步进.",
   "action.open.mnemonic": "⌃⌥Tab - 窗口切换键加 Ctrl, 用于标签页",
-  "action.open_backward.label": "向后循环",
-  "action.open_backward.description": "打开标签页切换器, 已打开时则向后循环切换标签页.",
-  "action.open_backward.mnemonic": "⌃⌥` 向后步进",
 
   "row.safariPrefix": "[Safari] %s",
   "alert.tabMoved": "该标签页移动了 -- 重试",

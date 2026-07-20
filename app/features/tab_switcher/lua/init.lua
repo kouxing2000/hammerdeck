@@ -38,7 +38,7 @@ local favicons = require("platform.favicons")
 -- Release-to-jump watches the modifier of the hotkey that fired this action
 -- (shared with window_switcher; nil when fired without a hotkey -> pick on Enter).
 local cycleModifier = require("platform.hotkeys").cycleModifier
--- Shared cycle-with-wrap + release-to-pick mechanics (also drives window_switcher).
+-- Shared release-to-pick mechanics (also drives window_switcher).
 local cyclingChooser = require("platform.cyclingChooser")
 
 local function jumperFor(ctx)
@@ -223,7 +223,7 @@ local function jumperFor(ctx)
         armAutoJump()
     end
 
-    function st.open(actionId, backward)
+    function st.open(actionId)
         st.cycleMod = cycleModifier(ctx.actionTrigger(actionId))
         if not st.chooser then
             st.chooser = ctx.chooser {
@@ -237,11 +237,12 @@ local function jumperFor(ctx)
         end
 
         if st.chooser.isVisible() then
-            -- Repeat invocation: cycle (wrap against the visible rows).
+            -- Repeat invocation: cycle forward (backward is the panel's own
+            -- shift+tab / option+arrows; the panel wraps the visible rows).
             st.chooser.setPlaceholder(st.cycleMod
                 and ctx.t("chooser.releaseToJump", "Release %s to jump · ⇧⇥ back", st.cycleMod)
                 or ctx.t("chooser.pressEnter", "Press Enter to jump"))
-            cyclingChooser.cycle(st.chooser, backward)
+            st.chooser.step(1)
             armAutoJump()
             return
         end
@@ -298,15 +299,9 @@ return {
     actions = {
         { id = "open", label = "Switch to a tab", icon = "rectangle.stack",
           description = "Open the tab switcher, or cycle forward through tabs when "
-              .. "it is already open.",
+              .. "it is already open. ⇧Tab steps back.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
           mnemonic = "⌃⌥Tab — the window-switch keys + Ctrl, for tabs",
-          run = function(ctx) with(ctx).open("open", false) end },
-        { id = "open_backward", label = "Cycle backward", icon = "arrow.uturn.backward",
-          description = "Open the tab switcher, or cycle backward through tabs when "
-              .. "it is already open.",
-          defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "`" },
-          mnemonic = "⌃⌥` steps backward",
-          run = function(ctx) with(ctx).open("open_backward", true) end },
+          run = function(ctx) with(ctx).open("open") end },
     },
 }

@@ -3,11 +3,8 @@
   "description": "可搜索的 Alt-Tab: 跨所有应用切换窗口, 按最近使用排序.",
 
   "action.main.label": "切换到窗口",
-  "action.main.description": "打开窗口切换器, 已打开时则向前循环切换窗口.",
+  "action.main.description": "打开窗口切换器, 已打开时则向前循环切换窗口. ⇧Tab 向后步进.",
   "action.main.mnemonic": "⌥Tab - 镜像 ⌘Tab, 但用于窗口",
-  "action.open_backward.label": "向后循环",
-  "action.open_backward.description": "打开窗口切换器, 已打开时则向后循环切换窗口.",
-  "action.open_backward.mnemonic": "⌥` 向后步进 (类似 ⌘`)",
 
   "chooser.title": "切换窗口",
   "chooser.count": { "one": "%d 个窗口", "other": "%d 个窗口" },

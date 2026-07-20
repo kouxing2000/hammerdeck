@@ -2,12 +2,14 @@
 --
 -- Alt-Tab replacement: searchable window switcher ordered by focus recency
 -- (ported from the author's prior Hammerspoon config). Invoke once to
--- open; invoke again while open to cycle (alt+` cycles backward, donor
--- parity); release the cycle modifier to pick. Mid-cycle turn-around --
--- overshot by a row -- is shift+tab / option+arrows, handled by the chooser
+-- open; invoke again while open to cycle forward; release the cycle modifier
+-- to pick. Backward is shift+tab / option+arrows, handled by the chooser
 -- panel itself (ChooserPanel's key monitor), so it works whatever key the
--- trigger is bound to. Window rows carry the screen name on multi-display
--- setups.
+-- trigger is bound to. There is deliberately NO "cycle backward" action
+-- (dropped 2026-07-20): on open it duplicated this action exactly (the open
+-- branch never read the direction), and its default ⌥` grabbed the option+`
+-- dead key (grave accents) system-wide. Window rows carry the screen name on
+-- multi-display setups.
 --
 -- Deliberately NOT ported from the donor: browser favicon composites and
 -- URL-domain subtext -- tab-level switching is tab_switcher's job now.
@@ -15,7 +17,7 @@
 -- Release-to-pick watches the modifier of the hotkey that fired this action
 -- (shared with tab_switcher; nil when fired without a hotkey -> pick on Enter).
 local cycleModifier = require("platform.hotkeys").cycleModifier
--- Shared cycle-with-wrap + release-to-pick mechanics (also drives tab_switcher).
+-- Shared release-to-pick mechanics (also drives tab_switcher).
 local cyclingChooser = require("platform.cyclingChooser")
 
 -- 1-based index of the screen whose VISIBLE frame contains point (cx, cy), or
@@ -56,8 +58,8 @@ local function pulseScreen(ctx, st, frame)
         .. tostring(frame.index) .. " (" .. tostring(frame.name) .. ")")
 end
 
-local function jump(ctx, actionId, backward)
-    -- Per-enable state, memoized on the ctx (shared across both actions).
+local function jump(ctx)
+    -- Per-enable state, memoized on the ctx.
     local st = ctx.perEnable(function() return { chooser = nil, altTimer = nil } end)
 
     if not st.chooser then
@@ -79,15 +81,16 @@ local function jump(ctx, actionId, backward)
     end
 
     if st.chooser.isVisible() then
-        -- Repeat invocation while open: cycle selection (either direction);
-        -- the panel wraps against the visible rows. Release-to-pick arms ONLY
-        -- while cycling here (the switcher has no preview-on-open step);
-        -- armRelease self-gates on the modifier.
-        local mod = cycleModifier(ctx.actionTrigger(actionId))
+        -- Repeat invocation while open: cycle forward (backward is the
+        -- panel's own shift+tab / option+arrows); the panel wraps against
+        -- the visible rows. Release-to-pick arms ONLY while cycling here (the
+        -- switcher has no preview-on-open step); armRelease self-gates on the
+        -- modifier.
+        local mod = cycleModifier(ctx.actionTrigger("main"))
         st.chooser.setPlaceholder(mod
             and ctx.t("chooser.release", "Release %s to switch · ⇧⇥ back", mod)
             or ctx.t("chooser.pressEnter", "Press Enter to switch"))
-        cyclingChooser.cycle(st.chooser, backward)
+        st.chooser.step(1)
         cyclingChooser.armRelease(ctx, st.chooser, st, mod)
     else
         local windows = ctx.window.list()
@@ -161,15 +164,9 @@ return {
         -- id "main" keeps pre-multi-action stored trigger keys valid.
         { id = "main", label = "Switch to a window", icon = "macwindow.on.rectangle",
           description = "Open the window switcher, or cycle forward through windows "
-              .. "when it is already open.",
+              .. "when it is already open. ⇧Tab steps back.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "tab" },
           mnemonic = "⌥Tab — mirrors ⌘Tab, but for windows",
-          run = function(ctx) jump(ctx, "main", false) end },
-        { id = "open_backward", label = "Cycle backward", icon = "arrow.uturn.backward",
-          description = "Open the window switcher, or cycle backward through windows "
-              .. "when it is already open.",
-          defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "`" },
-          mnemonic = "⌥` steps backward (like ⌘`)",
-          run = function(ctx) jump(ctx, "open_backward", true) end },
+          run = jump },
     },
 }

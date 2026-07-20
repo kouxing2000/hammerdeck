@@ -25,7 +25,11 @@ return {
         ok(desc[1].id == "break_reminder" and desc[1].kind == "service", "describe is sorted by id")
         local jumpDesc = desc[3]
         ok(jumpDesc.id == "window_switcher" and jumpDesc.kind == "action", "window_switcher is an action")
-        ok(jumpDesc.triggerDesc == "2 actions", "multi-action feature summarized in the list")
+        -- (window_switcher is single-action since the backward action was
+        -- dropped; the "N actions" multi-action summary stays covered by the
+        -- hybrid_probe block below.)
+        ok(jumpDesc.triggerDesc == "hotkey: alt+tab",
+            "a single-action feature shows that action's trigger in the list")
         ok(jumpDesc.actions[1].triggerDesc == "hotkey: alt+tab", "per-action trigger described")
         ok(type(jumpDesc.actions[1].mnemonic) == "string" and jumpDesc.actions[1].mnemonic:find("⌥Tab"),
             "per-action mnemonic surfaced in describe()")

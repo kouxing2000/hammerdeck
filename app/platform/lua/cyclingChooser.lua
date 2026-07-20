@@ -1,32 +1,23 @@
 -- platform/cyclingChooser.lua
 --
--- Shared mechanics for an alt-tab-style cycling chooser: step-with-wraparound
--- and release-to-pick (poll a held modifier; pick the current row when it is let
--- go). window_switcher and tab_switcher both drive a ctx.chooser this way;
--- centralizing the fiddly parts here keeps an off-by-one or a missed timer-stop
--- from drifting between the two copies.
+-- Shared mechanics for an alt-tab-style cycling chooser: release-to-pick
+-- (poll a held modifier; pick the current row when it is let go).
+-- window_switcher and tab_switcher both drive a ctx.chooser this way;
+-- centralizing the fiddly part keeps a missed timer-stop from drifting
+-- between the two copies. Row STEPPING is deliberately NOT here: a forward
+-- cycle is a plain chooser.step(1) at the call site, backward is the panel's
+-- own shift+tab / option+arrow keys, and the wrap math lives ONCE in the
+-- panel (moveSelection, over the visible rows) -- every path shares it, so
+-- the hotkey cycle and the in-panel keys cannot disagree.
 --
 -- LEAF UTIL (the layer map's leaf tier): ZERO `require`. The ctx, the chooser
 -- handle, and the feature's own state table are passed in -- the same contract
 -- platform.windows uses. Each feature keeps its own ARM POLICY (WHEN to start
 -- release-to-pick -- window_switcher arms only while cycling; tab_switcher arms
 -- on open too, gated on the modifier being held); this owns the poll-loop body
--- and the timer's lifecycle (stored in `state.altTimer`). The wrap math lives
--- in the panel itself (chooser.step) -- shared with its tab / option-arrow
--- keys, so the hotkey cycle and the in-panel keys can never disagree.
+-- and the timer's lifecycle (stored in `state.altTimer`).
 
 local M = {}
-
--- Step the selection one row (backward=true -> up). Delegates to chooser.step:
--- the panel wraps against the VISIBLE rows and skips non-selectable info rows.
--- (A Lua-side wrap against the FULL choice count used to jam at row 1 whenever
--- a search query had narrowed the list -- setSelectedRow rejects rows beyond
--- the filtered list, including the wrap target itself.)
----@param chooser table a ctx.chooser handle
----@param backward boolean step up instead of down
-function M.cycle(chooser, backward)
-    chooser.step(backward and -1 or 1)
-end
 
 -- Arm release-to-pick: poll `mod` every 0.1s and, once it is no longer held,
 -- stop the timer and select the current row. A no-op when there is no modifier
