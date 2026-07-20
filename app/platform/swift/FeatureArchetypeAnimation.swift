@@ -209,6 +209,7 @@ extension FeatureArchetype {
 struct Heartbeat: ViewModifier {
     let interval: TimeInterval
     let active: Bool
+    let onStart: (() -> Void)?
     let onTick: () -> Void
 
     @State private var cancellable: AnyCancellable?
@@ -224,6 +225,11 @@ struct Heartbeat: ViewModifier {
 
     private func start() {
         stop()   // never stack two timers
+        // Seed the story's FIRST frame before the first tick. Both entry paths
+        // run through here, which is the whole point: a scene that seeded only
+        // from onChange(of:) would never seed in the Feature Tour, which passes
+        // a CONSTANT playing:true (onAppear is the only entry there).
+        onStart?()
         cancellable = Timer.publish(every: interval, on: .main, in: .common)
             .autoconnect()
             .sink { _ in onTick() }
@@ -237,7 +243,22 @@ struct Heartbeat: ViewModifier {
 
 extension View {
     /// Tick `onTick` every `interval` seconds, but only while `active` is true.
-    func heartbeat(_ interval: TimeInterval, active: Bool, onTick: @escaping () -> Void) -> some View {
-        modifier(Heartbeat(interval: interval, active: active, onTick: onTick))
+    ///
+    /// `onStart` runs the moment playback begins (on appear-while-active AND on
+    /// the false->true transition) -- the hook for seeding a scene at the START
+    /// of its story. A scene whose calm resting frame is the story's END (a
+    /// shown banner, filled bars, a window already restored) MUST use it, or
+    /// its first visible beat runs the story backwards. Seed a bare state
+    /// assignment here and keep the scene's animation on the TICK
+    /// (`withAnimation` inside `onTick`), so the seed cannot animate: NO
+    /// `.animation(_:value:)` may observe a seeded variable -- one that does
+    /// re-animates the seed and undoes this (window_rewind's undo badge did
+    /// exactly that, fading out at hover-in). Note this makes the seed silent
+    /// with respect to the SCENE's own animations; an ancestor animation scoped
+    /// to the same hover/playing flip is outside this guarantee.
+    func heartbeat(_ interval: TimeInterval, active: Bool,
+                   onStart: (() -> Void)? = nil,
+                   onTick: @escaping () -> Void) -> some View {
+        modifier(Heartbeat(interval: interval, active: active, onStart: onStart, onTick: onTick))
     }
 }

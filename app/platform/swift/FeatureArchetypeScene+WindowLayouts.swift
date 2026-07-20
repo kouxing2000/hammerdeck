@@ -269,22 +269,17 @@ struct WindowFanArchetypeScene: View {
             .opacity(playing ? 1 : 0.9)
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
         }
-        // The scatter<->fan spring lives HERE, at the tick, not in an
-        // .animation(_:value: fanned) modifier -- so a bare `fanned` assignment
-        // (the jump-cuts below) is silent BY CONSTRUCTION. A value-driven
-        // .animation() would animate those too, and whether a
-        // disablesAnimations transaction overrides it is undocumented.
-        .heartbeat(Self.heartbeat, active: playing) {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) { fanned.toggle() }
-        }
         // Start scattered so the FIRST beat GATHERS into the fan (the story);
         // a visible fan->scatter explosion would be the story played backwards.
-        // onAppear is load-bearing, not belt-and-braces: the Feature Tour passes
-        // a CONSTANT playing:true, so onChange never fires there -- and the
-        // gallery re-seeds @State whenever a hovered card is recycled.
-        .onAppear { if playing { fanned = false } }
+        // The spring lives at the TICK, not in an .animation(_:value: fanned)
+        // modifier, so the seed below is silent by construction.
+        .heartbeat(Self.heartbeat, active: playing, onStart: { fanned = false }) {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) { fanned.toggle() }
+        }
         .onChange(of: playing) { isOn in
-            fanned = !isOn   // playing -> scattered (gather next); at rest -> the fan (calm frame)
+            // Animated: the rest-settle is a transition the user watches (the
+            // windows gathering as the pointer leaves), not a seed.
+            if !isOn { withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) { fanned = true } }
         }
     }
 

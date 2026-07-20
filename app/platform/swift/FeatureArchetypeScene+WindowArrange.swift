@@ -256,7 +256,6 @@ struct WindowRewindArchetypeScene: View {
                            height: max(0, away.height * h - gap * 2))
                     .offset(x: away.minX * w + gap, y: away.minY * h + gap)
                     .opacity(atHome ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.4), value: atHome)
 
                 // the window springing home (and back out again next beat), with the
                 // undo badge shown at the moment of return.
@@ -272,18 +271,30 @@ struct WindowRewindArchetypeScene: View {
                             .background(Circle().fill(Color.accentColor.opacity(0.9)))
                             .opacity(atHome ? 1 : 0)
                             .scaleEffect(atHome ? 1 : 0.6)
-                            .animation(.spring(response: 0.32, dampingFraction: 0.6), value: atHome)
                     )
-                    .animation(.spring(response: 0.4, dampingFraction: 0.72), value: atHome)
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .scaleEffect(playing ? 1 : 0.98)
             .opacity(playing ? 1 : 0.9)
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: playing)
         }
-        .heartbeat(Self.heartbeat, active: playing) { atHome.toggle() }
+        // Start AWAY so the FIRST beat is the window springing HOME -- the undo
+        // this feature IS. Starting from the restored calm frame made the first
+        // motion the window being thrown out, i.e. the undo in reverse.
+        //
+        // ALL THREE elements (window, ghost, badge) animate from the tick, and
+        // none carries an .animation(_:value: atHome): the ghost and badge used
+        // to keep bespoke curves, but those observe the seeded variable, so the
+        // seed made the undo badge fade+shrink away at hover-in -- a miniature
+        // of the very backwards-story artifact this fix exists to kill. One
+        // spring for all three keeps the seed silent by construction.
+        .heartbeat(Self.heartbeat, active: playing, onStart: { atHome = false }) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) { atHome.toggle() }
+        }
         .onChange(of: playing) { isOn in
-            if !isOn { atHome = true }   // settle at home (restored, calm frame) at rest
+            // Animated: the rest-settle is a real transition the user watches
+            // (the window sliding home as the pointer leaves), not a seed.
+            if !isOn { withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) { atHome = true } }
         }
     }
 

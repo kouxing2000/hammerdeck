@@ -49,13 +49,20 @@ struct BannerArchetypeScene: View {
                     // slide up out of frame (above the top edge) when hidden
                     .offset(y: shown ? 0 : -(geo.size.height))
                     .opacity(shown ? 1 : 0)
-                    .animation(.spring(response: 0.42, dampingFraction: 0.78), value: shown)
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .heartbeat(1.3, active: playing) { shown.toggle() }
+        // Start hidden so the FIRST beat is the banner SLIDING IN (the story --
+        // "a banner appears"); starting from the calm shown frame made the first
+        // motion its exit. The spring lives at the tick so the seed is silent.
+        .heartbeat(1.3, active: playing, onStart: { shown = false }) {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) { shown.toggle() }
+        }
         .onChange(of: playing) { isOn in
-            if !isOn { shown = true }   // settle back to the shown calm frame
+            // Animated: the rest-settle is a transition the user watches (the
+            // banner sliding back as the pointer leaves), not a seed -- without
+            // this it teleports, and a pointer that leaves mid-cycle pops.
+            if !isOn { withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) { shown = true } }
         }
     }
 

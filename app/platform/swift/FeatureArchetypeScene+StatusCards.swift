@@ -111,11 +111,15 @@ struct UsageChartArchetypeScene: View {
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.18), lineWidth: 1))
-        .heartbeat(1.6, active: playing) {
+        // Start empty so the FIRST beat is the bars GROWING (the story -- time
+        // accruing); starting from the filled calm frame made the first motion
+        // them draining. The spring is already at the tick, so the seed is silent.
+        .heartbeat(1.6, active: playing, onStart: { grown = false }) {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { grown.toggle() }
         }
         .onChange(of: playing) { isOn in
-            if !isOn { grown = true }   // bars rest filled
+            // Animated: the rest-settle is a transition the user watches, not a seed.
+            if !isOn { withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { grown = true } }
         }
     }
 
