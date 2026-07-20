@@ -151,7 +151,13 @@ extension Native {
         case nil, "", "all":
             return NSScreen.screens
         case "primary", "main":
-            return NSScreen.main.map { [$0] } ?? []
+            // The MAIN DISPLAY -- the one carrying the menu bar (CGMainDisplayID).
+            // NOT NSScreen.main, which is the screen holding KEY FOCUS: it follows
+            // the user between monitors, so "Main display only" painted whichever
+            // display happened to be focused when the timer fired -- over a day of
+            // refreshes that reaches EVERY screen, looking exactly like "all".
+            let mainID = CGMainDisplayID()
+            return NSScreen.screens.filter { Native.displayID($0) == mainID }
         case "external":
             return NSScreen.screens.filter { !Native.isBuiltinScreen($0) }
         default:
@@ -159,10 +165,15 @@ extension Native {
         }
     }
 
+    /// The CoreGraphics display id behind an NSScreen -- the stable identity to
+    /// compare against CGMainDisplayID() / CGDisplayIsBuiltin().
+    private static func displayID(_ s: NSScreen) -> CGDirectDisplayID {
+        (s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+         as? NSNumber)?.uint32Value ?? 0
+    }
+
     private static func isBuiltinScreen(_ s: NSScreen) -> Bool {
-        let num = (s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
-                   as? NSNumber)?.uint32Value ?? 0
-        return CGDisplayIsBuiltin(num) != 0
+        CGDisplayIsBuiltin(displayID(s)) != 0
     }
 
     // Parse "#RRGGBB" (or "RRGGBB") into an sRGB color; nil on a malformed value.

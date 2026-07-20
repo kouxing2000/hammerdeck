@@ -89,9 +89,11 @@ enum Toast {
     /// so at-keyboard confirmation and away-from-keyboard notifications never fight.
     static func flash(symbol: String?, text: String, seconds: TimeInterval) {
         // Land on the screen the user is actually on -- the one under the cursor --
-        // NOT NSScreen.main (the menu-bar/primary display), which on a multi-monitor
-        // setup is routinely not where you're working. A manual-shortcut confirmation
-        // has to appear where you're looking, or it may as well not fire.
+        // NOT NSScreen.main, which is the screen holding KEY FOCUS (it is NOT the
+        // menu-bar/primary display; CGMainDisplayID is) and on a multi-monitor setup
+        // routinely is not where you're working -- a background app's key focus is
+        // nowhere in particular. A manual-shortcut confirmation has to appear where
+        // you're looking, or it may as well not fire.
         guard let screen = activeScreen() else { return }
 
         // Take over the single slot: drop any flash still on screen at once.
