@@ -250,7 +250,7 @@ private struct GeneralSettingsDetail: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle(Strings.t("settings.general", default: "General"))
+        // (no .navigationTitle -- see the FeatureDetail note: it retitles the window)
         // A language change only fully applies on a fresh boot, so offer to
         // restart now (or later -- the preference is already saved).
         .alert(Strings.t("settings.lang_restart_title", default: "Language changed"),
@@ -288,6 +288,14 @@ private struct FeatureDetail: View {
                 }
             }
             Section {
+                // The pane's own heading. The feature name used to reach the
+                // user only as the WINDOW title (via .navigationTitle) -- which
+                // was the bug: it retitled the whole window and stuck there.
+                // Naming the page in-content identifies it without touching the
+                // window, and keeps DebugShot captures (which render this form
+                // alone, no sidebar) self-identifying.
+                Text(feature.name)
+                    .font(.title2.weight(.semibold))
                 Text(feature.description)
                     .foregroundStyle(.secondary)
                 // No "Kind" row: it only ever duplicated this Trigger summary
@@ -323,7 +331,14 @@ private struct FeatureDetail: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle(feature.name)
+        // NO .navigationTitle here. Inside the NSHostingController-hosted
+        // NavigationSplitView, a detail's navigationTitle becomes the WINDOW's
+        // title -- so opening a feature renamed the window to that feature, and
+        // it stuck there after navigating away ("Bing Daily Wallpaper" over the
+        // Home page). The page names itself in-content instead (the heading at
+        // the top of the Form above); the window title is pinned once, at the
+        // shell in HomepageView. A gate keeps it the only one -- see
+        // LocalizationTests.testWindowTitleIsDeclaredOnlyAtTheShell.
     }
 
     /// Options bucketed by their `section` field, preserving first-appearance

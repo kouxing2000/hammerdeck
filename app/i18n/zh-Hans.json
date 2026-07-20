@@ -223,7 +223,6 @@
   "rules.minutesAgo": "%d 分钟前",
   "rules.mode": "模式",
   "rules.namePlaceholder": "名称 (可选)",
-  "rules.navTitle": "规则",
   "rules.newRule": "新建规则",
   "rules.noRulesYet": "还没有规则 -- 选择 \"新建规则\" 来添加一条.",
   "rules.noStepsYet": "还没有步骤 -- 添加一个. 步骤会从上到下依次执行.",

@@ -123,7 +123,7 @@ struct RulesPageView: View {
         // outer frame centers that column and lets the rest be margin.
         .frame(maxWidth: 600)
         .frame(maxWidth: .infinity, alignment: .center)
-        .navigationTitle(Strings.t("rules.navTitle", default: "Rules"))
+        // (no .navigationTitle -- see the FeatureDetail note: it retitles the window)
     }
 }
 

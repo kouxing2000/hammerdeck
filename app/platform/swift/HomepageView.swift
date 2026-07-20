@@ -168,6 +168,17 @@ struct HomepageView: View {
         // windows anymore). Wide enough to hold the Shortcut Map's fixed columns
         // (sidebar + ~780) without clipping.
         .frame(minWidth: 960, minHeight: 560)
+        // Pin the WINDOW title to the app's name, once, at the shell. Inside an
+        // NSHostingController-hosted NavigationSplitView a DETAIL's
+        // .navigationTitle becomes the window title -- so a feature page used to
+        // rename the window to that feature and leave it there after navigating
+        // away ("Bing Daily Wallpaper" sitting over the Home page). Those detail
+        // titles are gone, and declaring the real one here states the intent
+        // rather than leaving the title to whatever StatusBar set at creation.
+        // This does NOT defend itself -- a detail's title would win again -- so
+        // the invariant is held by a gate:
+        // HostChromeTests.testWindowTitleIsDeclaredOnlyAtTheShell.
+        .navigationTitle(AppInfo.displayName)
         .onAppear { store.refresh() }
         // A timeline rule-click deep-links here: switch to the Rules tab, where
         // RulesPageView consumes selectedRuleId and opens that rule for editing.
