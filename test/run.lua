@@ -50,7 +50,21 @@ local ok, fake, registry = t.ok, t.fake, t.registry
 -- handle tripwire after keep it isolated -- every case is checked, a strictly stronger
 -- guarantee than the old monolith's scattered positional liveHandles checks. `arg` may
 -- name one case (narrowing the loop) or pass --shuffle (the order-independence self-check).
-for _, case in ipairs(harness.discover("test/cases", arg)) do
+local cases = harness.discover("test/cases", arg)
+-- Refuse a false green. An empty discovery -- a broken test/cases path, a searcher
+-- regression, or a bare `<id>` arg that matches nothing -- would otherwise run zero
+-- cases, print "OK -- 0 assertions passed", and exit 0: an all-clear that silently
+-- tested nothing. `#cases > 0` is a safe invariant (there is always at least one case,
+-- and a real narrow matches at least the case it names).
+local narrowed
+for _, a in ipairs(arg or {}) do
+    if a:sub(1, 2) ~= "--" then narrowed = a end
+end
+assert(#cases > 0, "no test cases discovered under test/cases"
+    .. (narrowed and (" matching '" .. narrowed .. "'") or "")
+    .. " -- refusing to report a false green")
+
+for _, case in ipairs(cases) do
     harness.freshWorld()
     case.run(t)
     ok(fake.liveHandles == 0 and registry.liveHandleCount() == 0,
