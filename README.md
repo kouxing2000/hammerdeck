@@ -6,17 +6,30 @@
      domain clearance. Rename touches: this file, LICENSE holder line, Package.swift,
      the `Hammerdeck` defaults domain, scripts/package.sh, and the app icon. -->
 
-A macOS **automation platform you configure instead of program**. It embeds a Lua
-engine -- think a focused, miniature Hammerspoon -- but you never have to write
-Lua. Toggle a feature on, set its options, and bind it to a **shortcut, a chord**
-(`cmd+shift+a`, then `b`), **a schedule, or a system event**.
+**Mac automation you configure instead of program.** Hammerdeck embeds a Lua
+engine -- think a focused, miniature Hammerspoon -- but you never write Lua.
+Toggle a feature on, pick its options, and bind it to a **hotkey, a chord**
+(`cmd+shift+a`, then `b`), **a schedule, or a system event**. A **rules engine**
+reacts to the Mac itself: the frontmost app changes, a display connects, the
+appearance flips, the power source switches -- and windows arrange into a saved
+layout, the wallpaper changes, any feature's action runs.
 
-<!-- TODO(screenshot): no image = no adoption for a Mac utility. Need, at minimum:
-     the command palette, a window deck in hero mode, and the Settings trigger editor.
+And it is automation you can **see**: every shortcut press flashes which action
+fired, automated runs can notify you of what happened while you were away, one
+hotkey rewinds the last window rearrangement, and every decision lands in a
+local, plain-text log. Open source and local-first -- no account, no cloud, no
+subscription.
+
+<!-- TODO(screenshot): no image = no adoption for a Mac utility. Priority order
+     (the story is automation, so show automation first):
+       1. The money shot, as a GIF: a rule firing -- plug in a display, windows fly
+          to a saved layout. Proves "configure instead of program" in three seconds.
+       2. The Settings trigger editor: binding an action to a schedule in one click.
+       3. Window Deck in hero mode -- the visual signature.
      Capture with `scripts/app.sh start` + `scripts/shot.sh`; the Settings window has
      an in-process capture (`scripts/control.sh '@shot:<path>'`) that needs no Screen
-     Recording grant and catches content below the fold. A short demo GIF beats all
-     three stills if there's time for only one thing. -->
+     Recording grant and catches content below the fold. If there's time for only one
+     asset, the rule-firing GIF beats everything else combined. -->
 
 ## Features
 
@@ -63,10 +76,12 @@ Lua. Toggle a feature on, set its options, and bind it to a **shortcut, a chord*
 
 <!-- FEATURES:END -->
 
-Beyond the catalog, a **rules engine** wires them together: when a signal changes
-(frontmost app, displays connected, appearance, power source), run an effect --
-move windows to a saved layout, run any feature's action, set the wallpaper, lock
-the screen, or chain several together. Built in Settings, no code.
+Beyond the catalog, the **rules engine** wires features together -- built in
+Settings, no code. A rule pairs a **signal** (frontmost app, displays connected,
+light/dark appearance, power source) with **effects**: move windows to a saved
+layout, run any feature's action, set the wallpaper, lock the screen, launch or
+quit an app, or chain several together. And where the built-in effects end, a
+rule can run any macOS Shortcut -- the escape hatch to everything else.
 
 ## Install
 
