@@ -331,7 +331,11 @@ requires `automatable = true` -- manifest.validate rejects the mismatch.
 Open work lives in the GitHub issue tracker. The author's working status doc and
 design notes are unpublished drafts -- see "Where a document goes" below for
 where they sit and why they aren't here. Don't duplicate the backlog in this
-file.
+file. Among those drafts, `STRATEGY.md` is the product-direction memo (the
+story and its weighting, the windows-as-anchor thesis, the build order, the
+non-goals): read it BEFORE any positioning, marketing-copy, or
+feature-priority work, and when direction changes, EDIT it -- never drift
+from it silently.
 
 ## Where a document goes (the repo is going PUBLIC -- this rule is load-bearing)
 
