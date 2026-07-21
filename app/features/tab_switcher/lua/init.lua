@@ -131,9 +131,12 @@ local function jumperFor(ctx)
                             -- Stable identity for re-resolution at pick time:
                             -- Chrome's tab id survives reorder / close-before /
                             -- window-move; Safari has none (0), so the pick falls
-                            -- back to the url with winId as a tie-break hint.
+                            -- back to the url with winId as a tie-break hint, and
+                            -- the listed (winId, tabIndex) as the resolver's
+                            -- last-resort tertiary (an in-place navigation).
                             tabId = tab.id or 0,
                             winId = tab.winId,
+                            tabIndex = tab.tabIndex or 0,
                             ts = st.mru[b.name][tab.url] or 0,
                         }
                     end
@@ -168,9 +171,13 @@ local function jumperFor(ctx)
     local function onPick(choice)
         if not choice then return end
         -- Re-resolve by STABLE IDENTITY (id first, else url + winId hint), searching
-        -- all windows -- never the positional index, which drifts on any tab churn.
+        -- all windows. Position is never primary identity (it drifts on any tab
+        -- churn) -- the listed (winId, tabIndex) rides along only as the resolver's
+        -- last-resort tertiary, for a Safari tab that navigated in place since
+        -- listing (no id, url changed; its position is all that's left).
         ctx.browserFocusTab(choice.browser, choice.tabId or 0, choice.winId, choice.subText,
-            function(url)
+            choice.tabIndex or 0,
+            function(url, via)
                 if not url then
                     -- The tab is genuinely gone since listing: stage a relist for the
                     -- next open and say so. Log the DOMAIN only -- a full url (incognito
@@ -182,7 +189,7 @@ local function jumperFor(ctx)
                     return
                 end
                 ctx.log(string.format("jump ok via %s (%s): %s", choice.browser,
-                    (choice.tabId or 0) ~= 0 and "id" or "url", getDomain(url) or "?"))
+                    via or "?", getDomain(url) or "?"))
                 stamp(choice.browser, url)   -- MRU rank; showChooser re-ranks from it
                 if getDomain(url) == getDomain(choice.subText) then
                     choice.subText = url   -- same site: refresh the exact url on the row

@@ -4,11 +4,17 @@
 -- feature keyed focus on (winId, tabIndex), which any reorder / close / window-move
 -- invalidates, so a pick landed on the WRONG tab or falsely reported "moved". The
 -- fix re-resolves each pick by STABLE IDENTITY (Chrome tab id first; else url + a
--- winId hint), searching all windows. These cases reproduce the exact drift the old
--- logic failed on: each mutates the tab set BETWEEN listing and the pick, then
--- asserts the pick still lands on the intended tab (or alerts only when it is truly
--- gone). They are RED under positional matching and GREEN with id/url resolution
--- (verified by temporarily reverting fake.browserFocusTab to (winId,tabIndex)).
+-- winId hint, preferring the listed tabIndex among equal-url matches), searching
+-- all windows. Position is never PRIMARY identity -- but on a total url miss the
+-- tab AT the listed (winId, tabIndex) is a last-resort tertiary: same host = a
+-- Safari tab that navigated in place (honest success, its current url); different
+-- host = a closed tab's neighbor (landed best-effort, reported as a miss). These
+-- cases reproduce the exact drift the old logic failed on: each mutates the tab
+-- set BETWEEN listing and the pick, then asserts the pick still lands on the
+-- intended tab (or alerts only when it is truly gone). They are RED under
+-- positional-primary matching and GREEN with id/url resolution (verified by
+-- temporarily reverting fake.browserFocusTab to (winId,tabIndex)); cases 6/9/10
+-- are likewise RED without the tabIndex preference / positional tertiary.
 --
 -- SCOPE: these assert against the FAKE resolver (fake_adapter.browserFocusTab), which
 -- MIRRORS the real JXA in Native+Browser.swift -- they prove the feature passes stable
@@ -110,16 +116,18 @@ return {
             "chrome dup-url: the exact tab id wins over a bare url match")
 
         -- 6. SAFARI DUP-URL (no id): Safari tabs have id 0, so resolution falls back
-        --    to the url. Ambiguous duplicates land on a match -- never a false "moved".
+        --    to the url -- and among equal-url matches in the hinted window, the
+        --    LISTED tabIndex wins, so each duplicate is individually reachable
+        --    (first-match would send every pick to S1).
         tch = freshOpen({ ["Google Chrome"] = {}, ["Safari"] = {
             { title = "S1", url = "https://s/", winId = 9, tabIndex = 1, id = 0, visible = true },
             { title = "S2", url = "https://s/", winId = 9, tabIndex = 2, id = 0, visible = true },
         } })
         local before = #fake.alerts
-        tch.userSelect(rowOf(tch, "[Safari] S1"))
-        ok(lastJump().resolved and lastJump().resolved.url == "https://s/"
+        tch.userSelect(rowOf(tch, "[Safari] S2"))
+        ok(lastJump().resolved and lastJump().resolved.tabIndex == 2
             and #fake.alerts == before,
-            "safari dup-url: url fallback lands on a match, no spurious 'moved'")
+            "safari dup-url: the listed tabIndex picks THAT duplicate, no spurious 'moved'")
 
         -- 7. NO MID-INTERACTION DISRUPTION, then deferred freshness. A background
         --    relist must NEVER re-setChoices the LIVE chooser: natively that runs
@@ -178,6 +186,43 @@ return {
         ok(tch.choices[1].text == "P", "after the jump, P (now current) re-ranks to the top")
         ok(tch.selectedRow == 2 and tch.choices[2].text == "C",
             "flick-back: row 2 is now C, the tab you were on -- a second flick returns you")
+
+        -- 9. SAFARI IN-PLACE NAVIGATION (same host): the tab NAVIGATED since listing
+        --    (its url matches nowhere), but it still sits at its listed (winId,
+        --    tabIndex) and stayed on the same site. The positional tertiary must
+        --    land it and report its CURRENT url -- an honest success, never a false
+        --    "moved". This was the old positional key's ONE win over pure url
+        --    resolution; the tertiary restores it.
+        tch = freshOpen({ ["Google Chrome"] = {}, ["Safari"] = {
+            { title = "Doc p1", url = "https://s/page1", winId = 9, tabIndex = 1, id = 0, visible = true },
+            { title = "Other", url = "https://t/", winId = 9, tabIndex = 2, id = 0, visible = true },
+        } })
+        fake.browserTabsByApp["Safari"] = {   -- p1 navigated to p2 in place
+            { title = "Doc p2", url = "https://s/page2", winId = 9, tabIndex = 1, id = 0, visible = true },
+            { title = "Other", url = "https://t/", winId = 9, tabIndex = 2, id = 0, visible = true },
+        }
+        before = #fake.alerts
+        tch.userSelect(rowOf(tch, "[Safari] Doc p1"))
+        ok(lastJump().resolved and lastJump().resolved.url == "https://s/page2"
+            and #fake.alerts == before,
+            "safari in-place navigation: the positional tertiary lands the CURRENT url, no false 'moved'")
+
+        -- 10. SAFARI CLOSED-TAB NEIGHBOR (different host): the listed tab is gone
+        --     and an unrelated site now sits at its position. Land there best-effort
+        --     (near where the tab was) but report the HONEST miss -- alert + relist,
+        --     never a silent wrong jump stamped into MRU.
+        tch = freshOpen({ ["Google Chrome"] = {}, ["Safari"] = {
+            { title = "Gone", url = "https://gone/", winId = 9, tabIndex = 1, id = 0, visible = true },
+            { title = "Neighbor", url = "https://neighbor/", winId = 9, tabIndex = 2, id = 0, visible = true },
+        } })
+        fake.browserTabsByApp["Safari"] = {   -- Gone closed; Neighbor shifted into slot 1
+            { title = "Neighbor", url = "https://neighbor/", winId = 9, tabIndex = 1, id = 0, visible = true },
+        }
+        tch.userSelect(rowOf(tch, "[Safari] Gone"))
+        ok(lastJump().resolved == nil
+            and lastJump().missLanding and lastJump().missLanding.url == "https://neighbor/"
+            and lastAlert():match("moved") ~= nil,
+            "safari closed neighbor: lands at the old position but reports the honest miss")
 
         registry.setEnabled("tab_switcher", false)
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,

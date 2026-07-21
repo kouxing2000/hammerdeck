@@ -345,8 +345,8 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     end
     function ctx.isAppRunning(name)  return adapter.isAppRunning(name) end
     function ctx.browserListTabs(app, cb)  adapter.browserListTabs(app, cb) end
-    function ctx.browserFocusTab(app, tabId, winId, url, cb)
-        adapter.browserFocusTab(app, tabId, winId, url, cb)
+    function ctx.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
+        adapter.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
     end
     function ctx.browserActiveURL(app) return adapter.browserActiveURL(app) end
     function ctx.extractFavicons(outDir, domains, cb)

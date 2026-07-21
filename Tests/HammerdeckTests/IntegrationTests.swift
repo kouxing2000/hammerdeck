@@ -1355,7 +1355,7 @@ final class IntegrationTests: XCTestCase {
             "return pcall(function() require('platform.adapter').browserListTabs('Evil App', function() end) end)")
         XCTAssertEqual(r1 as? Bool, false, "non-whitelisted app must raise")
         let r2 = try? host.lua.eval(
-            "return pcall(function() require('platform.adapter').browserFocusTab('Evil App', 0, 1, 'https://x/', function() end) end)")
+            "return pcall(function() require('platform.adapter').browserFocusTab('Evil App', 0, 1, 'https://x/', 0, function() end) end)")
         XCTAssertEqual(r2 as? Bool, false)
         XCTAssertNil(eval("return require('platform.adapter').browserActiveURL('Evil App')"),
                      "active-url for a non-whitelisted app is nil, not a script run")
@@ -1432,7 +1432,7 @@ final class IntegrationTests: XCTestCase {
         //    resolution (the positional bug) would return a different tab's url.
         eval("""
             _G.itFocus = false
-            require('platform.adapter').browserFocusTab('Google Chrome', \(targetId), 0, '',
+            require('platform.adapter').browserFocusTab('Google Chrome', \(targetId), 0, '', 0,
               function(u) _G.itFocus = u or false end)
             return true
             """)
@@ -1444,7 +1444,7 @@ final class IntegrationTests: XCTestCase {
         let bogus = (ids.max() ?? 0) + 1000
         eval("""
             _G.itGone = 'unset'
-            require('platform.adapter').browserFocusTab('Google Chrome', \(bogus), 0, '',
+            require('platform.adapter').browserFocusTab('Google Chrome', \(bogus), 0, '', 0,
               function(u) _G.itGone = u end)
             return true
             """)
@@ -1477,7 +1477,7 @@ final class IntegrationTests: XCTestCase {
                 if t.url and t.url ~= '' then
                   _G.sfTarget = t.url
                   require('platform.adapter').browserFocusTab('Safari', 0, t.winId or 0, t.url,
-                    function(u) _G.sfLanded = u or false end)
+                    t.tabIndex or 0, function(u) _G.sfLanded = u or false end)
                   return
                 end
               end
@@ -1498,7 +1498,7 @@ final class IntegrationTests: XCTestCase {
         eval("""
             _G.sfGone = 'unset'
             require('platform.adapter').browserFocusTab('Safari', 0, 0,
-              'https://hammerdeck-no-such-safari-tab.invalid/', function(u) _G.sfGone = u end)
+              'https://hammerdeck-no-such-safari-tab.invalid/', 0, function(u) _G.sfGone = u end)
             return true
             """)
         spinRunLoop(2.0)

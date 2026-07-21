@@ -463,19 +463,26 @@ extension Native {
         return "\"\""
     }
 
-    // browser_focus_tab(app, tabId, winId, url, cb): re-resolve the tab by STABLE
-    // IDENTITY across ALL windows, then raise its window and activate it. Keys on
-    // `tabId` when > 0 (Chrome's stable tab id -- immune to reorder/close/move),
-    // else on `url` preferring the `winId` hint (Safari / no id). NEVER a positional
-    // index, which drifts on any tab churn. cb gets {"url": "..."} JSON (the landed
-    // tab's CURRENT url) or {} -> nil when the tab is genuinely gone.
+    // browser_focus_tab(app, tabId, winId, url, tabIndex, cb): re-resolve the tab by
+    // STABLE IDENTITY across ALL windows, then raise its window and activate it.
+    // Keys on `tabId` when > 0 (Chrome's stable tab id -- immune to reorder/close/
+    // move), else on `url` preferring the `winId` hint and, among equal-url matches
+    // there, the listed `tabIndex` (so same-url Safari duplicates stay individually
+    // reachable). Position is NEVER primary identity -- it drifts on any tab churn --
+    // but on a TOTAL url miss the tab AT the listed (winId, tabIndex) is the
+    // last-resort tertiary (Safari navigates in place and has no id): same host as
+    // the listed url = that navigation, an honest success with its CURRENT url;
+    // different host = likely a closed tab's neighbor, activated best-effort (land
+    // near where the tab was) but reported as a miss so the caller alerts + relists.
+    // cb gets {"url": "...", "via": "id"|"url"|"pos"} JSON, or {} -> nil when the
+    // tab is genuinely gone.
     func browserFocusTab(_ L: OpaquePointer?) -> Int32 {
         guard let app = LuaState.string(L, 1), Native.scriptableBrowsers.contains(app),
               let tabId = LuaState.int(L, 2), let winId = LuaState.int(L, 3),
-              let url = LuaState.string(L, 4) else {
+              let url = LuaState.string(L, 4), let tabIndex = LuaState.int(L, 5) else {
             return luaError(L, "browser_focus_tab: unsupported app or bad args")
         }
-        let ref = lua.makeRef(at: 5)
+        let ref = lua.makeRef(at: 6)
         // Every AX/scripting read is try-guarded (parity with browser_list_tabs) so a
         // single throwing window/tab degrades to "not found", never a script error.
         let script = """
@@ -484,9 +491,9 @@ extension Native {
           app.activate();
           var wantId = \(tabId);
           var wantUrl = \(jsStringLiteral(url));
+          var wantIdx = \(tabIndex);
           var isSafari = ("\(app)" === "Safari");
-          var fbWin = null, fbTab = null, fbIdx = -1;   // best url match (winId-preferred)
-          function activate(win, tab, idx) {
+          function activate(win, tab, idx, via) {
             try { win.index = 1; } catch (e) {}    // raise is best-effort
             try {
               if (isSafari) { win.currentTab = tab; }
@@ -498,8 +505,26 @@ extension Native {
             }
             var u = "";
             try { u = tab.url() || ""; } catch (e) {}
-            return JSON.stringify({ url: u });
+            return JSON.stringify({ url: u, via: via });
           }
+          // scheme://host with credentials/port stripped -- the "same site" signal
+          // the positional tertiary keys on (platform.urls.getDomain's intent).
+          function hostOf(u) {
+            u = u || "";
+            var i = u.indexOf("://");
+            if (i < 0) return "";
+            var h = u.slice(i + 3);
+            var e = h.length, q;
+            q = h.indexOf("/"); if (q >= 0 && q < e) e = q;
+            q = h.indexOf("?"); if (q >= 0 && q < e) e = q;
+            q = h.indexOf("#"); if (q >= 0 && q < e) e = q;
+            h = h.slice(0, e);
+            var at = h.indexOf("@"); if (at >= 0) h = h.slice(at + 1);
+            var colon = h.indexOf(":"); if (colon >= 0) h = h.slice(0, colon);
+            return h.toLowerCase();
+          }
+          var fbWin = null, fbTab = null, fbIdx = -1, fbRank = 0;  // best url match: 2 = hinted win, 1 = anywhere
+          var posWin = null, posTab = null, posIdx = -1;           // the tab AT the listed (winId, tabIndex)
           var wins = [];
           try { wins = app.windows(); } catch (e) {}
           for (var wi = 0; wi < wins.length; wi++) {
@@ -519,18 +544,37 @@ extension Native {
               if (wantId > 0) {
                 var tid = 0;
                 try { tid = Number(tab.id()) || 0; } catch (e) {}
-                if (tid === wantId) { return activate(win, tab, ti); }
+                if (tid === wantId) { return activate(win, tab, ti, "id"); }
               } else {
+                var atListed = (wid === \(winId) && ti + 1 === wantIdx);
+                if (atListed) { posWin = win; posTab = tab; posIdx = ti; }
                 var u = "";
                 try { u = tab.url() || ""; } catch (e) {}
                 if (u === wantUrl) {
-                  if (wid === \(winId)) { return activate(win, tab, ti); }
-                  if (!fbTab) { fbWin = win; fbTab = tab; fbIdx = ti; }
+                  if (atListed) { return activate(win, tab, ti, "url"); }  // url AND position: the listed tab itself
+                  var rank = (wid === \(winId)) ? 2 : 1;
+                  if (rank > fbRank) { fbWin = win; fbTab = tab; fbIdx = ti; fbRank = rank; }
                 }
               }
             }
           }
-          if (fbTab) { return activate(fbWin, fbTab, fbIdx); }
+          if (fbTab) { return activate(fbWin, fbTab, fbIdx, "url"); }
+          if (posTab) {
+            // POSITIONAL TERTIARY: the url matched nowhere, but a tab still sits at
+            // the listed position. Same host -> it navigated in place; land it and
+            // report its CURRENT url. Different host -> likely a closed tab's
+            // neighbor; land there anyway (near where the tab was) but report the
+            // honest miss so the caller alerts + stages a relist -- never a silent
+            // wrong jump.
+            var pu = "";
+            try { pu = posTab.url() || ""; } catch (e) {}
+            var ph = hostOf(pu);
+            if (ph !== "" && ph === hostOf(wantUrl)) {
+              return activate(posWin, posTab, posIdx, "pos");
+            }
+            activate(posWin, posTab, posIdx, "pos");
+            return JSON.stringify({});
+          }
           return JSON.stringify({});
         }
         """

@@ -1131,32 +1131,59 @@ end
 
 -- Mirror the real JXA (Native+Browser.swift browserFocusTab): re-resolve the tab
 -- by STABLE IDENTITY across ALL of the app's windows -- id first (Chrome), else the
--- url preferring the hinted winId (Safari / no id). No positional index: a reorder /
--- close-before / cross-window move must still land on the same tab. nil = genuinely
--- gone. `resolved` records WHICH record we landed on so tests can assert end to end.
-function adapter.browserFocusTab(app, tabId, winId, url, cb)
-    local rec = { app = app, tabId = tabId, winId = winId, url = url }
+-- url preferring the hinted winId and, among equal-url matches there, the LISTED
+-- tabIndex (Safari / no id). Position is never primary identity (a reorder /
+-- close-before / cross-window move must still land on the same tab) -- but on a
+-- total url miss, the tab AT the listed (winId, tabIndex) is the last-resort
+-- tertiary: same host as the listed url = an in-place navigation, an honest
+-- success with its CURRENT url; different host = landed best-effort but reported
+-- as a miss (`missLanding` records that landing). nil = genuinely gone. `resolved`
+-- records WHICH record we landed on so tests can assert end to end; cb(url, via)
+-- with via = "id" | "url" | "pos".
+local function hostOf(u)
+    local h = (u or ""):match("://([^/?#]*)") or ""
+    h = h:gsub("^[^@]*@", ""):gsub(":.*$", "")
+    return h:lower()
+end
+
+function adapter.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
+    local rec = { app = app, tabId = tabId, winId = winId, url = url,
+                  tabIndex = tabIndex }
     fake.tabJumps[#fake.tabJumps + 1] = rec
     if fake.jumpUrlOverride == false then return cb(nil) end   -- forced "gone"
     local tabs = fake.browserTabsByApp[app] or {}
-    local match
+    local match, via
     if tabId and tabId ~= 0 then
         for _, t in ipairs(tabs) do
-            if t.id == tabId then match = t; break end
+            if t.id == tabId then match = t; via = "id"; break end
         end
     else
-        local firstUrl
+        local hinted, anywhere, pos
         for _, t in ipairs(tabs) do
+            local atListed = t.winId == winId and t.tabIndex == tabIndex
+            if atListed then pos = pos or t end
             if t.url == url then
-                if t.winId == winId then match = t; break end
-                firstUrl = firstUrl or t
+                if atListed then match = t; break end   -- url AND position: the listed tab itself
+                if t.winId == winId then hinted = hinted or t
+                else anywhere = anywhere or t end
             end
         end
-        match = match or firstUrl
+        match = match or hinted or anywhere
+        if match then via = "url" end
+        if not match and pos then
+            -- positional tertiary (see the JXA comment for the same-host rationale)
+            local ph = hostOf(pos.url)
+            if ph ~= "" and ph == hostOf(url) then
+                match = pos; via = "pos"
+            else
+                rec.missLanding = pos   -- landed near where the tab was; still a miss
+                return cb(nil)
+            end
+        end
     end
     if not match then return cb(nil) end
     rec.resolved = match
-    cb(fake.jumpUrlOverride or match.url)   -- string override = in-place drift
+    cb(fake.jumpUrlOverride or match.url, via)   -- string override = in-place drift
 end
 
 fake.activeUrls = {}   -- app -> the url its front tab is showing

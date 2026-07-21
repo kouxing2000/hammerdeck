@@ -994,20 +994,26 @@ end
 
 -- Raise the window and activate a tab, RE-RESOLVING it by stable identity across
 -- all windows: by `tabId` when non-zero (Chrome), else by `url` preferring the
--- `winId` hint (Safari / no id). Never keys on a positional index, so a reorder /
--- close-before / cross-window move still lands. cb(currentUrl|nil) -- nil means the
+-- `winId` hint and, among equal-url matches there, the listed `tabIndex` (Safari /
+-- no id). Position is never PRIMARY identity (a reorder / close-before / cross-
+-- window move still lands via id/url) -- but on a total url miss the tab AT the
+-- listed (winId, tabIndex) is the last-resort tertiary: same host = an in-place
+-- navigation, an honest success with its CURRENT url; different host = activated
+-- best-effort but reported as a miss. cb(currentUrl|nil, via) -- nil means the
 -- tab is genuinely gone since listing.
 ---@param app string             "Google Chrome" | "Safari"
 ---@param tabId integer          stable Chrome tab id, or 0 for "resolve by url"
 ---@param winId integer          window-id hint for the url fallback (tie-break)
 ---@param url string             the listed url (the url-fallback key)
----@param cb fun(currentUrl: string|nil)
-function adapter.browserFocusTab(app, tabId, winId, url, cb)
-    native.browser_focus_tab(app, tabId, winId, url, function(raw)
+---@param tabIndex integer       listed 1-based position (0 = unknown) -- the
+---                              last-resort tertiary for an in-place navigation
+---@param cb fun(currentUrl: string|nil, via: string|nil) via: "id"|"url"|"pos"
+function adapter.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
+    native.browser_focus_tab(app, tabId, winId, url, tabIndex, function(raw)
         if not raw then return cb(nil) end
         json = json or require("platform.json")
         local doc = json.decode(raw)
-        cb(doc and doc.url or nil)
+        if doc and doc.url then cb(doc.url, doc.via) else cb(nil) end
     end)
 end
 
