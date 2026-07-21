@@ -29,7 +29,10 @@ return {
                 ["https://github.com/x"] = nowT - 60,             -- fresh: sorts first
                 ["https://dead.example/old"] = nowT - 40 * 86400, -- stale: pruned
             },
-            ["Safari"] = { ["https://apple.com/"] = nowT - 3600 },
+            ["Safari"] = {
+                ["https://apple.com/"] = nowT - 3600,
+                ["favorites://"] = nowT - 60,   -- pre-guard junk: cleaned on load
+            },
         })
         fake.runningApps["Google Chrome"] = true
         fake.runningApps["Safari"] = true
@@ -75,16 +78,25 @@ return {
         ok(fake.tabJumps[#fake.tabJumps].app == "Safari" and fake.tabJumps[#fake.tabJumps].winId == 9,
             "releasing the modifier jumps to the selected tab")
         ok(fake.files[mruPath]:find("apple.com", 1, true) ~= nil
-            and fake.files[mruPath]:find("dead.example", 1, true) == nil,
-            "the landed tab is stamped; 30-day-old entries were pruned")
+            and fake.files[mruPath]:find("dead.example", 1, true) == nil
+            and fake.files[mruPath]:find("favorites://", 1, true) == nil,
+            "the landed tab is stamped; 30-day-old and non-web entries were pruned")
 
         -- the extracted favicon upgrades the row on the next open (show-time icon
         -- re-resolution -- no relist needed)
         fake.frontmost = "Google Chrome"
         fake.activeUrls["Google Chrome"] = "https://news.example/today"
-        fake.fireTimers("every", 10)   -- the MRU poll stamps + marks dirty
+        fake.fireTimers("every", 3)   -- the MRU poll stamps + marks dirty
         ok(fake.files[mruPath]:find("news.example", 1, true) ~= nil,
-            "the 10s poll stamps the active browser url")
+            "the 3s poll stamps the active browser url")
+        fake.activeUrls["Google Chrome"] = "chrome://extensions/"
+        fake.fireTimers("every", 3)
+        ok(fake.files[mruPath]:find("chrome://", 1, true) == nil,
+            "a non-web url (chrome://, favorites://) is never stamped")
+        fake.activeUrls["Google Chrome"] = "http://localhost:3000/app"
+        fake.fireTimers("every", 3)
+        ok(fake.files[mruPath]:find("localhost:3000", 1, true) ~= nil,
+            "the scheme guard keeps localhost dev tabs rankable (unlike getDomain)")
         fake.modifiers.alt = true
         fake.pressHotkey("tab", { "ctrl", "alt" })
         tch = fake.visibleChooser()

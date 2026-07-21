@@ -6,7 +6,8 @@
 -- release the cycle modifier to jump. Selecting activates the browser,
 -- raises the window, and switches to the tab.
 --
--- MRU: every 10s the active browser tab's URL is stamped; stamps persist to
+-- MRU: every 3s the active browser tab's URL is stamped (real web pages only --
+-- favorites://, chrome://, error pages never rank); stamps persist to
 -- <dataDir>/tab_switcher/mru.json (pruned at 30 days) so the ordering
 -- survives restarts. After a jump the landed URL is stamped immediately.
 --
@@ -29,7 +30,11 @@ local BROWSERS = {
 }
 local BUNDLE_BY_NAME = {}
 for _, b in ipairs(BROWSERS) do BUNDLE_BY_NAME[b.name] = b.bundle end
-local POLL_SECONDS = 10
+-- 3s, so even a short look at a tab gets sampled (10s missed quick visits and
+-- the tab then ranked as never-seen). The tick itself is one cheap native
+-- frontmost-app read; the AppleScript url read runs ONLY while a browser is
+-- frontmost, so the shorter interval costs nothing when not browsing.
+local POLL_SECONDS = 3
 local PRUNE_AGE = 30 * 24 * 3600
 
 local json = require("platform.json")
@@ -66,7 +71,10 @@ local function jumperFor(ctx)
             local m = doc and doc[b.name] or {}
             local kept = {}
             for url, ts in pairs(m) do
-                if type(ts) == "number" and now - ts <= PRUNE_AGE then
+                -- The scheme check also self-cleans junk stamped before the
+                -- guard in stamp() existed (favorites://, safari-resource:).
+                if type(ts) == "number" and now - ts <= PRUNE_AGE
+                    and url:find("^https?://") then
                     kept[url] = ts
                 end
             end
@@ -84,6 +92,11 @@ local function jumperFor(ctx)
 
     local function stamp(browser, url)
         if not url or url == "" then return end
+        -- Web pages only, by SCHEME: favorites://, chrome://, safari-resource:
+        -- error pages etc. must never earn an MRU rank. Deliberately NOT
+        -- getDomain (it also rejects localhost -- a dev's http://localhost:3000
+        -- is a real page and must keep ranking).
+        if not url:find("^https?://") then return end
         st.mru[browser][url] = ctx.now()
         saveMru()
     end
