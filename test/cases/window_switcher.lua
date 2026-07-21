@@ -34,7 +34,35 @@ return {
         ch.userSelect(2)
         ok(fake.focused[#fake.focused] == 22, "selecting focuses the chosen window")
 
-        -- repeat-invocation cycling, release modifier to pick
+        -- flick-to-previous: open with the modifier HELD past the tap grace,
+        -- release with nothing typed -- row 2 (the previous window) is picked
+        -- with no second cycle and no Enter (arm-on-open, parity with
+        -- tab_switcher).
+        local flickBefore = #fake.focused
+        fake.modifiers.alt = true
+        fake.pressHotkey("tab")                        -- open armed (alt held)
+        fake.fireTimers("every", 0.1)                  -- held through
+        fake.fireTimers("every", 0.1)                  -- the tap grace
+        fake.fireTimers("every", 0.1)                  -- (3 ticks)
+        fake.modifiers.alt = false
+        fake.fireTimers("every", 0.1)                  -- modifier poll sees release
+        ok(#fake.focused == flickBefore + 1 and fake.focused[#fake.focused] == 22,
+            "open-hold-release flicks to the previous window")
+
+        -- quick TAP: released while still inside the grace -- the panel STAYS
+        -- open (filter/browse mode, the pre-flick workflow); Enter then picks.
+        fake.modifiers.alt = true
+        fake.pressHotkey("tab")                        -- open armed (alt held)
+        fake.modifiers.alt = false
+        fake.fireTimers("every", 0.1)                  -- tick 1: inside the grace
+        ch = fake.visibleChooser()
+        ok(ch ~= nil and ch.selectedRow == 2, "a quick tap keeps the panel open (filter mode)")
+        ch.userSelect(2)
+        ok(fake.focused[#fake.focused] == 22, "Enter after a tap picks the preselected previous window")
+
+        -- repeat-invocation cycling, release modifier to pick (the cycle arm is
+        -- gated on the modifier being held, so the test holds it as a user would)
+        fake.modifiers.alt = true
         fake.pressHotkey("tab")                        -- reopen (row 2)
         fake.pressHotkey("tab")                        -- cycle -> row 3
         ch = fake.visibleChooser()
@@ -69,7 +97,7 @@ return {
             { id = 66, title = "Beta Two", appName = "AppC", bundleID = "com.c" },
         }
         fake.modifiers.alt = true
-        fake.pressHotkey("tab")                        -- open (row 2 preselected)
+        fake.pressHotkey("tab")                        -- open (row 2, armed: alt held)
         ch = fake.visibleChooser()
         ch.userType("beta")                            -- narrows 3 rows -> the two Betas
         ok(ch.selectedRow == 1, "typing a query reselects the first visible row")
@@ -77,9 +105,15 @@ return {
         ok(ch.selectedRow == 2, "backward wrap stays within the FILTERED rows")
         fake.pressHotkey("tab")                        -- forward from the bottom
         ok(ch.selectedRow == 1, "forward wrap stays within the filtered rows")
+        -- typing DISARMED release-to-pick: the user let go of the modifier to
+        -- keep typing the filter, so the release must NOT commit a pick.
+        local focusedBefore = #fake.focused
         fake.modifiers.alt = false
         fake.fireTimers("every", 0.1)
-        ok(fake.focused[#fake.focused] == 55, "release picks the FILTERED row's choice")
+        ok(#fake.focused == focusedBefore and ch.visible,
+            "typing disarms release-to-pick: releasing the modifier no longer commits")
+        ch.userSelect(1)
+        ok(fake.focused[#fake.focused] == 55, "Enter then picks the FILTERED row's choice")
 
         -- subtext = browser tab count and/or screen name (app name dropped -- the icon
         -- carries it); screen name only when the display is reported (native reports it

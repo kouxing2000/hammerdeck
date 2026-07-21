@@ -72,7 +72,11 @@ return {
         ok(dlSeen["/tmp/hammerdeck-fake-cache/favicons/github.com.png"] == nil,
             "extracted domains are not re-downloaded")
 
-        -- release the modifier: the armed auto-jump picks the selected row
+        -- release the modifier (after the tap grace): the armed auto-jump picks
+        -- the selected row
+        fake.fireTimers("every", 0.1)                  -- held through
+        fake.fireTimers("every", 0.1)                  -- the tap grace
+        fake.fireTimers("every", 0.1)                  -- (3 ticks)
         fake.modifiers.alt = false
         fake.fireTimers("every", 0.1)
         ok(fake.tabJumps[#fake.tabJumps].app == "Safari" and fake.tabJumps[#fake.tabJumps].winId == 9,

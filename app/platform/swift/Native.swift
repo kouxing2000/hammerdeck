@@ -119,6 +119,7 @@ final class Native {
             "chooser_set_placeholder": { L in MainActor.assumeIsolated { Native.shared.chooserSetPlaceholder(L) } },
             "chooser_set_title": { L in MainActor.assumeIsolated { Native.shared.chooserSetTitle(L) } },
             "chooser_set_query": { L in MainActor.assumeIsolated { Native.shared.chooserSetQuery(L) } },
+            "chooser_query": { L in MainActor.assumeIsolated { Native.shared.chooserQuery(L) } },
             "chooser_show": { L in MainActor.assumeIsolated { Native.shared.chooserShow(L) } },
             "chooser_hide": { L in MainActor.assumeIsolated { Native.shared.chooserHide(L) } },
             "chooser_visible": { L in MainActor.assumeIsolated { Native.shared.chooserVisible(L) } },

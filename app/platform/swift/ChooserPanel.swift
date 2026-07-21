@@ -304,6 +304,30 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
                 return event
             }
             if cmd, let ch, let d = Int(ch), d >= 1, d <= 9 { self.quickPick(d); return nil }
+            // Typing with ctrl/alt held (no cmd) feeds the SEARCH FIELD: during
+            // a release-to-pick hold (⌥Tab / ⌃⌥Tab still down) the field editor
+            // treats these as commands or option-glyphs (⌥a = å), so the first
+            // filter character could never land without releasing the modifier
+            // -- which commits the pick. Inserting the base character here lets
+            // typing start WHILE holding; the release-to-pick poll sees the
+            // non-empty query and disarms (cyclingChooser). Backspace edits it.
+            if !cmd, event.modifierFlags.contains(.control) || event.modifierFlags.contains(.option) {
+                if event.keyCode == 51 {  // delete: edit the query; consume even when
+                    // empty -- its char is DEL (0x7F), which the printable branch
+                    // below would otherwise insert invisibly into the query.
+                    if !self.searchField.stringValue.isEmpty {
+                        self.searchField.stringValue = String(self.searchField.stringValue.dropLast())
+                        self.applyFilter()
+                    }
+                    return nil
+                }
+                if let ch, ch.count == 1, let s = ch.unicodeScalars.first,
+                   s.value >= 0x20, s.value != 0x7F, s.value < 0xF700 {
+                    self.searchField.stringValue += ch
+                    self.applyFilter()
+                    return nil
+                }
+            }
             return event
         }
     }
@@ -321,6 +345,10 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     }
 
     var isVisible: Bool { panel.isVisible }
+
+    /// The current search text (the Lua-side release-to-pick poll reads this
+    /// to disarm once the user starts filtering).
+    var currentQuery: String { searchField.stringValue }
 
     // MARK: test introspection (read-only; surfaced via Native.chooserSnapshots)
     // Not part of the Lua/feature contract -- see the note on that method.

@@ -220,6 +220,7 @@ function adapter.chooser(opts)
     function h.step(delta)        native.chooser_step(id, delta) end
     function h.select(n)          native.chooser_select(id, n) end
     function h.setQuery(q)        native.chooser_set_query(id, q) end
+    function h.getQuery()         return native.chooser_query(id) end
     function h.stop()             native.stop(id) end
     return h
 end

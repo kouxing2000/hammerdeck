@@ -211,14 +211,18 @@ local function jumperFor(ctx)
             end)
     end
 
-    -- Release-to-jump: poll the cycle modifier (donor's autoJump). Unlike
-    -- window_switcher, tab_switcher arms it on OPEN too (the held-modifier preview),
-    -- so it gates on the modifier actually being held before arming -- a fire with
+    -- Release-to-jump: poll the cycle modifier (donor's autoJump). Arms on OPEN
+    -- too (the held-modifier preview -- both switchers do, since 2026-07-20),
+    -- gated on the modifier actually being held before arming -- a fire with
     -- no modifier held (menubar / chord) must wait for Enter, not jump instantly.
     -- st.cycleMod is derived from the trigger that fired (set in open()).
     local function armAutoJump()
         local mod = st.cycleMod
         if not mod or not ctx.isModifierHeld(mod) then return end
+        -- Armed = releasing will jump; say so (otherwise the open path's
+        -- "Search tabs" placeholder lies during a held-modifier preview).
+        st.chooser.setPlaceholder(
+            ctx.t("chooser.releaseToJump", "Release %s to jump · type to filter · ⇧⇥ back", mod))
         cyclingChooser.armRelease(ctx, st.chooser, st, mod)
     end
 
@@ -240,6 +244,9 @@ local function jumperFor(ctx)
         st.chooser.setQuery(nil)
         st.chooser.show()
         if #st.choices >= 2 then st.chooser.setSelectedRow(2) end
+        -- Tap grace: a release within the first ticks keeps the panel open
+        -- (filter mode) instead of jumping -- see cyclingChooser.armRelease.
+        st.releaseGrace = 3
         armAutoJump()
     end
 
@@ -260,9 +267,10 @@ local function jumperFor(ctx)
             -- Repeat invocation: cycle forward (backward is the panel's own
             -- shift+tab / option+arrows; the panel wraps the visible rows).
             st.chooser.setPlaceholder(st.cycleMod
-                and ctx.t("chooser.releaseToJump", "Release %s to jump · ⇧⇥ back", st.cycleMod)
+                and ctx.t("chooser.releaseToJump", "Release %s to jump · type to filter · ⇧⇥ back", st.cycleMod)
                 or ctx.t("chooser.pressEnter", "Press Enter to jump"))
             st.chooser.step(1)
+            st.releaseGrace = 0   -- cycling expressed intent: release commits at once
             armAutoJump()
             return
         end
@@ -318,8 +326,9 @@ return {
 
     actions = {
         { id = "open", label = "Switch to a tab", icon = "rectangle.stack",
-          description = "Open the tab switcher, or cycle forward through tabs when "
-              .. "it is already open. ⇧Tab steps back.",
+          description = "Tap to browse -- type to filter, Enter to jump. Hold and "
+              .. "release once the panel shows to jump straight to the previous "
+              .. "tab. Press again to cycle; ⇧Tab steps back.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
           mnemonic = "⌃⌥Tab — the window-switch keys + Ctrl, for tabs",
           run = function(ctx) with(ctx).open("open") end },

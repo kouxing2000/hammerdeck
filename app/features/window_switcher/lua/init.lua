@@ -83,15 +83,19 @@ local function jump(ctx)
     if st.chooser.isVisible() then
         -- Repeat invocation while open: cycle forward (backward is the
         -- panel's own shift+tab / option+arrows); the panel wraps against
-        -- the visible rows. Release-to-pick arms ONLY while cycling here (the
-        -- switcher has no preview-on-open step); armRelease self-gates on the
-        -- modifier.
+        -- the visible rows. armRelease self-gates on the modifier.
         local mod = cycleModifier(ctx.actionTrigger("main"))
         st.chooser.setPlaceholder(mod
-            and ctx.t("chooser.release", "Release %s to switch · ⇧⇥ back", mod)
+            and ctx.t("chooser.release", "Release %s to switch · type to filter · ⇧⇥ back", mod)
             or ctx.t("chooser.pressEnter", "Press Enter to switch"))
         st.chooser.step(1)
-        cyclingChooser.armRelease(ctx, st.chooser, st, mod)
+        st.releaseGrace = 0   -- cycling expressed intent: release commits at once
+        -- Gate on the modifier actually being held (parity with tab_switcher's
+        -- armAutoJump): a menubar re-invoke with nothing held must wait for
+        -- Enter, not insta-pick the stepped row on the next poll tick.
+        if mod and ctx.isModifierHeld(mod) then
+            cyclingChooser.armRelease(ctx, st.chooser, st, mod)
+        end
     else
         local windows = ctx.window.list()
         if #windows == 0 then
@@ -151,6 +155,20 @@ local function jump(ctx)
         st.chooser.show()
         -- Row 1 is the currently-focused window; preselect the previous one.
         if #choices >= 2 then st.chooser.setSelectedRow(2) end
+        -- Held-modifier preview (parity with tab_switcher): opening with the
+        -- trigger's cycle modifier still held arms release-to-pick, so
+        -- ⌥Tab-hold-release flicks straight to the previous window -- no
+        -- second cycle, no Enter. Gated on the modifier actually being held
+        -- (a menubar / chord fire waits for Enter), with a TAP GRACE: a
+        -- release within the first ticks means "I wanted the panel" -- it
+        -- stays open in filter/browse mode instead of insta-picking row 2.
+        local mod = cycleModifier(ctx.actionTrigger("main"))
+        if mod and ctx.isModifierHeld(mod) then
+            st.chooser.setPlaceholder(
+                ctx.t("chooser.release", "Release %s to switch · type to filter · ⇧⇥ back", mod))
+            st.releaseGrace = 3
+            cyclingChooser.armRelease(ctx, st.chooser, st, mod)
+        end
     end
 end
 
@@ -163,8 +181,9 @@ return {
     actions = {
         -- id "main" keeps pre-multi-action stored trigger keys valid.
         { id = "main", label = "Switch to a window", icon = "macwindow.on.rectangle",
-          description = "Open the window switcher, or cycle forward through windows "
-              .. "when it is already open. ⇧Tab steps back.",
+          description = "Tap to browse -- type to filter, Enter to switch. Hold and "
+              .. "release once the panel shows to jump straight to the previous "
+              .. "window. Press again to cycle; ⇧Tab steps back.",
           defaultTrigger = { type = "hotkey", mods = { "alt" }, key = "tab" },
           mnemonic = "⌥Tab — mirrors ⌘Tab, but for windows",
           run = jump },

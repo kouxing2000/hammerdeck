@@ -130,6 +130,13 @@ extension Native {
         return 0
     }
 
+    // chooser_query(id) -> the current search text ("" for a dead id). The
+    // release-to-pick poll reads this to DISARM once the user starts filtering.
+    func chooserQuery(_ L: OpaquePointer?) -> Int32 {
+        lua_pushstring(L, chooser(L)?.currentQuery ?? "")
+        return 1
+    }
+
     func chooserSetQuery(_ L: OpaquePointer?) -> Int32 {
         chooser(L)?.setQuery(LuaState.string(L, 2))
         return 0

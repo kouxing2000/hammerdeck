@@ -299,6 +299,7 @@ function adapter.chooser(opts)
         c.query = q
         selectFirstValid()
     end
+    function h.getQuery()         return c.query or "" end
     -- Mirror the native chooser: close() orders the panel out, so a stopped
     -- chooser is never "visible".
     function h.stop()             c.visible = false; freeOnce(c) end
