@@ -99,11 +99,13 @@ def render(features):
     known = {c for c, _ in GROUPS}
     ordered = GROUPS + [(c, c.title()) for c in sorted(by_cat) if c not in known]
 
-    n = len(features)
+    # No count in the lead line -- the strategy memo's copy rule ("never lead
+    # with the feature count") applies to this generated block too; a number
+    # here also goes stale as the catalog moves.
     lines = [BEGIN, ""]
     lines.append(
-        f"**{n} feature{'s' if n != 1 else ''}**, each off by default, "
-        "switched on in Settings and bindable to any trigger."
+        "Every feature ships **off by default** -- switch one on in Settings "
+        "and bind it to any trigger."
     )
     lines.append("")
     for cat, heading in ordered:

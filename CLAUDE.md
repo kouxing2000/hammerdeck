@@ -59,12 +59,17 @@ only through the seam, never `native.*`.
 **`app/platform/lua/` tiers** (the dir is FLAT; this is the layering `ls` does
 not show): **SEAM** = `adapter.lua` (the only file here that reaches `native.*`).
 **CORE / stateful** = `ctx`, `registry`, `triggers`, `manifest`, `modal`,
-`window_ops` (hold state + lifecycle; features never `require` them).
-`window_ops` owns the live focused-window move + "pointer-follows-window" policy
-(`ctx.window.setFrame` delegates to it); the registry injects its pointer-follow
-predicate at boot. **SUBSYSTEM** = the automation rules engine
-(`rules` + `signals` + `effects` -- domain logic that reaches the OS only through
-registry/adapter, never the seam), plus `i18n` (locale-injected, internal).
+`window_ops`, `window_history` (hold state + lifecycle; features never
+`require` them). `window_ops` owns the live focused-window move +
+"pointer-follows-window" policy (`ctx.window.setFrame` delegates to it); the
+registry injects its pointer-follow predicate at boot. `window_history` is the
+single-step window-undo engine behind `ctx.window.undoLast` (only `window_ops`
+requires it). **SUBSYSTEM** = the automation rules engine
+(`rules` + `signals` + `effects` -- domain logic that, like core, requires the
+adapter's high-level surface but never touches `native.*` directly -- only
+`adapter.lua` does that), plus `i18n` (locale-injected, internal) and `text`
+(a tiny pure string helper for rules/effects; zero-require but NOT on the
+feature allowlist).
 `favicons` sits in this tier structurally but is a **pure factory subsystem** a
 feature MAY `require` (it needs only the `urls` leaf util, used as
 `favicons.new(ctx)`) -- a sibling to the leaf utils, NOT a zero-`require` leaf
@@ -73,7 +78,9 @@ itself (so it stays OFF the leaf-guard list). **LEAF UTILS** =
 `require`, NOT purity -- they may call native, but only via a `ctx` passed in, e.g.
 `windows.focusedOrAlert`; the only ZERO-`require` platform modules a feature may
 `require` -- `favicons` above is the one require-ful module also allowed; a
-test-suite guard fails if any of them grows a `require`). The `ctx` surface is
+test-suite guard fails if any of them grows a `require`, and the mirror guard
+(`test/cases/_integration/platform/feature_requires.lua`) fails if a feature
+requires anything outside this allowlist). The `ctx` surface is
 namespaced into domain sub-tables (`ctx.window.*` / `ctx.screen.*` /
 `ctx.mouse.*`) -- Phase 1 of the ctx-domain-namespaces work, landed
 2026-06-29. The remaining Phase 2 (porting Hammerspoon's pure-Lua tiling/grid
@@ -92,7 +99,8 @@ pending.
   `defaultTrigger`+`action(ctx)` still works; SERVICE = `start(ctx)`+optional
   `stop`, may also declare `actions`), and receives the scoped `ctx` as its native
   surface. Never touches native APIs or the seam/stateful platform modules
-  (`adapter`, `ctx`, `registry`, `triggers`, `manifest`, `modal`, `window_ops`);
+  (`adapter`, `ctx`, `registry`, `triggers`, `manifest`, `modal`, `window_ops`,
+  `window_history`);
   MAY `require` the pure leaf util modules (`platform.json`, `platform.urls`,
   `platform.hotkeys`, `platform.windows`, `platform.cyclingChooser` -- stateless,
   no `require` of their own), PLUS the pure factory subsystem `platform.favicons`
