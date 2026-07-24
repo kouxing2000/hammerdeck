@@ -43,7 +43,18 @@ final class Native {
     var axWindowCache: [Int: AXWindowRef] = [:]
     var nextWindowId = 1
 
-    func attach(_ lua: LuaState) { self.lua = lua }
+    func attach(_ lua: LuaState) {
+        self.lua = lua
+        // Callback errors are the audit trail's highest-value entries (an
+        // automation failing while nobody watches) -- route them into the same
+        // stdout + daily-file sink as ctx.log, not a bare print.
+        lua.errorSink = { msg in
+            MainActor.assumeIsolated {
+                print("[hammerdeck]", msg)
+                Native.shared.appendLogLine(msg)
+            }
+        }
+    }
 
     func allocId() -> Int32 {
         let id = nextId

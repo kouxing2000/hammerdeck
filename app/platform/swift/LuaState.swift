@@ -23,6 +23,18 @@ final class LuaState {
 
     let L: OpaquePointer
 
+    /// Where `callRef` errors land. Defaults to stdout; the host repoints this
+    /// at its durable daily log on attach (Native.attach), so a timer/hotkey/
+    /// watcher callback failing while nobody watches still leaves a clue.
+    var errorSink: (String) -> Void = { print("[hammerdeck] \($0)") }
+
+    /// The threading invariant made loud: a single `lua_State` is not
+    /// reentrant, so every entry must come from the main thread. An off-main
+    /// caller would corrupt the state silently -- trap here instead.
+    private func assertMainThread() {
+        precondition(Thread.isMainThread, "LuaState entered off the main thread")
+    }
+
     init() {
         L = luaL_newstate()
         luaL_openlibs(L)   // base, string, table, math, os, io, ...
@@ -34,6 +46,7 @@ final class LuaState {
 
     /// Run a chunk of Lua source. Throws with the Lua error message on failure.
     func run(_ code: String) throws {
+        assertMainThread()
         // luaL_dostring / lua_pcall are C macros (not imported to Swift), so we
         // spell them out: load the chunk, then protected-call it.
         if luaL_loadstring(L, code) != LUA_OK || lua_pcallk(L, 0, LUA_MULTRET, 0, 0, nil) != LUA_OK {
@@ -43,6 +56,7 @@ final class LuaState {
 
     /// Run a Lua file by path.
     func runFile(_ path: String) throws {
+        assertMainThread()
         if luaL_loadfilex(L, path, nil) != LUA_OK || lua_pcallk(L, 0, LUA_MULTRET, 0, 0, nil) != LUA_OK {
             throw popError()
         }
@@ -52,6 +66,7 @@ final class LuaState {
     /// Swift value (bool/Double/String/[Any]/[String: Any]). Used by the
     /// config UI to query the registry over the bridge.
     func eval(_ code: String) throws -> Any? {
+        assertMainThread()
         if luaL_loadstring(L, code) != LUA_OK || lua_pcallk(L, 0, 1, 0, 0, nil) != LUA_OK {
             throw popError()
         }
@@ -96,6 +111,7 @@ final class LuaState {
     @discardableResult
     func call(_ module: String, _ function: String,
               _ args: [LuaArg] = [], results: Int32 = 1) throws -> [Any?] {
+        assertMainThread()
         let base = lua_gettop(L)
         // require(module) -> module table on top
         lua_getglobal(L, "require")
@@ -157,6 +173,7 @@ final class LuaState {
     /// Take the Lua value at `index` (usually a function argument) and pin it
     /// in the Lua registry so Swift can hold it past the current call.
     func makeRef(at index: Int32) -> Int32 {
+        assertMainThread()
         lua_pushvalue(L, index)
         let ref = luaL_ref(L, LUA_REGISTRY_INDEX)
         #if DEBUG
@@ -166,6 +183,7 @@ final class LuaState {
     }
 
     func releaseRef(_ ref: Int32) {
+        assertMainThread()
         luaL_unref(L, LUA_REGISTRY_INDEX, ref)
         #if DEBUG
         pinnedRefCount -= 1
@@ -176,12 +194,13 @@ final class LuaState {
     /// returns how many it pushed. Errors are logged, never propagated -- a
     /// feature callback blowing up must not take the host down.
     func callRef(_ ref: Int32, pushArgs: (OpaquePointer) -> Int32 = { _ in 0 }) {
+        assertMainThread()
         lua_rawgeti(L, LUA_REGISTRY_INDEX, lua_Integer(ref))
         let nargs = pushArgs(L)
         if lua_pcallk(L, nargs, 0, 0, 0, nil) != LUA_OK {
             let msg = LuaState.string(L, -1) ?? "unknown Lua error"
             lua_settop(L, -2)
-            print("[hammerdeck] lua callback error: \(msg)")
+            errorSink("lua callback error: \(msg)")
         }
     }
 
