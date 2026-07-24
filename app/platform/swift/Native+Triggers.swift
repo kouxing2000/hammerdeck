@@ -101,6 +101,21 @@ extension Native {
         return 1
     }
 
+    // NOTE -- why repeating ticks are NOT suppressed during a blocking seam call.
+    // A synchronous seam call (AppleScript) spins a NESTED event loop, so timers
+    // keep firing inside it and re-enter Lua mid-operation; that nesting is how
+    // the 2026-07-23 freeze compounded. Skipping such ticks was tried and
+    // REVERTED: it silently loses events, because a repeating timer here is not
+    // always a resumable "poll".
+    //   * count_down does `elapsed = elapsed + 1` per tick (tick-counting, not a
+    //     ctx.now() delta), so every dropped tick makes the countdown finish a
+    //     second late -- measurably, since a browser poll blocks often enough.
+    //   * sleep_schedule's Phase 3 only fires inside a ~20s window on a 10s
+    //     timer, so losing those ticks loses the day's scheduled sleep.
+    // The root fix is bounding the waits themselves (Native+AppleScript's
+    // `with timeout`, and the measured AX ceiling in Native+Windows), which caps
+    // the nesting instead of dropping the caller's work. Re-entrancy during a
+    // now-bounded wait is the long-standing status quo, not the bug that hung us.
     func timerEvery(_ L: OpaquePointer?) -> Int32 {
         guard let n = LuaState.double(L, 1) else { return luaError(L, "timer_every: seconds required") }
         let ref = lua.makeRef(at: 2)

@@ -112,21 +112,37 @@ extension Native {
         end if
         return found
         """
-        return runFoundScript(script)
+        return runFoundScript(script, "Google Chrome")
     }
 
     // Run a curated focus-or-open AppleScript ending in `return found`. Returns
     // the boolean, or nil on a script error (browser missing / Automation
     // denied) -- callers degrade nil to "not found".
-    private func runFoundScript(_ script: String) -> Bool? {
-        var errInfo: NSDictionary?
-        let result = NSAppleScript(source: script)?.executeAndReturnError(&errInfo)
-        if let errInfo {
-            print("[hammerdeck] focus tab failed: "
-                + ((errInfo[NSAppleScript.errorMessage] as? String) ?? "\(errInfo)"))
-            return nil
+    //
+    // Deliberately NOT liveness-gated (`requiring:` unset): these scripts open a
+    // site, so launching a cold browser IS the requested behavior.
+    //
+    // 8s, not longer: this blocks the main thread, and the incident it guards
+    // against was 25s -- a 20s beachball would be barely an improvement. 8s
+    // covers a warm browser's tab scan comfortably; a cold browser degrades to
+    // "not found" (the caller's existing nil path) instead of freezing the app.
+    //
+    // UNVERIFIED EDGE, do not assume otherwise: `with timeout` is confirmed to
+    // bound an Apple Event SEND, but it was NOT confirmed to bound the LAUNCH
+    // these scripts can trigger (`activate application ...` on a cold browser),
+    // nor a first-run Automation consent dialog. If either turns out to be
+    // unbounded, this path can still stall -- it is manual-trigger only (a
+    // deliberate hotkey), so nothing fires it unattended, but the honest fix
+    // would be moving it to the async out-of-process shape rather than raising
+    // the ceiling.
+    private func runFoundScript(_ script: String, _ browser: String) -> Bool? {
+        // Label carries the browser so a failure line says WHICH one failed --
+        // and so the per-label throttle cannot let Safari's error mask Chrome's.
+        guard let result = runAppleScript(script, timeout: 8,
+                                          label: "focus tab (\(browser))") else {
+            return nil   // script error OR timeout -- both mean "could not tell"
         }
-        return result?.booleanValue == true
+        return result.booleanValue == true
     }
 
     // Safari analog of chromeFocusTab: focus the first Safari tab whose URL
@@ -157,7 +173,7 @@ extension Native {
             return found
         end tell
         """
-        return runFoundScript(script)
+        return runFoundScript(script, "Safari")
     }
 
     // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
@@ -305,10 +321,10 @@ extension Native {
     private static let scriptableBrowsers: Set<String> = ["Google Chrome", "Safari"]
 
     func appRunning(_ L: OpaquePointer?) -> Int32 {
-        let name = LuaState.string(L, 1)
-        let running = name != nil && NSWorkspace.shared.runningApplications.contains {
-            $0.localizedName == name
-        }
+        // Same predicate the AppleScript chokepoint's `requiring:` gate uses --
+        // shared so the Lua-visible answer and the seam's own decision can never
+        // drift apart.
+        let running = LuaState.string(L, 1).map(Native.appIsRunning(named:)) ?? false
         lua_pushboolean(L, running ? 1 : 0)
         return 1
     }
@@ -607,9 +623,24 @@ extension Native {
                   return URL of active tab of front window
               end tell
               """
-        var errInfo: NSDictionary?
-        let result = NSAppleScript(source: source)?.executeAndReturnError(&errInfo)
-        if errInfo == nil, let url = result?.stringValue, !url.isEmpty {
+        // LIVENESS-GATED + BOUNDED. This is the call that hung the app on
+        // 2026-07-23: usage_stats polls it on a timer keyed on the LAST ACTIVATED
+        // app, so once Chrome quit it kept addressing a dead app every tick, and
+        // the Apple Event never came back. `requiring: app` makes a departed
+        // browser a nil in microseconds instead of an unbounded wait, and 2s is
+        // still enormous for what is one property read from a live browser.
+        //
+        // The 2s is deliberately FAR tighter than runJXA's 30s, and the difference
+        // is not an oversight: that path is a SUBPROCESS (it can afford to sit
+        // through a first-run TCC prompt because it blocks nobody), while this one
+        // runs ON THE MAIN THREAD. A synchronous call must never wait on a human --
+        // waiting out a permission dialog here would BE the freeze this fix exists
+        // to prevent. Timing out costs one missed poll sample; the next tick
+        // resamples, and the grant, once given, applies from then on. Do not raise
+        // this to "fix" a first-run prompt.
+        let result = runAppleScript(source, requiring: app, timeout: 2,
+                                    label: "browser active url")
+        if let url = result?.stringValue, !url.isEmpty {
             lua_pushstring(L, url)
         } else {
             lua_pushnil(L)

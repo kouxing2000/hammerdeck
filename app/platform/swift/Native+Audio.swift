@@ -25,7 +25,7 @@ extension Native {
         set volume output volume newVol
         return newVol
         """
-        let level = Native.runAudioScript(script)?.int32Value ?? -1
+        let level = runAudioScript(script)?.int32Value ?? -1
         lua_pushinteger(L, lua_Integer(level))
         return 1
     }
@@ -38,21 +38,20 @@ extension Native {
         set volume output muted (not m)
         return (not m)
         """
-        let muted = Native.runAudioScript(script)?.booleanValue ?? false
+        let muted = runAudioScript(script)?.booleanValue ?? false
         lua_pushboolean(L, muted ? 1 : 0)
         return 1
     }
 
     /// Run an AppleScript source and return its result descriptor, or nil (logged)
     /// on a compile/run error. AppleScript output-volume control needs no entitlement.
-    private static func runAudioScript(_ source: String) -> NSAppleEventDescriptor? {
-        var errInfo: NSDictionary?
-        let result = NSAppleScript(source: source)?.executeAndReturnError(&errInfo)
-        if let errInfo {
-            print("[hammerdeck] audio AppleScript failed: "
-                + ((errInfo[NSAppleScript.errorMessage] as? String) ?? "\(errInfo)"))
-            return nil
-        }
-        return result
+    ///
+    /// The lowest-risk of the seam's AppleScript calls: `get volume settings` is a
+    /// StandardAdditions command with no `tell application` target, so there is no
+    /// other app to be absent or wedged, and nothing to liveness-gate. It still
+    /// goes through the bounded chokepoint -- these actions are automatable, and a
+    /// uniform ceiling is cheaper than reasoning about which call is "safe enough".
+    private func runAudioScript(_ source: String) -> NSAppleEventDescriptor? {
+        runAppleScript(source, timeout: 5, label: "audio")
     }
 }

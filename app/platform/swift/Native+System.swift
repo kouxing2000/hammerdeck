@@ -231,11 +231,12 @@ extension Native {
         }
         let script = "tell application \"System Events\" to tell appearance preferences "
             + "to set dark mode to \(value)"
-        var errInfo: NSDictionary?
-        _ = NSAppleScript(source: script)?.executeAndReturnError(&errInfo)
-        if let errInfo {
-            print("[hammerdeck] set appearance failed: "
-                + ((errInfo[NSAppleScript.errorMessage] as? String) ?? "\(errInfo)"))
+        // NOT liveness-gated: System Events is an on-demand system agent that is
+        // MEANT to auto-launch, so gating on it would break the call outright.
+        // Bounded instead -- this action is automatable (a schedule can fire it
+        // with nobody watching), so an unbounded wait here would freeze the app
+        // exactly when no one is present to notice.
+        guard runAppleScript(script, timeout: 10, label: "set appearance") != nil else {
             lua_pushboolean(L, 0)
             return 1
         }

@@ -14,9 +14,11 @@ payload (the feature platform). They meet at one bridge.
 **Only the Swift bridge (`app/platform/swift/LuaState.swift` +
 `Native.swift` and its `Native+*.swift` domain extensions) and the Lua seam
 (`app/platform/lua/adapter.lua`) may touch native / OS APIs.** `Native.swift` holds
-the class, shared state and `installBindings`; the actual OS calls live in
-`Native+Triggers/Storage/Panels/Network/Windows/System/Input/Browser.swift`
-(same type, extensions). New OS surface grows in whichever `Native+*` slice fits
+the class, shared state and `installBindings`; the actual OS calls live in the
+`Native+<domain>.swift` extensions of the same type (`ls
+app/platform/swift/Native+*.swift` for the current set -- an enumerated list here
+went stale twice, so the invariant is "one slice per domain", not a snapshot).
+New OS surface grows in whichever `Native+*` slice fits
 (or a new one), plus its HotkeyCenter/ChordCenter and the per-panel UI files
 (`ChooserPanel.swift`, `BannerPanel.swift`, ...); features and every other
 platform module go through the adapter. This keeps the host
@@ -162,6 +164,28 @@ pending.
   calls. `Native.swift` is the class + shared state + `installBindings`; the OS
   calls are grouped into `Native+<domain>.swift` extensions. The only place
   macOS-API surface should grow.
+  **Anything that blocks the main thread on ANOTHER process must be bounded.**
+  A synchronous cross-process call also spins a NESTED event loop while it waits,
+  so timers keep firing inside it and re-enter Lua mid-call -- that is what froze
+  the app for 25+ seconds on 2026-07-23 (a browser read to a just-quit Chrome,
+  with a window poll nesting an unbounded AX enumeration inside the wait; it
+  looked like a dead loop but burned ~0% CPU). Two rules hold the line, and a new
+  call site must not sidestep them: every synchronous AppleScript goes through
+  `Native+AppleScript.runAppleScript`, which liveness-gates the target via
+  `requiring:` and imposes a `with timeout` ceiling (never `NSAppleScript` bare --
+  a test enforces this); and AX messaging is time-boxed process-wide once at boot
+  (`Native+Windows.applyAXMessagingTimeout`). **Bound the wait; do not suppress
+  the caller.** Skipping timer ticks during a blocking call was tried and
+  reverted: it silently loses work, because a repeating timer is not always a
+  resumable poll (count_down counts ticks; sleep_schedule fires inside a narrow
+  window). Prefer the ASYNC out-of-process shape (`runJXA`) for anything bigger
+  than one property read -- a subprocess cannot hang the host at all. Seam
+  failures log via `seamLog` / `seamLogThrottled` so they reach the DAILY LOG, not
+  just stdout (the 2026-07-23 hang left no durable trace, which is what made it
+  expensive to diagnose) -- throttled, because these sit on poll paths.
+  **Timeout values here are MEASURED, not guessed**: the AX default turned out to
+  be ~1.5s, so an initial 2s "ceiling" silently loosened it. Re-measure before
+  changing one.
 - **app/platform/swift/SettingsStore/SettingsView/StatusBar.swift** --
   config UI: menubar (QUICK TRIGGERS: every enabled feature's actions fire on
   demand via registry.runAction; enable/disable lives in Settings only) +

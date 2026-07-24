@@ -1367,6 +1367,53 @@ final class IntegrationTests: XCTestCase {
         XCTAssertNil(ChooserPanel.icon(for: "file:/nonexistent/icon.png"))
     }
 
+    /// LIVENESS GATE -- the 2026-07-23 freeze. A synchronous AppleScript to an app
+    /// that is not running does NOT fail fast: `tell` LAUNCHES the app and blocks
+    /// the main thread until it is scriptable, and if it never becomes scriptable
+    /// the app plays dead. usage_stats polls browserActiveURL on a timer keyed on
+    /// the last ACTIVATED app, so once Chrome quit it kept addressing a departed
+    /// app every tick -- 25+ unresponsive seconds at ~0% CPU (a hang report, not a
+    /// crash).
+    ///
+    /// Probes the chokepoint directly with a name that can NEVER be running, so
+    /// this is deterministic on every machine -- gating on whichever real browser
+    /// happens to be closed would skip exactly where it matters. ELAPSED TIME is
+    /// the real assertion: returning nil is not enough, it has to return nil
+    /// without going near an Apple Event.
+    func testAppleScriptChokepointRefusesAbsentTargetInstantly() {
+        let absent = "HammerdeckAbsentProbe-\(ProcessInfo.processInfo.processIdentifier)"
+        XCTAssertFalse(Native.appIsRunning(named: absent), "the probe name must not exist")
+
+        let t0 = Date()
+        let result = Native.shared.runAppleScript(
+            "tell application \"\(absent)\" to return 1",
+            requiring: absent, timeout: 2, label: "absent probe")
+        let elapsed = Date().timeIntervalSince(t0)
+
+        XCTAssertNil(result, "an absent target answers nil")
+        XCTAssertLessThan(elapsed, 0.1,
+                          "the nil came from the liveness gate, not from a script run")
+    }
+
+    /// The chokepoint only holds if everything goes through it. A new `tell` added
+    /// with bare NSAppleScript would be unbounded and un-gated again -- the exact
+    /// 2026-07-23 shape -- and nothing else in the build would notice. Same idea as
+    /// the platform's other structural guards (feature_requires, i18n parity).
+    func testNoBareNSAppleScriptOutsideTheChokepoint() throws {
+        let dir = TestHost.repoRoot + "/app/platform/swift"
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir)
+            .filter { $0.hasSuffix(".swift") && $0 != "Native+AppleScript.swift" }
+        XCTAssertFalse(files.isEmpty, "found no Swift seam files to scan -- bad path")
+
+        var offenders: [String] = []
+        for f in files {
+            let text = try String(contentsOfFile: dir + "/" + f, encoding: .utf8)
+            if text.contains("NSAppleScript(") { offenders.append(f) }
+        }
+        XCTAssertEqual(offenders, [],
+                       "these bypass Native.runAppleScript (no liveness gate, no timeout ceiling)")
+    }
+
     /// runJXA must DRAIN stdout concurrently. Reading only after termination
     /// deadlocks once osascript's output passes the ~64KB pipe buffer: it blocks in
     /// write(), never exits, the callback never fires -> a wedged st.refreshing and

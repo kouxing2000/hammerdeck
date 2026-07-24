@@ -29,6 +29,46 @@ func axStableWindowID(_ element: AXUIElement) -> CGWindowID {
 }
 
 extension Native {
+    // MARK: - AX messaging timeout
+
+    /// Every AX read in this file is a SYNCHRONOUS cross-process call on the main
+    /// thread, and the ceiling applies PER attribute read. listWindows does
+    /// several reads per window across every app, so unresponsive apps stack those
+    /// into a freeze: that is the inner half of the 2026-07-23 hang, where
+    /// window_fan's 2s poll ran an AX enumeration inside a blocked AppleScript's
+    /// nested event loop.
+    ///
+    /// One call on the SYSTEM-WIDE element sets the default for the whole process
+    /// (per AXUIElement.h: "Pass the system-wide accessibility object if you want
+    /// to set the timeout globally for this process"), so every element created
+    /// later inherits it -- no per-element bookkeeping, and no way for a new AX
+    /// caller to miss it. Called once from installBindings, before any Lua runs.
+    ///
+    /// THE VALUE IS MEASURED, NOT GUESSED -- and the measurement is the whole
+    /// point, because the platform default is far TIGHTER than it looks. Probing
+    /// `kAXWindows` across every regular app on this machine (alternating configs,
+    /// resetting via the documented `0` = restore-default):
+    ///
+    ///     default   slowest read 1.505-1.515s   (3 runs, tightly clustered)
+    ///     2.0s      slowest read 2.008s         <- ABOVE the default: loosens it
+    ///     0.3s      slowest read 0.305s         <- same success count as default
+    ///
+    /// So the default is ~1.5s, and an earlier 2.0s here made the bound WORSE
+    /// while slowing every listWindows pass. 0.3s cost zero successes (the apps
+    /// that miss it were timing out at 1.5s too), and it is what bounds a full
+    /// pass: with several wedged apps, 0.3s each keeps a pass near a second
+    /// instead of the ~7s the default allows -- and window_fan polls every 2s.
+    /// If you change this number, RE-MEASURE; do not trust the header's silence
+    /// about the default.
+    static func applyAXMessagingTimeout() {
+        let err = AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.3)
+        if err != .success {
+            // Silent failure here would leave every AX call on the loose default
+            // with nothing to show for it.
+            Native.shared.seamLog("AX messaging timeout not applied (AXError \(err.rawValue))")
+        }
+    }
+
     // MARK: - Windows / apps (AXUIElement)
 
     // list_windows() -> Lua window handles, MRU-first. The Lua side never sees
@@ -103,10 +143,22 @@ extension Native {
             let bundleID = runApp.bundleIdentifier ?? ""
 
             var winsRef: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid),
-                                                kAXWindowsAttribute as CFString,
-                                                &winsRef) == .success,
-                  let axWins = winsRef as? [AXUIElement] else { continue }
+            let winsErr = AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid),
+                                                        kAXWindowsAttribute as CFString,
+                                                        &winsRef)
+            guard winsErr == .success, let axWins = winsRef as? [AXUIElement] else {
+                // An app that misses the AX ceiling has ALL its windows dropped
+                // from this listing -- the user just sees them missing from the
+                // switcher. Say so, or that is a silent hole. Throttled per app:
+                // window_fan re-lists every 2s, and a chronically slow app would
+                // otherwise write a line per poll.
+                if winsErr == .cannotComplete {
+                    seamLogThrottled("axwins:" + appName,
+                                     "list_windows: '\(appName)' did not answer within the AX "
+                                     + "timeout -- its windows are missing from this listing")
+                }
+                continue
+            }
             for win in axWins {
                 var subroleRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subroleRef)

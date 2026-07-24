@@ -87,6 +87,10 @@ final class Native {
     // MARK: - Table registration
 
     func installBindings() {
+        // Bound every AX call in the process before any of them can run (see
+        // Native+Windows.applyAXMessagingTimeout) -- the seam's blocking calls
+        // must be time-boxed from the first Lua line onward, not from first use.
+        Native.applyAXMessagingTimeout()
         // SwiftC cannot type-check one ~90-entry [String: @convention(c) closure]
         // literal in reasonable time -- split into smaller literals it can handle,
         // then merge. Keys are unique, so the conflict resolver is never hit.
@@ -331,6 +335,38 @@ final class Native {
         appendLogLine(msg)
         return 0
     }
+
+    /// Seam-level diagnostics: stdout AND the daily log file, the same sink
+    /// ctx.log and the callback error sink use. Seam failures used to `print`
+    /// only, so they died with the terminal -- the 2026-07-23 AppleScript hang
+    /// left nothing in the daily log, which is where a post-mortem actually
+    /// looks. Terse and rare by construction; never per-frame.
+    func seamLog(_ msg: String) {
+        print("[hammerdeck]", msg)
+        appendLogLine(msg)
+    }
+
+    private var lastSeamErrorAt: [String: Date] = [:]
+
+    /// seamLog for a RECURRING failure, throttled per `key`.
+    /// Seam errors sit on poll paths -- tab_switcher reads a browser URL every few
+    /// seconds while browsing -- so a persistent failure (Automation denied, a
+    /// wedged app) would otherwise write a line every tick and bury the log it
+    /// exists to make readable. First occurrence logs immediately; repeats of the
+    /// same key are suppressed for a minute, then log again with how many were
+    /// swallowed, so a stuck condition stays visible without flooding.
+    func seamLogThrottled(_ key: String, _ msg: String) {
+        let now = Date()
+        if let last = lastSeamErrorAt[key], now.timeIntervalSince(last) < 60 {
+            suppressedSeamErrors[key, default: 0] += 1
+            return
+        }
+        lastSeamErrorAt[key] = now
+        let n = suppressedSeamErrors.removeValue(forKey: key) ?? 0
+        seamLog(n > 0 ? "\(msg) (+\(n) more since the last line)" : msg)
+    }
+
+    private var suppressedSeamErrors: [String: Int] = [:]
 
     func stop(_ L: OpaquePointer?) -> Int32 {
         if let id = LuaState.int(L, 1).map(Int32.init), let cancel = cancellers[id] {
