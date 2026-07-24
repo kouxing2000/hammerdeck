@@ -15,8 +15,26 @@
 #
 # Install:  git config core.hooksPath scripts/hooks
 # Bypass (ONLY for a genuine false positive):  git commit --no-verify
+#
+# CI backstop: `scripts/hooks/pre-commit --all` scans EVERY tracked file instead
+# of the staged set -- ci.yml runs it so content that rode in on a --no-verify
+# or hookless commit still turns the build red before the repo is public.
 
 set -uo pipefail
+
+if [ "${1:-}" = "--all" ]; then
+    # git ls-files is cwd-relative: from a subdirectory it silently scans a
+    # SUBSET and exits 0 -- indistinguishable from a clean full scan. Pin to the
+    # repo root and refuse an empty list, so a partial scan can never pass green.
+    cd "$(git rev-parse --show-toplevel)" || exit 1
+    list_files() { git ls-files; }
+    if [ -z "$(git ls-files | head -1)" ]; then
+        printf 'pre-commit --all: git ls-files returned nothing -- refusing a vacuous pass.\n' >&2
+        exit 1
+    fi
+else
+    list_files() { git diff --cached --name-only --diff-filter=ACM; }
+fi
 
 # Unambiguous business-strategy signals. Deliberately EXCLUDES words that carry a
 # common technical meaning here -- e.g. "subscription" (the rules engine is full of
@@ -52,14 +70,14 @@ while IFS= read -r f; do
     matches=$(grep -inE "$PATTERN" -- "$f" 2>/dev/null | head -5)
     if [ -n "$matches" ]; then
         if [ "$found" -eq 0 ]; then
-            printf '\n\033[31mBLOCKED\033[0m: business/strategy content in a staged file.\n' >&2
+            printf '\n\033[31mBLOCKED\033[0m: business/strategy content in a checked file.\n' >&2
             printf 'This repo is going PUBLIC -- that content must not enter its history.\n\n' >&2
             found=1
         fi
         printf '  %s\n' "$f" >&2
         printf '%s\n' "$matches" | sed 's/^/      /' >&2
     fi
-done < <(git diff --cached --name-only --diff-filter=ACM)
+done < <(list_files)
 
 if [ "$found" -eq 1 ]; then
     printf '\nMove it to your private strategy repo, or to the gitignored notes/ dir.\n' >&2

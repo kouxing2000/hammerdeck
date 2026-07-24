@@ -30,6 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The content pre-commit hook is LOCAL (core.hooksPath) -- bypassable with
+      # --no-verify, or simply never installed on a clone. This is its server-side
+      # backstop: the same check over every tracked file, so business/strategy
+      # content cannot ride a hookless commit into the public history unnoticed.
+      - name: Business-content guard (hook backstop)
+        run: scripts/hooks/pre-commit --all
+
       # README's feature catalog is GENERATED from each feature.json -- a doc that
       # restates what the code declares drifts by construction, so the code checks
       # the doc. Needs no toolchain, so it runs first: fastest possible red.
