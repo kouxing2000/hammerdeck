@@ -414,6 +414,38 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.toggleMute()        return adapter.toggleMute() end
     function ctx.mediaKey(name)      adapter.mediaKey(name) end
 
+    -- CAPABILITY GATE ----------------------------------------------------------
+    -- Withhold every tiered method the feature did not declare (see
+    -- manifest.CAPABILITY_METHODS). This runs LAST, once the whole surface is
+    -- built, so the map is checked against the real ctx rather than against the
+    -- order things happen to be defined in.
+    --
+    -- Denied methods are replaced by a raising stub, NOT deleted. A missing
+    -- method fails as "attempt to call a nil value (field 'httpGet')" from
+    -- somewhere inside the feature -- true, useless, and easy to misread as a
+    -- typo. The stub names the feature, the method, the capability, and the file
+    -- to edit, which is the difference between a five-second fix and a debugging
+    -- session. It is also the backstop for calls the static guard cannot see
+    -- (dynamic dispatch, or a platform helper like favicons reaching through a
+    -- ctx it was handed).
+    for cap, methods in pairs(manifest.CAPABILITY_METHODS) do
+        local granted = manifest.hasCapability(m, cap)
+        for _, name in ipairs(methods) do
+            -- A name here that is not on ctx would gate NOTHING and never be
+            -- noticed -- the failure mode of every allowlist that is written by
+            -- hand. Fail on the spot instead.
+            assert(ctx[name] ~= nil,
+                "capability map names ctx." .. name .. " (" .. cap .. "), which does not exist")
+            if not granted then
+                ctx[name] = function()
+                    error(("feature '%s' called ctx.%s without the '%s' capability -- add "
+                        .. '"capabilities": ["%s"] to app/features/%s/feature.json')
+                        :format(m.id, name, cap, cap, m.id), 2)
+                end
+            end
+        end
+    end
+
     -- capability-gated extras (stateless; no scope handle to track) ------------
     if extra then
         for k, v in pairs(extra) do

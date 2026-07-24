@@ -5,6 +5,12 @@
   "category": "productivity",
   "icon": "list.clipboard",
   "context": "anywhere",
-  "requires": ["accessibility"],
+  "capabilities": [
+    "files",
+    "input"
+  ],
+  "requires": [
+    "accessibility"
+  ],
   "recommended": true
 }

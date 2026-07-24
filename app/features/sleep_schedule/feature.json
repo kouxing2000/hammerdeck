@@ -4,5 +4,8 @@
   "description": "Forces system sleep at a set time, with graduated warnings, a one-time snooze, and a weekend shift.",
   "category": "health",
   "icon": "moon.zzz.fill",
-  "context": "automatic"
+  "context": "automatic",
+  "capabilities": [
+    "power"
+  ]
 }

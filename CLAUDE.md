@@ -91,7 +91,8 @@ pending.
 
 - **app/features/<id>/** -- one feature, three co-located parts: `feature.json`
   (DECLARATIVE identity/presentation -- name, version, description, category,
-  context, and optional requires/recommended/page; no code), `lua/` (the plugin
+  context, `capabilities` (see CAPABILITIES below), and optional
+  requires/recommended/page; no code), `lua/` (the plugin
   code: `init.lua` returns the manifest table -- `id` (the anchor) + `api` +
   behavior), and an optional `swift/` (native UI the feature contributes, e.g.
   usage_stats' report page). The registry OVERLAYS feature.json onto the manifest
@@ -151,10 +152,29 @@ pending.
 - **app/platform/lua/registry.lua** -- registers features, persists enabled-state +
   option values per id, runs lifecycle (bind trigger / start), scoped teardown.
 - **app/platform/lua/ctx.lua** -- builds the scoped, curated ctx (the plugin API);
-  every handle a feature creates is tracked and stopped on disable. A feature
-  that declares `capabilities = {"commands"}` gets privileged cross-feature
-  reach injected here (`ctx.commands()` / `ctx.runCommand()`, least-privilege --
-  powers the command palette).
+  every handle a feature creates is tracked and stopped on disable. It also
+  applies the **CAPABILITY GATE** (see below), which is the last thing it does.
+- **CAPABILITIES** -- a feature declares what it may reach in its `feature.json`
+  (`"capabilities": ["network", ...]`), NOT in `lua/init.lua`; feature.json is the
+  declarative file a reader opens to answer "what can this thing do to my
+  machine?" without reading the code. The tiers and the exact ctx methods each
+  one gates live in ONE place, `manifest.CAPABILITY_METHODS` -- read it there
+  rather than trusting a list here, which would go stale. Two shapes: GATED
+  (the method exists on ctx and is withheld unless declared -- network, input
+  synthesis, power, browser reads, out-of-dataDir file IO) and ADDITIVE
+  (`commands` INJECTS `ctx.commands()` / `ctx.runCommand()`, the cross-feature
+  reach behind the command palette, which no ordinary feature gets).
+  A withheld method is replaced by a **raising stub**, never deleted, so the
+  failure names the feature, the method, the capability and the file to edit --
+  not `attempt to call a nil value`. Note the reach is TRANSITIVE: `platform.
+  favicons` calls `ctx.downloadFile` / `ctx.extractFavicons` through the ctx it
+  is handed, so a feature using it needs `network` + `browser` + `files` too.
+  This is **auditability, not a sandbox** -- the catalog is first-party and a
+  feature could simply declare everything; the value is that the claim is
+  greppable and machine-checked. `test/cases/_integration/platform/
+  feature_capabilities.lua` checks declarations against real usage in BOTH
+  directions: under-declaring is a latent crash, and over-declaring is what rots
+  the labels into decoration, so a capability nothing uses fails the build too.
 - **app/platform/lua/adapter.lua** -- the seam (Lua side); every binding it returns
   is a handle with `.stop()`.
 - **app/platform/swift/LuaState.swift** -- the bridge mechanics: owns the
@@ -334,8 +354,9 @@ loudly, never dropped.
 ACTION feature: copy `app/features/window_switcher/`. SERVICE feature: copy
 `app/features/sleep_schedule/`. A feature is a folder
 `app/features/<id>/` with: `feature.json` (identity/presentation -- name,
-version, description, category, context, optional requires/recommended/page),
-`lua/init.lua` (returns the manifest table: `id` + `api` + behavior), and an
+version, description, category, context, `capabilities`, optional
+requires/recommended/page), `lua/init.lua` (returns the manifest table: `id` +
+`api` + behavior), and an
 optional `swift/` (native UI; register it in `FeaturePageRegistry` and declare a
 `page` in feature.json). Features are **autodiscovered** by scanning
 `app/features/` for a `<id>/lua/init.lua` -- just drop the folder in (no catalog
@@ -357,6 +378,15 @@ event (e.g. bing_daily's "Refresh wallpaper now", which ships with a schedule
 as its default trigger), mark it `automatable = true`;
 otherwise it stays manual-only (hotkey/chord). An automated `defaultTrigger`
 requires `automatable = true` -- manifest.validate rejects the mismatch.
+
+If the feature reaches the network, synthesizes keystrokes, sleeps/locks the
+machine, reads the browser, or touches files outside its own `dataDir`, declare
+the matching **`capabilities`** in its feature.json (`manifest.CAPABILITY_METHODS`
+is the map). Declare exactly what it uses: the guard fails on a MISSING
+capability AND on an unused one, so you cannot paper over it by declaring
+everything. Requiring `platform.favicons` counts -- it reaches the network and
+the browser through your ctx. Skip this and the feature still loads, then throws
+a message naming the capability the first time that code path runs.
 
 ## Status / roadmap
 

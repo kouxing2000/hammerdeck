@@ -30,6 +30,10 @@ return {
             api = 1,
             id = "async_probe",
             name = "Async probe",
+            -- Synthetic feature: no feature.json on disk, so it declares here.
+            -- It reaches the network, downloads, and the browser's favicon DB,
+            -- so it needs all three -- the capability gate denies the rest.
+            capabilities = { "network", "browser" },
             start = function(ctx)
                 poll = function()
                     ctx.httpGet("https://example.test/a", {}, function() end)

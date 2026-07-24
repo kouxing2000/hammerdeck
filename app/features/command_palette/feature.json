@@ -6,5 +6,8 @@
   "selfEvident": true,
   "icon": "command",
   "context": "anywhere",
+  "capabilities": [
+    "commands"
+  ],
   "recommended": true
 }

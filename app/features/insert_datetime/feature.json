@@ -5,5 +5,10 @@
   "category": "productivity",
   "icon": "calendar.badge.clock",
   "context": "textField",
-  "requires": ["accessibility"]
+  "capabilities": [
+    "input"
+  ],
+  "requires": [
+    "accessibility"
+  ]
 }

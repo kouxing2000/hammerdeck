@@ -4,5 +4,8 @@
   "description": "Turns the display off after a period of no activity, with a countdown warning on every screen first. Stands down while video, a call or a presentation is holding the display awake.",
   "category": "health",
   "icon": "lightswitch.off",
-  "context": "automatic"
+  "context": "automatic",
+  "capabilities": [
+    "power"
+  ]
 }

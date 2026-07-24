@@ -5,5 +5,11 @@
   "category": "productivity",
   "icon": "textformat",
   "context": "textField",
-  "requires": ["accessibility"]
+  "capabilities": [
+    "input",
+    "network"
+  ],
+  "requires": [
+    "accessibility"
+  ]
 }

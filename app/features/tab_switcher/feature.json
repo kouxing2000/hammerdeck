@@ -5,5 +5,10 @@
   "category": "productivity",
   "selfEvident": true,
   "icon": "rectangle.stack",
-  "context": "web"
+  "context": "web",
+  "capabilities": [
+    "browser",
+    "files",
+    "network"
+  ]
 }

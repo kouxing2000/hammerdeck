@@ -5,5 +5,12 @@
   "category": "productivity",
   "icon": "chart.bar.xaxis",
   "context": "automatic",
-  "page": { "title": "Usage", "icon": "chart.bar.xaxis" }
+  "capabilities": [
+    "browser",
+    "files"
+  ],
+  "page": {
+    "title": "Usage",
+    "icon": "chart.bar.xaxis"
+  }
 }

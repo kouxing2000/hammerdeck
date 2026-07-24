@@ -122,7 +122,8 @@ end
 return {
     api          = 1,
     id           = "command_palette",
-    capabilities = { "commands" },   -- opts into the cross-feature ctx methods
+    -- `capabilities` lives in feature.json (the declarative file a reader opens
+    -- to see what a feature may reach). This one declares "commands".
 
     options = {
         { key = "showShortcuts", type = "bool", default = true,

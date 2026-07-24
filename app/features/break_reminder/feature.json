@@ -4,5 +4,8 @@
   "description": "Reminds you to rest your eyes after a work interval; idle-aware, with daily work-time stats.",
   "category": "health",
   "icon": "figure.walk",
-  "context": "automatic"
+  "context": "automatic",
+  "capabilities": [
+    "power"
+  ]
 }

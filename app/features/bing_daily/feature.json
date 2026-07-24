@@ -4,5 +4,8 @@
   "description": "Sets Bing's picture of the day as your wallpaper, refreshed on a schedule.",
   "category": "appearance",
   "icon": "photo.artframe",
-  "context": "automatic"
+  "context": "automatic",
+  "capabilities": [
+    "network"
+  ]
 }

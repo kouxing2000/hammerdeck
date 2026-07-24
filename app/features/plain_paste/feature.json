@@ -5,5 +5,10 @@
   "category": "productivity",
   "icon": "doc.on.clipboard",
   "context": "textField",
-  "requires": ["accessibility"]
+  "capabilities": [
+    "input"
+  ],
+  "requires": [
+    "accessibility"
+  ]
 }

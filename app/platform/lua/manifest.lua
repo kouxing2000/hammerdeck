@@ -83,12 +83,50 @@ local VALID_OPTION_TYPES = {
     siteList = true, placementList = true, secret = true,
 }
 
--- Privileged ctx extensions a feature may opt into via `capabilities = {...}`.
--- The registry only injects the matching ctx methods for features that declare
--- the capability (principle of least privilege): `commands` grants
--- ctx.commands() / ctx.runCommand() -- the cross-feature reach the command
--- palette needs and a normal feature must never have.
+-- CAPABILITIES -- what a feature is allowed to reach, declared up front.
+--
+-- A feature gets the ordinary ctx surface (windows, panels, timers, options,
+-- clipboard, its own dataDir) for free. Everything below is withheld unless the
+-- feature NAMES it, so `capabilities` in feature.json answers "what can this
+-- thing actually do to my machine?" without reading its code -- which is the
+-- point, now that the source is public. It is honest labelling, not a sandbox:
+-- the catalog is first-party, and a feature that wanted to lie could simply
+-- declare everything. What it buys is that the declaration is greppable, is
+-- checked against real usage by a test, and cannot silently drift.
+--
+-- Two shapes:
+--   GATED (below)  -- the method exists on ctx and is REMOVED unless declared.
+--   ADDITIVE       -- `commands` grants ctx.commands()/ctx.runCommand(), which
+--                     do not otherwise exist (the registry injects them). That
+--                     is cross-feature reach the palette needs and a normal
+--                     feature must never have.
+--
+-- Adding a method to ctx? If it touches the network, synthesizes input, powers
+-- the machine down, reads the browser, or writes outside the feature's own
+-- dataDir, it belongs in a tier here. ctx.make asserts every name below really
+-- exists, so a typo fails loudly instead of gating nothing.
+local CAPABILITY_METHODS = {
+    -- Synthesizes keystrokes into whatever app is focused -- the highest-trust
+    -- surface here: it can drive any application as the user.
+    input = { "keyStroke", "typeText" },
+    -- Outbound network. Note platform.favicons downloads icons, so a feature
+    -- that uses it needs this too (the stub below says so by name).
+    network = { "httpGet", "httpPost", "httpRequest", "downloadFile" },
+    -- Puts the machine or its display to sleep / locks it.
+    power = { "systemSleep", "lockScreen", "displaySleep", "startScreensaver" },
+    -- Reads or drives the browser. The privacy-relevant tier: browserListTabs
+    -- enumerates every open tab's title and URL.
+    browser = { "browserListTabs", "browserFocusTab", "browserActiveURL",
+                "extractFavicons", "focusBrowserTab", "focusSafariTab",
+                "openSiteApp", "openSite" },
+    -- Filesystem beyond the feature's own sandbox. dataDir()/cacheDir() stay
+    -- ungated (a feature's own storage); these can address any path, and
+    -- homeDir() is the door to the user's documents.
+    files = { "homeDir", "fileRead", "fileWrite", "fileAppend", "fileExists",
+              "mkdir", "removeSubdir" },
+}
 local KNOWN_CAPABILITIES = { commands = true }
+for cap in pairs(CAPABILITY_METHODS) do KNOWN_CAPABILITIES[cap] = true end
 
 -- `context` is the PRIMARY way features are grouped in the UI (Gallery sections,
 -- Tour order): it answers "when does this apply / what must I be doing for it to
@@ -438,6 +476,18 @@ end
 
 -- Does this manifest declare the named capability? (registry uses this to
 -- decide whether to inject the matching privileged ctx methods.)
+-- capability -> the ctx method names it gates. ctx.make consumes this to strip
+-- what a feature did not declare; the capability guard test consumes it to check
+-- declarations against real usage. Read-only by convention.
+---@type table<string, string[]>
+manifest.CAPABILITY_METHODS = CAPABILITY_METHODS
+
+-- Every capability name a feature may declare (the gated tiers plus the
+-- additive `commands`), as a set. Exposed so a test can enumerate the full set
+-- rather than re-listing it and drifting.
+---@type table<string, boolean>
+manifest.KNOWN_CAPABILITIES = KNOWN_CAPABILITIES
+
 function manifest.hasCapability(m, name)
     for _, cap in ipairs(m.capabilities or {}) do
         if cap == name then return true end

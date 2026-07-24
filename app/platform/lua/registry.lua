@@ -106,6 +106,12 @@ local META_FIELDS = {
     "name", "version", "description", "category", "context",
     "requires", "recommended", "page", "preference", "icon", "defaultEnabled",
     "selfEvident",
+    -- What the feature is allowed to reach (see manifest.CAPABILITY_METHODS).
+    -- feature.json is its HOME: the declarative file a reader opens to see what a
+    -- feature can do, without reading its Lua. A synthetic test feature with no
+    -- feature.json on disk may still declare it in the manifest table (this
+    -- overlay only replaces the key when the JSON actually carries one).
+    "capabilities",
 }
 
 -- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
@@ -1026,6 +1032,14 @@ function registry.describe()
             icon = m.icon,
             context = m.context or "anywhere",
             requires = json.asArray(m.requires or {}),
+            -- What this feature is allowed to reach (network / input / power /
+            -- browser / files / commands). Empty for the majority, which is the
+            -- informative part: most features touch nothing but windows and
+            -- panels. Carried to the host so the config UI can show it -- a
+            -- declaration nobody can see is only half of the auditability this
+            -- gate exists for. asArray so an empty list crosses the bridge as
+            -- [] rather than {} (see json.asArray / LuaState.any).
+            capabilities = json.asArray(m.capabilities or {}),
             recommended = m.recommended == true,
             -- A global BEHAVIOR PREFERENCE (feature.json "preference": true), not a
             -- catalog capability: the Settings UI surfaces it in General > Behavior
