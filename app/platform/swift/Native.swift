@@ -207,6 +207,8 @@ final class Native {
             "set_appearance": { L in MainActor.assumeIsolated { Native.shared.setAppearance(L) } },
             "running_apps_info": { L in MainActor.assumeIsolated { Native.shared.runningAppsInfo(L) } },
             "power_source":  { L in MainActor.assumeIsolated { Native.shared.powerSource(L) } },
+            "display_sleep_prevented": { L in
+                MainActor.assumeIsolated { Native.shared.displaySleepPrevented(L) } },
             "set_focused_window_fullscreen": { L in MainActor.assumeIsolated { Native.shared.setFocusedWindowFullscreen(L) } },
             "minimize_app":  { L in MainActor.assumeIsolated { Native.shared.minimizeApp(L) } },
             "hide_app":      { L in MainActor.assumeIsolated { Native.shared.hideApp(L) } },

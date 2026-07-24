@@ -1213,6 +1213,13 @@ function adapter.idleSeconds()
     return fake.idle
 end
 
+-- Set to a process name to simulate an app holding the display awake (video
+-- playback, a call, a presentation); nil = nothing holds one.
+fake.displayHeldBy = nil
+function adapter.displaySleepPrevented()
+    return fake.displayHeldBy
+end
+
 fake.mouseLocates = {}   -- recorded locateMouse(seconds) calls
 function adapter.locateMouse(seconds)
     fake.mouseLocates[#fake.mouseLocates + 1] = seconds

@@ -353,6 +353,11 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
         adapter.extractFavicons(outDir, domains, cb)
     end
     function ctx.idleSeconds()       return adapter.idleSeconds() end
+    -- Name of a process holding the display awake (video playback, a call, a
+    -- presentation), or nil. ALWAYS pair this with idleSeconds before acting on
+    -- idleness: no-input does not mean nobody-is-there.
+    ---@return string|nil
+    function ctx.displaySleepPrevented() return adapter.displaySleepPrevented() end
     function ctx.systemSleep()       adapter.systemSleep() end
     function ctx.lockScreen()        adapter.lockScreen() end
     function ctx.displaySleep()      adapter.displaySleep() end

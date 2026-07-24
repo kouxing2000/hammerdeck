@@ -1041,6 +1041,17 @@ function adapter.idleSeconds()
     return native.idle_seconds()
 end
 
+-- Who, if anyone, is holding the display awake. Returns the holding process's
+-- name while SOME app holds a macOS display-wake power assertion (video
+-- playback, a video call, a presentation, screen sharing), nil otherwise.
+-- The companion to idleSeconds: idle time alone cannot tell "away from the
+-- desk" from "watching a film", and this is the signal macOS's own
+-- idle-display-sleep consults to tell them apart.
+---@return string|nil holder process name, or nil when nothing holds one
+function adapter.displaySleepPrevented()
+    return native.display_sleep_prevented()
+end
+
 function adapter.systemSleep()
     native.system_sleep()
 end

@@ -62,7 +62,7 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 
 - **Break Reminder** -- Reminds you to rest your eyes after a work interval; idle-aware, with daily work-time stats.
 - **Sleep Schedule** -- Forces system sleep at a set time, with graduated warnings, a one-time snooze, and a weekend shift.
-- **Turn Off Display When Idle** -- Turns the display off after a period of no activity, with a short warning first.
+- **Turn Off Display When Idle** -- Turns the display off after a period of no activity, with a countdown warning on every screen first. Stands down while video, a call or a presentation is holding the display awake.
 
 ### Appearance
 
