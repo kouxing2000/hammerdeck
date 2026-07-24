@@ -271,6 +271,11 @@ struct FeatureInfo: Identifiable {
     let icon: String?           // per-feature SF Symbol; nil -> fall back to the category glyph
     let context: String         // WHEN it applies -- the primary grouping axis (FeatureContext)
     let requires: [String]      // OS preconditions, e.g. ["accessibility"]
+    // What the feature is allowed to reach (network / input / power / browser /
+    // files / commands). Usually EMPTY, which is the informative case: most
+    // features touch nothing but windows and panels. Enforced in Lua
+    // (manifest.CAPABILITY_METHODS); carried here only to be shown.
+    let capabilities: [String]
     let recommended: Bool       // part of the curated "Essentials" starter set
     let preference: Bool        // a global behavior toggle -> shown in General > Behavior, hidden from the catalog
     let version: String
@@ -293,6 +298,7 @@ struct FeatureInfo: Identifiable {
         self.icon = (dict["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.context = dict.str("context", "anywhere")
         self.requires = dict.strArray("requires")
+        self.capabilities = dict.strArray("capabilities")
         self.recommended = dict.bool("recommended")
         self.preference = dict.bool("preference")
         self.version = dict.str("version")

@@ -1438,6 +1438,35 @@ final class IntegrationTests: XCTestCase {
                        "these open their own network egress instead of Native.httpTask")
     }
 
+    /// Every capability Lua can grant must have real presentation here.
+    ///
+    /// Enforcement lives in Lua (manifest.CAPABILITY_METHODS); the Swift table in
+    /// FeatureChrome is presentation only, so the two can drift -- and the drift is
+    /// silent by design: an unknown capability falls back to its raw id and a
+    /// generic line, which renders SOMETHING rather than vanishing (showing less
+    /// reach than a feature actually has would be the worst failure here). That
+    /// fallback is a safety net, not an acceptable resting state: "Files" with a
+    /// real sentence is the product, "Newtier / An additional capability." is a
+    /// bug the user would never report. This catches it at build time.
+    @MainActor
+    func testEveryCapabilityHasHostPresentation() throws {
+        let raw = try TestHost.shared.lua.eval("""
+            local caps = {}
+            for c in pairs(require("platform.manifest").KNOWN_CAPABILITIES) do caps[#caps+1] = c end
+            table.sort(caps)
+            return caps
+            """)
+        let caps = (raw as? [Any])?.compactMap { $0 as? String } ?? []
+        XCTAssertFalse(caps.isEmpty, "read no capabilities from Lua -- bad path, not a pass")
+
+        // capabilityPresentation returns nil for "no wording in this build" -- a
+        // direct answer, not a guess at whether the fallback was used.
+        let unpresented = caps.filter { capabilityPresentation($0) == nil }
+        XCTAssertEqual(unpresented, [],
+                       "these capabilities exist in Lua but have no label/glyph/description "
+                       + "in capabilityInfo -- they would render as a bare id to the user")
+    }
+
     /// runJXA must DRAIN stdout concurrently. Reading only after termination
     /// deadlocks once osascript's output passes the ~64KB pipe buffer: it blocks in
     /// write(), never exits, the callback never fires -> a wedged st.refreshing and

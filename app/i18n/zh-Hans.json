@@ -635,5 +635,20 @@
   "usage.safariOffTitle": "不记录 Safari 网站",
   "usage.safariOffBody": "与 Chrome 不同, Safari 没有给我们任何办法区分无痕浏览窗口, 所以私密网站有可能被记录. 如果你接受这一点, 请在 设置 › 使用统计 中开启 “同时记录 Safari 网站”.",
   "window.axRequired": "%1$s 需要辅助功能权限 -- 请在系统设置中授权 %2$s, 然后重试",
-  "window.noFocused": "没有聚焦的窗口"
+  "window.noFocused": "没有聚焦的窗口",
+  "settings.capabilities": "它能访问什么",
+  "settings.capabilities_none": "除窗口, 面板和自身设置外, 不访问任何内容.",
+  "cap.input": "键盘输入",
+  "cap.input.detail": "在当前聚焦的任意应用中输入文字和按键.",
+  "cap.network": "网络",
+  "cap.network.detail": "通过互联网收发数据.",
+  "cap.power": "睡眠与锁屏",
+  "cap.power.detail": "可以让显示器或 Mac 进入睡眠, 以及锁定屏幕.",
+  "cap.browser": "浏览器",
+  "cap.browser.detail": "读取你打开的标签页 -- 包括标题和网址 -- 并可在其间切换.",
+  "cap.files": "文件",
+  "cap.files.detail": "读写自身存储目录以外的文件.",
+  "cap.commands": "其他功能",
+  "cap.commands.detail": "可以列出并运行你已启用的其他功能的操作.",
+  "cap.unknown.detail": "一项额外的能力."
 }

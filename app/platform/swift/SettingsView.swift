@@ -305,6 +305,7 @@ private struct FeatureDetail: View {
                     LabeledContent(Strings.t("settings.version", default: "Version"), value: feature.version)
                 }
             }
+            CapabilitySection(feature: feature)
             // One trigger editor per declared action (a plugin may have several
             // shortcuts). Pure services have none. DYNAMIC actions are omitted: they
             // are created + bound by the option editor that owns them (window_snap's
@@ -352,6 +353,47 @@ private struct FeatureDetail: View {
             groups[s, default: []].append(opt)
         }
         return order.map { ($0, groups[$0]!) }
+    }
+}
+
+// MARK: - Capabilities
+
+/// "What it can reach" -- the feature's declared capabilities, or an explicit
+/// statement that it has none.
+///
+/// The empty case is rendered, not skipped, and that is the deliberate part: 13
+/// of the catalog's features declare nothing, and "this one touches only windows
+/// and panels" is a real answer the user wants. A section that simply vanished
+/// would be indistinguishable from a feature whose reach nobody had labelled --
+/// which is exactly the ambiguity the capability work exists to remove.
+private struct CapabilitySection: View {
+    let feature: FeatureInfo
+
+    var body: some View {
+        Section(Strings.t("settings.capabilities", default: "What it can reach")) {
+            if feature.capabilities.isEmpty {
+                Label(Strings.t("settings.capabilities_none",
+                                default: "Nothing beyond windows, panels and its own settings."),
+                      systemImage: "checkmark.shield")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(sortedCapabilities(feature.capabilities), id: \.self) { cap in
+                    let info = capabilityInfo(cap)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: info.symbol)
+                            .foregroundStyle(.tint)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(info.label)
+                            Text(info.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
