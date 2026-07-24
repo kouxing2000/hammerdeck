@@ -26,6 +26,60 @@ extension Native {
         }
     }
 
+    // MARK: - Cancelable one-shots
+
+    /// Pin `ref` as a CANCELABLE async one-shot and return the resource id to
+    /// hand back to Lua (`native.stop(id)` cancels it).
+    ///
+    /// WHY this exists: an async seam call (http, download, JXA, favicon scan)
+    /// pins a Lua callback and fires it whenever the work lands -- which can be
+    /// long AFTER the feature that asked for it was disabled. Unguarded that is a
+    /// real lifecycle hole, not a theoretical one: bing_daily chains
+    /// httpGet -> downloadFile -> setWallpaper, so disabling it mid-flight still
+    /// changed the user's wallpaper afterwards. "Disabled" has to mean disabled.
+    ///
+    /// Registering the in-flight call as a resource closes it. ctx tracks the
+    /// returned handle in the feature's enablement scope, so teardown calls
+    /// stop() -> `cancel` aborts the underlying work and the pinned ref is
+    /// released; a late landing then finds the id gone and drops silently
+    /// (see fireOneShot). `cancel` defaults to a no-op for work that cannot be
+    /// aborted -- dropping the callback is still the point.
+    ///
+    /// Reserve-then-arm (rather than one call) so the id is a `let` the completion
+    /// closure captures BY VALUE: the canceller needs the task, and the task's
+    /// completion needs the id, and a captured `var` closing that loop would be a
+    /// cross-thread mutable capture. Arming after the work is created is safe --
+    /// fireOneShot lands via main.async, which cannot run until this synchronous
+    /// main-actor call has returned.
+    func allocOneShot() -> Int32 { allocId() }
+
+    func armOneShot(_ id: Int32, _ ref: Int32, cancel: @escaping () -> Void = {}) {
+        cancellers[id] = {
+            cancel()
+            Native.shared.lua.releaseRef(ref)
+        }
+    }
+
+    /// Fire a one-shot reserved by `allocOneShot` + `armOneShot`, if it is still live.
+    ///
+    /// Race-free by construction: the liveness check and every teardown both run
+    /// on the main actor, so a completion that races a disable either finds the id
+    /// present (fires, then retires it) or absent (drops). Consuming the id BEFORE
+    /// calling into Lua matters -- the callback may re-enter and stop its own
+    /// handle, which would otherwise release the ref twice.
+    nonisolated static func fireOneShot(_ id: Int32, _ ref: Int32,
+                                        push: @escaping @Sendable (OpaquePointer) -> Int32) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let native = Native.shared
+                guard native.cancellers[id] != nil else { return }   // torn down: drop it
+                native.freeResource(id)                              // consume before firing
+                native.lua.callRef(ref, pushArgs: push)
+                native.lua.releaseRef(ref)
+            }
+        }
+    }
+
     /// Observe `names` on `center` (a NotificationCenter, or its
     /// DistributedNotificationCenter subclass), invoking the pinned Lua `ref` on
     /// each post; returns the cancel closure (remove every observer + releaseRef)

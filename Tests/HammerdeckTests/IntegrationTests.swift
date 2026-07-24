@@ -1414,6 +1414,30 @@ final class IntegrationTests: XCTestCase {
                        "these bypass Native.runAppleScript (no liveness gate, no timeout ceiling)")
     }
 
+    /// Outbound HTTP has exactly ONE egress point (Native.httpTask, in
+    /// Native+Network) and everything -- features AND the host's own config UI --
+    /// goes through it. SettingsStore used to open its own URLSession to validate an
+    /// OpenAI key, which made the host an exception to the rule the architecture
+    /// rests on and put a second network path outside the seam where nothing audits
+    /// it. Same structural-guard shape as the NSAppleScript check above: the
+    /// chokepoint only holds if nothing new quietly steps around it.
+    func testNoURLSessionOutsideTheNetworkSeam() throws {
+        let dir = TestHost.repoRoot + "/app/platform/swift"
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir)
+            .filter { $0.hasSuffix(".swift") && $0 != "Native+Network.swift" }
+        XCTAssertFalse(files.isEmpty, "found no Swift seam files to scan -- bad path")
+
+        var offenders: [String] = []
+        for f in files {
+            let text = try String(contentsOfFile: dir + "/" + f, encoding: .utf8)
+            if text.contains("URLSession.shared") || text.contains("URLSession(") {
+                offenders.append(f)
+            }
+        }
+        XCTAssertEqual(offenders, [],
+                       "these open their own network egress instead of Native.httpTask")
+    }
+
     /// runJXA must DRAIN stdout concurrently. Reading only after termination
     /// deadlocks once osascript's output passes the ~64KB pipe buffer: it blocks in
     /// write(), never exits, the callback never fires -> a wedged st.refreshing and

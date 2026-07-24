@@ -42,6 +42,35 @@ local function freeOnce(obj)
     end
 end
 
+-- Async ONE-SHOT calls (http, download, JXA tab reads, favicon scan), mirroring
+-- the real seam's cancelable-one-shot contract (Native+Callbacks registerOneShot/
+-- fireOneShot): the returned handle's stop() drops the pending callback, so a
+-- completion landing AFTER the feature was torn down does nothing.
+--
+-- Delivery is SYNCHRONOUS by default -- what nearly every case wants, and what
+-- the suite assumed before these grew handles. Set fake.deferAsync = true to
+-- queue completions instead and release them with fake.deliverAsync(): that is
+-- the only way to drive the disable-mid-flight path the real bridge guards, and
+-- without it the fake would silently under-report the contract (the shape-only
+-- parity gap CODE-13 is about).
+fake.pendingAsync = {}   -- queued completions while fake.deferAsync is set
+
+local function oneShot(deliver)
+    local h = { stopped = false }
+    alloc()
+    local function fire()
+        if h.stopped then return end   -- torn down while in flight: drop it
+        freeOnce(h)                    -- consume before delivering (matches fireOneShot)
+        deliver()
+    end
+    if fake.deferAsync then
+        fake.pendingAsync[#fake.pendingAsync + 1] = fire
+    else
+        fire()
+    end
+    return { stop = function() freeOnce(h) end }
+end
+
 -- Canonical short name for a modifier token ("Command" -> "cmd"), mirroring
 -- KeyModifier.canonical -- alias specs must match exactly as the real
 -- bridge's bitmask comparison does (command+k and cmd+k are one combo).
@@ -1127,7 +1156,7 @@ fake.jumpUrlOverride = nil   -- string = force the LANDED url (in-place navigati
                              -- drift); false = force "gone"; nil = the resolved url
 
 function adapter.browserListTabs(app, cb)
-    cb(fake.browserTabsByApp[app])
+    return oneShot(function() cb(fake.browserTabsByApp[app]) end)
 end
 
 -- Mirror the real JXA (Native+Browser.swift browserFocusTab): re-resolve the tab
@@ -1148,43 +1177,49 @@ local function hostOf(u)
 end
 
 function adapter.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
-    local rec = { app = app, tabId = tabId, winId = winId, url = url,
-                  tabIndex = tabIndex }
-    fake.tabJumps[#fake.tabJumps + 1] = rec
-    if fake.jumpUrlOverride == false then return cb(nil) end   -- forced "gone"
-    local tabs = fake.browserTabsByApp[app] or {}
-    local match, via
-    if tabId and tabId ~= 0 then
-        for _, t in ipairs(tabs) do
-            if t.id == tabId then match = t; via = "id"; break end
-        end
-    else
-        local hinted, anywhere, pos
-        for _, t in ipairs(tabs) do
-            local atListed = t.winId == winId and t.tabIndex == tabIndex
-            if atListed then pos = pos or t end
-            if t.url == url then
-                if atListed then match = t; break end   -- url AND position: the listed tab itself
-                if t.winId == winId then hinted = hinted or t
-                else anywhere = anywhere or t end
+    -- Cancelable one-shot like the real JXA call: resolve AND delivery both run
+    -- inside oneShot, so a handle stopped in flight drops the callback -- and,
+    -- under fake.deferAsync, records no tabJump either (the real osascript has
+    -- not run yet at that point).
+    return oneShot(function()
+        local rec = { app = app, tabId = tabId, winId = winId, url = url,
+                      tabIndex = tabIndex }
+        fake.tabJumps[#fake.tabJumps + 1] = rec
+        if fake.jumpUrlOverride == false then return cb(nil) end   -- forced "gone"
+        local tabs = fake.browserTabsByApp[app] or {}
+        local match, via
+        if tabId and tabId ~= 0 then
+            for _, t in ipairs(tabs) do
+                if t.id == tabId then match = t; via = "id"; break end
+            end
+        else
+            local hinted, anywhere, pos
+            for _, t in ipairs(tabs) do
+                local atListed = t.winId == winId and t.tabIndex == tabIndex
+                if atListed then pos = pos or t end
+                if t.url == url then
+                    if atListed then match = t; break end   -- url AND position: the listed tab itself
+                    if t.winId == winId then hinted = hinted or t
+                    else anywhere = anywhere or t end
+                end
+            end
+            match = match or hinted or anywhere
+            if match then via = "url" end
+            if not match and pos then
+                -- positional tertiary (see the JXA comment for the same-host rationale)
+                local ph = hostOf(pos.url)
+                if ph ~= "" and ph == hostOf(url) then
+                    match = pos; via = "pos"
+                else
+                    rec.missLanding = pos   -- landed near where the tab was; still a miss
+                    return cb(nil)
+                end
             end
         end
-        match = match or hinted or anywhere
-        if match then via = "url" end
-        if not match and pos then
-            -- positional tertiary (see the JXA comment for the same-host rationale)
-            local ph = hostOf(pos.url)
-            if ph ~= "" and ph == hostOf(url) then
-                match = pos; via = "pos"
-            else
-                rec.missLanding = pos   -- landed near where the tab was; still a miss
-                return cb(nil)
-            end
-        end
-    end
-    if not match then return cb(nil) end
-    rec.resolved = match
-    cb(fake.jumpUrlOverride or match.url, via)   -- string override = in-place drift
+        if not match then return cb(nil) end
+        rec.resolved = match
+        cb(fake.jumpUrlOverride or match.url, via)   -- string override = in-place drift
+    end)
 end
 
 fake.activeUrls = {}   -- app -> the url its front tab is showing
@@ -1206,7 +1241,7 @@ function adapter.extractFavicons(outDir, domains, cb)
             saved[#saved + 1] = d
         end
     end
-    cb(saved)
+    return oneShot(function() cb(saved) end)
 end
 
 function adapter.idleSeconds()
@@ -1239,15 +1274,18 @@ fake.wallpaperColors = {} -- recorded setWallpaperColor { hex=, target= }
 function adapter.httpGet(url, headers, cb)
     fake.httpRequests[#fake.httpRequests + 1] = { url = url, headers = headers }
     local r = fake.httpResponses[url]
-    -- synchronous in tests (the native backend calls back async on main)
-    if r then cb(r.status, r.body) else cb(0, nil) end
+    return oneShot(function()
+        if r then cb(r.status, r.body) else cb(0, nil) end
+    end)
 end
 
 function adapter.httpRequest(url, method, headers, body, cb)
     fake.httpRequests[#fake.httpRequests + 1] =
         { url = url, method = method, headers = headers, body = body }
     local r = fake.httpResponses[url]
-    if r then cb(r.status, r.body) else cb(0, nil) end
+    return oneShot(function()
+        if r then cb(r.status, r.body) else cb(0, nil) end
+    end)
 end
 
 function adapter.httpPost(url, headers, body, cb)
@@ -1256,7 +1294,8 @@ end
 
 function adapter.downloadFile(url, path, cb)
     fake.downloads[#fake.downloads + 1] = { url = url, path = path }
-    cb(fake.downloadOk)
+    local ok = fake.downloadOk
+    return oneShot(function() cb(ok) end)
 end
 
 function adapter.setWallpaper(path, mode)
@@ -1280,6 +1319,16 @@ function adapter.displaySleep()     fake.actions.displaySleep = fake.actions.dis
 function adapter.startScreensaver() fake.actions.screensaver = fake.actions.screensaver + 1 end
 
 -- Test drivers ------------------------------------------------------------------
+
+-- Release every completion queued while fake.deferAsync was set (see oneShot).
+-- Returns how many fired. A completion whose handle was stopped in the meantime
+-- (feature disabled mid-flight) is dropped, exactly as the real bridge drops it.
+function fake.deliverAsync()
+    local queued = fake.pendingAsync
+    fake.pendingAsync = {}
+    for _, fire in ipairs(queued) do fire() end
+    return #queued
+end
 
 -- Fire all live timers matching kind (and optionally n).
 function fake.fireTimers(kind, n)

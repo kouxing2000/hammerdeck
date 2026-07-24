@@ -401,13 +401,20 @@ extension Native {
     }
 
     // Lua-facing wrapper: run the template, then fire the pinned Lua callback (once).
-    private func runJXA(_ script: String, _ ref: Int32) {
+    // Returns the cancelable-one-shot resource id so the caller can hand it to Lua --
+    // a feature disabled while osascript is still running must not receive the tabs.
+    // No cancel closure: runJXACore owns the subprocess (and its own SIGTERM
+    // watchdog), so teardown drops the callback and lets the child wind down.
+    private func runJXA(_ script: String, _ ref: Int32) -> Int32 {
+        let id = allocOneShot()
         runJXACore(script) { text in
-            Native.fireCallback(ref) { L in
+            Native.fireOneShot(id, ref) { L in
                 if let text { lua_pushstring(L, text) } else { lua_pushnil(L) }
                 return 1
             }
         }
+        armOneShot(id, ref)
+        return id
     }
 
     #if DEBUG
@@ -464,8 +471,8 @@ extension Native {
           return JSON.stringify({ tabs: out });
         }
         """
-        runJXA(script, ref)
-        return 0
+        lua_pushinteger(L, lua_Integer(runJXA(script, ref)))
+        return 1
     }
 
     // A safe JS string literal (quotes + escaping) for embedding an arbitrary
@@ -594,8 +601,8 @@ extension Native {
           return JSON.stringify({});
         }
         """
-        runJXA(script, ref)
-        return 0
+        lua_pushinteger(L, lua_Integer(runJXA(script, ref)))
+        return 1
     }
 
     // browser_active_url(app) -> url|nil. Sync + cheap (one property read);

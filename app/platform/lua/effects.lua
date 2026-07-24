@@ -437,14 +437,15 @@ EFFECT_KINDS = {
             if node.channel == "system" then
                 -- Deliver to Notification Center; fall back to the in-app banner when
                 -- the system path is unavailable (dev `swift run` -- no app bundle).
+                -- This pcall IS load-bearing (unlike the ones dispatch absorbed): a
+                -- throwing system channel must fall through to the in-app banner, not
+                -- fail the effect.
                 local okS, delivered = pcall(adapter.systemNotify, node.title, node.text or "")
                 if okS and delivered then return true end
-                local okB, errB = pcall(adapter.notify, node.title, node.text or "")
-                if not okB then return false, tostring(errB) end
+                adapter.notify(node.title, node.text or "")
                 return true, "shown in-app (system notification unavailable)"
             end
-            local ok, err = pcall(adapter.notify, node.title, node.text or "")
-            if not ok then return false, tostring(err) end
+            adapter.notify(node.title, node.text or "")
             return true
         end,
         describe = function(node) return desc("notify", 'Notify "%s"', tostring(node.title or "")) end,
@@ -471,9 +472,7 @@ EFFECT_KINDS = {
             end
         end,
         run = function(node)
-            local ok, res, reason = pcall(applyLayout, node)
-            if not ok then return false, tostring(res) end
-            return res, reason
+            return applyLayout(node)
         end,
         describe = function(node)
             local n = (type(node.placements) == "table") and #node.placements or 0
@@ -490,8 +489,7 @@ EFFECT_KINDS = {
                 "runShortcut effect needs a Shortcut name")
         end,
         run = function(node)
-            local ok, err = pcall(adapter.runShortcut, node.name)
-            if not ok then return false, tostring(err) end
+            adapter.runShortcut(node.name)
             return true
         end,
         describe = function(node) return desc("runShortcut", 'Run Shortcut "%s"', tostring(node.name or "")) end,
@@ -504,8 +502,7 @@ EFFECT_KINDS = {
                 "openURL effect needs a url")
         end,
         run = function(node)
-            local ok, err = pcall(adapter.openURL, node.url)
-            if not ok then return false, tostring(err) end
+            adapter.openURL(node.url)
             return true
         end,
         describe = function(node) return desc("openURL", "Open %s", tostring(node.url or "")) end,
@@ -526,9 +523,9 @@ EFFECT_KINDS = {
             -- Check the adapter's success boolean (parity with appAction): a typo'd or
             -- now-disconnected display matches no screen -> paint nothing, which must
             -- read as a FAILURE in the rule's fire log, not a silent green "fired".
-            local ok, res = pcall(adapter.setWallpaperColor, node.color, target)
-            if not ok then return false, tostring(res) end
-            if not res then return false, "no display to paint: " .. tostring(target) end
+            if not adapter.setWallpaperColor(node.color, target) then
+                return false, "no display to paint: " .. tostring(target)
+            end
             return true
         end,
         describe = function(node, pronoun)
@@ -551,9 +548,9 @@ EFFECT_KINDS = {
             if not target then return false, reason end
             -- Same success-boolean contract as solidWallpaper: a typo'd/disconnected
             -- display matches no screen -> nothing set -> a FAILURE in the fire log.
-            local ok, res = pcall(adapter.setWallpaper, node.image, target)
-            if not ok then return false, tostring(res) end
-            if not res then return false, "no display for the wallpaper: " .. tostring(target) end
+            if not adapter.setWallpaper(node.image, target) then
+                return false, "no display for the wallpaper: " .. tostring(target)
+            end
             return true
         end,
         describe = function(node, pronoun)
@@ -586,9 +583,9 @@ EFFECT_KINDS = {
             -- Launch (or focus, if already running) the app by its bundle id. A false
             -- return means no installed app carries that id -- surface it as a real
             -- failure in the fire log, not a lying green "fired" (parity with appAction).
-            local ok, res = pcall(adapter.launchOrFocusApp, node.appBundleId)
-            if not ok then return false, tostring(res) end
-            if not res then return false, "no installed app: " .. tostring(node.app) end
+            if not adapter.launchOrFocusApp(node.appBundleId) then
+                return false, "no installed app: " .. tostring(node.app)
+            end
             return true
         end,
         describe = function(node) return desc("launchApp", "Open %s", tostring(node.app or "")) end,
@@ -603,9 +600,7 @@ EFFECT_KINDS = {
                 "moveAppToDisplay effect needs a display (a name or '" .. effects.TRIGGER_DISPLAY .. "')")
         end,
         run = function(node, context)
-            local ok, res, reason = pcall(applyMoveToDisplay, node, context)
-            if not ok then return false, tostring(res) end
-            return res, reason
+            return applyMoveToDisplay(node, context)
         end,
         describe = function(node, pronoun)
             return desc("moveAppToDisplay", "Move %1$s to %2$s",
@@ -620,8 +615,7 @@ EFFECT_KINDS = {
                 "speak effect needs text to say")
         end,
         run = function(node)
-            local ok, err = pcall(adapter.say, node.text)
-            if not ok then return false, tostring(err) end
+            adapter.say(node.text)
             return true
         end,
         describe = function(node) return desc("speak", 'Say "%s"', tostring(node.text or "")) end,
@@ -630,8 +624,7 @@ EFFECT_KINDS = {
     },
     lockScreen = {
         run = function()
-            local ok, err = pcall(adapter.lockScreen)
-            if not ok then return false, tostring(err) end
+            adapter.lockScreen()
             return true
         end,
         describe = function() return desc("lockScreen", "Lock the screen") end,
@@ -640,8 +633,7 @@ EFFECT_KINDS = {
     },
     startScreensaver = {
         run = function()
-            local ok, err = pcall(adapter.startScreensaver)
-            if not ok then return false, tostring(err) end
+            adapter.startScreensaver()
             return true
         end,
         describe = function() return desc("startScreensaver", "Start the screensaver") end,
@@ -650,8 +642,7 @@ EFFECT_KINDS = {
     },
     emptyTrash = {
         run = function()
-            local ok, n = pcall(adapter.emptyTrash)
-            if not ok then return false, tostring(n) end
+            local n = adapter.emptyTrash()
             -- -1 = found items but removed none (a Full Disk Access denial); surface it
             -- as a real failure, not a lying green "fired". A count > 0 rides as a note.
             if n == -1 then
@@ -668,8 +659,7 @@ EFFECT_KINDS = {
     },
     eject = {
         run = function()
-            local ok, n = pcall(adapter.eject)
-            if not ok then return false, tostring(n) end
+            local n = adapter.eject()
             if n == -1 then return false, "external disk(s) busy -- nothing ejected" end
             if type(n) == "number" and n > 0 then
                 return true, "ejected " .. n .. (n == 1 and " disk" or " disks")
@@ -692,9 +682,7 @@ EFFECT_KINDS = {
         run = function(node)
             -- setAppearance returns whether it applied; a false means the Automation
             -- grant is missing -- surface it, don't lie green (parity with wallpaper).
-            local ok, res = pcall(adapter.setAppearance, node.mode)
-            if not ok then return false, tostring(res) end
-            if not res then
+            if not adapter.setAppearance(node.mode) then
                 return false, "couldn't set appearance -- grant Automation control of System Events"
             end
             return true
@@ -714,14 +702,12 @@ EFFECT_KINDS = {
         end,
         run = function(node)
             if node.op == "mute" then
-                local ok, err = pcall(adapter.toggleMute)
-                if not ok then return false, tostring(err) end
+                adapter.toggleMute()
                 return true
             end
             -- adjustVolume returns the new level, or -1 on an AppleScript error --
             -- surface that as a real failure, don't lie green (parity with the rest).
-            local ok, res = pcall(adapter.adjustVolume, node.op == "up" and 10 or -10)
-            if not ok then return false, tostring(res) end
+            local res = adapter.adjustVolume(node.op == "up" and 10 or -10)
             if type(res) == "number" and res < 0 then
                 return false, "couldn't change the volume"
             end
@@ -741,8 +727,7 @@ EFFECT_KINDS = {
                 "mediaKey effect key must be 'playpause', 'next', or 'previous'")
         end,
         run = function(node)
-            local ok, err = pcall(adapter.mediaKey, node.key)
-            if not ok then return false, tostring(err) end
+            adapter.mediaKey(node.key)
             return true
         end,
         describe = function(node)
@@ -766,9 +751,7 @@ EFFECT_KINDS = {
             end
         end,
         run = function(node, context)
-            local ok, res, reason = pcall(applyChain, node, context)
-            if not ok then return false, tostring(res) end
-            return res, reason
+            return applyChain(node, context)
         end,
         describe = function(node, pronoun)
             local parts = {}
@@ -854,7 +837,19 @@ end
 function effects.dispatch(node, context)
     local spec = EFFECT_KINDS[node.kind]
     if not spec then return false, "unknown effect kind: " .. tostring(node and node.kind) end
-    return spec.run(node, context)
+    -- THE containment point. Every kind's `run` may call the adapter directly and
+    -- let a throw propagate here; none of them carries its own pcall (~12 copies of
+    -- the identical "pcall / if not ok then return false, tostring(err)" prologue
+    -- used to). That makes the never-throws contract STRUCTURAL rather than a
+    -- convention each new effect kind has to remember -- a kind that forgets is
+    -- contained anyway, instead of taking a firing rule down with it.
+    --
+    -- A `run` may still pcall INTERNALLY where a throw is not a failure but a
+    -- branch (notify falls back to the in-app banner when the system channel is
+    -- unavailable); that is deliberate and local, not boilerplate.
+    local ok, res, reason = pcall(spec.run, node, context)
+    if not ok then return false, tostring(res) end
+    return res, reason
 end
 
 --- A short human label for an effect node (the rules-list "→ ..." column).

@@ -63,6 +63,33 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
         return w
     end
 
+    -- Track an async ONE-SHOT (http, download, JXA read, favicon scan) and RETIRE
+    -- its scope entry the moment it delivers.
+    --
+    -- Tracking alone is not enough: a one-shot that completes normally is never
+    -- stopped by anyone, so its entry would sit in the scope until disable --
+    -- unbounded growth on any feature that polls (tab_switcher lists tabs on every
+    -- single invocation), and a liveCount() that reports handles which are long
+    -- gone. Retiring on delivery keeps the scope an accurate picture of what is
+    -- actually in flight, without asking each feature author to remember to stop a
+    -- handle in its own callback.
+    --
+    -- `start` receives the wrapped callback and returns the raw handle. The
+    -- `delivered` flag covers a backend that calls back SYNCHRONOUSLY (the test
+    -- fake does) -- there the callback runs before `h` exists, so the retire has to
+    -- happen after assignment instead.
+    local function trackOneShot(start, cb)
+        local h, delivered = nil, false
+        local function onDeliver(...)
+            delivered = true
+            if h then h.stop() end     -- retire before cb: a cb that starts another
+            if cb then cb(...) end     -- request must not be tangled with this one
+        end
+        h = track(start(onDeliver))
+        if delivered then h.stop() end
+        return h
+    end
+
     local scope = {}
     function scope.adopt(raw) return track(raw) end
     function scope.teardown()
@@ -310,12 +337,27 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.pasteboardInfo()      return adapter.pasteboardInfo() end
 
     -- network / files / wallpaper -----------------------------------------------
-    function ctx.httpGet(url, headers, cb)     adapter.httpGet(url, headers, cb) end
-    function ctx.httpPost(url, headers, body, cb) adapter.httpPost(url, headers, body, cb) end
-    function ctx.httpRequest(url, method, headers, body, cb)
-        adapter.httpRequest(url, method, headers, body, cb)
+    -- ASYNC ONE-SHOTS, all scope-tracked. Each returns a handle whose stop()
+    -- cancels the work in flight and drops the pinned callback, so disabling a
+    -- feature mid-request means it never hears back -- "disabled" has to mean
+    -- disabled. (bing_daily chains httpGet -> downloadFile -> setWallpaper; an
+    -- untracked chain still changed the wallpaper after the user turned it off.)
+    -- Callers may ignore the handle: teardown stops it either way, and a call that
+    -- completes normally retires its own scope entry (see trackOneShot).
+    function ctx.httpGet(url, headers, cb)
+        return trackOneShot(function(f) return adapter.httpGet(url, headers, f) end, cb)
     end
-    function ctx.downloadFile(url, path, cb)   adapter.downloadFile(url, path, cb) end
+    function ctx.httpPost(url, headers, body, cb)
+        return trackOneShot(function(f) return adapter.httpPost(url, headers, body, f) end, cb)
+    end
+    function ctx.httpRequest(url, method, headers, body, cb)
+        return trackOneShot(function(f)
+            return adapter.httpRequest(url, method, headers, body, f)
+        end, cb)
+    end
+    function ctx.downloadFile(url, path, cb)
+        return trackOneShot(function(f) return adapter.downloadFile(url, path, f) end, cb)
+    end
     function ctx.setWallpaper(path, mode)      return adapter.setWallpaper(path, mode) end
     function ctx.cacheDir()                    return adapter.cacheDir() end
 
@@ -344,13 +386,18 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
         return adapter.openSite(bundleId, profile, app, url)
     end
     function ctx.isAppRunning(name)  return adapter.isAppRunning(name) end
-    function ctx.browserListTabs(app, cb)  adapter.browserListTabs(app, cb) end
+    -- Async out-of-process reads; scope-tracked one-shots (see the network note).
+    function ctx.browserListTabs(app, cb)
+        return trackOneShot(function(f) return adapter.browserListTabs(app, f) end, cb)
+    end
     function ctx.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
-        adapter.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
+        return trackOneShot(function(f)
+            return adapter.browserFocusTab(app, tabId, winId, url, tabIndex, f)
+        end, cb)
     end
     function ctx.browserActiveURL(app) return adapter.browserActiveURL(app) end
     function ctx.extractFavicons(outDir, domains, cb)
-        adapter.extractFavicons(outDir, domains, cb)
+        return trackOneShot(function(f) return adapter.extractFavicons(outDir, domains, f) end, cb)
     end
     function ctx.idleSeconds()       return adapter.idleSeconds() end
     -- Name of a process holding the display awake (video playback, a call, a

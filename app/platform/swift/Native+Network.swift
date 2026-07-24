@@ -6,31 +6,67 @@ import AppKit
 import CLua
 
 extension Native {
+    // MARK: - The one outbound HTTP path
+
+    /// Build (but do not start) an outbound HTTP request. This is the seam's ONLY
+    /// egress point, and both callers go through it: the Lua bindings below, and
+    /// the host's own config UI (SecretValidator's credential check in
+    /// SettingsStore). Host UI code must NOT open its own URLSession -- a second
+    /// egress is a second thing to audit, and "all OS access lives in the seam"
+    /// has to be true of the host, not only of features.
+    ///
+    /// Returns the task so the caller owns cancellation (the Lua side hands it to
+    /// armOneShot; the config UI just resumes it). `completion` reports the HTTP
+    /// status (0 when there was no HTTP response at all), the body, and the
+    /// transport error, and runs on URLSession's queue -- hop to main yourself.
+    nonisolated static func httpTask(
+        url: URL, method: String = "GET", headers: [String: String] = [:],
+        body: Data? = nil, timeout: TimeInterval = 60,
+        completion: @escaping @Sendable (Int, Data?, Error?) -> Void
+    ) -> URLSessionDataTask {
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.timeoutInterval = timeout
+        req.httpBody = body
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        return URLSession.shared.dataTask(with: req) { data, resp, err in
+            completion((resp as? HTTPURLResponse)?.statusCode ?? 0, data, err)
+        }
+    }
+
+    /// Lua header tables arrive as [String: Any]; keep the string-valued entries.
+    nonisolated static func stringHeaders(_ raw: [String: Any]) -> [String: String] {
+        raw.compactMapValues { $0 as? String }
+    }
+}
+
+extension Native {
     // MARK: - Network / files / wallpaper
 
     // Async GET; callback gets (status, body|nil). Body is decoded as UTF-8
     // text (this surface is for JSON/HTML APIs -- binary payloads go through
     // download_file, which never round-trips bytes into a Lua string).
+    // Returns a resource id: the request is CANCELABLE, so disabling the feature
+    // mid-flight both aborts the transfer and drops the callback (registerOneShot).
     func httpGet(_ L: OpaquePointer?) -> Int32 {
         guard let url = LuaState.string(L, 1), let u = URL(string: url) else {
             return luaError(L, "http_get: url required")
         }
         let headers = (LuaState.any(L, 2) as? [String: Any]) ?? [:]
         let ref = lua.makeRef(at: 3)
-        var req = URLRequest(url: u)
-        for (k, v) in headers {
-            if let s = v as? String { req.setValue(s, forHTTPHeaderField: k) }
-        }
-        URLSession.shared.dataTask(with: req) { data, resp, _ in
-            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let id = allocOneShot()
+        let task = Native.httpTask(url: u, headers: Native.stringHeaders(headers)) { status, data, _ in
             let body = data.flatMap { String(data: $0, encoding: .utf8) }
-            Native.fireCallback(ref) { L in
+            Native.fireOneShot(id, ref) { L in
                 lua_pushinteger(L, lua_Integer(status))
                 if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
                 return 2
             }
-        }.resume()
-        return 0
+        }
+        armOneShot(id, ref) { task.cancel() }
+        task.resume()
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
     }
 
     // Async request with an explicit method/body; callback gets (status, body|nil),
@@ -45,22 +81,21 @@ extension Native {
         let headers = (LuaState.any(L, 3) as? [String: Any]) ?? [:]
         let body = LuaState.string(L, 4)
         let ref = lua.makeRef(at: 5)
-        var req = URLRequest(url: u)
-        req.httpMethod = method
-        for (k, v) in headers {
-            if let s = v as? String { req.setValue(s, forHTTPHeaderField: k) }
-        }
-        if let body { req.httpBody = body.data(using: .utf8) }
-        URLSession.shared.dataTask(with: req) { data, resp, _ in
-            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let id = allocOneShot()
+        let task = Native.httpTask(url: u, method: method,
+                                   headers: Native.stringHeaders(headers),
+                                   body: body?.data(using: .utf8)) { status, data, _ in
             let body = data.flatMap { String(data: $0, encoding: .utf8) }
-            Native.fireCallback(ref) { L in
+            Native.fireOneShot(id, ref) { L in
                 lua_pushinteger(L, lua_Integer(status))
                 if let body { lua_pushstring(L, body) } else { lua_pushnil(L) }
                 return 2
             }
-        }.resume()
-        return 0
+        }
+        armOneShot(id, ref) { task.cancel() }
+        task.resume()
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
     }
 
     func downloadFile(_ L: OpaquePointer?) -> Int32 {
@@ -69,7 +104,8 @@ extension Native {
             return luaError(L, "download_file: url and path required")
         }
         let ref = lua.makeRef(at: 3)
-        URLSession.shared.downloadTask(with: u) { tmp, resp, _ in
+        let id = allocOneShot()
+        let task = URLSession.shared.downloadTask(with: u) { tmp, resp, _ in
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             let ok: Bool
             if let tmp, (200..<300).contains(status) {
@@ -79,12 +115,15 @@ extension Native {
             } else {
                 ok = false
             }
-            Native.fireCallback(ref) { L in
+            Native.fireOneShot(id, ref) { L in
                 lua_pushboolean(L, ok ? 1 : 0)
                 return 1
             }
-        }.resume()
-        return 0
+        }
+        armOneShot(id, ref) { task.cancel() }
+        task.resume()
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
     }
 
     func setWallpaper(_ L: OpaquePointer?) -> Int32 {

@@ -827,28 +827,34 @@ end
 -- Network / files / wallpaper
 -- ---------------------------------------------------------------------------
 
--- Async GET; cb(status, body|nil). One-shot, NOT a handle: it cannot be
--- cancelled, and the callback may arrive after the feature was disabled --
--- any stopped ctx handles it touches are safe no-ops.
+-- Async GET; cb(status, body|nil). Returns a HANDLE: stop() cancels the transfer
+-- and drops the callback, so a feature torn down mid-flight never hears back.
+-- ctx tracks it in the feature's scope, which is what makes "disabled" mean
+-- disabled (bing_daily chains httpGet -> downloadFile -> setWallpaper; before
+-- this, disabling it mid-chain still changed the wallpaper).
+---@return { stop: fun() }
 function adapter.httpGet(url, headers, cb)
-    native.http_get(url, headers or {}, cb)
+    return handleFor(native.http_get(url, headers or {}, cb))
 end
 
 -- Async request with an explicit method/body; cb(status, body|nil). Same
--- one-shot, non-cancellable contract as httpGet. `body` is a string (e.g. a
--- JSON payload); pass Content-Type / Authorization via the headers table.
+-- cancelable-handle contract as httpGet. `body` is a string (e.g. a JSON
+-- payload); pass Content-Type / Authorization via the headers table.
+---@return { stop: fun() }
 function adapter.httpRequest(url, method, headers, body, cb)
-    native.http_request(url, method or "GET", headers or {}, body, cb)
+    return handleFor(native.http_request(url, method or "GET", headers or {}, body, cb))
 end
 
 -- Convenience POST over adapter.httpRequest; cb(status, body|nil).
+---@return { stop: fun() }
 function adapter.httpPost(url, headers, body, cb)
-    native.http_request(url, "POST", headers or {}, body, cb)
+    return handleFor(native.http_request(url, "POST", headers or {}, body, cb))
 end
 
 -- Async download straight to `path` (binary-safe); cb(ok).
+---@return { stop: fun() }
 function adapter.downloadFile(url, path, cb)
-    native.download_file(url, path, cb)
+    return handleFor(native.download_file(url, path, cb))
 end
 
 -- mode: "primary" sets only the main display; nil/"all" sets every screen.
@@ -984,13 +990,15 @@ local json -- platform.json, loaded lazily (avoids a cost when unused)
 -- Async (out-of-process script).
 ---@param app string             "Google Chrome" | "Safari"
 ---@param cb fun(tabs: BrowserTab[]|nil)
+---@return { stop: fun() } handle -- stop() drops the callback if the feature
+---        is torn down while osascript is still running
 function adapter.browserListTabs(app, cb)
-    native.browser_list_tabs(app, function(raw)
+    return handleFor(native.browser_list_tabs(app, function(raw)
         if not raw then return cb(nil) end
         json = json or require("platform.json")
         local doc = json.decode(raw)
         cb(doc and doc.tabs or nil)
-    end)
+    end))
 end
 
 -- Raise the window and activate a tab, RE-RESOLVING it by stable identity across
@@ -1009,13 +1017,14 @@ end
 ---@param tabIndex integer       listed 1-based position (0 = unknown) -- the
 ---                              last-resort tertiary for an in-place navigation
 ---@param cb fun(currentUrl: string|nil, via: string|nil) via: "id"|"url"|"pos"
+---@return { stop: fun() }
 function adapter.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
-    native.browser_focus_tab(app, tabId, winId, url, tabIndex, function(raw)
+    return handleFor(native.browser_focus_tab(app, tabId, winId, url, tabIndex, function(raw)
         if not raw then return cb(nil) end
         json = json or require("platform.json")
         local doc = json.decode(raw)
         if doc and doc.url then cb(doc.url, doc.via) else cb(nil) end
-    end)
+    end))
 end
 
 -- The URL the browser is showing right now (front window's active tab), or
@@ -1027,8 +1036,11 @@ end
 -- Pull real favicons for `domains` out of Chrome's local icon DB into
 -- outDir/<domain>.png (largest PNG per domain; existing files kept).
 -- Async; cb(savedDomains). Works offline -- the browser already has them.
+-- The scan itself cannot be aborted, but stop() drops the callback so results
+-- never land in a feature that has since been disabled.
+---@return { stop: fun() }
 function adapter.extractFavicons(outDir, domains, cb)
-    native.extract_favicons(outDir, domains, cb)
+    return handleFor(native.extract_favicons(outDir, domains, cb))
 end
 
 -- Draw a crosshair around the pointer for `seconds` (fire-and-forget overlay;

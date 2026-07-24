@@ -407,9 +407,14 @@ extension Native {
         }
         let domains = LuaState.stringArray(L, 2)
         let ref = lua.makeRef(at: 3)
+        // Cancelable one-shot: the scan itself can't be aborted mid-flight (a
+        // synchronous DB copy + PNG walk on a utility queue), but dropping the
+        // callback is what matters -- teardown must not deliver results into a
+        // feature that is no longer enabled. Returns the resource id.
+        let id = allocOneShot()
         DispatchQueue.global(qos: .utility).async {
             let saved = Self.extractFaviconsSync(outDir: outDir, domains: domains)
-            Native.fireCallback(ref) { L in
+            Native.fireOneShot(id, ref) { L in
                 lua_createtable(L, Int32(saved.count), 0)
                 for (i, d) in saved.enumerated() {
                     lua_pushstring(L, d)
@@ -418,7 +423,9 @@ extension Native {
                 return 1
             }
         }
-        return 0
+        armOneShot(id, ref)
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
     }
 
     /// The donor's extract_favicons.py, in-process: copy the DB (Chrome holds
