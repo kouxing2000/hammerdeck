@@ -397,6 +397,21 @@ extension Native {
             // never runs, and the pinned Lua callback is dropped for good: the
             // feature waits forever for tabs that already arrived.
             //
+            // KNOWN FOUNDATION DEFECT, not something exotic about this code.
+            // Documented for macOS/iOS since 2015 ("the readability handler is
+            // not called again on EOF", mjtsai.com/blog/2015/12/11/
+            // nsfilehandles-indeterminable-readabilityhandler/) and tracked as
+            // SR-12080 / swift-corelibs-foundation#3275. Read that issue with
+            // care though: it reports the fault as Linux-only and calls macOS
+            // reliable. It is NOT -- the trace above is Darwin 25.5.0. Do not let
+            // that claim talk a future reader out of this guard.
+            //
+            // The shape here (handler for incremental reads, completion owned by
+            // the termination handler, plus a final drain) is the workaround the
+            // community converged on; the incremental handler stays because
+            // dropping it reintroduces the >64KB pipe deadlock this file's header
+            // describes.
+            //
             // The SIGTERM watchdog cannot cover this -- it fires at a process
             // that has already exited, so nothing is left to close the pipe.
             //

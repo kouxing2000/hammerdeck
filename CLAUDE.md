@@ -286,6 +286,18 @@ Settings live in the `Hammerdeck` defaults domain (`defaults read Hammerdeck`;
 stdout AND a rotating daily file under
 `~/Library/Application Support/Hammerdeck/logs/YYYY-MM-DD.log` (14-day retention;
 "Open Logs" in the menubar; `scripts/app.sh logs` tails the launcher stdout).
+
+**Temporary Swift instrumentation: use `NSLog`, never `print`.** `app.sh`
+launches the app with stdout REDIRECTED to a file, and a redirected stdout is
+BLOCK-buffered -- so `print` traces sit in a 4KB buffer and never appear, however
+long you wait. That is not a missing log line, it is a log line that lies:
+on 2026-07-25 an empty trace was read as "the completion callback never fired"
+and sent a JXA investigation down the wrong path for several rounds. `NSLog`
+writes unbuffered (and stamps a timestamp + thread, both of which you want when
+chasing a race). The seam's own `seamLog`/`seamLogThrottled` are better still --
+they reach the daily log -- but they are `@MainActor`, so from a `@Sendable`
+completion closure (`Process.terminationHandler`, a `readabilityHandler`, a
+URLSession handler) `NSLog` is the one that compiles without a main-actor hop.
 A feature MUST keep PERMANENT, terse `ctx.log` traces of its meaningful runtime
 DECISIONS and state transitions -- enable/disable, and each branch a stateful
 loop takes (e.g. window_deck logs on/off, promote, drop, peek-stay, and a
