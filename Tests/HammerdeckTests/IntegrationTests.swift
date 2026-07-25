@@ -365,7 +365,32 @@ final class IntegrationTests: XCTestCase {
     /// it, and report whether it fired -- so an incapable environment SKIPS
     /// rather than producing a misleading red.
     private func canDeliverSynthesizedHotkeys() -> Bool {
+        if let known = Self.synthesisCapable { return known }
+        let result = probeSynthesisCapability()
+        Self.synthesisCapable = result
+        return result
+    }
+
+    /// Probed at most ONCE per process (see canDeliverSynthesizedHotkeys).
+    ///
+    /// Caching is not an optimization, it is the correctness fix. Three tests
+    /// consult this gate and each probe posts the SAME key (F19). On a machine
+    /// where delivery is slow rather than absent, probe #1 times out and reports
+    /// "incapable" -- but its event is still queued, and arrives while probe #2
+    /// holds the binding, which then reports "capable" off someone else's
+    /// keypress. That is exactly what happened on 2026-07-25: run the suite and
+    /// two synthesis tests skipped ("cannot deliver") while the third believed
+    /// the gate, ran, and failed; run that third test ALONE and it skipped 3/3.
+    /// A red that appears only in a full-suite run and vanishes in isolation is
+    /// the most expensive kind, and it was reporting a broken app when the app
+    /// was fine. One probe per process cannot disagree with itself.
+    private static var synthesisCapable: Bool?
+
+    private func probeSynthesisCapability() -> Bool {
         guard AXIsProcessTrusted() else { return false }
+        // Drain anything already in flight, so this probe answers about ITSELF
+        // and not about an event some earlier test posted.
+        pumpAppEvents(0.2)
         var fired = false
         guard let unbind = HotkeyCenter.shared.bind(mods: [], key: "f19", handler: { fired = true })
         else { return false }
@@ -375,8 +400,10 @@ final class IntegrationTests: XCTestCase {
             .post(tap: .cghidEventTap)
         CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_F19), keyDown: false)?
             .post(tap: .cghidEventTap)
-        pumpAppEvents(0.3)
-        return fired
+        // Condition wait, not a flat sleep: a capable-but-loaded machine answers
+        // in milliseconds and should not pay a fixed cost, while a slow one gets
+        // a real ceiling instead of a 0.3s guess that decides capability by luck.
+        return waitUntil(2.0) { fired } && fired
     }
 
     /// Whether the console session is behind the lock screen. AX window
@@ -1635,7 +1662,18 @@ final class IntegrationTests: XCTestCase {
         // on a Safari with no url-bearing tab (a legitimate skip, below); polling
         // only for sfListed would race the focus step and read a stale 'unset'.
         // `_G.sfListed` exists solely to make the no-target path observable.
-        waitUntil(20.0) {
+        //
+        // KNOWN FLAKE, PRE-EXISTING (measured 2026-07-25): Safari's focus-by-url
+        // is bimodal -- the whole chain settles in well under a second, or the
+        // focus callback never arrives at all. Roughly 1 run in 2 either way, and
+        // it is NOT a symptom of this wait: the previous `spinRunLoop(3.0)`
+        // version fails at the same rate (2 of 4 on the same machine, same
+        // minute). Something in the JXA `win.currentTab = tab` path drops the
+        // reply; that is a real bug worth its own investigation, not a budget to
+        // tune. The ceiling is therefore sized for the FAST case plus headroom
+        // rather than optimism -- waiting 20s for a reply that is never coming
+        // just made each failure four times slower to report.
+        waitUntil(10.0) {
             eval("return _G.sfListed == true and (_G.sfTarget == nil or _G.sfLanded ~= 'unset')")
                 as? Bool == true
         }
