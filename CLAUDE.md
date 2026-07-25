@@ -384,42 +384,12 @@ loudly, never dropped.
 
 ## Adding a feature
 
-ACTION feature: copy `app/features/window_switcher/`. SERVICE feature: copy
-`app/features/sleep_schedule/`. A feature is a folder
-`app/features/<id>/` with: `feature.json` (identity/presentation -- name,
-version, description, category, context, `capabilities`, optional
-requires/recommended/page), `lua/init.lua` (returns the manifest table: `id` +
-`api` + behavior), and an
-optional `swift/` (native UI; register it in `FeaturePageRegistry` and declare a
-`page` in feature.json). Features are **autodiscovered** by scanning
-`app/features/` for a `<id>/lua/init.lua` -- just drop the folder in (no catalog
-to edit; menubar "Reload Features" or a restart picks it up). To keep `swift
-build` warning-free, also add the new feature to `Package.swift`'s
-`HammerdeckKit` target: a Lua-only feature -> add `"features/<id>"` to `exclude`;
-a feature WITH a `swift/` -> add `"features/<id>/swift"` to `sources` and
-`"features/<id>/lua"` + `"features/<id>/feature.json"` to `exclude`. (SwiftPM
-scans the whole `app/` subtree for resources; skipping the exclude just brings
-back the harmless "N unhandled files" warning -- the feature still loads.) Then run
-`scripts/gen-readme-features.py` -- README's feature catalog is GENERATED from every
-`feature.json`, and CI fails if it is stale (the list used to be hand-written and
-rotted badly, never once naming window_deck). Then cover its
-main flow in `test/run.lua` (register it there directly -- the test harness uses
-its own catalog, not disk discovery; a real feature's `feature.json` is read
-from disk via io, so its metadata merges in tests too). If an action is a
-context-free state-changer a user might want to schedule or fire on a system
-event (e.g. bing_daily's "Refresh wallpaper now", which ships with a schedule
-as its default trigger), mark it `automatable = true`;
-otherwise it stays manual-only (hotkey/chord). An automated `defaultTrigger`
-requires `automatable = true` -- manifest.validate rejects the mismatch.
-
-If the feature reaches the network, synthesizes keystrokes, sleeps/locks the
-machine, reads the browser, or touches files outside its own `dataDir`, declare
-the matching **`capabilities`** in its feature.json (`manifest.CAPABILITY_METHODS`
-is the map). Declare exactly what it uses: the guard fails on a MISSING
-capability AND on an unused one, so you cannot paper over it by declaring
-everything. Requiring `platform.favicons` counts -- it reaches the network and
-the browser through your ctx. Skip this and the feature still loads, then throws
-a message naming the capability the first time that code path runs.
+Load the **`add-hammerdeck-feature` skill** -- the full end-to-end checklist
+(feature.json + the `context` vocabulary, the capability gate, the ctx-only rule,
+i18n, options, the `test/cases/<id>.lua` case file, `Package.swift` +
+`gen-readme-features.py`, the gallery archetype, verification) lives there, kept
+next to the code it describes. Features are **autodiscovered** by scanning
+`app/features/` for a `<id>/lua/init.lua` -- there is no catalog to edit.
 
 ## Status / roadmap
 

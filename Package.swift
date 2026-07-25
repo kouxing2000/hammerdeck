@@ -41,7 +41,9 @@ let package = Package(
         // MAINTENANCE when adding a feature `app/features/<id>/`:
         //   - Lua-only feature -> add `"features/<id>"` to `exclude` below.
         //   - feature WITH a `swift/` -> add `"features/<id>/swift"` to `sources`
-        //     AND `"features/<id>/lua"` + `"features/<id>/feature.json"` to `exclude`.
+        //     AND all three of `"features/<id>/lua"`, `"features/<id>/i18n"`,
+        //     `"features/<id>/feature.json"` to `exclude` (every feature ships an
+        //     i18n catalog -- omitting it leaves exactly the warning we silence here).
         // (Skipping the exclude just brings the harmless warning back for that feature.)
         .target(
             name: "HammerdeckKit",
