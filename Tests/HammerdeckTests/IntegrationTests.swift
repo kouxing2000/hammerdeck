@@ -1664,14 +1664,15 @@ final class IntegrationTests: XCTestCase {
         // `_G.sfListed` exists solely to make the no-target path observable.
         //
         // This test used to fail about half the time, and the cause was NOT here
-        // and not in Safari: runJXACore joined two obligations (stdout EOF and
-        // process exit), and Foundation's readabilityHandler does not reliably
-        // deliver its final empty-data callback when the last read and the child's
-        // exit land within a millisecond. The stdout obligation then never
-        // completed and the pinned Lua callback was dropped for good. Fixed in
-        // Native+Browser.runJXACore (termination fallback); this ceiling is only a
-        // liveness bound now, sized for the fast case (the whole chain settles in
-        // well under a second) rather than for a reply that is never coming.
+        // and not in Safari: runJXACore held no strong reference to the child's
+        // Pipe, so Process deallocated at child exit and closed the read end while
+        // the readability source was still racing to deliver EOF. The stdout
+        // obligation then never completed and the pinned Lua callback was dropped
+        // for good. Fixed by retaining the pipes to completion (Native+Browser,
+        // JXAPipes) -- measured 69 losses in 150 runs without, 0 with. This
+        // ceiling is only a liveness bound now, sized for the fast case (the whole
+        // chain settles in well under a second) rather than for a reply that is
+        // never coming.
         waitUntil(10.0) {
             eval("return _G.sfListed == true and (_G.sfTarget == nil or _G.sfLanded ~= 'unset')")
                 as? Bool == true

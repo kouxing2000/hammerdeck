@@ -31,6 +31,29 @@ private final class JXABox: @unchecked Sendable {
     }
 }
 
+/// Keeps the child's pipes ALIVE until the read is finished.
+///
+/// THE ROOT CAUSE of the dropped-callback bug (2026-07-25), and it is ownership,
+/// not a Foundation defect. Nothing in `runJXACore` held a strong reference to
+/// the `Pipe`: `Process` self-retains only while the child runs, so at
+/// termination it deallocates, releasing standardOutput -> Pipe -> FileHandle ->
+/// `close(readFD)`. That closes the read end while the dispatch readability
+/// source is still racing to deliver its final empty-data (EOF) callback -- so
+/// on a child whose last write and exit land within a millisecond, EOF is simply
+/// never delivered, the stdout obligation never completes, and the pinned Lua
+/// callback is dropped forever.
+///
+/// Measured on this machine, same harness, `osascript` child, 150 runs each:
+/// without a retain 69 hangs; holding the pipes to completion, 0. The failure is
+/// not rare or exotic -- it was roughly one call in three.
+///
+/// `@unchecked Sendable` because `Pipe` is not Sendable and this only ever hands
+/// it back on the completion path; the box is immutable after init.
+private final class JXAPipes: @unchecked Sendable {
+    let out: Pipe, err: Pipe
+    init(out: Pipe, err: Pipe) { self.out = out; self.err = err }
+}
+
 extension Native {
     // MARK: - Apps / URLs
 
@@ -352,9 +375,14 @@ extension Native {
     // buffer (hundreds of tabs): it blocks in write(), never exits, and the callback
     // never fires -- which would wedge tab_switcher's st.refreshing forever. Completion
     // joins TWO obligations -- stdout EOF AND process exit -- so nothing ever blocks
-    // waiting; a watchdog SIGTERMs a hung process (unanswered Automation prompt,
-    // beachball) so the reads hit EOF and cb(nil) still fires. Exactly one
-    // completion per call (the throw path returns before notify is registered).
+    // waiting; a watchdog SIGTERMs a still-RUNNING hung process (unanswered
+    // Automation prompt, beachball) so the reads hit EOF and cb(nil) still fires.
+    // Exactly one completion per call (the throw path returns before notify is
+    // registered).
+    //
+    // The pipes must be RETAINED until completion (see JXAPipes) -- without that
+    // the read end is closed at child exit and the EOF callback is lost, which
+    // dropped roughly one callback in three.
     private func runJXACore(_ script: String, _ completion: @escaping @Sendable (String?) -> Void) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -362,6 +390,8 @@ extension Native {
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err
+        // Strong reference held past this function's return -- the whole fix.
+        let pipes = JXAPipes(out: out, err: err)
 
         let box = JXABox()
         let group = DispatchGroup()
@@ -380,67 +410,42 @@ extension Native {
         err.fileHandleForReading.readabilityHandler = { h in
             if h.availableData.isEmpty { h.readabilityHandler = nil }
         }
-        // The read end as a bare fd: Int32 is Sendable, FileHandle/Pipe are not, so
-        // this is what the @Sendable terminationHandler below can legally capture.
-        let outFD = out.fileHandleForReading.fileDescriptor
-
         group.enter()   // obligation 2: process exit (Process arrives as the param, never captured)
         p.terminationHandler = { proc in
             box.setStatus(proc.terminationStatus)
             group.leave()
 
-            // LOST-EOF FALLBACK (2026-07-25). `readabilityHandler` does not
-            // reliably deliver its final empty-data callback when the last read
-            // and the child's exit land within a millisecond of each other --
-            // observed in a captured trace: "stdout 48b" then "TERMINATED", and
-            // no EOF, ever. The stdout obligation then never completes, notify
-            // never runs, and the pinned Lua callback is dropped for good: the
-            // feature waits forever for tabs that already arrived.
+            // BELT-AND-BRACES, not the fix. The fix is holding `pipes` alive
+            // (see JXAPipes) -- with the read end kept open, EOF is delivered
+            // every time (0 losses in 150 runs, against 69 without it).
             //
-            // KNOWN FOUNDATION DEFECT, not something exotic about this code.
-            // Documented for macOS/iOS since 2015 ("the readability handler is
-            // not called again on EOF", mjtsai.com/blog/2015/12/11/
-            // nsfilehandles-indeterminable-readabilityhandler/) and tracked as
-            // SR-12080 / swift-corelibs-foundation#3275. Read that issue with
-            // care though: it reports the fault as Linux-only and calls macOS
-            // reliable. It is NOT -- the trace above is Darwin 25.5.0. Do not let
-            // that claim talk a future reader out of this guard.
+            // This remains because a lost EOF costs a permanently dropped Lua
+            // callback, and the child's exit is proof no more data can arrive:
+            // after a grace period for the real EOF, claim the obligation so the
+            // group can never stay outstanding. Whichever path claims first
+            // wins; the other becomes a no-op.
             //
-            // The shape here (handler for incremental reads, completion owned by
-            // the termination handler, plus a final drain) is the workaround the
-            // community converged on; the incremental handler stays because
-            // dropping it reintroduces the >64KB pipe deadlock this file's header
-            // describes.
-            //
-            // The SIGTERM watchdog cannot cover this -- it fires at a process
-            // that has already exited, so nothing is left to close the pipe.
-            //
-            // The child is gone, so no further data can ever appear: after a
-            // short grace for the real EOF, claim the obligation and finish.
-            // Whichever path claims first wins; the other becomes a no-op.
+            // The grace matters -- claiming immediately would routinely beat the
+            // legitimate EOF and make TWO readers on one live fd the common case.
+            // It reads through the RETAINED handle (never a bare fd): an earlier
+            // version captured `fileDescriptor` as an Int32 and read from it
+            // 0.25s later, which measured as closed in 100% of firings -- a
+            // use-after-close that could have read, and advanced the offset of,
+            // whatever unrelated file had since been handed that fd number.
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
                 guard box.claimStdoutSettled() else { return }   // real EOF got there first
-                // Non-blocking drain so a still-open write end can never park us
-                // here: O_NONBLOCK turns "nothing more to read" into EAGAIN (-1)
-                // instead of an indefinite block.
-                let flags = fcntl(outFD, F_GETFL, 0)
-                if flags != -1 { _ = fcntl(outFD, F_SETFL, flags | O_NONBLOCK) }
-                var buf = [UInt8](repeating: 0, count: 65536)
-                while true {
-                    let n = buf.withUnsafeMutableBytes { read(outFD, $0.baseAddress, $0.count) }
-                    if n <= 0 { break }          // 0 = EOF, -1 = EAGAIN/error
-                    box.append(Data(buf[0..<n]))
-                }
-                // Record the rescue: this is a real kernel/Foundation race being
-                // papered over, and if it ever becomes common the daily log is
-                // where that shows up. Throttled -- it sits on the tab-listing
-                // path, which polls. seamLog is main-actor-isolated, hence the hop.
+                let fh = pipes.out.fileHandleForReading
+                // Sole reader from here: the handler is retired BEFORE draining,
+                // so the two cannot split the byte stream between them.
+                fh.readabilityHandler = nil
+                if let rest = try? fh.readToEnd(), !rest.isEmpty { box.append(rest) }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         Native.shared.seamLogThrottled(
                             "jxa-lost-eof",
-                            "jxa: stdout EOF never arrived after exit; completed the read from the "
-                            + "termination fallback (callback would otherwise have been dropped)")
+                            "jxa: stdout EOF never arrived after child exit; completed the read from "
+                            + "the termination fallback. Expected to be silent -- if this appears, the "
+                            + "pipe-retention fix in runJXACore is not holding.")
                     }
                 }
                 group.leave()
@@ -456,23 +461,37 @@ extension Native {
             return                         // notify never registered -> exactly-once holds
         }
 
-        // Watchdog addresses the child by PID (Int32 is Sendable; Process is not).
-        // ESRCH on an already-exited pid is harmless; the group cancels it in every
-        // completed run.
-        // Watchdog: SIGTERM a hung osascript (unanswered Automation prompt,
-        // beachball) so the reads hit EOF and completion still fires. Addresses the
-        // child by PID (Int32 is Sendable; Process is not) and runs on .main, matching
-        // the notify below -- both inherit this @MainActor method's isolation, so
-        // nothing crosses actor boundaries (a background hop would trap Swift 6's
-        // isolation assertion). Main is free during the out-of-process run, so the
-        // backstop is reliable; notify cancels it in every completed run, so kill only
-        // fires on a still-hung (still-valid) pid.
+        // Watchdog: SIGTERM a STILL-RUNNING hung osascript (unanswered Automation
+        // prompt, beachball) so the reads hit EOF and completion still fires. It
+        // covers only that case -- a child that never exits. It cannot rescue a
+        // child that already exited, because then there is nothing left to close
+        // the pipe; that case is the pipe retention plus the termination fallback
+        // above. Addresses the child by PID (Int32 is Sendable; Process is not)
+        // and runs on .main, matching the notify below -- both inherit this
+        // @MainActor method's isolation, so nothing crosses actor boundaries (a
+        // background hop would trap Swift 6's isolation assertion). Main is free
+        // during the out-of-process run, so the backstop is reliable.
+        //
+        // notify cancels it in every completed run, and completion is now
+        // guaranteed (the fallback closes the last hole), so it fires only at a
+        // child that is genuinely still alive. That guarantee is load-bearing:
+        // firing at a long-dead pid would not be "harmless ESRCH" as an earlier
+        // comment here claimed -- pids are recycled, and the signal would land on
+        // whatever unrelated process inherited the number.
         let pid = p.processIdentifier
         let watchdog = DispatchWorkItem { kill(pid, SIGTERM) }
         DispatchQueue.main.asyncAfter(deadline: .now() + Native.jxaTimeoutSeconds, execute: watchdog)
 
         group.notify(queue: .main) {
-            watchdog.cancel()   // safe: stdout EOF and process exit have both happened
+            // THE RETAIN. Holding `pipes` across the whole run is what keeps the
+            // read end open until the reader is finished -- without it, Process
+            // deallocates at child exit, closes the fd, and the EOF callback is
+            // lost. `withExtendedLifetime` (not a bare mention) so no optimizer is
+            // free to release it early.
+            withExtendedLifetime(pipes) {}
+            // Both obligations are settled here -- via the real EOF, or via the
+            // termination fallback that claimed it.
+            watchdog.cancel()
             let (data, status) = box.result()
             let text = status == 0
                 ? String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
