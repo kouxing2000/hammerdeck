@@ -335,6 +335,29 @@ struct Placement: Identifiable {
     var screen: String = ""
     var pos: String = "full"
     var ratios: [String: Double]? = nil
+
+    /// Decode a stored placement dict. `pos` is either a named snap-grid id
+    /// (a string) or an exact captured rect (a ratios object) -- the latter
+    /// becomes `capturedPosId` plus the ratios, which is how the editor shows
+    /// "Captured" and how buildSpec forks them back out.
+    init(from d: [String: Any]) {
+        app = d["app"] as? String ?? ""
+        screen = d["screen"] as? String ?? ""
+        if let s = d["pos"] as? String {
+            pos = s
+        } else if let r = d["pos"] as? [String: Any] {
+            func dbl(_ v: Any?) -> Double { (v as? Double) ?? (v as? Int).map(Double.init) ?? 0 }
+            ratios = ["x": dbl(r["x"]), "y": dbl(r["y"]), "w": dbl(r["w"]), "h": dbl(r["h"])]
+            pos = capturedPosId
+        }
+    }
+
+    /// Explicit memberwise init: declaring `init(from:)` suppresses the synthesized
+    /// one, and `addPlacement` seeds a row with a screen + position.
+    init(app: String = "", screen: String = "", pos: String = "full",
+         ratios: [String: Double]? = nil) {
+        self.app = app; self.screen = screen; self.pos = pos; self.ratios = ratios
+    }
 }
 let capturedPosId = "__captured__"
 // The app-target effect kinds (minimize/hide/quit a named app). File-level so
@@ -1089,28 +1112,12 @@ private struct AddRuleForm: View {
 
     // --- token labels ----------------------------------------------------------
     private func effectVerbLabel(_ kind: String?) -> String {
-        switch kind {
-        case "notify":         return Strings.t("rules.verb.notify", default: "notify")
-        case "lockScreen":     return Strings.t("rules.verb.lock", default: "lock the screen")
-        case "startScreensaver": return Strings.t("rules.verb.screensaver", default: "start the screensaver")
-        case "emptyTrash":     return Strings.t("rules.verb.emptyTrash", default: "empty the Trash")
-        case "eject":          return Strings.t("rules.verb.eject", default: "eject external disks")
-        case "setAppearance":  return Strings.t("rules.verb.appearance", default: "set appearance")
-        case "volume":         return Strings.t("rules.verb.volume", default: "volume")
-        case "mediaKey":       return Strings.t("rules.verb.media", default: "media")
-        case "solidWallpaper", "setWallpaperImage": return Strings.t("rules.verb.wallpaper", default: "set wallpaper")
-        case "moveAppToDisplay": return Strings.t("rules.verb.move", default: "move")
-        case "minimizeApp":    return Strings.t("rules.verb.minimize", default: "minimize")
-        case "hideApp":        return Strings.t("rules.verb.hide", default: "hide")
-        case "quitApp":        return Strings.t("rules.verb.quit", default: "quit")
-        case "launchApp":      return Strings.t("rules.verb.launchApp", default: "open")
-        case "openURL":        return Strings.t("rules.verb.open", default: "open")
-        case "speak":          return Strings.t("rules.verb.speak", default: "say")
-        case "runShortcut":    return Strings.t("rules.verb.runShortcut", default: "run Shortcut")
-        case "layout":         return Strings.t("rules.verb.layout", default: "arrange windows")
-        case "chain":          return Strings.t("rules.verb.chain", default: "do several things")
-        default:               return selectedEffect?.label ?? (kind ?? "")   // command -> "Run: <label>"
+        // The verb lives on the kind's row (RuleEffectKinds). No row means
+        // "command", whose label is the catalog entry itself ("Run: <label>").
+        guard let spec = EffectKinds.spec(for: kind) else {
+            return selectedEffect?.label ?? (kind ?? "")
         }
+        return Strings.t("rules.verb." + spec.verbSuffix, default: spec.verbDefault)
     }
 
     private func colorLabel(_ hex: String) -> String {
@@ -1554,15 +1561,11 @@ private struct AddRuleForm: View {
         }
     }
 
+    /// Is this chain row complete? Defined as "it would serialize", so the row's
+    /// warning indicator and what buildSpec actually keeps can never disagree --
+    /// this was a second switch over the same kinds until it was folded in.
     private func chainStepComplete(_ s: ChainStep) -> Bool {
-        switch s.kind {
-        case "notify":      return !s.notifyTitle.trimmingCharacters(in: .whitespaces).isEmpty
-        case "speak":       return !s.speakText.trimmingCharacters(in: .whitespaces).isEmpty
-        case "runShortcut": return !s.shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
-        case "openURL":     return !s.url.trimmingCharacters(in: .whitespaces).isEmpty
-        case "lockScreen", "startScreensaver", "emptyTrash", "eject":  return true
-        default:            return false
-        }
+        EffectKinds.chainStepDict(s) != nil
     }
 
     /// Map a stored chain-step dict to an editor row, or nil if it's a kind the
@@ -1650,24 +1653,8 @@ private struct AddRuleForm: View {
                 : String(format: Strings.t("rules.captureNoWindowsError", default: "No windows on \"%@\" to capture -- move some there first (or it isn't connected right now)."), onlyDisplay)
             return
         }
-        placements = snap.map(placement(from:))
+        placements = snap.map(Placement.init(from:))
         formError = nil
-    }
-
-    /// Map a captured/stored placement dict to an editor row. A string `pos` is a
-    /// grid id; a `{x,y,w,h}` table is exact ratios (captured), flagged as such.
-    private func placement(from d: [String: Any]) -> Placement {
-        var p = Placement()
-        p.app = d["app"] as? String ?? ""
-        p.screen = d["screen"] as? String ?? ""
-        if let s = d["pos"] as? String {
-            p.pos = s
-        } else if let r = d["pos"] as? [String: Any] {
-            func dbl(_ v: Any?) -> Double { (v as? Double) ?? (v as? Int).map(Double.init) ?? 0 }
-            p.ratios = ["x": dbl(r["x"]), "y": dbl(r["y"]), "w": dbl(r["w"]), "h": dbl(r["h"])]
-            p.pos = capturedPosId
-        }
-        return p
     }
 
     /// Warn when the typed value isn't currently present and we have a candidate
@@ -1690,44 +1677,13 @@ private struct AddRuleForm: View {
         }
         if isStateTrigger,
            stateValue.trimmingCharacters(in: .whitespaces).isEmpty { return false }
-        if selectedEffect?.kind == "notify",
-           notifyTitle.trimmingCharacters(in: .whitespaces).isEmpty { return false }
-        if selectedEffect?.kind == "layout" {
-            return placements.contains {
-                !$0.app.trimmingCharacters(in: .whitespaces).isEmpty
-                    && !$0.screen.trimmingCharacters(in: .whitespaces).isEmpty
-            }
-        }
-        if selectedEffect?.kind == "runShortcut" {
-            return !shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if selectedEffect?.kind == "openURL" {
-            return !openURLValue.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if selectedEffect?.kind == "speak" {
-            return !speakText.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if selectedEffect?.kind == "solidWallpaper" {
-            return !solidDisplay.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if selectedEffect?.kind == "setWallpaperImage" {
-            return !wallpaperImage.trimmingCharacters(in: .whitespaces).isEmpty
-                && !solidDisplay.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if appTargetKinds.contains(selectedEffect?.kind ?? "") {
-            return !minimizeAppName.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if selectedEffect?.kind == "launchApp" {
-            // Require the bundle id (not just the name) -- launch needs it.
-            return !launchAppBundleId.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if selectedEffect?.kind == "moveAppToDisplay" {
-            return !moveApp.trimmingCharacters(in: .whitespaces).isEmpty
-                && !moveDisplay.trimmingCharacters(in: .whitespaces).isEmpty
-        }
-        if selectedEffect?.kind == "chain" {
-            return chainSteps.contains { chainStepComplete($0) }
-        }
+        // ONE definition of "complete enough": the kind's own build closure
+        // (RuleEffectKinds), which is exactly what buildSpec will run on submit.
+        // This used to be a parallel if-chain, and it had already drifted --
+        // launchApp's validator accepted a bundle id alone while buildSpec also
+        // required the name, so Submit could enable for a form that then
+        // serialized to nil and silently did nothing.
+        if !formModel.effectComplete { return false }
         return selectedEffect != nil
     }
 
@@ -1857,63 +1813,24 @@ private struct AddRuleForm: View {
             // The "Do" dropdown only offers automatable commands of ENABLED
             // features; a command whose target vanished can't be shown in the form.
             if !opts.effects.contains(where: { $0.id == effectId }) { representable = false }
-        } else if kind == "layout" {
-            effectId = "layout"
-            placements = ((effect["placements"] as? [Any]) ?? [])
-                .compactMap { $0 as? [String: Any] }.map(placement(from:))
-        } else if kind == "runShortcut" {
-            effectId = "runShortcut"
-            shortcutName = effect["name"] as? String ?? ""
-        } else if kind == "openURL" {
-            effectId = "openURL"
-            openURLValue = effect["url"] as? String ?? ""
-        } else if kind == "speak" {
-            effectId = "speak"
-            speakText = effect["text"] as? String ?? ""
-        } else if kind == "solidWallpaper" {
-            effectId = "solidWallpaper"
-            solidColor = effect["color"] as? String ?? "#FFFFFF"
-            solidDisplay = effect["display"] as? String ?? "external"
-        } else if kind == "setWallpaperImage" {
-            effectId = "setWallpaperImage"
-            wallpaperImage = effect["image"] as? String ?? ""
-            solidDisplay = effect["display"] as? String ?? "external"
-        } else if kind == "moveAppToDisplay" {
-            effectId = "moveAppToDisplay"
-            moveApp = effect["app"] as? String ?? ""
-            moveAppBundleId = effect["appBundleId"] as? String ?? ""
-            moveDisplay = effect["display"] as? String ?? ""
-        } else if let k = kind, appTargetKinds.contains(k) {
+        } else if let k = kind, let spec = EffectKinds.spec(for: k) {
+            // One table row per kind decodes its own fields (RuleEffectKinds).
+            // Round-trip through RuleFormModel: the table writes into the model,
+            // then the model is copied back onto the view's @State -- the exact
+            // inverse of the `formModel` bundling below, and the reason adding a
+            // kind no longer means editing a load chain here as well.
             effectId = k
-            minimizeAppName = effect["app"] as? String ?? ""
-            minimizeAppBundleId = effect["appBundleId"] as? String ?? ""
-        } else if kind == "launchApp" {
-            effectId = "launchApp"
-            launchAppName = effect["app"] as? String ?? ""
-            launchAppBundleId = effect["appBundleId"] as? String ?? ""
-        } else if kind == "setAppearance" {
-            effectId = "setAppearance"
-            appearanceMode = effect["mode"] as? String ?? "dark"
-        } else if kind == "volume" {
-            effectId = "volume"
-            volumeOp = effect["op"] as? String ?? "up"
-        } else if kind == "mediaKey" {
-            effectId = "mediaKey"
-            mediaKeyName = effect["key"] as? String ?? "playpause"
-        } else if kind == "lockScreen" {
-            effectId = "lockScreen"
-        } else if kind == "startScreensaver" {
-            effectId = "startScreensaver"
-        } else if kind == "emptyTrash" {
-            effectId = "emptyTrash"
-        } else if kind == "eject" {
-            effectId = "eject"
-        } else if kind == "chain" {
-            effectId = "chain"
-            let steps = (effect["effects"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
-            chainSteps = steps.compactMap(chainStep(from:))
-            // a chain with a step the form can't edit (layout/command) -> JSON
-            if steps.count != chainSteps.count { representable = false }
+            var m = formModel
+            spec.load(effect, &m)
+            applyEffectFields(from: m)
+            if k == "chain" {
+                // Chain rows are the one thing the table cannot decode: the form
+                // edits only a subset of step kinds, and a chain containing any
+                // other kind must open in JSON rather than silently losing it.
+                let steps = (effect["effects"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+                chainSteps = steps.compactMap(chainStep(from:))
+                if steps.count != chainSteps.count { representable = false }
+            }
         } else {
             effectId = "notify"
             notifyTitle = effect["title"] as? String ?? AppInfo.displayName
@@ -2029,6 +1946,22 @@ private struct AddRuleForm: View {
         m.appearanceMode = appearanceMode; m.volumeOp = volumeOp; m.mediaKeyName = mediaKeyName
         m.opts = opts
         return m
+    }
+
+    /// Copy the model's EFFECT fields back onto the view's @State -- the exact
+    /// inverse of `formModel` above, used by loadForEdit once a kind's table row
+    /// has decoded into the model. Trigger fields are excluded on purpose: they
+    /// are decoded directly in loadForEdit and must not be clobbered by a model
+    /// snapshot taken mid-decode.
+    private func applyEffectFields(from m: RuleFormModel) {
+        notifyTitle = m.notifyTitle; notifyText = m.notifyText; notifyChannel = m.notifyChannel
+        placements = m.placements
+        shortcutName = m.shortcutName; openURLValue = m.openURLValue; speakText = m.speakText
+        wallpaperImage = m.wallpaperImage; solidColor = m.solidColor; solidDisplay = m.solidDisplay
+        minimizeAppName = m.minimizeAppName; minimizeAppBundleId = m.minimizeAppBundleId
+        moveApp = m.moveApp; moveAppBundleId = m.moveAppBundleId; moveDisplay = m.moveDisplay
+        launchAppName = m.launchAppName; launchAppBundleId = m.launchAppBundleId
+        appearanceMode = m.appearanceMode; volumeOp = m.volumeOp; mediaKeyName = m.mediaKeyName
     }
 }
 

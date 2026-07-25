@@ -57,6 +57,7 @@ final class LocalizationTests: XCTestCase {
     // all, FAILS -- a gate that quietly skips what it cannot read certifies nothing, which is
     // how `Strings.plural` (4 sites) and `rules.triggerField.*` sat unguarded behind a green
     // test until a review caught them.
+    @MainActor
     func testEveryChromeStringIsTranslated() throws {
         let root = repoRoot()
         let catalogPath = root + "/app/i18n/zh-Hans.json"
@@ -72,6 +73,11 @@ final class LocalizationTests: XCTestCase {
         let dynamicFamilies: [String: [String]] = [
             "recipe.": PlacementListEditor.recipeStringKeys,
             "rules.triggerField.": [],   // covered by i18n_parity.lua (Lua owns the noun set)
+            // The effect-verb pills read their key off the per-kind table
+            // (RuleEffectKinds), so no literal spells them out any more. Declaring
+            // the family keeps every verb checked for a translation -- moving keys
+            // into a data table must not quietly exempt them from the gate.
+            "rules.verb.": EffectKinds.verbStringKeys,
         ]
 
         // Every localization call site, then the two shapes we can resolve.
@@ -148,6 +154,7 @@ final class LocalizationTests: XCTestCase {
     // ctx.plural` (a feature may reach a DOTTED global key -- see i18n.tFeature's fallback).
     // A key is also live when it matches a CONCATENATED prefix ("rules.signal." .. name) --
     // the same dynamic families the scan above resolves from the other side.
+    @MainActor
     func testCatalogHasNoOrphanedKeys() throws {
         let root = repoRoot()
         guard let data = FileManager.default.contents(atPath: root + "/app/i18n/zh-Hans.json"),

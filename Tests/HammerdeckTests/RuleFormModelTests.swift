@@ -6,6 +6,10 @@ import XCTest
 /// turns the form's state into the engine's rule-spec dict; a bug here silently
 /// persists a malformed rule, so the subtle paths (bundle-id gating, required
 /// fields, incomplete-step dropping) earn the coverage.
+// @MainActor: buildSpec reads the EffectKinds table, which is main-actor
+// isolated (it is only ever consulted while building or submitting the rule
+// form -- main-actor UI work). The tests are pure value-in/value-out either way.
+@MainActor
 final class RuleFormModelTests: XCTestCase {
 
     /// A realistic option catalog: a spread of effect kinds + two signals, one
@@ -190,5 +194,84 @@ final class RuleFormModelTests: XCTestCase {
         XCTAssertEqual(on(spec)?["leaves"] as? String, "Safari")
         XCTAssertNil(on(spec)?["becomes"], "a 'leaves' rule carries no 'becomes' key")
         XCTAssertNil(effect(spec)?["text"], "an empty notify body omits the text key")
+    }
+
+    // MARK: - load -> build round-trip (CODE-4)
+
+    /// For EVERY effect kind: a stored dict loaded into the form must serialize
+    /// back to the same dict.
+    ///
+    /// This is the property the table-driven split has to preserve, and the one a
+    /// screenshot cannot show: `load` and `build` are now two closures sitting in
+    /// one row, and nothing else forces them to agree. A field decoded under the
+    /// wrong key, or written out under a different one, round-trips to something
+    /// subtly different -- the rule editor would open a saved rule, look right, and
+    /// save back a changed spec. Covering every kind at once is also what makes
+    /// adding a kind cheap: the new row is exercised here for free.
+    func testEveryKindRoundTripsThroughLoadAndBuild() {
+        // One representative, FULLY-populated dict per kind (fully populated so an
+        // optional field silently dropped by load still shows up as a diff).
+        let cases: [[String: Any]] = [
+            ["kind": "notify", "title": "T", "text": "B", "channel": "system"],
+            ["kind": "runShortcut", "name": "My Shortcut"],
+            ["kind": "openURL", "url": "https://example.com"],
+            ["kind": "speak", "text": "hello"],
+            ["kind": "solidWallpaper", "color": "#123456", "display": "all"],
+            ["kind": "setWallpaperImage", "image": "/tmp/a.png", "display": "external"],
+            ["kind": "moveAppToDisplay", "app": "Safari", "appBundleId": "com.apple.Safari",
+             "display": "DELL"],
+            ["kind": "minimizeApp", "app": "Safari", "appBundleId": "com.apple.Safari"],
+            ["kind": "hideApp", "app": "Mail", "appBundleId": "com.apple.mail"],
+            ["kind": "quitApp", "app": "Notes", "appBundleId": "com.apple.Notes"],
+            ["kind": "launchApp", "app": "Safari", "appBundleId": "com.apple.Safari"],
+            ["kind": "setAppearance", "mode": "light"],
+            ["kind": "volume", "op": "down"],
+            ["kind": "mediaKey", "key": "next"],
+            ["kind": "lockScreen"],
+            ["kind": "startScreensaver"],
+            ["kind": "emptyTrash"],
+            ["kind": "eject"],
+            ["kind": "layout",
+             "placements": [["app": "Safari", "screen": "DELL", "pos": "left"]]],
+        ]
+        let covered = Set(cases.compactMap { $0["kind"] as? String })
+        XCTAssertEqual(covered.count, cases.count,
+                       "one case per kind -- a duplicate would hide a missing one")
+        // A kind added to the table with no case here would be untested while this
+        // test still passed -- the silent gap that makes a suite look better than
+        // it is. "chain" is excluded: its rows are rebuilt by the view, so its
+        // load is a deliberate no-op (see the table).
+        let untested = EffectKinds.all.map(\.kind).filter { $0 != "chain" && !covered.contains($0) }
+        XCTAssertEqual(untested, [], "these table rows have no round-trip case")
+
+        for stored in cases {
+            let kind = stored["kind"] as! String
+            guard let spec = EffectKinds.spec(for: kind) else {
+                XCTFail("no table row for \(kind)"); continue
+            }
+            var m = RuleFormModel()
+            m.opts = makeOpts()
+            spec.load(stored, &m)
+            guard let rebuilt = spec.build(m) else {
+                XCTFail("\(kind): built nil from a fully-populated stored dict"); continue
+            }
+            XCTAssertEqual(NSDictionary(dictionary: rebuilt), NSDictionary(dictionary: stored),
+                           "\(kind) did not survive load -> build unchanged")
+        }
+    }
+
+    /// Submit-enablement and serialization must answer the same question. They were
+    /// separate switches before CODE-4 and had already drifted: launchApp's
+    /// validator accepted a bundle id alone, while buildSpec also required the
+    /// name -- so the button could enable for a form that then serialized to nil.
+    func testEffectCompleteAgreesWithBuild() {
+        for spec in EffectKinds.all {
+            var m = RuleFormModel()
+            m.opts = makeOpts()
+            m.effectId = spec.kind
+            guard m.selectedEffect != nil else { continue }   // not in this catalog
+            XCTAssertEqual(m.effectComplete, spec.build(m) != nil,
+                           "\(spec.kind): canSubmit and buildSpec disagree on an empty form")
+        }
     }
 }

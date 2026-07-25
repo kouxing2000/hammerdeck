@@ -57,7 +57,19 @@ struct RuleFormModel {
     private var meta: SignalMeta? { opts.signalMeta[signal] }
     private var signalUsesBundleId: Bool { meta?.bundleIdMatch ?? false }
 
+    /// Is the effect half of the form complete enough to serialize? Asked by the
+    /// Submit button. Defined as "build would succeed", so the button can never
+    /// disagree with what buildSpec actually produces -- they used to be separate
+    /// switches, and had already drifted for launchApp.
+    @MainActor
+    var effectComplete: Bool {
+        guard let eff = selectedEffect else { return false }
+        guard let spec = EffectKinds.spec(for: eff.kind) else { return true }  // command
+        return spec.build(self) != nil
+    }
+
     // MARK: Serialize the form into the engine's rule spec (nil = too incomplete)
+    @MainActor
     func buildSpec() -> [String: Any]? {
         var on: [String: Any]
         if isStateTrigger {
@@ -81,121 +93,18 @@ struct RuleFormModel {
             return nil
         }
         guard let eff = selectedEffect else { return nil }
-        var effect: [String: Any]
-        if eff.kind == "notify" {
-            let t = notifyTitle.trimmingCharacters(in: .whitespaces)
-            guard !t.isEmpty else { return nil }
-            effect = ["kind": "notify", "title": t, "channel": notifyChannel]
-            let body = notifyText.trimmingCharacters(in: .whitespaces)
-            if !body.isEmpty { effect["text"] = body }
-        } else if eff.kind == "layout" {
-            let list: [[String: Any]] = placements.compactMap { p in
-                let app = p.app.trimmingCharacters(in: .whitespaces)
-                let screen = p.screen.trimmingCharacters(in: .whitespaces)
-                guard !app.isEmpty, !screen.isEmpty else { return nil }
-                var entry: [String: Any] = ["app": app, "screen": screen]
-                if p.pos == capturedPosId, let r = p.ratios {
-                    entry["pos"] = r            // exact captured ratios
-                } else {
-                    entry["pos"] = p.pos        // a named snap-grid id
-                }
-                return entry
-            }
-            guard !list.isEmpty else { return nil }
-            effect = ["kind": "layout", "placements": list]
-        } else if eff.kind == "runShortcut" {
-            let n = shortcutName.trimmingCharacters(in: .whitespaces)
-            guard !n.isEmpty else { return nil }
-            effect = ["kind": "runShortcut", "name": n]
-        } else if eff.kind == "openURL" {
-            let u = openURLValue.trimmingCharacters(in: .whitespaces)
-            guard !u.isEmpty else { return nil }
-            effect = ["kind": "openURL", "url": u]
-        } else if eff.kind == "speak" {
-            let t = speakText.trimmingCharacters(in: .whitespaces)
-            guard !t.isEmpty else { return nil }
-            effect = ["kind": "speak", "text": t]
-        } else if eff.kind == "solidWallpaper" {
-            let d = solidDisplay.trimmingCharacters(in: .whitespaces)
-            guard !d.isEmpty else { return nil }
-            effect = ["kind": "solidWallpaper", "color": solidColor, "display": d]
-        } else if eff.kind == "setWallpaperImage" {
-            let img = wallpaperImage.trimmingCharacters(in: .whitespaces)
-            let d = solidDisplay.trimmingCharacters(in: .whitespaces)
-            guard !img.isEmpty, !d.isEmpty else { return nil }
-            effect = ["kind": "setWallpaperImage", "image": img, "display": d]
-        } else if eff.kind == "moveAppToDisplay" {
-            let a = moveApp.trimmingCharacters(in: .whitespaces)
-            let d = moveDisplay.trimmingCharacters(in: .whitespaces)
-            guard !a.isEmpty, !d.isEmpty else { return nil }
-            effect = ["kind": "moveAppToDisplay", "app": a, "display": d]
-            if !moveAppBundleId.isEmpty { effect["appBundleId"] = moveAppBundleId }
-        } else if appTargetKinds.contains(eff.kind) {
-            let a = minimizeAppName.trimmingCharacters(in: .whitespaces)
-            guard !a.isEmpty else { return nil }
-            effect = ["kind": eff.kind, "app": a]
-            if !minimizeAppBundleId.isEmpty { effect["appBundleId"] = minimizeAppBundleId }
-        } else if eff.kind == "launchApp" {
-            // The bundle id is the launch key (required); the name rides along for the
-            // sentence/log. A typed-name-only pick (no id) is blocked by canSubmit.
-            let bid = launchAppBundleId.trimmingCharacters(in: .whitespaces)
-            let a = launchAppName.trimmingCharacters(in: .whitespaces)
-            guard !bid.isEmpty, !a.isEmpty else { return nil }
-            effect = ["kind": "launchApp", "app": a, "appBundleId": bid]
-        } else if eff.kind == "chain" {
-            // Drop incomplete steps (mirrors layout); keep order.
-            let steps: [[String: Any]] = chainSteps.compactMap { s in
-                switch s.kind {
-                case "notify":
-                    let t = s.notifyTitle.trimmingCharacters(in: .whitespaces)
-                    guard !t.isEmpty else { return nil }
-                    var e: [String: Any] = ["kind": "notify", "title": t, "channel": s.notifyChannel]
-                    let body = s.notifyText.trimmingCharacters(in: .whitespaces)
-                    if !body.isEmpty { e["text"] = body }
-                    return e
-                case "speak":
-                    let t = s.speakText.trimmingCharacters(in: .whitespaces)
-                    guard !t.isEmpty else { return nil }
-                    return ["kind": "speak", "text": t]
-                case "runShortcut":
-                    let n = s.shortcutName.trimmingCharacters(in: .whitespaces)
-                    guard !n.isEmpty else { return nil }
-                    return ["kind": "runShortcut", "name": n]
-                case "openURL":
-                    let u = s.url.trimmingCharacters(in: .whitespaces)
-                    guard !u.isEmpty else { return nil }
-                    return ["kind": "openURL", "url": u]
-                case "lockScreen":
-                    return ["kind": "lockScreen"]
-                case "startScreensaver":
-                    return ["kind": "startScreensaver"]
-                case "emptyTrash":
-                    return ["kind": "emptyTrash"]
-                case "eject":
-                    return ["kind": "eject"]
-                default:
-                    return nil
-                }
-            }
-            guard !steps.isEmpty else { return nil }
-            effect = ["kind": "chain", "effects": steps]
-        } else if eff.kind == "setAppearance" {
-            effect = ["kind": "setAppearance", "mode": appearanceMode]
-        } else if eff.kind == "volume" {
-            effect = ["kind": "volume", "op": volumeOp]
-        } else if eff.kind == "mediaKey" {
-            effect = ["kind": "mediaKey", "key": mediaKeyName]
-        } else if eff.kind == "lockScreen" {
-            effect = ["kind": "lockScreen"]
-        } else if eff.kind == "startScreensaver" {
-            effect = ["kind": "startScreensaver"]
-        } else if eff.kind == "emptyTrash" {
-            effect = ["kind": "emptyTrash"]
-        } else if eff.kind == "eject" {
-            effect = ["kind": "eject"]
+        // One table row per kind (RuleEffectKinds) instead of the if-chain that
+        // used to live here -- see that file for why. "command" is the only thing
+        // without a row: it is not a fixed kind but a feature+action pair resolved
+        // from the live catalog, so it is built here.
+        let effect: [String: Any]
+        if let spec = EffectKinds.spec(for: eff.kind) {
+            guard let built = spec.build(self) else { return nil }
+            effect = built
         } else {
-            effect = ["kind": "command", "feature": eff.feature ?? ""]
-            if let a = eff.action { effect["action"] = a }
+            var cmd: [String: Any] = ["kind": "command", "feature": eff.feature ?? ""]
+            if let a = eff.action { cmd["action"] = a }
+            effect = cmd
         }
         var spec: [String: Any] = ["on": on, "effect": effect]
         let label = name.trimmingCharacters(in: .whitespaces)

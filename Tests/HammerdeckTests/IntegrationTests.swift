@@ -1438,6 +1438,36 @@ final class IntegrationTests: XCTestCase {
                        "these open their own network egress instead of Native.httpTask")
     }
 
+    /// Every effect kind the Lua engine offers must have a row in the Swift table.
+    ///
+    /// The two halves are independent: effects.lua's EFFECT_KINDS decides what the
+    /// ENGINE can run, RuleEffectKinds decides what the EDITOR can build and load.
+    /// Adding a kind to Lua and forgetting the Swift row is the exact failure CODE-4
+    /// set out to make impossible -- and it is silent: the kind appears in the "Do"
+    /// dropdown (the catalog comes from Lua), then serializes to a command-shaped
+    /// dict and quietly does the wrong thing. Nothing in the build notices.
+    ///
+    /// "command" is excluded on both sides: it is not a fixed kind but a
+    /// feature+action pair resolved from the live catalog.
+    @MainActor
+    func testEveryEngineEffectKindHasAnEditorRow() throws {
+        let raw = try TestHost.shared.lua.eval("""
+            local ks = {}
+            for _, e in ipairs(require("platform.effects").catalog()) do
+                if e.kind ~= "command" then ks[#ks+1] = e.kind end
+            end
+            table.sort(ks)
+            return ks
+            """)
+        let engineKinds = (raw as? [Any])?.compactMap { $0 as? String } ?? []
+        XCTAssertFalse(engineKinds.isEmpty, "read no effect kinds from Lua -- bad path, not a pass")
+
+        let missing = engineKinds.filter { EffectKinds.spec(for: $0) == nil }
+        XCTAssertEqual(missing, [],
+                       "these effect kinds exist in effects.lua but have no row in "
+                       + "RuleEffectKinds -- the rule editor cannot build or load them")
+    }
+
     /// Every capability Lua can grant must have real presentation here.
     ///
     /// Enforcement lives in Lua (manifest.CAPABILITY_METHODS); the Swift table in
