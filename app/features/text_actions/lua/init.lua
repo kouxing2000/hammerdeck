@@ -141,17 +141,19 @@ end
 
 -- Build the picker from the enabled toggles: base transforms, plus AI entries
 -- only once the key is VALIDATED in Settings AND the entry's toggle is on (an
--- unvalidated key shows no AI noise). Labels are LOCALIZED; the returned
--- byLabel map lets onChoose dispatch by the stable `id` (display/comparison
--- decoupled). Returns (actions, byLabel).
+-- unvalidated key shows no AI noise). Labels are LOCALIZED; each row carries the
+-- entry's stable `id`, which is what onChoose dispatches on. Returns
+-- (actions, byId).
+--
+-- The byId map used to be keyed by the localized LABEL, because askChoice handed
+-- the display text back. Two entries whose translations collided in some locale
+-- would then have silently shared one slot -- last writer wins, wrong action
+-- runs, no error. Keying by id (CODE-12) removes that entirely.
 local function buildPicker(ctx)
-    local actions, byLabel = {}, {}
+    local actions, byId = {}, {}
     local function addEntry(e)
-        local label = ctx.t("action." .. e.id, e.label)
-        -- A { label, icon } entry -- askChoice still hands the LABEL back to
-        -- onChoose, so byLabel dispatch is unchanged; the icon is pure display.
-        actions[#actions + 1] = { label = label, icon = e.icon }
-        byLabel[label] = e
+        actions[#actions + 1] = { id = e.id, label = ctx.t("action." .. e.id, e.label), icon = e.icon }
+        byId[e.id] = e
     end
     for _, b in ipairs(BASE_ACTIONS) do
         if ctx.opt(b.opt) then addEntry(b) end
@@ -161,7 +163,7 @@ local function buildPicker(ctx)
             if ctx.opt(ai.opt) then addEntry(ai) end
         end
     end
-    return actions, byLabel
+    return actions, byId
 end
 
 -- Run the chosen picker `entry` against `content`: base transforms paste back
@@ -236,7 +238,7 @@ local function actOnSelection(ctx, content)
         return
     end
 
-    local actions, byLabel = buildPicker(ctx)
+    local actions, byId = buildPicker(ctx)
     if #actions == 0 then
         ctx.alert(ctx.t("alert.noneEnabled", "No Text Actions are enabled -- turn some on in Settings"))
         return
@@ -248,7 +250,7 @@ local function actOnSelection(ctx, content)
         infos = { snippet },
         actions = actions,
         onChoose = function(choice)
-            local entry = choice and byLabel[choice]
+            local entry = choice and byId[choice]
             if entry then runEntry(ctx, content, entry) end
         end,
     }

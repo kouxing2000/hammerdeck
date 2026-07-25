@@ -345,35 +345,52 @@ end
 
 function adapter.askChoice(opts)
     -- Mirror the real adapter: each action entry is a plain label STRING or a
-    -- { label, icon } table (icon = an icon token like "symbol:zzz"); onChoose
-    -- always receives the LABEL string either way. Expose `actions` as those
-    -- label strings (what tests read and pass to choose) and `items` as the
-    -- normalized { text, image } rows, so a test can also assert on the icons.
+    -- { id, label, icon } table (icon = an icon token like "symbol:zzz").
+    -- onChoose receives (choiceId, label) -- the entry's `id` if it declares one,
+    -- else its 1-based INDEX, never the display text (CODE-12). Expose `actions`
+    -- as the label strings (what tests read and pass to choose) and `items` as
+    -- the normalized { text, image } rows, so a test can assert on the icons.
     local raw = opts.actions or {}
-    local labels, items = {}, {}
+    local labels, ids, items = {}, {}, {}
     for i, a in ipairs(raw) do
         if type(a) == "table" then
             labels[i] = a.label or a.text or ""
+            ids[i] = a.id ~= nil and a.id or i
             items[i] = { text = labels[i], image = a.icon }
         else
             labels[i] = a
+            ids[i] = i
             items[i] = { text = a }
         end
     end
     local d = {
         title = opts.title, infos = opts.infos or {}, actions = labels, items = items,
-        onChoose = opts.onChoose, open = true, stopped = false,
+        ids = ids, onChoose = opts.onChoose, open = true, stopped = false,
     }
     fake.dialogs[#fake.dialogs + 1] = d
     alloc()
-    local function finish(choiceText)
+    local function finish(idx)
         if not d.open then return end
         d.open = false
         freeOnce(d)
-        if d.onChoose then d.onChoose(choiceText) end
+        if not d.onChoose then return end
+        if idx then d.onChoose(ids[idx], labels[idx]) else d.onChoose(nil) end
     end
-    -- test-side driver
-    function d.choose(text) finish(text) end
+    -- Test-side driver: pick a row the way a USER does -- by the text they see,
+    -- or by position. Deliberately NOT by id: a test that drove by id could not
+    -- catch a row whose id and label got out of step, and "the user clicked the
+    -- row reading X" is what the test is actually asserting. The callback still
+    -- receives the id, so the feature's dispatch is exercised for real.
+    ---@param which string|number|nil label text, 1-based index, or nil to dismiss
+    function d.choose(which)
+        if which == nil then return finish(nil) end
+        if type(which) == "number" then return finish(which) end
+        for i, l in ipairs(labels) do
+            if l == which then return finish(i) end
+        end
+        error("fake askChoice: no action labelled '" .. tostring(which)
+            .. "' (have: " .. table.concat(labels, ", ") .. ")")
+    end
     return {
         dismiss = function() finish(nil) end,
         stop    = function() d.open = false; freeOnce(d) end,

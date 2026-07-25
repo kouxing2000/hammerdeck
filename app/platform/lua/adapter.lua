@@ -229,20 +229,36 @@ end
 --   title    = placeholder text
 --   infos    = { "info line", ... }   -- non-selectable context rows
 --   actions  = { "Action A", ... }    -- selectable rows; each entry is either a
---              plain label string OR a table { label = "...", icon = "<token>" }
---              where icon is an icon token ("symbol:moon.stars", "appicon:...",
---              "file:..."). onChoose still receives the LABEL string either way.
---   onChoose(actionText|nil)          -- nil = dismissed without choosing
--- The dialog frees itself after completion. dismiss() cancels (-> onChoose(nil)).
+--              plain label string OR a table { id = "...", label = "...",
+--              icon = "<token>" } where icon is an icon token
+--              ("symbol:moon.stars", "appicon:...", "file:...").
+--   onChoose(choiceId|nil, label)     -- nil = dismissed without choosing
+--
+-- WHAT onChoose RECEIVES, and why it is NOT the label (CODE-12). `choiceId` is
+-- the entry's `id` when it declares one, else its 1-based INDEX -- never the
+-- display text. Callers dispatch on a value they control, which cannot change
+-- when a string is translated, retitled, or interpolated.
+--
+-- The bridge has always handed back the index; this used to map it into the
+-- label right here, which pushed every caller into comparing translated strings
+-- (`if choice == snoozeLabel`) or keeping a private label->entry map. That is
+-- silent when it breaks: two rows whose translations collide dispatch to
+-- whichever the map saw last, and a label that gains a formatted value stops
+-- matching itself. Passing the id makes the whole class unrepresentable, and the
+-- label rides along second for logs and display.
 function adapter.askChoice(opts)
     local raw = opts.actions or {}
-    local labels, items = {}, {}
+    local labels, ids, items = {}, {}, {}
     for i, a in ipairs(raw) do
         if type(a) == "table" then
             labels[i] = a.label or a.text or ""
+            -- No `id` declared -> the index. Never the label: falling back to it
+            -- would quietly reinstate exactly what this change removes.
+            ids[i] = a.id ~= nil and a.id or i
             items[i] = { text = labels[i], image = a.icon }
         else
             labels[i] = a
+            ids[i] = i
             items[i] = { text = a }
         end
     end
@@ -251,7 +267,9 @@ function adapter.askChoice(opts)
         opts.infos or {},
         items,
         function(idx)
-            if opts.onChoose then opts.onChoose(idx and labels[idx] or nil) end
+            if opts.onChoose then
+                if idx then opts.onChoose(ids[idx], labels[idx]) else opts.onChoose(nil) end
+            end
         end)
     return {
         dismiss = function() native.ask_choice_dismiss(id) end,

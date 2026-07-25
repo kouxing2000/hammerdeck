@@ -142,10 +142,10 @@ return {
                 ctx.setState("workSeconds", s.workSeconds)
             end
 
-            -- Localized action labels, computed once. onChoose compares the
-            -- chosen label against these SAME locals (not English literals), so
-            -- dispatch tracks the displayed text in any locale -- the decouple of
-            -- the former display-and-comparison-key constants.
+            -- Localized action labels, computed once -- DISPLAY only. Dispatch
+            -- below is on each row's stable `id`, so the translated text and the
+            -- branch that acts on it are fully decoupled (CODE-12): a retitled or
+            -- newly-interpolated label can no longer silently stop matching.
             local L = {
                 postpone1   = ctx.t("action.postpone1", "postpone 1 minute"),
                 postpone5   = ctx.t("action.postpone5", "postpone 5 minutes"),
@@ -161,11 +161,11 @@ return {
                     ctx.t("info.elapsedToday", "Elapsed today: %s", durationInfo(now - s.lastStartWorkStamp)),
                 },
                 actions = {
-                    { label = L.postpone1,   icon = "symbol:clock" },
-                    { label = L.postpone5,   icon = "symbol:clock.arrow.circlepath" },
-                    { label = L.screensaver, icon = "symbol:moon.stars" },
-                    { label = L.lock,        icon = "symbol:lock" },
-                    { label = L.sleep,       icon = "symbol:powersleep" },
+                    { id = "postpone1",   label = L.postpone1,   icon = "symbol:clock" },
+                    { id = "postpone5",   label = L.postpone5,   icon = "symbol:clock.arrow.circlepath" },
+                    { id = "screensaver", label = L.screensaver, icon = "symbol:moon.stars" },
+                    { id = "lock",        label = L.lock,        icon = "symbol:lock" },
+                    { id = "sleep",       label = L.sleep,       icon = "symbol:powersleep" },
                 },
                 onChoose = function(choice)
                     s.dialog = nil
@@ -180,20 +180,24 @@ return {
                         return
                     end
 
+                    -- Dismissed without choosing: treat as the gentlest option
+                    -- and say so. (The alert shows the LABEL; the branch below
+                    -- runs off the id.)
                     if choice == nil then
-                        choice = L.postpone1
-                        ctx.alert(choice)
+                        choice = "postpone1"
+                        ctx.alert(L.postpone1)
                     end
 
-                    if choice == L.lock then
+                    ctx.log("rest dialog chose: " .. tostring(choice))
+                    if choice == "lock" then
                         ctx.lockScreen()
-                    elseif choice == L.screensaver then
+                    elseif choice == "screensaver" then
                         ctx.startScreensaver()
-                    elseif choice == L.sleep then
+                    elseif choice == "sleep" then
                         ctx.systemSleep()
-                    elseif choice == L.postpone1 then
+                    elseif choice == "postpone1" then
                         startRestTimer(60, true)
-                    elseif choice == L.postpone5 then
+                    elseif choice == "postpone5" then
                         startRestTimer(5 * 60, true)
                     end
                 end,

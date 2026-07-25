@@ -149,14 +149,22 @@ return {
                 infos[#infos + 1] = ctx.t("info.weekendShift", "Weekend schedule (+%dmin)", ctx.opt("weekendShiftMin"))
             end
 
-            -- snoozeLabel held in a local so onChoose compares the chosen label
-            -- against it (not an English "^Snooze" prefix) -- works in any locale.
-            local snoozeLabel
-            local actions = { { label = ctx.t("action.wrapUp", "OK, I'll wrap up"),
+            -- The snooze row is conditional, so its INDEX moves; dispatch is on
+            -- its stable id instead (CODE-12). This label is the strongest case
+            -- for that rule in the catalog: it interpolates both the snooze
+            -- minutes and a wall-clock time, so it is a different string on
+            -- almost every call -- comparing the chosen text against a local
+            -- worked only because the same call built both sides.
+            local actions = { { id = "wrapUp",
+                                label = ctx.t("action.wrapUp", "OK, I'll wrap up"),
                                 icon = "symbol:checkmark.circle" } }
             if not s.snoozed then
-                snoozeLabel = ctx.t("action.snooze", "Snooze %1$d minutes (until %2$s)", ctx.opt("snoozeMin"), formatTime(snoozeTargetSecs()))
-                actions[#actions + 1] = { label = snoozeLabel, icon = "symbol:zzz" }
+                actions[#actions + 1] = {
+                    id = "snooze",
+                    label = ctx.t("action.snooze", "Snooze %1$d minutes (until %2$s)",
+                        ctx.opt("snoozeMin"), formatTime(snoozeTargetSecs())),
+                    icon = "symbol:zzz",
+                }
             end
 
             dismissWarnDialog()
@@ -166,7 +174,7 @@ return {
                 actions = actions,
                 onChoose = function(choice)
                     s.warnDialog = nil
-                    if snoozeLabel and choice == snoozeLabel then doSnooze() end
+                    if choice == "snooze" then doSnooze() end
                 end,
             }
         end
