@@ -23,6 +23,76 @@ local modal      = require("platform.modal")
 local i18n       = require("platform.i18n")
 local window_ops = require("platform.window_ops")
 
+-- ---------------------------------------------------------------------------
+-- The plugin API's SHAPES (CODE-10).
+--
+-- These are the tables that cross the boundary into feature code, so they are
+-- declared here rather than inline at each use: a feature author reads this file
+-- to learn what `ctx` hands them, and `scripts/check-lua-types.sh` runs LuaLS
+-- over the workspace at Error level, so every one of these is checked rather
+-- than merely documented. `BrowserTab` is declared in adapter.lua and reused.
+--
+-- Frames are TOP-LEFT-ORIGIN GLOBAL POINTS everywhere in this API -- macOS's own
+-- screen coordinates are bottom-left-origin, and the seam converts once so no
+-- feature has to. Getting that backwards puts a window on the wrong display in a
+-- multi-monitor setup, which is exactly the sort of thing a type can pin down.
+--
+-- HOW FAR THESE CURRENTLY REACH -- measured, not assumed. They are checked
+-- INSIDE this file (LuaLS verifies each definition against its own annotation),
+-- and they are what a feature author reads. They do NOT yet check feature CALL
+-- SITES: a feature receives `ctx` as a plain function parameter, so LuaLS types
+-- it `any` and checks nothing through it. Verified by injecting
+-- `ctx.mouse.locate("not a number")` into a real feature -- check-lua-types.sh
+-- stayed green.
+--
+-- Closing that needs two more steps, in this order:
+--   1. a complete `---@class Ctx` listing EVERY public member (~85 of them plus
+--      the window/screen/mouse sub-tables), and `M.make` annotated to return it;
+--   2. `---@param ctx Ctx` on each feature's action/start functions.
+-- Step 1 must be COMPLETE before step 2 touches anything: LuaLS reports an
+-- undeclared field on a classed table as an error, so a partial `Ctx` would turn
+-- every un-listed method into a false positive across the whole catalog. That is
+-- why this file stops here rather than shipping half a class.
+-- ---------------------------------------------------------------------------
+
+---A live resource a feature created through ctx. Always scope-tracked: disabling
+---the feature stops it even if the feature never does. `stop()` is idempotent.
+---@class Handle
+---@field stop fun()
+
+---A rectangle in top-left-origin global points.
+---@class Frame
+---@field x number
+---@field y number
+---@field w number
+---@field h number
+
+---One row of `ctx.window.list()`, most-recently-focused first.
+---@class WindowInfo : Frame
+---@field id integer          valid ONLY until the next list() -- never persist it
+---@field wid integer         OS-stable CGWindowID (0 = unresolved); the key for
+---                           long-lived identity, survives a retitle
+---@field title string
+---@field appName string
+---@field bundleID string
+---@field minimized boolean   listed WITH its normal frame -- filter if unwanted
+---@field fullscreen boolean
+---@field screenName string?
+
+---One row of `ctx.screen.frames()`, primary first; `screenIndex` indexes this.
+---@class ScreenFrame : Frame
+---@field name string         the display's localizedName -- how layouts target it
+---@field index integer
+---@field builtin boolean     true for the laptop's own panel
+
+---One selectable row of `ctx.askChoice`. `id` is what `onChoose` receives; when
+---omitted it is the row's 1-based index. NEVER the label -- see adapter.askChoice
+---for why dispatching on display text is a silent bug (CODE-12).
+---@class ChoiceAction
+---@field id string|integer|nil
+---@field label string
+---@field icon string?        icon token: "symbol:…" | "appicon:…" | "file:…"
+
 local M = {}
 
 local function optKey(id, k)   return "hammerdeck.opt." .. id .. "." .. k end
@@ -137,6 +207,11 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     end
 
     -- options (typed, user-overridable, manifest default fallback) ----------
+    ---The user's value for one of this feature's declared options, falling back
+    ---to the manifest default. The Lua type follows the option's declared `type`
+    ---(bool -> boolean, int/number -> number, everything else -> string).
+    ---@param key string an option key declared in this feature's manifest
+    ---@return boolean|number|string|nil
     function ctx.opt(key)
         return adapter.getSetting(optKey(m.id, key), manifest.defaultFor(m, key))
     end
@@ -145,14 +220,24 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- Settings). Namespaced per feature, so a feature reads only its own.
     -- Returns the stored string or nil; NEVER a manifest default (a `secret`
     -- option must not declare a plaintext default).
+    ---@param key string a `secret` option key
+    ---@return string|nil the stored secret, or nil -- never a manifest default
     function ctx.secret(key)
         return adapter.secretGet(optKey(m.id, key))
     end
 
     -- feature-scoped persistent state ----------------------------------------
+    ---@generic T
+    ---@param key string
+    ---@param default T returned when nothing is stored yet
+    ---@return T
     function ctx.getState(key, default)
         return adapter.getSetting(stateKey(m.id, key), default)
     end
+    ---Persisted across restarts. Scalars only -- the settings store holds
+    ---boolean/number/string, so encode a table yourself (platform.json).
+    ---@param key string
+    ---@param value boolean|number|string
     function ctx.setState(key, value)
         adapter.setSetting(stateKey(m.id, key), value)
     end
@@ -170,10 +255,19 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- string.format cannot reorder, and RAISES on "%2$s"), and only this path refuses to
     -- throw when a translation's slots don't match. A raw string.format over a translated
     -- template turns one mistyped placeholder in a catalog into a crash in your feature.
+    ---@param key string catalog key, e.g. "action.postpone1"
+    ---@param default string the inline English source string
+    ---@param ... any format arguments -- pass them HERE, never string.format the result
+    ---@return string
     function ctx.t(key, default, ...)
         if select("#", ...) == 0 then return i18n.tFeature(m.id, key, default) end
         return i18n.formatFeature(m.id, key, default, ...)
     end
+    ---@param key string
+    ---@param count number selects the form
+    ---@param forms { one: string, other: string } inline English templates
+    ---@param ... any format arguments (same rule as ctx.t)
+    ---@return string
     function ctx.plural(key, count, forms, ...)
         if select("#", ...) == 0 then return i18n.plural(key, count, forms, m.id) end
         return i18n.formatPlural(key, count, forms, m.id, ...)
@@ -191,14 +285,38 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ctx.confirmAction = confirmFlash or function() end
 
     -- bindings (all scope-tracked) --------------------------------------------
+    ---@param mods string[] e.g. { "cmd", "alt" }
+    ---@param key string
+    ---@param fn fun() on key-down
+    ---@param onRelease fun()|nil on key-up (release-to-act features)
+    ---@return Handle
     function ctx.bindHotkey(mods, key, fn, onRelease) return track(adapter.bindHotkey(mods, key, fn, onRelease)) end
+    ---@param n number seconds between fires
+    ---@param fn fun()
+    ---@return Handle
     function ctx.everySeconds(n, fn)       return track(adapter.everySeconds(n, fn)) end
+    ---@param n number seconds to wait
+    ---@param fn fun()
+    ---@return Handle
     function ctx.afterSeconds(n, fn)       return track(adapter.afterSeconds(n, fn)) end
+    ---@param timeStr string "HH:MM" (00:00-23:59)
+    ---@param fn fun()
+    ---@return Handle
     function ctx.dailyAt(timeStr, fn)      return track(adapter.dailyAt(timeStr, fn)) end
+    ---@param event "sleep"|"wake"|"screenLock"|"screenUnlock"|"screenChanged"
+    ---@param fn fun()
+    ---@return Handle
     function ctx.onSystemEvent(event, fn)  return track(adapter.onSystemEvent(event, fn)) end
 
     -- UI (scope-tracked) -------------------------------------------------------
+    ---@param opts table searchable picker; see adapter.chooser
+    ---@return Handle
     function ctx.chooser(opts)   return track(adapter.chooser(opts)) end
+    ---One-shot "pick an action" dialog. `onChoose` receives the chosen row's
+    ---stable id (or its 1-based index when the row declares none) -- NOT the
+    ---label. Dismissal passes nil alone. See adapter.askChoice for why.
+    ---@param opts { title: string?, infos: string[]?, actions: (ChoiceAction|string)[], onChoose: fun(choiceId: string|integer|nil, label: string?) }
+    ---@return Handle handle -- also carries dismiss()
     function ctx.askChoice(opts) return track(adapter.askChoice(opts)) end
     -- One-shot multi-select picker (all pre-checked; uncheck to exclude). The
     -- one-shot frees itself on completion, so a well-behaved caller stops the
@@ -265,11 +383,25 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ctx.window = {}
     -- Routed through window_ops so window_history captures the snapshot (lets a
     -- following setFrameFor batch resolve before-frames without re-listing).
+    ---Every standard window, most-recently-focused first. Returns {} when the
+    ---Accessibility permission is missing -- check axTrusted()/axPrompt() to
+    ---onboard rather than treating empty as "no windows".
+    ---@return WindowInfo[]
     function ctx.window.list()           return window_ops.list() end
+    ---@param id integer from a CURRENT list() -- ids die at the next list
+    ---@return boolean
     function ctx.window.focus(id)        return adapter.focusWindow(id) end
+    ---@return Frame|nil nil when there is no focused window / no permission
     function ctx.window.frame()          return adapter.focusedWindowFrame() end
+    ---@return string|nil
     function ctx.window.title()          return adapter.focusedWindowTitle() end
+    ---Move/resize the FOCUSED window. Routed through window_ops, so this is the
+    ---one placement path that also applies the pointer-follows-window policy.
+    ---@param f Frame
+    ---@return boolean
     function ctx.window.setFrame(f)      return window_ops.setFrame(f) end
+    ---@param b boolean
+    ---@return boolean
     function ctx.window.setFullscreen(b) return adapter.setFocusedWindowFullscreen(b) end
     -- Place a SPECIFIC listed window by id (batch layout, e.g. Window Deck).
     -- Bypasses window_ops on purpose: a multi-window layout must NOT yank the
@@ -277,6 +409,9 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- the same rule). Ids are only valid until the next list() -- re-list right
     -- before a placement batch. Returns true on success. Routed through window_ops
     -- so the move is recorded for undo (window_history), still bypassing pointer-follow.
+    ---@param id integer from a CURRENT list() -- re-list before a placement batch
+    ---@param f Frame
+    ---@return boolean
     function ctx.window.setFrameFor(id, f) return window_ops.setFrameFor(id, f) end
     -- Raise a listed window above others WITHOUT activating its app or moving the
     -- pointer -- a surgical AXRaise (no same-app-sibling drag, no app activation,
@@ -286,25 +421,35 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- Subscribe to focused-window changes (within-app switches app activation
     -- can't see). Scope-tracked; fn() is a bare pulse -- re-list to see who's
     -- focused now. Needs Accessibility.
+    ---@param fn fun() a bare pulse -- re-list to see who is focused now
+    ---@return Handle
     function ctx.window.onFocusChanged(fn) return track(adapter.onFocusedWindowChanged(fn)) end
     -- Subscribe to window move/resize events for the given apps: fn(info) gets
     -- { bundleID, title, wid, x, y, w, h } (top-left global). Fires for the
     -- caller's own AX moves too -- guard your own echoes. Needs Accessibility.
+    ---@param bundleIds string[] apps to watch
+    ---@param fn fun(info: { bundleID: string, title: string, wid: integer, x: number, y: number, w: number, h: number })
+    ---@return Handle
     function ctx.window.onFramesChanged(bundleIds, fn)
         return track(adapter.onWindowFramesChanged(bundleIds, fn))
     end
     -- The focused window's stable CGWindowID (0/nil = unresolvable) -- same
     -- identity as the `wid` field on ctx.window.list() rows.
+    ---@return integer|nil wid 0/nil = unresolvable
     function ctx.window.focusedWid() return adapter.focusedWindowWid() end
     -- Undo the most-recent window LAYOUT change (single-step): restore every window
     -- a snap / screen-swap / deck move just repositioned, and the pointer with them.
     -- Returns the count restored (0 = nothing to undo). Powers window_rewind.
+    ---@return integer restored windows (0 = nothing to undo)
     function ctx.window.undoLast() return window_ops.undoLast() end
     -- Turn window-layout history recording on/off. window_rewind's start/stop calls
     -- this so the recording cost is paid only while that feature is enabled.
     function ctx.window.enableHistory(on) window_ops.setHistoryEnabled(on) end
 
     ctx.screen = {}
+    ---Visible frame of every screen, primary first. `screenIndex` arguments
+    ---elsewhere in this API index into THIS list.
+    ---@return ScreenFrame[]
     function ctx.screen.frames()         return adapter.screenFrames() end
     -- Spatial display picker (the "Arrange Displays"-style map: each display drawn
     -- at its real position with name/resolution/window-count). Reusable: set
@@ -317,8 +462,12 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.screen.pickDisplay(opts) return track(adapter.pickDisplays(opts)) end
 
     ctx.mouse = {}
+    ---@return number x, number y top-left-origin global points
     function ctx.mouse.position()        return adapter.mousePosition() end
+    ---@param x number
+    ---@param y number
     function ctx.mouse.setPosition(x, y) adapter.setMousePosition(x, y) end
+    ---@param seconds number how long the locator ripple stays up
     function ctx.mouse.locate(seconds)   adapter.locateMouse(seconds) end
 
     -- data files (durable feature-owned storage) ---------------------------------
