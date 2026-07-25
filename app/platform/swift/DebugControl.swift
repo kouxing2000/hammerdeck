@@ -61,7 +61,18 @@ enum DebugControl {
         try? fm.removeItem(atPath: cmdPath)   // drop a command stranded by a crash
         print("[hammerdeck] debug control listening at \(dir)")
 
-        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+        // .common mode, NOT the default `scheduledTimer` registration. A timer
+        // scheduled the usual way lands in .default only, so it STOPS FIRING
+        // whenever the main run loop switches modes -- which for a menubar app is
+        // routine: an open menu runs in .eventTracking, and a modal session runs
+        // in its own mode. The channel then looks exactly like a hung app (the
+        // command file sits unconsumed, the process is alive at 0% CPU, app.sh
+        // says "running"), which is a costly thing to debug precisely because it
+        // mimics the failure this tool exists to investigate. Observed on
+        // 2026-07-24; this is the best-supported explanation, though the trigger
+        // was not captured, so it is a fix for a real defect rather than a proven
+        // post-mortem.
+        let t = Timer(timeInterval: 0.2, repeats: true) { _ in
             MainActor.assumeIsolated {
                 guard fm.fileExists(atPath: cmdPath),
                       let code = try? String(contentsOfFile: cmdPath, encoding: .utf8)
@@ -107,6 +118,8 @@ enum DebugControl {
                 try? out.write(toFile: resPath, atomically: true, encoding: .utf8)
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     /// Render an eval result as a single line for result.txt.
