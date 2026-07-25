@@ -1654,7 +1654,25 @@ final class IntegrationTests: XCTestCase {
             function(saved) _G.itFav = #saved end)
         return true
         """)
-        spinRunLoop(3.0)   // background copy + query, callback on main
+        // WAIT FOR THE CALLBACK, don't sleep a fixed budget. This test used
+        // `spinRunLoop(3.0)` -- a flat 3s sleep -- for work that copies Chrome's
+        // Favicons SQLite DB aside (4.9MB on this machine) and queries it. That
+        // raced, and failed 1 run in 3 in isolation on 2026-07-24; it is near
+        // certainly the earlier one-off nobody could reproduce, since the pipe to
+        // `grep` had thrown away its name.
+        //
+        // The evidence is the timings AFTER this fix, not before: a fixed sleep
+        // always burns its full budget, so the old ~3.1s case duration measured
+        // the sleep, not the work. Polling, the same work lands in 1.0-4.5s run
+        // to run -- and that 4.5s run is the proof, because it would have blown
+        // the old 3.0s budget outright.
+        //
+        // No budget can be "right" here: it scales with machine load and with how
+        // much the USER has browsed, neither of which the test controls. So poll
+        // and exit the moment the result lands; the ceiling below is only a
+        // liveness bound, not a race. (A genuine hang still fails, on the
+        // assertion underneath, with the right message.)
+        _ = waitUntil(15.0) { eval("return _G.itFav") != nil }
         let n = eval("return _G.itFav") as? Double
         XCTAssertNotNil(n, "the extraction callback must fire")
         if (n ?? 0) >= 1 {
