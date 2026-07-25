@@ -232,8 +232,18 @@ swift build       # compiles CLua + HammerdeckKit + the launcher
 swift run         # boots the platform in the native host (the real app)
 lua test/run.lua     # headless platform + feature tests (fake adapter, Homebrew Lua -- fast inner loop)
 scripts/test-lua.sh  # SAME suite on the vendored 5.4.7 (exact embedded engine) -- run before committing Lua / in CI
+scripts/test-swift.sh  # `swift test` to a log, then the FAILING CASE NAMES -- prefer this
 swift test           # integration tests on the REAL bridge (run after Swift/seam changes)
 ```
+
+Use `scripts/test-swift.sh` rather than piping `swift test` into a filter. A
+pipeline reports the LAST command's status, so `swift test | grep` exits 0 even
+on a hard failure, and the filter discards the failing case's name along with
+everything else it did not match. That cost a real diagnosis on 2026-07-24: a
+test failed once, the pipe had kept only "1 failure", and fourteen re-runs could
+not reproduce it -- the evidence was gone before anyone looked. The wrapper
+writes the full output to `.build/test-logs/swift-test.log` (previous run kept
+alongside), prints the failing case lines, and exits with the real status.
 
 **After a code change, restart the app FOR the user, then WAIT for them to
 verify.** When a change is ready to try (a completed edit or logical batch, NOT

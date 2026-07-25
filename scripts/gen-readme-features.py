@@ -22,6 +22,12 @@ pass --check -- reintroducing the very bug this guards against. A feature withou
 a feature.json is an ERROR here: it cannot be documented, so it must not be
 silently dropped.
 
+Each feature also self-declares what it may REACH (`capabilities` in the same
+file, enforced at runtime by the Lua capability gate). That is surfaced here for
+the reader who has not cloned anything: the catalog is the first place a stranger
+sees what these features can do to their machine, and "most of them reach nothing"
+is only credible if the few that DO are named in the same list.
+
 The grouping is the app's OWN category taxonomy -- the same one Settings renders.
 If a group reads badly, fix the `category` in feature.json; Settings and the
 README improve together. Don't add a prettier mapping here: that would just be a
@@ -46,8 +52,41 @@ GROUPS = [
 ]
 
 
+# Reader-facing wording per capability, and the order they are listed in
+# (by reach, not alphabetically -- same ranking the Settings UI uses).
+# Mirrors manifest.CAPABILITY_METHODS, which is the enforcement source of truth.
+# An unknown capability still renders, under its raw name: showing LESS reach
+# than a feature actually has is the one thing this must never do.
+CAPABILITY_ORDER = ["input", "browser", "network", "files", "power", "commands"]
+CAPABILITY_WORDS = {
+    "input": "types keystrokes",
+    "browser": "reads browser tabs",
+    "network": "network",
+    "files": "reads/writes files",
+    "power": "sleep/lock",
+    "commands": "runs other features",
+}
+
+
 def die(msg):
     sys.exit(f"gen-readme-features: {msg}")
+
+
+def capability_note(caps, feature_id):
+    """The parenthetical reach note, or "" when the feature declares nothing.
+
+    Silence means "reaches nothing", which is the common case (most features
+    touch only windows and panels) and is the informative half of this: a reader
+    scanning the list should be able to see at a glance that the annotated ones
+    are the exception.
+    """
+    if not caps:
+        return ""
+    if not isinstance(caps, list) or any(not isinstance(c, str) for c in caps):
+        die(f"{feature_id}: 'capabilities' must be a list of strings")
+    rank = {c: i for i, c in enumerate(CAPABILITY_ORDER)}
+    ordered = sorted(caps, key=lambda c: (rank.get(c, 99), c))
+    return ", ".join(CAPABILITY_WORDS.get(c, c) for c in ordered)
 
 
 def clean(value, field, feature_id):
@@ -86,6 +125,7 @@ def load_features():
                 "name": clean(d.get("name", ""), "name", fdir.name),
                 "description": clean(d.get("description", ""), "description", fdir.name),
                 "category": clean(d.get("category", "general"), "category", fdir.name),
+                "capabilities": capability_note(d.get("capabilities", []), fdir.name),
             }
         )
     return out
@@ -115,7 +155,8 @@ def render(features):
         lines.append(f"### {heading}")
         lines.append("")
         for f in sorted(items, key=lambda x: x["name"]):
-            lines.append(f"- **{f['name']}** -- {f['description']}")
+            reach = f" <sub>Reaches: {f['capabilities']}.</sub>" if f["capabilities"] else ""
+            lines.append(f"- **{f['name']}** -- {f['description']}{reach}")
         lines.append("")
     lines.append(END)
     return "\n".join(lines)

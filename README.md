@@ -39,17 +39,17 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 
 ### Productivity
 
-- **Clipboard History** -- Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded.
+- **Clipboard History** -- Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded. <sub>Reaches: types keystrokes, reads/writes files.</sub>
 - **Countdown** -- Ask for minutes, then run a thin progress strip along the bottom of the screen; notifies when time is up.
-- **Insert Date/Time** -- Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern).
+- **Insert Date/Time** -- Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern). <sub>Reaches: types keystrokes.</sub>
 - **Password Generator** -- Generate a strong random password and copy it to the clipboard.
-- **Paste as Plain Text** -- Paste without formatting: strips fonts/colors/links from the copied text and pastes it (or types it as keystrokes).
+- **Paste as Plain Text** -- Paste without formatting: strips fonts/colors/links from the copied text and pastes it (or types it as keystrokes). <sub>Reaches: types keystrokes.</sub>
 - **Pointer** -- On-demand pointer helpers -- flash a crosshair to find the mouse, or center it on the focused window or a screen.
 - **Pointer Follows Moved Window** -- When a window-movement feature (Snap, Window Mode, Grid) repositions the focused window, the pointer rides along, keeping its place inside it.
-- **Quick Sites** -- Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether to open it as a standalone app window. cmd+<number> jumps straight to a row.
-- **Tab Switcher** -- Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons.
-- **Text Actions** -- Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- refine/translate/summarize via AI. Results paste back in place.
-- **Usage Stats** -- Tracks wake/sleep sessions and per-app focus time to daily CSV files (idle time excluded), with an optional desktop widget.
+- **Quick Sites** -- Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether to open it as a standalone app window. cmd+<number> jumps straight to a row. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
+- **Tab Switcher** -- Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
+- **Text Actions** -- Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- refine/translate/summarize via AI. Results paste back in place. <sub>Reaches: types keystrokes, network.</sub>
+- **Usage Stats** -- Tracks wake/sleep sessions and per-app focus time to daily CSV files (idle time excluded), with an optional desktop widget. <sub>Reaches: reads browser tabs, reads/writes files.</sub>
 - **Window Deck** -- Tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.
 - **Window Fan** -- A window-switcher mode: fan every window on the focused screen against the screen's edges so each keeps a full, always-visible edge no other window can cover -- whatever is on top. Stay in the mode with every window live-bordered (the focused one bold) and click any to switch; press again to leave and restore. Any number of windows.
 - **Window Grid** -- Place the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle. Pairs with Window Snap and Window Mode.
@@ -60,17 +60,17 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 
 ### Health
 
-- **Break Reminder** -- Reminds you to rest your eyes after a work interval; idle-aware, with daily work-time stats.
-- **Sleep Schedule** -- Forces system sleep at a set time, with graduated warnings, a one-time snooze, and a weekend shift.
-- **Turn Off Display When Idle** -- Turns the display off after a period of no activity, with a countdown warning on every screen first. Stands down while video, a call or a presentation is holding the display awake.
+- **Break Reminder** -- Reminds you to rest your eyes after a work interval; idle-aware, with daily work-time stats. <sub>Reaches: sleep/lock.</sub>
+- **Sleep Schedule** -- Forces system sleep at a set time, with graduated warnings, a one-time snooze, and a weekend shift. <sub>Reaches: sleep/lock.</sub>
+- **Turn Off Display When Idle** -- Turns the display off after a period of no activity, with a countdown warning on every screen first. Stands down while video, a call or a presentation is holding the display awake. <sub>Reaches: sleep/lock.</sub>
 
 ### Appearance
 
-- **Bing Daily Wallpaper** -- Sets Bing's picture of the day as your wallpaper, refreshed on a schedule.
+- **Bing Daily Wallpaper** -- Sets Bing's picture of the day as your wallpaper, refreshed on a schedule. <sub>Reaches: network.</sub>
 
 ### Platform
 
-- **Command Palette** -- Fuzzy-search and run any action of any enabled feature from one keystroke.
+- **Command Palette** -- Fuzzy-search and run any action of any enabled feature from one keystroke. <sub>Reaches: runs other features.</sub>
 - **Confirm Shortcut Presses** -- When you fire a feature with a hotkey or chord, briefly flash which action ran -- a quiet, single-slot chip (glyph + name, top-center) that fades on its own. Confirms the press registered and, if you reached for the wrong shortcut, shows what you actually triggered. Automated triggers use the separate notification instead.
 - **Notify on Automated Run** -- Show a brief on-screen notification naming a feature when one of its actions fires from an AUTOMATED trigger -- a schedule or a system event (sleep/wake/screen lock/...). Lets you see what ran while you were away. Manual shortcuts (hotkeys, chords) and menubar runs never notify -- you started those yourself.
 
