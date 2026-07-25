@@ -60,9 +60,10 @@ only through the seam, never `native.*`.
 
 **`app/platform/lua/` tiers** (the dir is FLAT; this is the layering `ls` does
 not show): **SEAM** = `adapter.lua` (the only file here that reaches `native.*`).
-**CORE / stateful** = `ctx`, `registry`, `triggers`, `manifest`, `modal`,
-`window_ops`, `window_history` (hold state + lifecycle; features never
-`require` them). `window_ops` owns the live focused-window move +
+**CORE / stateful** = `ctx`, `registry`, `registry_view`, `triggers`, `manifest`,
+`modal`, `window_ops`, `window_history` (hold state + lifecycle; features never
+`require` them). `registry_view` is the registry's read model -- stateless
+itself, but registry-injected and firmly off the feature allowlist. `window_ops` owns the live focused-window move +
 "pointer-follows-window" policy (`ctx.window.setFrame` delegates to it); the
 registry injects its pointer-follow predicate at boot. `window_history` is the
 single-step window-undo engine behind `ctx.window.undoLast` (only `window_ops`
@@ -151,6 +152,16 @@ pending.
   adapter primitives; reach it via ctx.modal().
 - **app/platform/lua/registry.lua** -- registers features, persists enabled-state +
   option values per id, runs lifecycle (bind trigger / start), scoped teardown.
+  LIFECYCLE ONLY: it decides what IS.
+- **app/platform/lua/registry_view.lua** -- the registry's READ MODEL: localized
+  names/labels, `describe()` (the whole config-UI payload), the command list, the
+  Hyper legend, the trigger summary. It only DESCRIBES what registry decided;
+  nothing here mutates. Dependency direction is registry -> view, never back --
+  the view needs live state, so registry injects the accessors via
+  `view.configure` at load (the same composition-root idiom `window_ops` uses for
+  its pointer-follow predicate). Reach it through `registry.describe()` /
+  `registry.hyperLegend()`: callers keep one entry point and need not know about
+  the split.
 - **app/platform/lua/ctx.lua** -- builds the scoped, curated ctx (the plugin API);
   every handle a feature creates is tracked and stopped on disable. It also
   applies the **CAPABILITY GATE** (see below), which is the last thing it does.

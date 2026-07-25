@@ -20,6 +20,14 @@ local ctxlib    = require("platform.ctx")
 local json      = require("platform.json")
 local i18n      = require("platform.i18n")
 local window_ops = require("platform.window_ops")
+-- The READ MODEL (localized metadata, describe(), the command list, the Hyper
+-- legend). Split out so this file is lifecycle only; wired to live state via
+-- view.configure at the bottom. See registry_view.lua for the direction rule.
+local view      = require("platform.registry_view")
+
+-- Defined below (a thin delegation to view.commandList). Injected into the ctx
+-- of features holding the "commands" capability as ctx.commands().
+local buildCommandList
 
 local registry = {}
 
@@ -28,80 +36,25 @@ local bound    = {}   -- id -> { ctx, scope } (when enabled)
 local catalog  = {}   -- the module-name list, remembered so reload() can re-run it
 local discoverDir = nil   -- when set, the catalog is re-scanned from disk on reload
 
--- Defined below. Injected into the ctx of features holding the "commands"
--- capability as ctx.commands().
-local buildCommandList
-
 -- Quarantine bookkeeping: a broken plugin must never take the whole app down.
 local loadFailures  = {}   -- list of { source, id?, error } -- never registered
 local startFailures = {}   -- id -> error string -- registered but failed to start
 
 local function enabledKey(id) return "hammerdeck.enabled." .. id end
 
--- ---------------------------------------------------------------------------
--- Localized feature metadata. The English source lives INLINE (feature.json /
--- init.lua); these resolve a per-feature catalog
--- (app/features/<id>/i18n/<locale>.json) keyed by the field PATH, falling back to
--- that inline English (so an untranslated feature/field just shows English).
--- Applied at describe()/emit time, so a language switch needs only a re-describe,
--- never a re-register. The key scheme is the convention feature authors follow:
---   name | description | page.title
---   action.<id>.label | .description | .mnemonic
---   option.<key>.label | .hint | .section | .defaultLabel | .actionLabel
---   option.<key>.values.<value>     (enum labels, parallel to values)
--- ---------------------------------------------------------------------------
-local function locName(m) return i18n.tFeature(m.id, "name", m.name) end
-local function locDesc(m)
-    if not m.description or m.description == "" then return "" end
-    return i18n.tFeature(m.id, "description", m.description)
-end
-local function locActionLabel(m, a)
-    -- `labelFromName` (set by manifest.lua's single-action sugar) says this label is
-    -- a COPY of the feature name, frozen to the ENGLISH name because register()
-    -- overlays feature.json before validate runs. Falling back to that copy would
-    -- print "Password Generator" in an otherwise-Chinese menubar while the translated
-    -- name ("密码生成器") sits right there unused -- so fall back to the LOCALIZED name
-    -- instead. An action with a label of its OWN is untouched: it looks up its own key
-    -- and falls back to its own English source. (Same convention the palette and
-    -- hyper-hints apply one screen down: a single-action feature IS its feature.)
-    local src = a.labelFromName and locName(m) or (a.label or a.id)
-    return i18n.tFeature(m.id, "action." .. a.id .. ".label", src)
-end
--- The user-facing label for one action, the single command-surface convention:
--- a multi-action feature disambiguates as "Feature -- Action"; a single-action
--- feature IS its feature, so it collapses to the feature name. Shared by the "Do"
--- dropdown (enabledActions), the command palette, and the command effect's
--- read-back (registry.actionLabel) so all three name an action identically.
-local function commandLabel(m, a)
-    local fname = locName(m)
-    if #m.actions > 1 then return fname .. " -- " .. locActionLabel(m, a) end
-    return fname
-end
-local function locActionField(m, a, field, src)
-    if src == nil then return nil end
-    return i18n.tFeature(m.id, "action." .. a.id .. "." .. field, src)
-end
-local function locOptionField(m, o, field, src)
-    if src == nil then return nil end
-    return i18n.tFeature(m.id, "option." .. o.key .. "." .. field, src)
-end
--- Enum labels are an array parallel to o.values; localize each by its VALUE so a
--- reordering of values can't mis-key a translation.
-local function locOptionLabels(m, o)
-    if not o.labels then return nil end
-    local out = {}
-    for i, lbl in ipairs(o.labels) do
-        local v = o.values and o.values[i]
-        local key = "option." .. o.key .. ".values." .. (v ~= nil and tostring(v) or tostring(i))
-        out[i] = i18n.tFeature(m.id, key, lbl)
-    end
-    return out
-end
+-- Localized metadata + every read-model projection live in registry_view.lua
+-- (CODE-9). Aliased locally because the lifecycle code below also names actions
+-- for its notify/flash/menu surfaces -- the view owns the wording, this file
+-- just uses it.
+local locName        = view.locName
+local locDesc        = view.locDesc
+local locActionLabel = view.locActionLabel
+local locActionField = view.locActionField
+local commandLabel   = view.commandLabel
 
--- A feature's DECLARATIVE identity/presentation lives in a co-located
--- feature.json (language-agnostic, no code), beside its lua/. These keys are
--- overlaid onto the manifest table its lua/init.lua returns (which keeps `id`
--- as the structural anchor + `api` + the behavioral surface). The JSON wins.
+-- feature.json fields overlaid onto the manifest at register time. Only these:
+-- an unknown key in feature.json is IGNORED rather than merged, so a typo can't
+-- silently redefine part of the manifest.
 local META_FIELDS = {
     "name", "version", "description", "category", "context",
     "requires", "recommended", "page", "preference", "icon", "defaultEnabled",
@@ -114,11 +67,9 @@ local META_FIELDS = {
     "capabilities",
 }
 
--- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
--- io (like the module loader / require), NOT via the adapter seam: feature.json
--- is a co-located build-time asset, read once at feature-load time -- the same
--- class of access as loading the feature's .lua. Raises on malformed JSON so a
--- typo surfaces loudly instead of silently dropping metadata.
+--- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
+--- io (like the module loader / require), NOT via the adapter seam: feature.json
+--- is a co-located build-time asset, read once at feature-load time.
 local function readFeatureMeta(id)
     local path = require("loader").appdir .. "/features/" .. id .. "/feature.json"
     local f = io.open(path, "r")
@@ -847,261 +798,19 @@ end
 -- this layer just aggregates the live registry state.
 -- ---------------------------------------------------------------------------
 
--- Flatten the catalog into a command list for a "commands"-capability holder:
--- one entry per action of every OTHER ENABLED feature (self excluded -- the
--- palette never lists its own opener). Backs ctx.commands(); rebuilt on each
--- call, so it always reflects the live enabled/rebound state. Stable order
--- (registry.all() is id-sorted; actions stay in declared order).
-function buildCommandList(selfId)
-    local out = {}
-    for _, m in ipairs(registry.all()) do
-        if m.id ~= selfId and registry.isEnabled(m.id) then
-            for _, a in ipairs(m.actions) do
-                out[#out + 1] = {
-                    featureId   = m.id,
-                    featureName = locName(m),
-                    actionId    = a.id,
-                    -- single-action features read better as the feature name;
-                    -- multi-action ones need the per-action label to disambiguate.
-                    label       = (#m.actions > 1) and locActionLabel(m, a) or locName(m),
-                    -- Leading glyph for the palette row: the action's own icon
-                    -- when it declares one (distinct per shortcut for a
-                    -- multi-action feature), else the feature icon. Always set --
-                    -- every feature declares a feature.json `icon`; the literal
-                    -- is the generic Swift shows for an unknown category (see
-                    -- categoryIcon in FeatureChrome.swift), so the list is never
-                    -- ragged even if a future feature omits its icon. A bare SF
-                    -- Symbol name (the palette wraps it as a "symbol:" token).
-                    icon        = a.icon or m.icon or "puzzlepiece.fill",
-                    triggerDesc = triggers.describe(triggerFor(m, a)),
-                    triggerGlyph = triggers.glyph(triggerFor(m, a)),
-                    -- "why this key" hint, only while the default still holds
-                    -- (an override would make the mnemonic lie).
-                    mnemonic    = (storedTrigger(m, a) == nil)
-                        and locActionField(m, a, "mnemonic", a.mnemonic) or nil,
-                }
-            end
-        end
-    end
-    return out
-end
+-- The read model lives in registry_view.lua; these are the registry's public
+-- face for it, kept here so callers (ctx, the Swift bridge, the HUD) keep one
+-- entry point and do not need to know about the split.
 
--- A "which-key" legend of every ENABLED binding on the Hyper prefix
--- (cmd+alt+ctrl), for the held-Caps HUD. Returns a key-sorted list of rows
--- { key = <raw key>, label = <feature/action name>, chord = <bool> }; the
--- renderer turns `key` into a key-cap glyph (chords get a trailing "…").
-function registry.hyperLegend()
-    local function isHyper(t)
-        if not t or (t.type ~= "hotkey" and t.type ~= "chord") then return false end
-        local m = t.mods or {}
-        if #m ~= 3 then return false end
-        local s = {}
-        for _, x in ipairs(m) do s[x:lower()] = true end
-        return (s.cmd or s.command) and (s.alt or s.option) and (s.ctrl or s.control)
-    end
-    local items = {}
-    for _, m in ipairs(registry.all()) do
-        if registry.isEnabled(m.id) then
-            for _, a in ipairs(m.actions) do
-                local t = triggerFor(m, a)
-                if isHyper(t) then
-                    local desc = locActionField(m, a, "description", a.description)
-                    if desc == nil or desc == "" then desc = locDesc(m) end
-                    items[#items + 1] = {
-                        key = t.key,
-                        label = (#m.actions > 1) and locActionLabel(m, a) or locName(m),
-                        chord = (t.type == "chord"),
-                        -- Leading glyph for the Hyper cheat-sheet row; resolved
-                        -- action icon -> feature icon, the same glyph the palette
-                        -- / menubar / chord hint show for this action.
-                        icon = a.icon or m.icon,
-                        -- One-line "what it does", shown in the keyboard HUD's
-                        -- hover hint (falls back to the feature description).
-                        desc = desc,
-                    }
-                end
-            end
-        end
-    end
-    table.sort(items, function(a, b) return a.key < b.key end)
-    return items
-end
+-- Command list for a "commands"-capability holder -- backs ctx.commands().
+function buildCommandList(selfId) return view.commandList(selfId) end
 
-local function describeTrigger(m)
-    -- Actions first: a service that ALSO declares actions (window_deck,
-    -- window_fan, bing_daily, ...) is, from the user's side, TRIGGERED -- its
-    -- start() is plumbing (an idle controller so disable can tear down /
-    -- restore), not what this summary should read. Only a PURE service (no
-    -- actions: sleep_schedule, pointer_follows_window, ...) is truly always-on.
-    local n = #m.actions
-    if n == 1 then
-        -- A DORMANT single action (no stored trigger, no defaultTrigger -- the
-        -- "no uninvited hotkey grabs" shape) describes as "no trigger", which
-        -- would read as "does nothing" for a feature whose start() runs the
-        -- whole time. Fall through to the always-on label instead.
-        local spec = triggerFor(m, m.actions[1])
-        if spec or not m.start then return triggers.describe(spec) end
-    elseif n > 1 then
-        return i18n.format("trigger.actions", "%d actions", n)
-    end
-    return i18n.t("trigger.alwaysOn", "always-on service")
-end
+-- A "which-key" legend of every ENABLED binding on the Hyper prefix, for the
+-- held-Caps HUD.
+function registry.hyperLegend() return view.hyperLegend() end
 
--- Normalize one entry returned by a feature's schedule(ctx) descriptor into a
--- serializable shape the Timeline can plot. Returns the normalized row, or nil
--- to skip a malformed entry (logged by the caller). `kind` is exactly one of
--- everyMin / at / event / note (a non-time-anchored condition, e.g. "after 5m
--- idle"), so the UI can route it to the ruler, a lane, or the events column.
-local function normalizeScheduleEntry(e)
-    if type(e) ~= "table" or type(e.label) ~= "string" or e.label == "" then return nil end
-    local row = { label = e.label, optionKey = e.optionKey, category = e.category }
-    if e.everyMin ~= nil then
-        local n = tonumber(e.everyMin)
-        if not n or n <= 0 then return nil end
-        row.kind = "everyMin"; row.everyMin = n
-    elseif e.at ~= nil then
-        local h, mm = triggers.parseTimeOfDay(e.at)   -- shape AND range
-        if not h then return nil end
-        row.kind = "at"; row.at = string.format("%02d:%02d", h, mm)
-    elseif e.event ~= nil then
-        row.kind = "event"; row.event = tostring(e.event)
-    elseif e.note ~= nil then
-        row.kind = "note"; row.note = tostring(e.note)
-    else
-        return nil
-    end
-    return row
-end
-
--- A feature's self-reported schedule (its internal timers/events made visible),
--- or nil when it declares none. Runs schedule(ctx) under a read-only ctx (no
--- handle is bound -- ctxlib.make only defines closures) and quarantines a throw,
--- so a buggy descriptor never breaks describe(). Reads live option values via
--- ctx.opt, so derived times track the user's settings even while disabled.
-local function scheduleFor(m)
-    if type(m.schedule) ~= "function" then return nil end
-    -- A descriptor is meant to be pure metadata (read ctx.opt / ctx.now, return
-    -- a list). It still receives the full ctx, so a buggy one COULD bind a
-    -- handle -- and describe() runs on every Timeline/Settings open. Tear the
-    -- scope down afterward so any stray handle is stopped instead of leaking.
-    local ctx, scope = ctxlib.make(m, nil, nil)
-    local ok, entries = pcall(m.schedule, ctx)
-    scope.teardown()
-    if not ok then
-        adapter.log(m.id .. ": schedule() failed: " .. tostring(entries))
-        return nil
-    end
-    if type(entries) ~= "table" then return nil end
-    local out = {}
-    for _, e in ipairs(entries) do
-        local row = normalizeScheduleEntry(e)
-        if row then
-            row.category = row.category or m.category
-            out[#out + 1] = row
-        else
-            adapter.log(m.id .. ": skipped a malformed schedule entry")
-        end
-    end
-    return out
-end
-
-function registry.describe()
-    local out = {}
-    for _, m in ipairs(registry.all()) do
-        local opts = {}
-        for _, o in ipairs(m.options or {}) do
-            opts[#opts + 1] = {
-                key = o.key, type = o.type,
-                label = locOptionField(m, o, "label", o.label or o.key),
-                default = o.default, min = o.min, max = o.max,
-                values = o.values, labels = locOptionLabels(m, o), multiline = o.multiline,
-                defaultLabel = locOptionField(m, o, "defaultLabel", o.defaultLabel),
-                hint = locOptionField(m, o, "hint", o.hint),
-                section = locOptionField(m, o, "section", o.section),
-                actionLabel = locOptionField(m, o, "actionLabel", o.actionLabel),
-                preview = o.preview,
-                validate = o.validate, gatedBy = o.gatedBy, valuesFrom = o.valuesFrom,
-                collapsible = o.collapsible,
-            }
-        end
-        local row = {
-            id = m.id, name = locName(m), description = locDesc(m),
-            category = m.category, version = m.version or "",
-            -- Optional per-feature SF Symbol; nil falls back host-side to the
-            -- shared category glyph (see featureIcon in FeatureChrome.swift).
-            icon = m.icon,
-            context = m.context or "anywhere",
-            requires = json.asArray(m.requires or {}),
-            -- What this feature is allowed to reach (network / input / power /
-            -- browser / files / commands). Empty for the majority, which is the
-            -- informative part: most features touch nothing but windows and
-            -- panels. Carried to the host so the config UI can show it -- a
-            -- declaration nobody can see is only half of the auditability this
-            -- gate exists for. asArray so an empty list crosses the bridge as
-            -- [] rather than {} (see json.asArray / LuaState.any).
-            capabilities = json.asArray(m.capabilities or {}),
-            recommended = m.recommended == true,
-            -- A global BEHAVIOR PREFERENCE (feature.json "preference": true), not a
-            -- catalog capability: the Settings UI surfaces it in General > Behavior
-            -- and filters it OUT of the feature list. Still a normal registered,
-            -- enable/disable-able feature -- only its presentation differs.
-            preference = m.preference == true,
-            kind = m.start and "service" or "action",
-            enabled = registry.isEnabled(m.id),
-            triggerDesc = describeTrigger(m),
-            options = opts,
-            failed = startFailures[m.id] ~= nil,
-            error = startFailures[m.id],
-            -- A feature-contributed native page (Homepage sidebar), if declared.
-            -- Pure metadata; the host renders the view registered for this id.
-            page = m.page and { title = i18n.tFeature(m.id, "page.title", m.page.title),
-                                icon = m.page.icon or "doc" } or nil,
-        }
-        -- Each action carries its editable trigger (current + default) and
-        -- whether a user override is in effect, so the config UI renders one
-        -- trigger picker per action. Empty list for pure services.
-        local actions = {}
-        for _, a in ipairs(m.actions) do
-            local current = triggerFor(m, a)
-            actions[#actions + 1] = {
-                id = a.id, label = locActionLabel(m, a),
-                description = locActionField(m, a, "description", a.description),
-                mnemonic = locActionField(m, a, "mnemonic", a.mnemonic),
-                -- Optional per-action SF Symbol; nil falls back host-side to the
-                -- feature glyph (see actionImage in StatusBar.swift). Same field
-                -- the command palette resolves via buildCommandList.
-                icon = a.icon,
-                automatable = a.automatable == true,
-                trigger = current,
-                defaultTrigger = a.defaultTrigger,
-                triggerOverridden = storedTrigger(m, a) ~= nil,
-                triggerDesc = triggers.describe(current),
-                -- Created + bound by an option editor (its inline shortcut), so the
-                -- UI hides it from the generic per-action trigger sections.
-                dynamic = a.dynamic == true,
-            }
-        end
-        row.actions = actions
-        -- A service's self-reported internal schedule (times/intervals/events it
-        -- runs on its own, not via the trigger model). Absent for features that
-        -- declare no schedule() descriptor. Powers the Automation Timeline.
-        row.schedule = scheduleFor(m)
-        out[#out + 1] = row
-    end
-    -- Modules that failed to even load/register: surface as inert "failed" rows
-    -- so a broken plugin is visible in the UI rather than silently missing.
-    for _, f in ipairs(loadFailures) do
-        out[#out + 1] = {
-            id = f.id or f.source, name = f.id or f.source,
-            description = "Failed to load: " .. tostring(f.error),
-            category = "failed", version = "",
-            kind = "failed", enabled = false,
-            triggerDesc = "load error", options = {},
-            failed = true, error = tostring(f.error),
-        }
-    end
-    return out
-end
+-- The whole catalog as the config UI renders it.
+function registry.describe() return view.describe() end
 
 -- For tests / diagnostics: { load = { {source,id?,error}... }, start = { id->err } }.
 function registry.failures()
@@ -1123,6 +832,19 @@ end
 -- the live state on every move. This is the single place that names the feature id.
 window_ops.configure({
     pointerFollowEnabled = function() return registry.isEnabled("pointer_follows_window") end,
+})
+
+-- Same composition-root wiring for the read model: registry_view projects live
+-- registry state but must not require this module back (that would be a cycle),
+-- so it receives the accessors it needs. Functions, not snapshots -- the view is
+-- rebuilt on every describe()/commands() call and has to see current state.
+view.configure({
+    all           = function() return registry.all() end,
+    isEnabled     = function(id) return registry.isEnabled(id) end,
+    triggerFor    = function(m, a) return triggerFor(m, a) end,
+    storedTrigger = function(m, a) return storedTrigger(m, a) end,
+    startFailures = function() return startFailures end,
+    loadFailures  = function() return loadFailures end,
 })
 
 return registry
