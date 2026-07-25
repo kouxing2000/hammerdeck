@@ -1663,16 +1663,15 @@ final class IntegrationTests: XCTestCase {
         // only for sfListed would race the focus step and read a stale 'unset'.
         // `_G.sfListed` exists solely to make the no-target path observable.
         //
-        // KNOWN FLAKE, PRE-EXISTING (measured 2026-07-25): Safari's focus-by-url
-        // is bimodal -- the whole chain settles in well under a second, or the
-        // focus callback never arrives at all. Roughly 1 run in 2 either way, and
-        // it is NOT a symptom of this wait: the previous `spinRunLoop(3.0)`
-        // version fails at the same rate (2 of 4 on the same machine, same
-        // minute). Something in the JXA `win.currentTab = tab` path drops the
-        // reply; that is a real bug worth its own investigation, not a budget to
-        // tune. The ceiling is therefore sized for the FAST case plus headroom
-        // rather than optimism -- waiting 20s for a reply that is never coming
-        // just made each failure four times slower to report.
+        // This test used to fail about half the time, and the cause was NOT here
+        // and not in Safari: runJXACore joined two obligations (stdout EOF and
+        // process exit), and Foundation's readabilityHandler does not reliably
+        // deliver its final empty-data callback when the last read and the child's
+        // exit land within a millisecond. The stdout obligation then never
+        // completed and the pinned Lua callback was dropped for good. Fixed in
+        // Native+Browser.runJXACore (termination fallback); this ceiling is only a
+        // liveness bound now, sized for the fast case (the whole chain settles in
+        // well under a second) rather than for a reply that is never coming.
         waitUntil(10.0) {
             eval("return _G.sfListed == true and (_G.sfTarget == nil or _G.sfLanded ~= 'unset')")
                 as? Bool == true

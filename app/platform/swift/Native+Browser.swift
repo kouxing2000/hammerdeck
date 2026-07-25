@@ -14,9 +14,21 @@ private final class JXABox: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
     private var status: Int32 = -1
+    private var stdoutSettled = false
     func append(_ d: Data) { lock.lock(); data.append(d); lock.unlock() }
     func setStatus(_ s: Int32) { lock.lock(); status = s; lock.unlock() }
     func result() -> (Data, Int32) { lock.lock(); defer { lock.unlock() }; return (data, status) }
+
+    /// Claim the stdout obligation. Returns true for exactly ONE caller, ever --
+    /// whoever gets it owns the matching `group.leave()`. Two racers exist by
+    /// design: the readabilityHandler's EOF callback, and the post-exit fallback
+    /// that covers the case where that callback never comes.
+    func claimStdoutSettled() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if stdoutSettled { return false }
+        stdoutSettled = true
+        return true
+    }
 }
 
 extension Native {
@@ -357,14 +369,68 @@ extension Native {
         group.enter()   // obligation 1: stdout drained to EOF
         out.fileHandleForReading.readabilityHandler = { h in
             let d = h.availableData
-            if d.isEmpty { h.readabilityHandler = nil; group.leave() } else { box.append(d) }
+            if d.isEmpty {
+                h.readabilityHandler = nil
+                if box.claimStdoutSettled() { group.leave() }
+            } else {
+                box.append(d)
+            }
         }
         // stderr: drain + discard (an unread stderr can wedge the child too).
         err.fileHandleForReading.readabilityHandler = { h in
             if h.availableData.isEmpty { h.readabilityHandler = nil }
         }
+        // The read end as a bare fd: Int32 is Sendable, FileHandle/Pipe are not, so
+        // this is what the @Sendable terminationHandler below can legally capture.
+        let outFD = out.fileHandleForReading.fileDescriptor
+
         group.enter()   // obligation 2: process exit (Process arrives as the param, never captured)
-        p.terminationHandler = { proc in box.setStatus(proc.terminationStatus); group.leave() }
+        p.terminationHandler = { proc in
+            box.setStatus(proc.terminationStatus)
+            group.leave()
+
+            // LOST-EOF FALLBACK (2026-07-25). `readabilityHandler` does not
+            // reliably deliver its final empty-data callback when the last read
+            // and the child's exit land within a millisecond of each other --
+            // observed in a captured trace: "stdout 48b" then "TERMINATED", and
+            // no EOF, ever. The stdout obligation then never completes, notify
+            // never runs, and the pinned Lua callback is dropped for good: the
+            // feature waits forever for tabs that already arrived.
+            //
+            // The SIGTERM watchdog cannot cover this -- it fires at a process
+            // that has already exited, so nothing is left to close the pipe.
+            //
+            // The child is gone, so no further data can ever appear: after a
+            // short grace for the real EOF, claim the obligation and finish.
+            // Whichever path claims first wins; the other becomes a no-op.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
+                guard box.claimStdoutSettled() else { return }   // real EOF got there first
+                // Non-blocking drain so a still-open write end can never park us
+                // here: O_NONBLOCK turns "nothing more to read" into EAGAIN (-1)
+                // instead of an indefinite block.
+                let flags = fcntl(outFD, F_GETFL, 0)
+                if flags != -1 { _ = fcntl(outFD, F_SETFL, flags | O_NONBLOCK) }
+                var buf = [UInt8](repeating: 0, count: 65536)
+                while true {
+                    let n = buf.withUnsafeMutableBytes { read(outFD, $0.baseAddress, $0.count) }
+                    if n <= 0 { break }          // 0 = EOF, -1 = EAGAIN/error
+                    box.append(Data(buf[0..<n]))
+                }
+                // Record the rescue: this is a real kernel/Foundation race being
+                // papered over, and if it ever becomes common the daily log is
+                // where that shows up. Throttled -- it sits on the tab-listing
+                // path, which polls. seamLog is main-actor-isolated, hence the hop.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        Native.shared.seamLogThrottled(
+                            "jxa-lost-eof",
+                            "jxa: stdout EOF never arrived after exit; completed the read from the "
+                            + "termination fallback (callback would otherwise have been dropped)")
+                    }
+                }
+                group.leave()
+            }
+        }
 
         do { try p.run() } catch {
             out.fileHandleForReading.readabilityHandler = nil
