@@ -111,9 +111,13 @@ final class IntegrationTests: XCTestCase {
         eval("return require('platform.registry').\(expr)") as? Double
     }
 
-    private func spinRunLoop(_ seconds: TimeInterval) {
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
-    }
+    // NOTE: there is deliberately no `spinRunLoop(seconds)` helper any more.
+    // Every caller was really waiting for an async callback, and a flat sleep
+    // turns that into a race against a budget nobody can pick correctly -- it
+    // scales with machine load and with the user's own data (see the Chrome
+    // favicon test, which flaked 1-in-3 that way). Use `waitUntil` below. If you
+    // genuinely need to let the run loop breathe with no condition to wait on,
+    // `pumpAppEvents(_:)` says that plainly.
 
     /// The locale seam: adapter.locale() (Lua) returns the SAME resolved code as
     /// the Swift LocaleResolver -- the single authority both layers read -- and is
@@ -921,7 +925,7 @@ final class IntegrationTests: XCTestCase {
         require('platform.adapter').afterSeconds(0.05, function() _G.itTimerFired = true end)
         return true
         """)
-        spinRunLoop(0.3)
+        waitUntil(5.0) { eval("return _G.itTimerFired") as? Bool == true }
         XCTAssertEqual(eval("return _G.itTimerFired") as? Bool, true)
     }
 
@@ -1541,7 +1545,7 @@ final class IntegrationTests: XCTestCase {
             end)
             return true
             """)
-        spinRunLoop(3.0)
+        waitUntil(15.0) { eval("return _G.itTabs") != nil }
         guard let raw = eval("return _G.itTabs") as? String,
               let data = raw.data(using: .utf8),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
@@ -1566,7 +1570,11 @@ final class IntegrationTests: XCTestCase {
               function(u) _G.itFocus = u or false end)
             return true
             """)
-        spinRunLoop(2.0)
+        // Seeded `false`, and the callback writes `u or false` -- so "no longer
+        // false" cannot tell "not yet fired" from "fired with nil". Wait for a
+        // STRING instead: a nil result then burns the ceiling and fails on the
+        // equality below, which is the honest outcome for a broken resolve.
+        waitUntil(15.0) { eval("return _G.itFocus") as? String != nil }
         XCTAssertEqual(eval("return _G.itFocus") as? String, targetUrl,
                        "focus-by-id resolves to the intended tab and returns its live url")
 
@@ -1578,7 +1586,12 @@ final class IntegrationTests: XCTestCase {
               function(u) _G.itGone = u end)
             return true
             """)
-        spinRunLoop(2.0)
+        // nil IS the expected answer here, so the wait CANNOT be "non-nil" -- that
+        // would return instantly and assert nothing. The `'unset'` seed above is
+        // what makes the difference observable: wait for it to stop being the
+        // sentinel, i.e. for the callback to have actually run. Keep that seed --
+        // without it, a callback that never fires would leave nil and pass.
+        waitUntil(15.0) { eval("return _G.itGone") as? String != "unset" }
         XCTAssertNil(eval("return _G.itGone"), "a non-existent tab id resolves to nil (moved)")
 
         eval("_G.itTabs = nil; _G.itFocus = nil; _G.itGone = nil; return true")
@@ -1602,7 +1615,9 @@ final class IntegrationTests: XCTestCase {
         eval("""
             _G.sfTarget = nil
             _G.sfLanded = 'unset'
+            _G.sfListed = false
             require('platform.adapter').browserListTabs('Safari', function(tabs)
+              _G.sfListed = true
               for _, t in ipairs(tabs or {}) do
                 if t.url and t.url ~= '' then
                   _G.sfTarget = t.url
@@ -1614,7 +1629,16 @@ final class IntegrationTests: XCTestCase {
             end)
             return true
             """)
-        spinRunLoop(3.0)
+        // Two chained async steps (list -> focus), so "settled" is not one flag:
+        // wait until the LIST callback ran and, if it found a target, the FOCUS
+        // callback ran too. Polling only for sfLanded would burn the full ceiling
+        // on a Safari with no url-bearing tab (a legitimate skip, below); polling
+        // only for sfListed would race the focus step and read a stale 'unset'.
+        // `_G.sfListed` exists solely to make the no-target path observable.
+        waitUntil(20.0) {
+            eval("return _G.sfListed == true and (_G.sfTarget == nil or _G.sfLanded ~= 'unset')")
+                as? Bool == true
+        }
         guard let target = eval("return _G.sfTarget") as? String else {
             throw XCTSkip("Safari lists no tab with a url to target")
         }
@@ -1631,10 +1655,12 @@ final class IntegrationTests: XCTestCase {
               'https://hammerdeck-no-such-safari-tab.invalid/', 0, function(u) _G.sfGone = u end)
             return true
             """)
-        spinRunLoop(2.0)
+        // Same sentinel rule as itGone above: nil is the expected answer, so wait
+        // for the seed to be replaced, not for a non-nil value.
+        waitUntil(15.0) { eval("return _G.sfGone") as? String != "unset" }
         XCTAssertNil(eval("return _G.sfGone"), "an unmatched url resolves to nil (moved)")
 
-        eval("_G.sfTarget = nil; _G.sfLanded = nil; _G.sfGone = nil; return true")
+        eval("_G.sfTarget = nil; _G.sfLanded = nil; _G.sfGone = nil; _G.sfListed = nil; return true")
     }
 
     /// Real Chrome-DB favicon extraction (the donor's mechanism, in Swift):
