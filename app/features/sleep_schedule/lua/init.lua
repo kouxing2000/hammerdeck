@@ -64,6 +64,7 @@ return {
         }
     end,
 
+    ---@param ctx Ctx
     start = function(ctx)
         -- Per-enablement state (fresh on every enable).
         local s = {

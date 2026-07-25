@@ -25,6 +25,7 @@ return {
 
     -- A pure toggle: enabling it flips the behavior at the window-move seam.
     -- No timers, watchers, or hotkeys -- start() is just a breadcrumb in the log.
+    ---@param ctx Ctx
     start = function(ctx)
         ctx.log("active -- window moves will carry the pointer")
     end,

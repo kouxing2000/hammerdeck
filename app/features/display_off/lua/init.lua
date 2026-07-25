@@ -56,6 +56,7 @@ return {
         }
     end,
 
+    ---@param ctx Ctx
     start = function(ctx)
         local s = { warnedAt = nil, dimmed = false, banners = nil, heldBy = nil }
 

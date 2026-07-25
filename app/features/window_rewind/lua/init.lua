@@ -21,10 +21,12 @@ return {
 
     -- Recording lives in window_history (a CORE peer of window_ops); gate it on the
     -- feature's own enabled-state so a disabled feature adds no per-move overhead.
+    ---@param ctx Ctx
     start = function(ctx)
         ctx.window.enableHistory(true)
         ctx.log("window_rewind: enabled -- recording window layout changes")
     end,
+    ---@param ctx Ctx
     stop = function(ctx)
         ctx.window.enableHistory(false)
         ctx.log("window_rewind: disabled -- window history cleared")
@@ -41,6 +43,7 @@ return {
             -- Reads the live layout + history; firing it unattended (schedule/event)
             -- is meaningless, so it stays manual-only.
             automatable = false,
+            ---@param ctx Ctx
             run = function(ctx)
                 -- Undo needs Accessibility to list and move windows; without it there
                 -- is nothing to restore, so onboard rather than report "nothing to undo".

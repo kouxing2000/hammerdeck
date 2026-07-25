@@ -22,6 +22,7 @@
 
 local PASTE_SETTLE_SECONDS = 0.5   -- donor's pause before the synthesized cmd+v
 
+---@param ctx Ctx
 local function cleaned(ctx)
     local text = ctx.pasteboardRead()
     if not text or text == "" then
@@ -53,6 +54,7 @@ return {
               .. "with a synthesized cmd+v.",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "shift" }, key = "v" },
           mnemonic = "⇧⌘V — the system's paste-and-match-style key",
+          ---@param ctx Ctx
           run = function(ctx)
               local text = cleaned(ctx)
               if not text then return end
@@ -78,6 +80,7 @@ return {
               .. "of pasting -- works in paste-blocking fields.",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "y" },
           mnemonic = "Y = keYstrokes",
+          ---@param ctx Ctx
           run = function(ctx)
               local text = cleaned(ctx)
               if not text then return end

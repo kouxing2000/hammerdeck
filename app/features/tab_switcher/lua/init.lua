@@ -46,6 +46,7 @@ local cycleModifier = require("platform.hotkeys").cycleModifier
 -- Shared release-to-pick mechanics (also drives window_switcher).
 local cyclingChooser = require("platform.cyclingChooser")
 
+---@param ctx Ctx
 local function jumperFor(ctx)
     local st = {
         mru = {},          -- browser name -> { url -> ts }
@@ -312,6 +313,7 @@ local function jumperFor(ctx)
     return st
 end
 
+---@param ctx Ctx
 local function with(ctx)
     return ctx.perEnable(jumperFor)
 end
@@ -322,6 +324,7 @@ return {
 
     options = {},
 
+    ---@param ctx Ctx
     start = function(ctx) with(ctx) end,
 
     actions = {
@@ -331,6 +334,7 @@ return {
               .. "tab. Press again to cycle; ⇧Tab steps back.",
           defaultTrigger = { type = "hotkey", mods = { "ctrl", "alt" }, key = "tab" },
           mnemonic = "⌃⌥Tab — the window-switch keys + Ctrl, for tabs",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).open("open") end },
     },
 }

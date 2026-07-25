@@ -26,6 +26,7 @@ return {
         -- Per-enable state shared across both actions (ctx.perEnable memoizes it
         -- on the ctx). Keeps `ctx` in the state -- the timer/bar callbacks call
         -- s.ctx.* long after the action returns.
+        ---@param ctx Ctx
         local function ensure(ctx)
             return ctx.perEnable(function(ctx) return { ctx = ctx } end)
         end
@@ -69,6 +70,7 @@ return {
                     .. "cancel the one already running.",
                 defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "c", follows = { "c" } },
                 mnemonic = "C for Countdown (Hyper+C, then C)",
+                ---@param ctx Ctx
                 run = function(ctx)
                     local s = ensure(ctx)
                     if s.timer or s.paused then
@@ -99,6 +101,7 @@ return {
                     .. "already paused.",
                 defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "c", follows = { "p" } },
                 mnemonic = "P for Pause (same Hyper+C prefix)",
+                ---@param ctx Ctx
                 run = function(ctx)
                     local s = ensure(ctx)
                     if s.timer then

@@ -24,6 +24,7 @@ return {
 
     -- A pure toggle: enabling it flips notification on at the trigger-fire seam.
     -- No timers, watchers, or hotkeys -- start() is just a breadcrumb in the log.
+    ---@param ctx Ctx
     start = function(ctx)
         ctx.log("active -- automated runs will show a notification")
     end,

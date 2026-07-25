@@ -20,6 +20,7 @@ local RETRY_SECONDS = 0.5   -- fullscreen exit settle time before retrying
 local TOGGLE_SCALE  = 0.75  -- the "smaller" size of the maximize toggle
 
 -- Build the helpers around a ctx once per enablement.
+---@param ctx Ctx
 local function arranger(ctx)
     local a = {}
 
@@ -231,6 +232,7 @@ local function arranger(ctx)
 end
 
 -- One arranger per enablement (ctx changes on re-enable; ctx.perEnable memoizes).
+---@param ctx Ctx
 local function with(ctx)
     return ctx.perEnable(arranger)
 end
@@ -337,21 +339,25 @@ return {
           description = "Move the focused window to the left half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "left" },
           mnemonic = "Hyper+← — the arrow points to the edge",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).snap(0, 0, 0.5, 1) end },
         { id = "right", label = "Right half", icon = "rectangle.righthalf.filled",
           description = "Move the focused window to the right half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "right" },
           mnemonic = "Hyper+→ — the arrow points to the edge",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).snap(0.5, 0, 0.5, 1) end },
         { id = "top", label = "Top half", icon = "rectangle.tophalf.filled",
           description = "Move the focused window to the top half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "up" },
           mnemonic = "Hyper+↑ — the arrow points to the edge",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).snap(0, 0, 1, 0.5) end },
         { id = "bottom", label = "Bottom half", icon = "rectangle.bottomhalf.filled",
           description = "Move the focused window to the bottom half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "down" },
           mnemonic = "Hyper+↓ — the arrow points to the edge",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).snap(0, 0.5, 1, 0.5) end },
 
         -- The thirds (and quarters, center, ...) are no longer hardcoded here: they
@@ -363,18 +369,21 @@ return {
           description = "Toggle the focused window between maximized and 75% centered.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "return" },
           mnemonic = "Hyper+Return — Return = fill the screen",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).toggleMax() end },
         { id = "screen_next", label = "To next screen", icon = "arrow.right.to.line",
           description = "Throw the focused window to the next screen, rescaling it "
               .. "proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "]" },
           mnemonic = "Hyper+] — ] pushes forward to the next screen",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).moveScreen(W.DIR.NEXT) end },
         { id = "screen_prev", label = "To previous screen", icon = "arrow.left.to.line",
           description = "Throw the focused window to the previous screen, rescaling "
               .. "it proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "[" },
           mnemonic = "Hyper+[ — [ pushes back to the previous screen",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).moveScreen(W.DIR.PREV) end },
 
         -- Swap the whole layout across the two displays. No default trigger (like
@@ -386,6 +395,7 @@ return {
               .. "display's -- everything on each moves to the other, rescaled "
               .. "proportionally. On three or more displays it first asks which "
               .. "one. Minimized and fullscreen windows stay put.",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).swapScreens() end },
     },
 }

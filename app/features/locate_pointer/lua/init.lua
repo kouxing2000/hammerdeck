@@ -25,6 +25,9 @@
 local W = require("platform.windows")
 
 -- warp the pointer to the center of a frame {x,y,w,h}, then flash the locator
+---@param ctx Ctx
+---@param f Frame
+---@param ctx Ctx
 local function centerOn(ctx, f)
     ctx.mouse.setPosition(f.x + f.w / 2, f.y + f.h / 2)
     ctx.mouse.locate(1)
@@ -45,6 +48,7 @@ return {
               .. "find it on screen.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "m" } },
           mnemonic = "M for Mouse (Hyper+M, then M)",
+          ---@param ctx Ctx
           run = function(ctx)
               ctx.mouse.locate(ctx.opt("seconds"))
           end },
@@ -53,6 +57,7 @@ return {
               .. "window, then flash the locator.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "c" } },
           mnemonic = "C for Center (same Hyper+M prefix)",
+          ---@param ctx Ctx
           run = function(ctx)
               local f = ctx.window.frame() or ctx.screen.frames()[1]
               if f then centerOn(ctx, f) end
@@ -63,6 +68,7 @@ return {
               .. "pointer when nothing is focused -- then flash the locator.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "a" } },
           mnemonic = "A for Active screen (same Hyper+M prefix)",
+          ---@param ctx Ctx
           run = function(ctx)
               -- The screen you are working on: the focused window's screen, else
               -- the screen under the pointer (never a surprise jump to a display
@@ -83,6 +89,7 @@ return {
               .. "then flash the locator.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "s" } },
           mnemonic = "S for Screen (same Hyper+M prefix)",
+          ---@param ctx Ctx
           run = function(ctx)
               local f = ctx.screen.frames()[1]
               if f then centerOn(ctx, f) end
@@ -92,6 +99,7 @@ return {
               .. "(wraps around), then flash the locator.",
           defaultTrigger = { type = "chord", mods = { "cmd", "alt", "ctrl" }, key = "m", follows = { "n" } },
           mnemonic = "N for Next screen (same Hyper+M prefix)",
+          ---@param ctx Ctx
           run = function(ctx)
               -- the screen physically to the right of the pointer's screen
               -- (wraps), per the display arrangement -- see windows.adjacentScreen.

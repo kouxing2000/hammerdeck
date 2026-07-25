@@ -21,6 +21,7 @@ local AMBIG_LOWER  = "l"
 local AMBIG_UPPER  = "IO"
 local AMBIG_DIGITS = "01"
 
+---@param ctx Ctx
 local function poolsFor(ctx)
     local avoid = ctx.opt("avoidAmbiguous")
     local pools = {}
@@ -31,6 +32,7 @@ local function poolsFor(ctx)
     return pools
 end
 
+---@param ctx Ctx
 local function pick(ctx, s)
     local i = ctx.randomInt(1, #s)
     return s:sub(i, i)
@@ -38,6 +40,7 @@ end
 
 -- Build a password of `length` from `pools`, one guaranteed char per pool, then
 -- a Fisher-Yates shuffle so the guaranteed chars are not stuck at the front.
+---@param ctx Ctx
 local function build(ctx, length, pools)
     local all = table.concat(pools)
     local chars = {}
@@ -52,6 +55,7 @@ local function build(ctx, length, pools)
     return table.concat(chars)
 end
 
+---@param ctx Ctx
 local function generate(ctx)
     local pools = poolsFor(ctx)
     if #pools == 0 then

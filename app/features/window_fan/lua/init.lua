@@ -81,6 +81,7 @@ local PALETTE = W.RING_PALETTE
 -- per enable via ctx.perEnable, so every action fire and stop() reach the SAME
 -- state.
 ---@param ctx table
+---@param ctx Ctx
 local function controllerFor(ctx)
     -- The mode's live state. Three per-window maps, all keyed by stable wid, held
     -- for the mode's life so a window keeps its identity across re-fans (and across
@@ -715,6 +716,7 @@ local function controllerFor(ctx)
     return st
 end
 
+---@param ctx Ctx
 local function with(ctx) return ctx.perEnable(controllerFor) end
 
 return {
@@ -731,6 +733,7 @@ return {
     },
 
     -- Service: start builds the idle controller; stop leaves a live mode.
+    ---@param ctx Ctx
     start = function(ctx) with(ctx) end,
     stop  = function(ctx) with(ctx).forceExit() end,
 
@@ -745,6 +748,7 @@ return {
             description = "Enter Window Fan mode: fan the focused screen's windows against the screen edges, each keeping a live colored border and a full always-visible edge no other window can cover. Windows that open or are dragged onto the screen are taken into the fan automatically. Press again to leave and restore the original layout.",
             defaultTrigger = { type = "hotkey", mods = HYPER, key = "f" },
             mnemonic = "Hyper+F -- F for Fan",
+            ---@param ctx Ctx
             run = function(ctx) with(ctx).toggle() end,
         },
     },

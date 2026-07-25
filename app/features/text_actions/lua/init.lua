@@ -81,6 +81,7 @@ local AI_ACTIONS = {
 -- field, PASTE the word, and search; paste is more reliable than typing, esp.
 -- for CJK) or, when none is configured, the macOS Dictionary via dict://. Shared
 -- by the Dictionary action and the Settings "Test" button.
+---@param ctx Ctx
 local function lookupInDict(ctx, word)
     local app = ctx.opt("dictApp")   -- a bundle id, or "" for macOS Dictionary
     if app and app ~= "" then
@@ -100,6 +101,7 @@ local function lookupInDict(ctx, word)
 end
 
 -- Paste `text` back over the current selection (write the clipboard, then cmd+V).
+---@param ctx Ctx
 local function pasteBack(ctx, text)
     ctx.pasteboardWrite(text)
     ctx.keyStroke({ "cmd" }, "v")
@@ -107,6 +109,7 @@ end
 
 -- Send `content` to OpenAI with `systemPrompt`; paste the reply back over the
 -- selection. Async (httpPost): the result lands in the completion callback.
+---@param ctx Ctx
 local function askAI(ctx, content, systemPrompt)
     local key = ctx.secret("openaiKey")
     if not key or key == "" then
@@ -149,6 +152,7 @@ end
 -- the display text back. Two entries whose translations collided in some locale
 -- would then have silently shared one slot -- last writer wins, wrong action
 -- runs, no error. Keying by id (CODE-12) removes that entirely.
+---@param ctx Ctx
 local function buildPicker(ctx)
     local actions, byId = {}, {}
     local function addEntry(e)
@@ -169,6 +173,7 @@ end
 -- Run the chosen picker `entry` against `content`: base transforms paste back
 -- in place; AI entries (translate/freeAsk prompt for input first) send to
 -- OpenAI. The dispatch the audit called the natural extraction.
+---@param ctx Ctx
 local function runEntry(ctx, content, entry)
     local id = entry.id
     if id == "lowercase" then
@@ -220,6 +225,7 @@ end
 -- Act on the captured selection `content`: nothing selected -> alert (prompting
 -- for Accessibility if that's why); a URL opens directly; otherwise offer the
 -- transform picker and dispatch the choice.
+---@param ctx Ctx
 local function actOnSelection(ctx, content)
     if content == "" then
         if not ctx.axTrusted() then
@@ -337,6 +343,7 @@ return {
                 .. "through AI -- the result pastes back in place.",
             defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "o" },
             mnemonic = "O — act On the selection",
+            ---@param ctx Ctx
             run = function(ctx)
                 -- Capture the selection (cmd+C), then act on it once it has
                 -- reached the clipboard. The body lives in the module-level

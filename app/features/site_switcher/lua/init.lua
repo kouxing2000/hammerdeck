@@ -110,6 +110,7 @@ end
 -- multiline text (`Name | URL | app`, one per line) or the even older single-URL
 -- "openURL" key. One-way migration -- nothing is rewritten until the user edits
 -- in Settings (which then saves JSON).
+---@param ctx Ctx
 local function configuredSites(ctx)
     local raw = ctx.opt("sites")
     if type(raw) == "string" and raw:match("^%s*%[") then
@@ -141,6 +142,7 @@ end
 --     seam. Routing is authoritative; focus-if-already-open is best-effort.
 --     Non-scriptable browsers (Firefox) just open a plain tab.
 -- An unset browser falls back to the system default browser.
+---@param ctx Ctx
 local function jump(ctx, site)
     local pattern = siteName(site.url)
     if pattern == "" then
@@ -174,6 +176,7 @@ end
 -- One reusable chooser + favicon cache per enablement (a fresh ctx => fresh
 -- state, so a disable/enable cycle never reuses a torn-down handle; ctx.perEnable
 -- memoizes it on the ctx).
+---@param ctx Ctx
 local function state(ctx)
     return ctx.perEnable(function(ctx)
         return { chooser = nil, fav = favicons.new(ctx) }
@@ -194,6 +197,7 @@ return {
     defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "u" },
     mnemonic = "U for URL",
 
+    ---@param ctx Ctx
     action = function(ctx)
         local sites = configuredSites(ctx)
         if #sites == 0 then

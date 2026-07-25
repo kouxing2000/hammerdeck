@@ -73,6 +73,7 @@ end
 ---@param rows integer grid height
 ---@param cell {x:integer,y:integer,w:integer,h:integer} cell/span in grid units
 ---@return boolean placed
+---@param ctx Ctx
 local function placeSpan(ctx, cols, rows, cell)
     local f = W.focusedOrAlert(ctx, "Window Grid")
     if not f then return false end
@@ -95,6 +96,7 @@ end
 ---@param rows integer grid height
 ---@param armA {x:integer,y:integer}|nil corner-A (top-left); nil = initial phase
 ---@return table hud spec for adapter.hud / WindowModeHUDPanel
+---@param ctx Ctx
 local function hudFor(ctx, cols, rows, armA)
     local cells = {}
     for r = 0, rows - 1 do
@@ -132,6 +134,7 @@ end
 -- One controller per enablement (ctx changes on re-enable). Tracks the live
 -- placement modal, the armed corner-A, and the idle timer so a second entry
 -- replaces the first instead of stacking.
+---@param ctx Ctx
 local function controllerFor(ctx)
     local st = { modal = nil, armA = nil, idleTimer = nil }
 
@@ -256,6 +259,7 @@ local function controllerFor(ctx)
     return st
 end
 
+---@param ctx Ctx
 local function with(ctx)
     return ctx.perEnable(controllerFor)
 end
@@ -271,6 +275,7 @@ return {
               .. "fill that rectangle.",
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "9" },
           mnemonic = "Hyper+9 — 9 cells = 3×3",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).enter(3, 3) end },
         { id = "grid_2x2", label = "2×2 grid placement", icon = "square.grid.2x2",
           description = "Deem the screen a 2×2 grid, then press a cell to place the "
@@ -278,6 +283,7 @@ return {
               .. "fill that rectangle.",
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "4" },
           mnemonic = "Hyper+4 — 4 cells = 2×2",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).enter(2, 2) end },
 
         -- A 6-cell grid, oriented to the screen (3×2 wide / 2×3 tall) -- the split
@@ -290,6 +296,7 @@ return {
               .. "there, or a second cell down-right of it to fill that rectangle.",
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "6" },
           mnemonic = "Hyper+6 — 6 cells = 3×2 (wide) or 2×3 (tall)",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).enterOriented(6) end },
     },
 }

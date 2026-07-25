@@ -40,6 +40,7 @@ end
 -- above every app's windows and needs no z-reordering; afterSeconds tears it
 -- down. The handles live on `st` so a rapid second pick replaces the prior
 -- pulse instead of leaking a second overlay.
+---@param ctx Ctx
 local function pulseScreen(ctx, st, frame)
     if st.screenGlow then st.screenGlow.stop() end
     if st.glowTimer then st.glowTimer.stop() end
@@ -58,6 +59,7 @@ local function pulseScreen(ctx, st, frame)
         .. tostring(frame.index) .. " (" .. tostring(frame.name) .. ")")
 end
 
+---@param ctx Ctx
 local function jump(ctx)
     -- Per-enable state, memoized on the ctx.
     local st = ctx.perEnable(function() return { chooser = nil, altTimer = nil } end)

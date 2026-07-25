@@ -37,22 +37,16 @@ local window_ops = require("platform.window_ops")
 -- feature has to. Getting that backwards puts a window on the wrong display in a
 -- multi-monitor setup, which is exactly the sort of thing a type can pin down.
 --
--- HOW FAR THESE CURRENTLY REACH -- measured, not assumed. They are checked
--- INSIDE this file (LuaLS verifies each definition against its own annotation),
--- and they are what a feature author reads. They do NOT yet check feature CALL
--- SITES: a feature receives `ctx` as a plain function parameter, so LuaLS types
--- it `any` and checks nothing through it. Verified by injecting
--- `ctx.mouse.locate("not a number")` into a real feature -- check-lua-types.sh
--- stayed green.
+-- HOW FAR THESE REACH -- measured, not assumed. They are ENFORCED at feature
+-- call sites, not merely documentation: every feature entry point carries
+-- `---@param ctx Ctx`, so `ctx.window.focus("not an id")` inside a feature fails
+-- check-lua-types.sh at Error level, which CI runs. Verified by injecting
+-- exactly that into a feature and watching it go red (it passed silently before
+-- the class existed).
 --
--- Closing that needs two more steps, in this order:
---   1. a complete `---@class Ctx` listing EVERY public member (~85 of them plus
---      the window/screen/mouse sub-tables), and `M.make` annotated to return it;
---   2. `---@param ctx Ctx` on each feature's action/start functions.
--- Step 1 must be COMPLETE before step 2 touches anything: LuaLS reports an
--- undeclared field on a classed table as an error, so a partial `Ctx` would turn
--- every un-listed method into a false positive across the whole catalog. That is
--- why this file stops here rather than shipping half a class.
+-- The class is declared ON the ctx table rather than as a hand-written
+-- `---@field` list, so it is complete by construction -- see the note at
+-- `local ctx` below for why that distinction is load-bearing.
 -- ---------------------------------------------------------------------------
 
 ---A live resource a feature created through ctx. Always scope-tracked: disabling
@@ -117,6 +111,11 @@ local function stateKey(id, k) return "hammerdeck.state." .. id .. "." .. k end
 -- confirmFlash -- optional registry-injected, confirm_shortcut-gated flasher a
 --          MODAL feature fires at its real-action moment (surfaced as
 --          ctx.confirmAction); nil (a no-op) off the bind path (e.g. describe).
+---@param m table the validated manifest
+---@param resolveTrigger nil|fun(actionId: string): table|nil injected by the registry
+---@param extra nil|table capability-gated methods copied verbatim onto ctx
+---@param confirmFlash nil|fun(label: string?) registry-injected confirm flasher
+---@return Ctx ctx, table scope
 function M.make(m, resolveTrigger, extra, confirmFlash)
     local live = {}   -- set: wrapper -> true
 
@@ -173,7 +172,29 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
         return n
     end
 
+    -- The plugin API's type, declared on the table itself rather than as a
+    -- hand-written field list. LuaLS attaches every `ctx.x = ...` /
+    -- `function ctx.x()` below to this class, so the type is COMPLETE BY
+    -- CONSTRUCTION and cannot drift as members are added -- which is the whole
+    -- ballgame here. A hand-maintained `---@field` list would be a second copy
+    -- of ~100 members, and the moment it missed one, every feature annotated
+    -- `---@param ctx Ctx` would report that member as an undefined field.
+    -- The two exceptions to "by construction": the `commands` capability injects
+    -- these through the dynamic `ctx[k] = v` loop at the end of this function,
+    -- which LuaLS cannot follow, so they are declared by hand. They are also
+    -- absent for most features -- only one that declares the `commands`
+    -- capability ever receives them.
+    ---@class Ctx
+    ---@field commands nil|fun(): table[] every enabled action, for a command palette
+    ---@field runCommand nil|fun(featureId: string, actionId: string): boolean
     local ctx = {}
+    -- Set by the registry around a manual hotkey fire (see registry.lua), read
+    -- by ctx.modal to default a mode's sticky modifiers. Declared so the class
+    -- covers them; features have no reason to touch either.
+    ---@type string[]|nil
+    ctx._leaderMods = nil
+    ---@type string|nil
+    ctx._leaderKey = nil
     ctx.featureId = m.id
 
     -- The user-visible app display name (single source of truth, from the seam).
@@ -198,6 +219,9 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- `local cached; function with(ctx) if not cached or cached.ctx ~= ctx then
     -- cached = {...} end return cached end`. factory receives ctx.
     local perEnableBuilt, perEnableMemo = false, nil
+    ---@generic T
+    ---@param factory fun(ctx: Ctx): T built once per enable
+    ---@return T the memoized controller/cache
     function ctx.perEnable(factory)
         if not perEnableBuilt then
             perEnableMemo = factory(ctx)
@@ -208,10 +232,22 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
 
     -- options (typed, user-overridable, manifest default fallback) ----------
     ---The user's value for one of this feature's declared options, falling back
-    ---to the manifest default. The Lua type follows the option's declared `type`
-    ---(bool -> boolean, int/number -> number, everything else -> string).
+    ---to the manifest default. At runtime the Lua type follows the option's
+    ---declared `type` (bool -> boolean, int/number -> number, everything else
+    ----> string).
+    ---
+    ---Typed `any` ON PURPOSE, and it is the honest annotation rather than a
+    ---cop-out: the concrete type is decided by manifest DATA, which LuaLS cannot
+    ---see, so the only sound alternative is the union
+    ---`boolean|number|string|nil`. That union makes every CORRECT call site an
+    ---error -- `ctx.mouse.locate(ctx.opt("seconds"))` is right, and was rejected
+    ---as "cannot assign boolean|string|number|nil to parameter number" the
+    ---moment a feature was annotated `---@param ctx Ctx`. A type that is
+    ---unusable at every real call site does not buy safety, it just trains
+    ---people to ignore the checker. If a feature wants the guarantee, assert the
+    ---shape locally (`local n = ctx.opt("seconds") --[[@as number]]`).
     ---@param key string an option key declared in this feature's manifest
-    ---@return boolean|number|string|nil
+    ---@return any value typed by the option's declared `type` at runtime
     function ctx.opt(key)
         return adapter.getSetting(optKey(m.id, key), manifest.defaultFor(m, key))
     end

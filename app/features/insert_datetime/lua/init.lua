@@ -40,6 +40,7 @@ local PRESETS = {
 
 -- Resolve the live strftime pattern: the chosen preset, or the custom field when
 -- "Custom" is selected. Returns nil when custom is selected but empty.
+---@param ctx Ctx
 local function resolveFormat(ctx)
     local fmt = ctx.opt("format")
     if fmt == "custom" then
@@ -57,6 +58,7 @@ end
 -- Returns the string, or (nil, human-readable reason). This is the single
 -- validator both the action and the Settings "Preview" button go through, so a
 -- preview can never disagree with what typing actually produces.
+---@param ctx Ctx
 local function formatNow(ctx, fmt, when)
     local ok, res = pcall(os.date, fmt, when)
     if not ok then
@@ -72,6 +74,7 @@ local function formatNow(ctx, fmt, when)
     return res
 end
 
+---@param ctx Ctx
 local function insert(ctx)
     local fmt = resolveFormat(ctx)
     if not fmt then

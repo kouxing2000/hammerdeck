@@ -93,6 +93,7 @@ local FLIGHT = 0.15
 
 -- One controller per enablement (ctx changes on re-enable). Holds the live deck
 -- session; nil/inactive between decks.
+---@param ctx Ctx
 local function controllerFor(ctx)
     local st = { active = false, picking = false, settling = false, peeked = false }
 
@@ -1413,6 +1414,7 @@ local function controllerFor(ctx)
     return st
 end
 
+---@param ctx Ctx
 local function with(ctx)
     return ctx.perEnable(controllerFor)
 end
@@ -1433,6 +1435,7 @@ return {
     },
 
     -- Service: start builds the idle controller; stop restores a live deck.
+    ---@param ctx Ctx
     start = function(ctx) with(ctx) end,
     stop  = function(ctx) with(ctx).forceExit() end,
 
@@ -1442,6 +1445,7 @@ return {
               .. "focus one to make it the hero. ⌥Esc drops the hero, then exits.",
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "k" },
           mnemonic = "Hyper+K — K for decK (Hyper+D is Insert Date/Time)",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).toggle() end },
     },
 }

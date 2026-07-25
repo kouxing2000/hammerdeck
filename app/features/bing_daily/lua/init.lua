@@ -54,6 +54,7 @@ local MAX_SKIP_SECONDS = 48 * 60 * 60
 
 -- Do we still hold the current picture? Only if the stored stamp is well-formed
 -- AND inside that horizon. A stamp in the past is the ordinary "time to poll".
+---@param ctx Ctx
 local function stillCurrent(ctx, stamp)
     if type(stamp) ~= "string" or not stamp:match("^%d%d%d%d%d%d%d%d%d%d%d%d$") then
         return false
@@ -65,12 +66,14 @@ end
 -- Set the wallpaper, logging a failure in ONE place. The log is the audit trail
 -- for "did the desktop actually change", so an apply that no-ops (no target
 -- display, a cache file macOS purged) must never read back as a success.
+---@param ctx Ctx
 local function applyWallpaper(ctx, path, applyTo)
     if ctx.setWallpaper(path, applyTo) then return true end
     ctx.log("wallpaper apply failed (target " .. tostring(applyTo) .. "): " .. path)
     return false
 end
 
+---@param ctx Ctx
 local function refresh(ctx)
     local applyTo = ctx.opt("applyTo")
 
@@ -160,6 +163,7 @@ return {
     -- interval, never on bind). The recurring refresh is the action's declared
     -- schedule trigger below -- visible and rebindable, per the platform's
     -- "bind each to a schedule" model.
+    ---@param ctx Ctx
     start = function(ctx)
         ctx.afterSeconds(5, function() refresh(ctx) end)
         -- A display plugged in / rearranged: re-assert the already-downloaded
@@ -178,6 +182,7 @@ return {
           -- an automated trigger -- and its default IS a schedule.
           automatable = true,
           defaultTrigger = { type = "schedule", everyMin = REFRESH_MINUTES },
+          ---@param ctx Ctx
           run = function(ctx) refresh(ctx) end },
     },
 }

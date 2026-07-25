@@ -24,6 +24,7 @@ local json = require("platform.json")
 
 local shared = {}
 
+---@param ctx Ctx
 local function start(ctx)
     local st = {
         history = {},      -- newest first, plain strings
@@ -155,11 +156,13 @@ return {
         { id = "show", label = "Show clipboard history",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "h" },
           mnemonic = "H for History",
+          ---@param ctx Ctx
           run = function(ctx)
               if shared.st then shared.st.show() end
           end },
     },
 
+    ---@param ctx Ctx
     stop = function(ctx)
         shared.st = nil
     end,

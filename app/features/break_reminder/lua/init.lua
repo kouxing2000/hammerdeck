@@ -42,6 +42,7 @@ return {
         }
     end,
 
+    ---@param ctx Ctx
     start = function(ctx)
         local persistedStamp = ctx.getState("lastStartWorkTimestamp")
         local s = {

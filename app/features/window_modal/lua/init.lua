@@ -25,6 +25,7 @@ local W = require("platform.windows")
 
 local HISTORY_MAX = 50
 
+---@param ctx Ctx
 local function arrangerFor(ctx)
     local st = { mode = nil, undoStack = {}, redoStack = {} }
 
@@ -246,6 +247,7 @@ local function arrangerFor(ctx)
 end
 
 -- One arranger per enablement (ctx.perEnable memoizes per enable).
+---@param ctx Ctx
 local function with(ctx)
     return ctx.perEnable(arrangerFor)
 end
@@ -265,6 +267,7 @@ return {
               .. "move, resize, and snap the focused window until Escape.",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "w" },
           mnemonic = "W for Window mode",
+          ---@param ctx Ctx
           run = function(ctx) with(ctx).toggleMode() end },
     },
 }

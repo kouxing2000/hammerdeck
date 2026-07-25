@@ -19,6 +19,7 @@ local function cmdKey(featureId, actionId) return featureId .. "\0" .. actionId 
 -- `counts` is a string-keyed map (cmdKey -> run count). Tag it as a JSON object
 -- so it always serializes as `{}`/`{...}` -- never as an array -- even when
 -- empty or when an older build persisted an empty map as "[]".
+---@param ctx Ctx
 local function loadCounts(ctx)
     local raw = ctx.getState("counts")
     if type(raw) == "string" then
@@ -28,13 +29,24 @@ local function loadCounts(ctx)
     return json.asObject({})
 end
 
+---@param ctx Ctx
 local function bumpCount(ctx, featureId, actionId)
     local counts = loadCounts(ctx)
     local k = cmdKey(featureId, actionId)
     counts[k] = (counts[k] or 0) + 1
-    ctx.setState("counts", json.encode(counts))
+    -- json.encode returns `nil, err` on failure, and this used to hand its
+    -- result straight to setState -- which would have persisted nil and wiped
+    -- every recorded count, silently, on the next successful read. Found by
+    -- typing ctx, not by a test: nothing exercises a failing encode here.
+    local encoded = json.encode(counts)
+    if encoded then
+        ctx.setState("counts", encoded)
+    else
+        ctx.log("could not encode palette counts; leaving the stored ranking untouched")
+    end
 end
 
+---@param ctx Ctx
 local function buildChoices(ctx)
     local counts = loadCounts(ctx)
     local cmds = {}
@@ -84,6 +96,7 @@ local function buildChoices(ctx)
     return choices
 end
 
+---@param ctx Ctx
 local function openPalette(ctx)
     local st = ctx.perEnable(function() return {} end)
     if not st.chooser then
@@ -136,5 +149,6 @@ return {
     -- input source, ⌃⌘Space emoji) and keeps our conflict warning clean.
     defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "space" },
     mnemonic = "Space — the everything launcher",
+    ---@param ctx Ctx
     action = function(ctx) openPalette(ctx) end,
 }

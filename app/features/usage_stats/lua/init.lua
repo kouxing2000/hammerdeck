@@ -67,6 +67,7 @@ local store = require("features.usage_stats.store")
 -- them (same shared-upvalue pattern as count_down's cross-action state).
 local shared = {}
 
+---@param ctx Ctx
 local function start(ctx)
     local st = {
         wakeAt   = nil,   -- session start (nil = no open session)
@@ -376,6 +377,7 @@ return {
         end
     end,
 
+    ---@param ctx Ctx
     stop = function(ctx)
         -- Record the open session, then flush regardless -- pending app time
         -- must hit disk even when no session is open (e.g. disabled while the

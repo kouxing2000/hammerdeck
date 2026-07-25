@@ -24,6 +24,7 @@ return {
 
     -- A pure toggle: enabling it turns the flash on at the trigger-fire seam.
     -- No timers, watchers, or hotkeys -- start() is just a breadcrumb in the log.
+    ---@param ctx Ctx
     start = function(ctx)
         ctx.log("active -- manual shortcuts will flash what they fired")
     end,
