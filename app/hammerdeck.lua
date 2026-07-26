@@ -36,9 +36,10 @@ local registry = require("platform.registry")
 require("platform.i18n").configure({ locale = adapter.locale(), log = adapter.log })
 
 -- ---------------------------------------------------------------------------
--- Feature catalog: autodiscovered by scanning lua/features/ (drop in a folder,
--- Reload, and it appears -- no list to maintain). Loads are quarantined, so one
--- broken plugin is recorded + surfaced in the UI, not fatal to boot.
+-- Feature catalog: autodiscovered by scanning app/features/ for a
+-- <id>/lua/init.lua (drop in a folder, Reload, and it appears -- no list to
+-- maintain). Loads are quarantined, so one broken plugin is recorded +
+-- surfaced in the UI, not fatal to boot.
 -- ---------------------------------------------------------------------------
 if here then
     registry.loadFromDir(here .. "/features")

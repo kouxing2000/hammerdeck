@@ -174,9 +174,10 @@ function registry.loadCatalog(list)
     for _, modname in ipairs(list) do registry.load(modname) end
 end
 
--- Scan a directory for feature modules: a "<name>/init.lua" subdir or a flat
--- "<name>.lua" file each yields the module name "features.<name>". Returns a
--- sorted module-name list (the OS scan lives behind the adapter seam).
+-- Scan a directory for feature modules: a subdir holding "<name>/lua/init.lua"
+-- yields the module name "features.<name>" (the co-located layout -- there is
+-- no flat "<name>.lua" form). Returns a sorted module-name list (the OS scan
+-- lives behind the adapter seam).
 function registry.discover(dir)
     local mods = {}
     for _, name in ipairs(adapter.discoverFeatures(dir) or {}) do

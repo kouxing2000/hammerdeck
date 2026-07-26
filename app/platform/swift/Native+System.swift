@@ -7,10 +7,10 @@ import CLua
 import SQLite3
 
 extension Native {
-    // Returns the bare names of feature modules in `dir`: a "<name>/init.lua"
-    // subdirectory or a flat "<name>.lua" file each yields "<name>". The
-    // registry prefixes "features." and loads them. Drives autodiscovery +
-    // hot-plug (reload re-scans).
+    // Returns the bare names of feature modules in `dir`: a subdirectory
+    // holding "<name>/lua/init.lua" yields "<name>" (the co-located layout --
+    // there is no flat "<name>.lua" form). The registry prefixes "features."
+    // and loads them. Drives autodiscovery + hot-plug (reload re-scans).
     func discoverFeatures(_ L: OpaquePointer?) -> Int32 {
         guard let dir = LuaState.string(L, 1) else { return luaError(L, "discover_features: dir required") }
         let fm = FileManager.default
