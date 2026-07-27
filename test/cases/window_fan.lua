@@ -267,6 +267,119 @@ return {
             ok(#fake.liveOutlines() == 0, "restore tore down the borders")
         end
 
+        -- ===== AN APP THAT GOES QUIET UNDER AX IS NOT A CLOSED WINDOW.
+        -- A window missing from a listing is ambiguous: closed, or its app just
+        -- missed the AX messaging timeout. Reading the second as the first is
+        -- DESTRUCTIVE -- it frees the captured original, and when the app answers
+        -- again the window is re-captured from the SLAB it is sitting in, so leaving
+        -- the mode "restores" it to the slab and the real geometry is lost for good.
+        -- That shipped, and fired routinely (a 0.3s AX ceiling was dropping nine
+        -- apps from every listing). ctx.window.droppedApps() is what disambiguates.
+        do
+            fake.windows = freshWindows()
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows)
+            ok(#fake.liveOutlines() == 5, "entered with five windows")
+
+            -- Safari (wid 102) is now sitting on a slab -- setFrameFor mutates the
+            -- live rows, so this IS what a listing would report for it.
+            local slab
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 102 then slab = { x = w.x, y = w.y, w = w.w, h = w.h } end
+            end
+            ok(slab ~= nil and not (slab.x == ORIG[2].x and slab.y == ORIG[2].y),
+                "Safari was moved onto a slab (its slab frame differs from its original)")
+
+            -- Safari's app goes QUIET: its windows vanish from the listing, and the
+            -- seam reports the app as dropped rather than the window as gone.
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 102 then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            fake.droppedApps = { "com.saf" }
+            fake.activateApp("Mail", "com.mail")       -- membership changed -> refan
+
+            -- The survivors must NOT re-tile: 102's slot stays RESERVED, so the fan
+            -- is still the five-slot geometry and nobody else budged.
+            local stillOnFive = true
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 108 and not w.minimized and not w.fullscreen then
+                    local onSlot = false
+                    for _, s in ipairs(SLOTS) do
+                        if w.x == s.x and w.y == s.y and w.w == s.w and w.h == s.h then
+                            onSlot = true
+                        end
+                    end
+                    if not onSlot then stillOnFive = false end
+                end
+            end
+            ok(stillOnFive,
+                "an app going quiet reserves its slot -- the other windows do not re-tile")
+
+            -- Safari answers again, reporting the SLAB frame it was left on. A
+            -- re-capture here is exactly how the original used to be destroyed.
+            table.insert(fake.windows, 2, { id = 2, wid = 102, title = "Browser",
+                appName = "Safari", bundleID = "com.saf",
+                x = slab.x, y = slab.y, w = slab.w, h = slab.h })
+            fake.droppedApps = {}
+            fake.activateApp("Safari", "com.saf")      -- reclaims the reserved slot
+
+            fake.pressHotkey("f", HYP)                 -- leave -> restore
+            local back = frameOf(2)
+            ok(back and back.x == ORIG[2].x and back.y == ORIG[2].y
+               and back.w == ORIG[2].w and back.h == ORIG[2].h,
+                "a window whose app went quiet still restores to its TRUE original, not the slab")
+
+            fake.droppedApps = {}
+            fake.windows = freshWindows()
+        end
+
+        -- ===== A CAPTURED ORIGINAL IS NEVER DISCARDED WHILE THE MODE IS LIVE.
+        -- droppedApps explains the AX case, but absence has causes it CANNOT
+        -- classify -- above all a Space switch: CGWindowList is Space-scoped, so
+        -- every window on another Space reads as absent while its app still answers
+        -- fine. That lands in the "closed" branch, so freeing the original there
+        -- would lose the real geometry by a different route than the AX one. The
+        -- slot/colour are recycled (the fan re-tiles densely); the original is kept.
+        do
+            fake.windows = freshWindows()
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)                 -- enter (5 windows)
+
+            local slab
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 103 then slab = { x = w.x, y = w.y, w = w.w, h = w.h } end
+            end
+
+            -- Mail (103) leaves for another Space: absent from the listing, and its
+            -- app is NOT reported dropped (nothing timed out).
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 103 then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            fake.droppedApps = {}
+            fake.activateApp("Notes", "com.not")       -- membership changed -> refan
+
+            -- It comes back on this Space, reporting the slab frame it was left on.
+            table.insert(fake.windows, 3, { id = 3, wid = 103, title = "Mail",
+                appName = "Mail", bundleID = "com.mail",
+                x = slab.x, y = slab.y, w = slab.w, h = slab.h })
+            fake.activateApp("Mail", "com.mail")
+            fake.pressHotkey("f", HYP)                 -- leave -> restore
+
+            local back = frameOf(3)
+            ok(back and back.x == ORIG[3].x and back.y == ORIG[3].y
+               and back.w == ORIG[3].w and back.h == ORIG[3].h,
+                "a window absent for an unclassifiable reason (a Space switch) still restores to its TRUE original")
+
+            fake.droppedApps = {}
+            fake.windows = freshWindows()
+        end
+
         -- ===== EDGE-THICKNESS OPTION is read LIVE: changing it re-sizes the fan.
         do
             fake.windows = freshWindows()
@@ -615,7 +728,10 @@ return {
             -- SCREEN both SHRINKS and MOVES (same name "Main"). The members are still in
             -- their OLD (larger) slabs, so their centres now fall OUTSIDE the new frame --
             -- a geometry re-classification would strand them. All five must re-fan onto it.
-            local SMALL = { x = 100, y = 50, w = 800, h = 600, name = "Main", index = 1 }
+            -- The new size deliberately still CLEARS capacity (1200x800 fits 8 > 5), so
+            -- this block exercises the re-fan path; the over-capacity shrink is its own
+            -- block below.
+            local SMALL = { x = 100, y = 50, w = 1200, h = 800, name = "Main", index = 1 }
             fake.screenList = { SMALL, SCREEN2 }
             local before = #fake.windowFrameSets
             fake.systemEvent("screenChanged")
@@ -638,6 +754,40 @@ return {
             fake.screenList = { SCREEN, SCREEN2 }      -- reset for later blocks
         end
 
+        -- ===== A SHRINK THAT OVERFLOWS CAPACITY LEAVES THE MODE (and restores).
+        -- The capacity gate guards enter() and refan(), but a display RESIZE reaches
+        -- place() by a third path -- and it is the one most likely to overflow, since
+        -- nothing about it is under the user's control. Re-placing anyway would rebuild
+        -- the buried-strip layout the gate exists to prevent. Restore IS wanted here:
+        -- the display still exists (unlike the screen-GONE case), so the captured
+        -- originals are still meaningful frames on it.
+        do
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)                 -- enter on SCREEN (fits 12)
+            ok(#fake.liveOutlines() == 5, "entered with five windows")
+
+            local TINY = { x = 0, y = 0, w = 800, h = 600, name = "Main", index = 1 }
+            ok(W.fanCapacity(TINY, 40, 8) < 5,
+                "the shrunk screen genuinely cannot hold the five members")
+            local a = #fake.alerts
+            fake.screenList = { TINY, SCREEN2 }
+            fake.systemEvent("screenChanged")
+
+            ok(#fake.liveOutlines() == 0, "an over-capacity shrink leaves the mode")
+            ok(fake.liveFanWidget() == nil, "the widget is torn down with it")
+            ok(#fake.alerts == a + 1, "and says why, rather than vanishing silently")
+            local restoredOk = true
+            for id, o in pairs(ORIG) do
+                local w = frameOf(id)
+                if w and not (w.x == o.x and w.y == o.y) then restoredOk = false end
+            end
+            ok(restoredOk, "every window is restored -- the display still exists")
+            fake.screenList = { SCREEN, SCREEN2 }      -- reset for later blocks
+        end
+
         -- ===== ALERTS: nothing fannable, and nothing to restore.
         do
             fake.windows = {}
@@ -647,6 +797,135 @@ return {
             local a = #fake.alerts
             fake.pressHotkey("f", HYP)
             ok(#fake.alerts == a + 1, "no fannable windows -> alert, not active")
+        end
+
+        -- ===== CAPACITY GATE: the fan REFUSES rather than degrading.
+        -- A window cannot shrink below its own minimum size, so past a certain N the
+        -- slabs are a request every app rejects -- windows overshoot (measured
+        -- median 3.8x) and bury their neighbours' strips, which voids the mode's one
+        -- promise. Owner's call (2026-07-25): refuse, and say the real number.
+        do
+            local CAP = W.fanCapacity(SCREEN, 40, 8)
+            ok(CAP > 0 and CAP < 20, "the test screen has a sane finite capacity (" .. CAP .. ")")
+
+            -- Exactly at capacity: still fans.
+            local wins = {}
+            for i = 1, CAP do
+                wins[i] = { id = 500 + i, wid = 5000 + i, title = "W" .. i, appName = "A" .. i,
+                    bundleID = "com.cap" .. i, x = 100 + i, y = 100 + i, w = 600, h = 400 }
+            end
+            fake.windows = wins
+            fake.focusedWindow = { x = 101, y = 101, w = 600, h = 400, screenIndex = 1 }
+            fake.focusedWid = 5001
+            fake.pressHotkey("f", HYP)
+            ok(#fake.liveOutlines() == CAP, "exactly at capacity, the fan runs (" .. CAP .. " bordered)")
+            fake.pressHotkey("f", HYP)                        -- leave
+
+            -- One over: refused, with an alert, and nothing moved.
+            wins[CAP + 1] = { id = 600, wid = 6000, title = "One too many", appName = "Z",
+                bundleID = "com.cap.z", x = 120, y = 120, w = 600, h = 400 }
+            fake.windows = wins
+            local a, moved = #fake.alerts, #fake.windowFrameSets
+            fake.pressHotkey("f", HYP)
+            ok(#fake.alerts == a + 1, "one window over capacity -> an alert")
+            ok(#fake.liveOutlines() == 0, "over capacity, the mode does NOT enter")
+            ok(#fake.windowFrameSets == moved, "over capacity, not a single window is moved")
+        end
+
+        -- ===== THE CEILING ALSO APPLIES TO GROWTH. A screen reaches 30 windows by
+        -- ACCUMULATING them, so every one of those opens arrives via refan, not
+        -- enter() -- gating only entry would be theatre. A newcomer past capacity is
+        -- left where it is. The subtle part is change detection: place() records the
+        -- signature of what it PLACED, but the poll compares against the full
+        -- fannable set, so a permanently-refused window would read as "set changed"
+        -- on every single tick and re-fan forever.
+        do
+            local CAP = W.fanCapacity(SCREEN, 40, 8)
+            local wins = {}
+            for i = 1, CAP do
+                wins[i] = { id = 700 + i, wid = 7000 + i, title = "G" .. i, appName = "B" .. i,
+                    bundleID = "com.grow" .. i, x = 100 + i, y = 100 + i, w = 600, h = 400 }
+            end
+            fake.windows = wins
+            fake.focusedWindow = { x = 101, y = 101, w = 600, h = 400, screenIndex = 1 }
+            fake.focusedWid = 7001
+            fake.pressHotkey("f", HYP)
+            ok(#fake.liveOutlines() == CAP, "entered at capacity")
+
+            -- A new window opens on the screen while the mode is live.
+            table.insert(fake.windows, { id = 800, wid = 8000, title = "Latecomer", appName = "L",
+                bundleID = "com.late", x = 300, y = 300, w = 600, h = 400 })
+            fake.fireTimers("every", 2.0)
+            ok(#fake.liveOutlines() == CAP,
+                "a newcomer past capacity is NOT taken into the fan")
+            local late = frameOf(800)
+            ok(late.x == 300 and late.y == 300, "the refused newcomer is left exactly where it was")
+
+            -- ... and the refusal must SETTLE. Two more quiet polls must not re-fan.
+            local steady = #fake.windowFrameSets
+            fake.fireTimers("every", 2.0)
+            fake.fireTimers("every", 2.0)
+            ok(#fake.windowFrameSets == steady,
+                "a permanently-refused window does not re-trigger a refan on every poll")
+            fake.pressHotkey("f", HYP)                        -- leave
+        end
+
+        -- ===== KEYBOARD NAVIGATION: next / prev move a PREVIEW; confirm commits.
+        -- Stepping deliberately does NOT focus each window on the way past -- that
+        -- would be an app activation per keypress and a multi-window raise storm
+        -- (the project's Z-order rule). So the bold border moves while focus stays
+        -- put, and only confirm focuses + leaves.
+        do
+            fake.windows = freshWindows()
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)                        -- enter (5 windows)
+            local boldWid = function()
+                for _, wid in ipairs({ 101, 102, 103, 104, 105 }) do
+                    local b = borderFor(wid)
+                    if b and b.kind == "focus" then return wid end
+                end
+            end
+            ok(boldWid() == 101, "on entry the bold border is on the focused window")
+
+            local focusesBefore = #fake.focused
+            registry.runAction("window_fan", "next")
+            local afterNext = boldWid()
+            ok(afterNext ~= nil and afterNext ~= 101, "next moves the bold border to another window")
+            ok(#fake.focused == focusesBefore,
+                "next only PREVIEWS -- it focuses nothing (no activation storm per keypress)")
+            ok(fake.focusedWid == 101, "next leaves the real focus untouched")
+
+            registry.runAction("window_fan", "prev")
+            ok(boldWid() == 101, "prev steps back to where it started")
+
+            -- Wrapping: prev from the first member lands on the last.
+            registry.runAction("window_fan", "prev")
+            local wrapped = boldWid()
+            ok(wrapped ~= nil and wrapped ~= 101, "prev wraps around the ring")
+
+            -- Confirm: leaves the mode, restores every window, focuses the pick.
+            registry.runAction("window_fan", "confirm")
+            ok(#fake.liveOutlines() == 0, "confirm leaves the mode")
+            local restoredOk = true
+            for id, o in pairs(ORIG) do
+                local w = frameOf(id)
+                if w and not (w.x == o.x and w.y == o.y) then restoredOk = false end
+            end
+            ok(restoredOk, "confirm restores every window to its original frame")
+            ok(#fake.focused > focusesBefore, "confirm focuses the selected window")
+        end
+
+        -- ===== the navigation actions are inert outside the mode (they are ordinary
+        -- global hotkeys, so they fire whether or not the fan is up).
+        do
+            fake.windows = freshWindows()
+            local moved, focused = #fake.windowFrameSets, #fake.focused
+            registry.runAction("window_fan", "next")
+            registry.runAction("window_fan", "prev")
+            registry.runAction("window_fan", "confirm")
+            ok(#fake.windowFrameSets == moved and #fake.focused == focused,
+                "next / prev / confirm are no-ops while the mode is off")
         end
 
         -- ===== LEAVE ON DISABLE: a live mode is torn down + restored on stop.

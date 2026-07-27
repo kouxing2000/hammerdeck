@@ -1,7 +1,7 @@
 {
   "name": "Window Fan",
   "version": "1.0.0",
-  "description": "A window-switcher mode: fan every window on the focused screen against the screen's edges so each keeps a full, always-visible edge no other window can cover -- whatever is on top. Stay in the mode with every window live-bordered (the focused one bold) and click any to switch; press again to leave and restore. Any number of windows.",
+  "description": "A window-switcher mode: fan every window on the focused screen against the screen's edges so each keeps a full, always-visible edge no other window can cover -- whatever is on top. Stay in the mode with every window live-bordered (the selected one bold), click any to switch or step through them from the keyboard; press again to leave and restore. Because a window cannot shrink below its own minimum size, the fan declines to run when the screen holds more windows than it can honestly fit, and says how many that is.",
   "category": "productivity",
   "selfEvident": true,
   "icon": "square.stack.3d.down.right",

@@ -384,6 +384,51 @@ function M.fanSlots(screen, n, s, gap)
     return slots
 end
 
+--- The smallest slab a REAL window will actually accept, per axis (points).
+---
+--- These are MEASURED, not guessed. macOS gives no way to ask a window for its
+--- minimum size (AX exposes none for windows), so the floor comes from observing
+--- what windows did when asked for less: replaying a 33-window fan on a
+--- 1496x938 display, every app overshot its slot -- median 3.8x, worst 5.3x --
+--- and the frames they settled on cluster at widths 480-800 and heights 150-520.
+--- The floor takes the low end of each: below this, a slab is a request the
+--- window will simply refuse.
+---
+--- Consequence, and the reason fanCapacity exists: a window that refuses its slab
+--- covers its NEIGHBOURS' slabs, strips included -- which voids the whole point of
+--- the fan (strip-exclusivity). At 33 windows that measured 24 of 26 strips
+--- covered, 22 of them completely. See notes/window-fan-usability.md.
+M.MIN_SLAB_W = 480
+M.MIN_SLAB_H = 250
+
+--- The largest number of windows `screen` can fan HONESTLY: the biggest n for
+--- which every slab still clears MIN_SLAB_W/H, so every window can actually take
+--- the slab it is given and its edge strip really is exclusive.
+---
+--- Computed by walking n upward rather than inverting the segment arithmetic:
+--- fanSlots round-robins onto four edges, so the per-side count moves in steps and
+--- the closed form is fiddlier than it looks. Monotonic (slabs only shrink as n
+--- grows), so the first failure is the answer.
+---@param screen {x:number,y:number,w:number,h:number}
+---@param s number   edge thickness (the exposed strip depth)
+---@param gap number|nil
+---@return integer   0 when the screen cannot honestly fan even one window
+function M.fanCapacity(screen, s, gap)
+    gap = gap or 8
+    local best = 0
+    for n = 1, 64 do
+        local fits = true
+        for _, sl in ipairs(M.fanSlots(screen, n, s, gap)) do
+            -- T/B slabs run out of WIDTH, L/R slabs run out of HEIGHT; one test
+            -- covers both because each slab is generous on its other axis.
+            if sl.w < M.MIN_SLAB_W or sl.h < M.MIN_SLAB_H then fits = false; break end
+        end
+        if not fits then break end
+        best = n
+    end
+    return best
+end
+
 --- Subtract rect `s` from rect `r`: the part of `r` NOT covered by `s`, as up to
 --- four DISJOINT rects (top + bottom full-width strips, then left + right middle
 --- strips). No overlap with `s`, no overlap among the pieces -- so a caller can

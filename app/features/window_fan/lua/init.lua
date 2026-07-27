@@ -8,10 +8,14 @@
 -- mode: every window wears a live colored border, and clicking any window
 -- switches to it. Press the toggle again -- or the widget's Exit -- to leave
 -- the mode and put every window back where it was (slab shapes are a
--- switcher-only cost; leaving restores the real layout). Deliberately ONE
--- action, like Window Deck: the toggle already exits from the menubar and the
--- hotkey, so a separate "restore" action only added a Settings editor and a
--- menubar row for a duplicate exit path (removed 2026-07-19).
+-- switcher-only cost; leaving restores the real layout).
+--
+-- FOUR ACTIONS: the toggle, plus next / prev / confirm for keyboard use. There is
+-- still deliberately no separate "restore" action -- the toggle already exits from
+-- both the menubar and the hotkey, and a duplicate exit path was removed on
+-- 2026-07-19. `confirm` is NOT that duplicate: it exits AND focuses the selection,
+-- which the toggle cannot do (the toggle leaves focus where it was). next/prev
+-- move a preview only -- see the note on st.cursor for why they must not focus.
 --
 -- WHY THE FAN. macOS won't let us reorder OTHER apps' windows (AXRaise is
 -- top-only; some apps steal focus on raise), so we cannot "manage layers". The
@@ -19,6 +23,18 @@
 -- window's RECTANGLE reaches, so it is visible under ANY stacking order -- no
 -- reflow, no re-layer, and the user's own click (raise-to-top) never covers
 -- another window's edge. (Proven in windows_geometry: strip-exclusivity.)
+--
+-- AND WHY IT IS BOUNDED. That proof is sound but it ASSUMES each window occupies
+-- the slab it is handed, and macOS windows have minimum sizes they will not go
+-- below. Slabs shrink as ~1/N; minimums do not. Past the crossing point windows
+-- overshoot their slots and bury their neighbours' strips -- replaying a real
+-- 33-window fan measured median overshoot 3.8x (worst 5.3x) and 24 of 26 strips
+-- covered, 22 of them completely. So the mode is CAPPED by W.fanCapacity: it
+-- refuses to enter above the screen's honest capacity, and refuses to grow past
+-- it while live, rather than silently delivering the exact layout it exists to
+-- prevent. (Owner's call, 2026-07-25, over fanning a top-K subset: the mode keeps
+-- its promise for every window on the screen, or it does not run.)
+-- Analysis: notes/window-fan-usability.md.
 --
 -- THE FAN STAYS COMPLETE, WITH STABLE SLOTS. The mode's promise is "every window
 -- on this screen has a grabbable edge" -- so a window that opens or is dragged in
@@ -97,9 +113,44 @@ local function controllerFor(ctx)
     -- active gates the toggle; refanning guards re-entry. Occlusion clips a border
     -- against EVERY window in front of it -- fanned or not -- so a window we didn't
     -- gather still clips it.
+    -- bundle: wid -> owning app's bundleID (non-empty only). Recorded at place
+    -- time so refan can tell "this window closed" from "this window's WHOLE APP
+    -- missed the AX timeout" -- absence from a listing looks identical otherwise,
+    -- and guessing wrong destroys the window's captured original (see refan).
+    -- cursor: the KEYBOARD selection (a wid), or nil when the keyboard is not
+    -- driving. It is deliberately separate from focusedWid: stepping through the
+    -- ring must not focus each window on the way past, both because that is a
+    -- burst of app activations per keypress and because raising windows one after
+    -- another is the z-order churn the project's Z-order rule forbids. So next/prev
+    -- move a PREVIEW, and only confirm commits.
     local st = { active = false, slot = {}, color = {}, side = {}, originals = {},
+                 bundle = {},
                  borders = {}, order = {}, frames = {}, focusedWid = nil, screen = nil,
-                 memberSig = nil, refanning = false, widget = nil, widgetOrder = {} }
+                 memberSig = nil, refanning = false, widget = nil, widgetOrder = {},
+                 cursor = nil }
+
+    -- What the bold border and the highlighted widget row point at: the keyboard
+    -- selection when the keyboard is driving, else whatever is really focused.
+    --
+    -- The cursor is dropped the moment its window is no longer a fan member (closed,
+    -- moved to another Space, its app went quiet). A cursor pointing outside
+    -- st.borders would leave NO border bold and NO widget row highlighted -- the
+    -- selection would simply vanish from view while still being what confirm() acts
+    -- on, so confirm would exit having focused nothing.
+    local function selectedWid()
+        if st.cursor and not st.borders[st.cursor] then st.cursor = nil end
+        return st.cursor or st.focusedWid
+    end
+
+    -- The fan's members in a STABLE ring order (by slot index), independent of the
+    -- widget -- keyboard navigation must work with the widget option turned off,
+    -- so this cannot live inside widgetRows.
+    local function orderedWids()
+        local wids = {}
+        for wid in pairs(st.borders) do wids[#wids + 1] = wid end
+        table.sort(wids, function(a, b) return (st.slot[a] or 0) < (st.slot[b] or 0) end)
+        return wids
+    end
 
     -- Re-draw every border for the current z-order + frames: each window's full
     -- border, CLIPPED to the part of it that nothing IN FRONT covers. The FOCUSED
@@ -116,7 +167,7 @@ local function controllerFor(ctx)
             local f = st.frames[wid]
             if b and f then
                 b.o.setFrame(f)
-                b.o.setStyle(wid == st.focusedWid and "focus" or "member")
+                b.o.setStyle(wid == selectedWid() and "focus" or "member")
                 local fronts = {}                          -- EVERY window in front of it
                 for j = 1, i - 1 do
                     local wf = st.frames[st.order[j]]
@@ -129,7 +180,7 @@ local function controllerFor(ctx)
                     b.o.setFilled(false)
                     b.o.clearClip()
                 else
-                    b.o.setFilled(wid ~= st.focusedWid)
+                    b.o.setFilled(wid ~= selectedWid())
                     b.o.setClip(vis)                        -- draw only where still visible
                 end
             end
@@ -255,18 +306,14 @@ local function controllerFor(ctx)
         for _, w in ipairs(ctx.window.list()) do
             if w.wid then meta[w.wid] = { title = w.title or "", bundleID = w.bundleID or "" } end
         end
-        local wids = {}
-        for wid in pairs(st.borders) do wids[#wids + 1] = wid end
-        table.sort(wids, function(a, b) return (st.slot[a] or 0) < (st.slot[b] or 0) end)
         local rows = {}
-        st.widgetOrder = {}
-        for _, wid in ipairs(wids) do
+        st.widgetOrder = orderedWids()          -- the SAME ring the keyboard walks
+        for _, wid in ipairs(st.widgetOrder) do
             local m = meta[wid] or { title = "", bundleID = "" }
-            st.widgetOrder[#st.widgetOrder + 1] = wid
             rows[#rows + 1] = {
                 color = st.color[wid], side = st.side[wid] or "T",
                 title = m.title, bundleID = m.bundleID,
-                focused = wid == st.focusedWid,
+                focused = wid == selectedWid(),
             }
         end
         return rows
@@ -310,7 +357,13 @@ local function controllerFor(ctx)
             st.frames[w.wid] = frame
             st.side[w.wid] = s.side              -- the edge this window exposes (widget swatch)
             ctx.window.setFrameFor(w.id, frame)
-            if w.bundleID and w.bundleID ~= "" then bundleSet[w.bundleID] = true end
+            if w.bundleID and w.bundleID ~= "" then
+                bundleSet[w.bundleID] = true
+                -- Only NON-EMPTY ids are recorded: "" is truthy in Lua, so storing
+                -- it would make refan read every bundle-less process as an
+                -- AX-timeout blind spot forever.
+                st.bundle[w.wid] = w.bundleID
+            end
         end
 
         -- One ordered raise pass, back-to-front (reversed MRU), so the pile's
@@ -399,12 +452,51 @@ local function controllerFor(ctx)
         for _, w in ipairs(ctx.window.list()) do
             if w.wid and w.wid ~= 0 then exists[w.wid] = true end
         end
-        -- CLOSED members: free slot / color / side / original / border to the pool.
+        -- A member missing from the listing is EITHER closed OR its app just missed
+        -- the AX messaging timeout -- and absence ALONE cannot tell them apart.
+        -- Treating a timeout as a close is DESTRUCTIVE: it frees st.originals, and
+        -- when the app answers again the window returns as a newcomer whose
+        -- "original" is captured from the SLAB it now sits in, so leaving the mode
+        -- restores it to the slab and its real pre-fan geometry is gone for good.
+        -- That was a live bug (found 2026-07-25), and it fired routinely: a fixed
+        -- 0.3s AX ceiling was dropping nine apps' windows from every listing.
+        --
+        -- So ASK, don't guess -- the seam reports exactly which apps it failed to
+        -- read (a heuristic on "did any of this app's windows appear?" was tried
+        -- first and is WRONG: closing an app's LAST window is indistinguishable from
+        -- that app going quiet, so it wasted a slot and re-tiled the fan on an
+        -- ordinary close -- which the test suite caught).
+        local dropped = {}
+        for _, id in ipairs(ctx.window.droppedApps()) do dropped[id] = true end
         for wid in pairs(st.slot) do
             if not exists[wid] then
-                st.slot[wid], st.color[wid], st.side[wid], st.originals[wid] = nil, nil, nil, nil
-                if st.borders[wid] then st.borders[wid].o.stop(); st.borders[wid] = nil end
-                ctx.log("fan: window " .. wid .. " closed -- slot + color freed")
+                local owner = st.bundle[wid]
+                if owner and dropped[owner] then
+                    -- Its app did not answer: keep slot + color + original reserved
+                    -- so nothing re-tiles and the true geometry survives. Only the
+                    -- border goes (there is no known frame to draw it on).
+                    if st.borders[wid] then st.borders[wid].o.stop(); st.borders[wid] = nil end
+                    ctx.log("fan: window " .. wid .. " missing -- app '" .. owner
+                        .. "' did not answer AX, slot " .. (st.slot[wid] or "?")
+                        .. " + original RESERVED (not treated as closed)")
+                else
+                    -- Free the slot + color (so the fan re-tiles densely and the
+                    -- colour returns to the pool) but NEVER the captured original.
+                    -- An absent window has SEVERAL possible causes and only some are
+                    -- distinguishable: closed, app unanswered (handled above), or
+                    -- moved to another Space -- CGWindowList is Space-scoped, so a
+                    -- Space switch makes every window elsewhere "absent" while its
+                    -- app still answers, which lands here. Discarding the original
+                    -- is the one irreversible act available, so it is simply never
+                    -- done while the mode is live: the entry costs a few bytes, and
+                    -- leave() only ever restores wids that are still bordered, so a
+                    -- genuinely-closed window's stale entry is inert.
+                    st.slot[wid], st.color[wid], st.side[wid] = nil, nil, nil
+                    st.bundle[wid] = nil
+                    if st.borders[wid] then st.borders[wid].o.stop(); st.borders[wid] = nil end
+                    ctx.log("fan: window " .. wid
+                        .. " absent -- slot + color freed, original kept")
+                end
             end
         end
         -- MOVED-OUT members (exist but off our screen): drop only the border; keep
@@ -418,12 +510,51 @@ local function controllerFor(ctx)
         end
         -- NEWCOMERS: lowest FREE slot + color (reserved holes are held, never reused
         -- here), original captured NOW before we move it.
+        -- The entry gate would be theatre on its own: a screen reaches 30 windows by
+        -- ACCUMULATING them, and every one of those opens lands here, not in enter().
+        -- So the same ceiling applies to growth -- a newcomer beyond capacity is left
+        -- where it is rather than shrinking every slab past what apps will accept.
+        -- The members keep their exclusive strips relative to each other, and
+        -- drawOcclusion already clips their borders against non-member windows, so
+        -- the borders stay honest about what is actually visible.
+        local cap = W.fanCapacity(st.screen, ctx.opt("edge") or 40, PAD)
+        local held = 0
+        for _ in pairs(st.slot) do held = held + 1 end
         for _, w in ipairs(active) do
             if not st.slot[w.wid] then
-                st.slot[w.wid] = lowestFreeIndex()
-                st.color[w.wid] = lowestFreeColor()
-                st.originals[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h }
+                if held >= cap then
+                    ctx.log("fan: not taking in wid " .. w.wid .. " -- at capacity ("
+                        .. cap .. " on '" .. (st.screen.name or "?") .. "'); left in place")
+                else
+                    held = held + 1
+                    st.slot[w.wid] = lowestFreeIndex()
+                    st.color[w.wid] = lowestFreeColor()
+                    -- NEVER overwrite a retained original. The branch above keeps one
+                    -- alive across an AX blind spot; this guard is what makes that
+                    -- retention count, and it also covers the bundle-less case that
+                    -- branch cannot classify. Capturing here unconditionally is exactly
+                    -- how the pre-fan frame got replaced by the slab.
+                    --
+                    -- But retention is keyed to the OWNING APP, because macOS RECYCLES
+                    -- a CGWindowID after a window closes (listWindows says so itself).
+                    -- Retention now spans the whole mode session rather than a
+                    -- sub-second gap, so a recycled wid really can arrive here -- and
+                    -- inheriting the dead window's frame would make leave() fling this
+                    -- window to a stranger's geometry, which is worse than the bug the
+                    -- retention fixes. A different owner means a different window.
+                    local kept = st.originals[w.wid]
+                    if not kept or kept.bundleID ~= (w.bundleID or "") then
+                        st.originals[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h,
+                                                bundleID = w.bundleID or "" }
+                    end
+                end
             end
+        end
+        -- Only SLOTTED windows may go to place() -- it indexes the slot table by
+        -- st.slot[wid], so a refused newcomer would index it with nil.
+        local placeable = {}
+        for _, w in ipairs(active) do
+            if st.slot[w.wid] then placeable[#placeable + 1] = w end
         end
         if #active == 0 then                            -- screen emptied: nothing to fan
             for _, b in pairs(st.borders) do b.o.stop() end
@@ -432,14 +563,25 @@ local function controllerFor(ctx)
             ctx.log("fan: no windows left on screen -- fan cleared (mode still on)")
             return
         end
-        -- Keep whoever is focused frontmost if they're active; else the first active.
+        if #placeable == 0 then                          -- everything refused
+            st.memberSig = sigOf(active)
+            updateWidget()
+            return
+        end
+        -- Keep whoever is focused frontmost if they're a member; else the first one.
         local fwid = ctx.window.focusedWid()
         local isMember = false
-        for _, w in ipairs(active) do if w.wid == fwid then isMember = true; break end end
-        if not isMember then fwid = active[1].wid end
+        for _, w in ipairs(placeable) do if w.wid == fwid then isMember = true; break end end
+        if not isMember then fwid = placeable[1].wid end
         st.refanning = true
-        place(active, st.screen, fwid, "refanned")
+        place(placeable, st.screen, fwid, "refanned")
         st.refanning = false
+        -- place() records the signature of what it PLACED, but change detection
+        -- compares against the full fannable set (currentSig). With a refused
+        -- newcomer those differ permanently, and every poll would see a "changed"
+        -- set and re-fan forever -- so the signature must describe what we LOOKED
+        -- at, not what we moved.
+        st.memberSig = sigOf(active)
     end
 
     -- Reconcile the highlight + occlusion with what is ACTUALLY focused and on top
@@ -459,7 +601,13 @@ local function controllerFor(ctx)
     local function resyncFocus(source)
         if not st.active or st.refanning then return end
         local w = ctx.window.focusedWid()
-        if w ~= 0 then st.focusedWid = w end
+        if w ~= 0 then
+            -- Focus moved by some OTHER means (a click on a window, a widget row,
+            -- an app switch): the keyboard preview is stale and would now point
+            -- somewhere the user is not, so hand the highlight back to real focus.
+            if st.focusedWid and w ~= st.focusedWid then st.cursor = nil end
+            st.focusedWid = w
+        end
         refreshFromList()          -- the switch changed the stacking order
         if currentSig() ~= st.memberSig then
             ctx.log("fan: window set changed (" .. source .. ") -- refanning")
@@ -524,12 +672,46 @@ local function controllerFor(ctx)
             return
         end
 
+        -- CAPACITY GATE. The fan's promise -- every window keeps an edge no other
+        -- window can cover -- holds only while each window can actually TAKE the
+        -- slab it is handed. Slabs shrink as ~1/N; app minimum sizes do not. Past
+        -- the crossing point windows overshoot their slots (measured: median 3.8x,
+        -- worst 5.3x) and bury their neighbours' strips, so the mode silently
+        -- delivers the exact layout it exists to prevent -- 24 of 26 strips covered
+        -- at 33 windows, 22 of them completely.
+        --
+        -- So REFUSE rather than degrade. Owner's call (2026-07-25) over fanning a
+        -- top-K subset: the mode either keeps its promise for every window on the
+        -- screen or does not run, and the alert names the real number so the limit
+        -- is visible instead of mysterious.
+        local edge = ctx.opt("edge") or 40
+        local cap = W.fanCapacity(screen, edge, PAD)
+        if #wins > cap then
+            ctx.log(string.format(
+                "fan: REFUSED -- %d windows on '%s' but edge=%d fits only %d "
+                .. "(slabs below %dx%d are refused by real apps)",
+                #wins, screen.name or "?", edge, cap, W.MIN_SLAB_W, W.MIN_SLAB_H))
+            if cap == 0 then
+                -- "it fits 0" is not a limit the user can act on -- the screen itself
+                -- is too small for even one slab at this edge depth, and the only
+                -- lever is the edge option (or a bigger display).
+                ctx.alert(ctx.t("fan.screenTooSmall",
+                    "This screen is too small to fan any window at an edge depth of %1$d",
+                    edge))
+            else
+                ctx.alert(ctx.t("fan.tooMany",
+                    "Too many windows to fan on this screen -- %1$d open, and it fits %2$d",
+                    #wins, cap))
+            end
+            return
+        end
+
         -- Fresh slot / color / original maps for this mode session. assignNearest
         -- gives each window the slot NEAREST its current position, so the first
         -- arrangement is the least jarring jump; colors are dealt lowest-free in
         -- window order. Refan keeps these fixed and only fills in newcomers.
         -- (Originals are captured by VALUE -- setFrameFor mutates the live rows.)
-        st.slot, st.color, st.side, st.originals = {}, {}, {}, {}
+        st.slot, st.color, st.side, st.originals, st.bundle = {}, {}, {}, {}, {}
         local slots = W.fanSlots(screen, #wins, ctx.opt("edge") or 40, PAD)
         local winCenters, slotCenters = {}, {}
         for i, w in ipairs(wins) do winCenters[i] = W.center(w) end
@@ -538,7 +720,10 @@ local function controllerFor(ctx)
         for i, w in ipairs(wins) do
             st.slot[w.wid] = perm[i]
             st.color[w.wid] = lowestFreeColor()
-            st.originals[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h }
+            -- bundleID rides along so a RECYCLED CGWindowID can be told from the
+            -- window that held it before (see the guard in refan).
+            st.originals[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h,
+                                    bundleID = w.bundleID or "" }
         end
 
         place(wins, screen, fwid, "entered")
@@ -641,7 +826,8 @@ local function controllerFor(ctx)
             end
         end
         st.active = false
-        st.slot, st.color, st.side, st.originals = {}, {}, {}, {}
+        st.slot, st.color, st.side, st.originals, st.bundle = {}, {}, {}, {}, {}
+        st.cursor = nil          -- the next entry starts on real focus, not a stale pick
         ctx.log("fan: left mode -- " .. (skipRestore
             and (#members .. " windows left in place (screen gone)")
             or ("restored " .. restored .. " windows" ..
@@ -685,13 +871,39 @@ local function controllerFor(ctx)
         for wid in pairs(st.borders) do
             if not live[wid] then
                 st.borders[wid].o.stop(); st.borders[wid] = nil
-                st.slot[wid], st.color[wid], st.side[wid], st.originals[wid] = nil, nil, nil, nil
+                -- Same rule as refan: recycle the slot, NEVER the captured original.
+                -- This path had the identical destructive bug and is in fact the more
+                -- likely one to hit it -- a display reconfig is exactly when apps
+                -- reflow and their AX reads time out, so "missing from this listing"
+                -- here is more often a blind spot than a close.
+                st.slot[wid], st.color[wid], st.side[wid] = nil, nil, nil
+                st.bundle[wid] = nil
             end
         end
         if #members == 0 then
             st.order, st.frames, st.memberSig = {}, {}, ""
             updateWidget()
             ctx.log("fan: screenChanged -- no members left on '" .. tostring(cur.name) .. "'")
+            return
+        end
+        -- CAPACITY, on the third path. A display that SHRANK may no longer hold the
+        -- members honestly -- and this is the transition most likely to overflow,
+        -- since nothing about it is under the user's control. Re-placing anyway would
+        -- rebuild the exact buried-strip layout the entry gate exists to prevent, just
+        -- reached by a different route. So apply the same answer: keep the promise for
+        -- every member, or leave. Restore IS wanted here (unlike the screen-GONE case
+        -- above, which skips it) -- the display still exists, so the captured
+        -- originals are still meaningful frames on it.
+        local shrunkCap = W.fanCapacity(cur, ctx.opt("edge") or 40, PAD)
+        if #members > shrunkCap then
+            ctx.log(string.format(
+                "fan: screenChanged -- '%s' now fits only %d, but %d members are fanned"
+                .. " -- leaving and restoring",
+                tostring(cur.name), shrunkCap, #members))
+            ctx.alert(ctx.t("fan.leftTooSmall",
+                "Left Window Fan -- '%1$s' now fits only %2$d windows, and %3$d are fanned",
+                tostring(cur.name), shrunkCap, #members))
+            st.leave()
             return
         end
         local fwid = ctx.window.focusedWid()
@@ -705,6 +917,57 @@ local function controllerFor(ctx)
 
     function st.toggle()
         if st.active then st.leave() else st.enter() end
+    end
+
+    -- Move the keyboard selection `delta` places around the ring (wrapping), from
+    -- wherever the highlight currently is. PREVIEW ONLY -- no raise, no focus (see
+    -- the note on st.cursor); confirm is what commits. A no-op outside the mode:
+    -- these are ordinary global hotkeys, so they fire whether or not the fan is up,
+    -- and an alert on every stray press would be noise.
+    ---@param delta integer
+    function st.step(delta)
+        if not st.active then return end
+        local ring = orderedWids()
+        if #ring == 0 then return end
+        -- Where the highlight is NOW, if it is still in the ring at all. When it is
+        -- not (the selected window closed, left the screen, or its app went quiet),
+        -- step onto the ring's FIRST member rather than treating the miss as
+        -- index 1 and stepping off it -- the latter silently skips ring[1].
+        local cur, idx = selectedWid(), nil
+        for i, wid in ipairs(ring) do
+            if wid == cur then idx = i; break end
+        end
+        if idx then
+            st.cursor = ring[((idx - 1 + delta) % #ring) + 1]
+        else
+            st.cursor = ring[1]
+        end
+        drawOcclusion()
+        updateWidget()
+        ctx.log("fan: cursor -> wid " .. st.cursor .. " (slot "
+            .. (st.slot[st.cursor] or "?") .. ", " .. #ring .. " in ring)")
+    end
+
+    -- Commit the selection: leave the mode (restoring every window to its real
+    -- geometry), THEN focus the picked one -- in that order, so the user lands on
+    -- their window at its true size rather than on a slab. This is the switcher's
+    -- payoff, and the one thing the toggle alone cannot do: the toggle exits
+    -- leaving focus wherever it was.
+    function st.confirm()
+        if not st.active then return end
+        local wid = selectedWid()
+        ctx.log("fan: confirm -> wid " .. tostring(wid))
+        st.leave()
+        if not wid then return end
+        for _, w in ipairs(ctx.window.list()) do
+            if w.wid == wid then
+                -- One window forward, after the layout is already restored: the
+                -- sanctioned single-window z-order move.
+                ctx.window.raise(w.id)
+                ctx.window.focus(w.id)
+                break
+            end
+        end
     end
 
     -- Called from stop(ctx) on disable: leave a live mode so disabling never
@@ -750,6 +1013,39 @@ return {
             mnemonic = "Hyper+F -- F for Fan",
             ---@param ctx Ctx
             run = function(ctx) with(ctx).toggle() end,
+        },
+        -- KEYBOARD NAVIGATION. Ordinary rebindable actions, NOT a modal layer:
+        -- the fan is a mode you STAY in, so grabbing bare keys (the modal shape
+        -- window_grid/window_modal use) would swallow every keystroke aimed at the
+        -- window you just switched to. Modified hotkeys leave typing alone.
+        -- All three are no-ops while the mode is off, and none is automatable --
+        -- they act on the live selection, which means nothing unattended.
+        {
+            id = "next",
+            label = "Select next window in the fan",
+            description = "Move the fan's selection one window forward (wrapping). Only the highlight moves -- the window is not focused until you confirm.",
+            defaultTrigger = { type = "hotkey", mods = HYPER, key = "n" },
+            mnemonic = "Hyper+N -- N for Next",
+            ---@param ctx Ctx
+            run = function(ctx) with(ctx).step(1) end,
+        },
+        {
+            id = "prev",
+            label = "Select previous window in the fan",
+            description = "Move the fan's selection one window back (wrapping). Only the highlight moves -- the window is not focused until you confirm.",
+            defaultTrigger = { type = "hotkey", mods = HYPER, key = "b" },
+            mnemonic = "Hyper+B -- B for Back",
+            ---@param ctx Ctx
+            run = function(ctx) with(ctx).step(-1) end,
+        },
+        {
+            id = "confirm",
+            label = "Jump to the selected window",
+            description = "Leave Window Fan, restore every window to its original position, and focus the selected one. This is the switcher's payoff -- the plain toggle exits without changing focus.",
+            defaultTrigger = { type = "hotkey", mods = HYPER, key = "j" },
+            mnemonic = "Hyper+J -- J for Jump",
+            ---@param ctx Ctx
+            run = function(ctx) with(ctx).confirm() end,
         },
     },
 }
