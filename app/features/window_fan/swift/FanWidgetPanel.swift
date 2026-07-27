@@ -23,7 +23,9 @@ final class FanWidgetPanel {
     /// One window's row, as it crosses the seam.
     struct Row {
         let color: String      // hex, matches the window's border
-        let side: String       // "T" | "B" | "L" | "R" -- the exposed edge
+        /// "T" | "B" | "L" | "R" -- the exposed edge; "" in LABEL MODE, where no
+        /// window was moved so no edge is guaranteed and the swatch is a plain chip.
+        let side: String
         let title: String
         let bundleID: String   // for the app icon ("" -> generic)
         let focused: Bool
@@ -34,7 +36,22 @@ final class FanWidgetPanel {
     private let onMove: (Double, Double) -> Void
     private let onSwitch: (Int) -> Void
     private let countLabel = NSTextField(labelWithString: "")
-    private let list = NSStackView()
+    private let list = FlippedStackView()
+    /// The row list SCROLLS. Without this the card grew unbounded with the window
+    /// count, and once it was taller than the screen `clamped()` pinned its origin to
+    /// the screen bottom so it grew UPWARD -- carrying the header, and with it the
+    /// Exit button, off the top edge. Exit became unreachable exactly when the list
+    /// was longest. It went unnoticed while the fan's capacity gate kept the row count
+    /// to single digits; LABEL MODE has no such limit by design, so the bound has to
+    /// live here.
+    private let scroll = NSScrollView()
+    private var scrollHeight: NSLayoutConstraint!
+    /// Height of everything in the card that is NOT the row list, MEASURED once from
+    /// the live view tree rather than hardcoded. An earlier version carried a literal
+    /// `10 + 20 + 8 + 11`, which silently goes stale the moment an inset or the header
+    /// changes -- and no test could catch that, because a formula that subtracts its
+    /// own constant validates against itself for any value of it.
+    private var chromeHeight: CGFloat?
     private var clamp: NSRect
 
     init(title: String, count: String,
@@ -78,24 +95,45 @@ final class FanWidgetPanel {
         header.alignment = .centerY
         header.spacing = 7
 
-        // --- Row list ----------------------------------------------------------
+        // --- Row list (inside a scroll view; see `scroll`) ----------------------
         list.orientation = .vertical
         list.alignment = .leading
         list.spacing = 3
+        list.translatesAutoresizingMaskIntoConstraints = false
 
-        let vstack = NSStackView(views: [header, list])
+        scroll.documentView = list
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.horizontalScrollElasticity = .none
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let vstack = NSStackView(views: [header, scroll])
         vstack.orientation = .vertical
         vstack.alignment = .leading
         vstack.spacing = 8
         vstack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(vstack)
+        // Sized in setRows to the content height, capped so the card always fits the
+        // screen. Placeholder value only.
+        scrollHeight = scroll.heightAnchor.constraint(equalToConstant: 100)
         NSLayoutConstraint.activate([
             vstack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
             vstack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -11),
             vstack.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
             vstack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -11),
             header.widthAnchor.constraint(equalTo: vstack.widthAnchor),
-            list.widthAnchor.constraint(equalTo: vstack.widthAnchor),
+            scroll.widthAnchor.constraint(equalTo: vstack.widthAnchor),
+            scrollHeight,
+            // The document view tracks the CLIP view's width, not the scroll view's.
+            // With legacy scrollers (a mouse attached, or "Show scroll bars: Always")
+            // the clip is ~17pt narrower than the scroll view -- measured 303 vs 320 --
+            // so anchoring to the outer width pushes the right edge of every row into
+            // a region no scroller can reach, since there is no horizontal scroller.
+            // Titles would lose exactly the width the card is sized to give them.
+            // Invisible with overlay scrollers, which cost no width.
+            list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             // A comfortable fixed content width so window titles get real room (the
             // header alone would otherwise size the card and collapse the titles).
             // Fixed, not title-driven, so the draggable card never jumps width as
@@ -112,10 +150,29 @@ final class FanWidgetPanel {
         panel.orderFrontRegardless()
     }
 
+    /// The row list's height: its content, but never more than the screen can show
+    /// once `chrome` (everything else in the card) is accounted for.
+    ///
+    /// PURE and `static` so the clamping is testable without a window server. `chrome`
+    /// is passed in rather than baked in because the caller MEASURES it from the live
+    /// view tree -- that is what makes the bound real instead of a restatement of a
+    /// constant. NOTE the floor: on a very short display the floor wins and the card
+    /// may exceed the screen, because a list too small to show one row is useless.
+    static func listHeight(content: CGFloat, screenHeight: CGFloat,
+                           chrome: CGFloat) -> CGFloat {
+        // The 40 keeps the card off both screen edges rather than exactly filling it.
+        min(content, max(80, screenHeight - chrome - 40))
+    }
+
     /// Rebuild the row list (called whenever the fan's membership or focus changes)
     /// and re-fit the card, keeping its TOP-LEFT anchored so it grows downward.
     /// `count` is the pre-localized header count string (Lua owns the plural).
     func setRows(_ rows: [Row], count: String) {
+        // setRows runs on EVERY focus event and every reconcile tick, so it must not
+        // fight the user's own scrolling: remember where they were and put them back.
+        // Forcing a scroll here instead would yank a user who scrolled to find a
+        // window back to the end within ~2 seconds.
+        let wasScrolledTo = scroll.contentView.bounds.origin
         for v in list.arrangedSubviews { list.removeArrangedSubview(v); v.removeFromSuperview() }
         for (i, r) in rows.enumerated() {
             let row = RowView(index: i + 1, row: r)
@@ -124,6 +181,20 @@ final class FanWidgetPanel {
             row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
         }
         countLabel.stringValue = count
+
+        // Measure the chrome ONCE, from the real tree: with the list collapsed to
+        // zero, the card's fitting height IS everything that is not the list.
+        if chromeHeight == nil {
+            let keep = scrollHeight.constant
+            scrollHeight.constant = 0
+            card.layoutSubtreeIfNeeded()
+            chromeHeight = card.fittingSize.height
+            scrollHeight.constant = keep
+        }
+        list.layoutSubtreeIfNeeded()
+        scrollHeight.constant = Self.listHeight(content: list.fittingSize.height,
+                                               screenHeight: clamp.height,
+                                               chrome: chromeHeight ?? 0)
 
         // Re-fit while pinning the top-left corner (AppKit origin is bottom-left,
         // so growing height must drop the origin to keep the top edge fixed).
@@ -134,6 +205,12 @@ final class FanWidgetPanel {
         var f = panel.frame
         f.origin.y = topY - f.height
         panel.setFrame(clampedFrame(f), display: true)
+        // Restore the user's scroll position (AppKit clamps it if the list shrank).
+        // The document view is FLIPPED, so y grows downward and a fresh panel's 0 is
+        // the TOP -- with an unflipped NSStackView this same code showed the BOTTOM of
+        // the list, hiding row 1 and the selected row at entry.
+        scroll.contentView.scroll(to: wasScrolledTo)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     private func clamped(_ o: NSPoint) -> NSPoint {
@@ -167,6 +244,16 @@ final class FanWidgetPanel {
 }
 
 // MARK: - Views
+
+/// A stack view whose origin is its TOP-LEFT.
+///
+/// NSView is unflipped by default, so a plain NSStackView used as a scroll view's
+/// document view puts y=0 at the BOTTOM -- which made "scroll to 0" show the END of
+/// the row list and hide row 1. Flipping it makes y grow downward, so a fresh panel
+/// opens at the top and a saved offset means what it reads like.
+private final class FlippedStackView: NSStackView {
+    override var isFlipped: Bool { true }
+}
 
 /// The card body; drags the (clamped) panel by any empty point on it.
 private final class DraggableCardView: NSView {
@@ -270,6 +357,17 @@ private final class EdgeSwatchView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let body = bounds.insetBy(dx: 1.5, dy: 1.5)
+        // LABEL MODE sends an empty side: no window was moved, so no edge is
+        // guaranteed exposed and drawing an edge glyph would point the user at a
+        // strip that is not there. A plain filled chip carries the identity (the
+        // colour matching the on-screen border) and claims nothing about position.
+        if side.isEmpty {
+            ctx.setFillColor(color.cgColor)
+            ctx.addPath(CGPath(roundedRect: body.insetBy(dx: 4, dy: 3),
+                               cornerWidth: 3, cornerHeight: 3, transform: nil))
+            ctx.fillPath()
+            return
+        }
         // Window body: faint rounded outline.
         ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.35).cgColor)
         ctx.setLineWidth(1)

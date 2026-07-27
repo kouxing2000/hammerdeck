@@ -780,7 +780,10 @@ extension Native {
     // MARK: - Window Fan switcher widget
 
     // Read a `rows` array-of-tables at stack index `at` into [FanWidgetPanel.Row].
-    // Each row = { color, side, title, bundleID, focused }.
+    // Each row = { color, side, title, bundleID, focused }. `side` is the screen
+    // edge that window exposes ("T"/"B"/"L"/"R"), or "" when the caller moved no
+    // windows (window_fan's label mode) -- the swatch then draws a plain colour chip
+    // rather than claiming an edge that is not guaranteed visible.
     private func fanWidgetRows(_ L: OpaquePointer?, at: Int32) -> [FanWidgetPanel.Row] {
         var out: [FanWidgetPanel.Row] = []
         guard lua_type(L, at) == LUA_TTABLE else { return out }

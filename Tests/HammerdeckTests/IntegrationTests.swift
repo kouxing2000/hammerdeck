@@ -1203,6 +1203,64 @@ final class IntegrationTests: XCTestCase {
     /// the test process is cold, and the post-listing shape is asserted inside
     /// testRealWindowListingViaAX, which already pays for one): the contract checked
     /// here is that the reader always answers a table, including before any listing.
+    /// The fan widget's row list must never make the card taller than the screen.
+    /// When it did, `clamped()` pinned the card's origin to the screen bottom so it
+    /// grew UPWARD, carrying the header -- and the Exit button -- off the top edge:
+    /// Exit became unreachable exactly when the list was longest. The fan's capacity
+    /// gate hid this by keeping row counts in single digits; LABEL MODE has no window
+    /// limit by design, so the bound has to hold on its own.
+    ///
+    /// Asserted on the pure clamp rather than through pixels: a screenshot check needs
+    /// an unlocked screen and Screen Recording, and a locked display returns an
+    /// all-black frame that passes every "X is not off-screen" assertion silently
+    /// (that happened while this was being written).
+    ///
+    /// `chrome` is an INPUT here, not a constant this re-derives -- an earlier version
+    /// asserted `listHeight(...) + chromeHeight < screenHeight` against a hardcoded
+    /// chrome, which is algebraically true for ANY value of it and so could never catch
+    /// the drift its own comment claimed to guard. The real defence is that the panel
+    /// now MEASURES chrome from the live view tree, so there is no constant left to
+    /// drift; what remains testable, and tested here, is the clamping itself.
+    func testFanWidgetListNeverOutgrowsTheScreen() {
+        let screenH: CGFloat = 938          // the author's built-in display
+        let chrome: CGFloat = 49            // measured from the real tree: 898pt card
+
+        // 30 rows (row 28pt + 3pt spacing) is ~927pt of content -- taller than the
+        // screen once chrome is added. It must be capped, not passed through.
+        let tall = FanWidgetPanel.listHeight(content: 927, screenHeight: screenH, chrome: chrome)
+        XCTAssertLessThan(tall, 927, "the over-long content was actually capped")
+        XCTAssertLessThanOrEqual(tall + chrome, screenH,
+                                 "a 30-row list leaves the card no taller than the screen")
+
+        // A short list is untouched, so the common case looks exactly as before.
+        XCTAssertEqual(FanWidgetPanel.listHeight(content: 160, screenHeight: screenH, chrome: chrome),
+                       160, "content that already fits is passed through unchanged")
+
+        // The cap is a function of the SCREEN, so a bigger chrome must yield a smaller
+        // list -- this is the part a self-referential assertion could not see.
+        XCTAssertLessThan(FanWidgetPanel.listHeight(content: 5_000, screenHeight: screenH, chrome: 200),
+                          FanWidgetPanel.listHeight(content: 5_000, screenHeight: screenH, chrome: 49),
+                          "more chrome must leave less room for rows")
+
+        for content in [0, 500, 2_000, 100_000] as [CGFloat] {
+            XCTAssertLessThanOrEqual(
+                FanWidgetPanel.listHeight(content: content, screenHeight: screenH, chrome: chrome) + chrome,
+                screenH, "bounded at content=\(content)")
+        }
+
+        // The floor is deliberate and DOCUMENTED as breaking the bound: a list too
+        // short to show a row is useless, so on a tiny display the floor wins. Asserted
+        // so the behaviour and the docstring cannot drift apart.
+        // (The floor only wins below ~169pt with this chrome: 200 - 49 - 40 = 111 still
+        // clears 80, so a 200pt screen is bounded normally.)
+        XCTAssertLessThanOrEqual(
+            FanWidgetPanel.listHeight(content: 900, screenHeight: 200, chrome: chrome) + chrome,
+            200, "a 200pt screen is still bounded -- the floor has not kicked in yet")
+        let tiny = FanWidgetPanel.listHeight(content: 900, screenHeight: 120, chrome: chrome)
+        XCTAssertEqual(tiny, 80, "a very short screen falls back to the minimum row area")
+        XCTAssertGreaterThan(tiny + chrome, 120, "and that floor knowingly exceeds such a screen")
+    }
+
     func testDroppedAppsAlwaysAnswersATable() {
         let dropped = eval("return require('platform.adapter').windowsDroppedApps()") as? [Any]
         XCTAssertNotNil(dropped, "windowsDroppedApps always answers a table, never nil")

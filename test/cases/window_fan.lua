@@ -1118,6 +1118,123 @@ return {
                 "next / prev / confirm are no-ops while the mode is off")
         end
 
+        -- ===== LABEL MODE (`arrange` off): borders + list, nothing moved.
+        -- The arrangement is the expensive half of this feature and the identification
+        -- is the half that demonstrably works, so the arrangement is optional. With it
+        -- off every constraint it imposes goes away: no window limit (nothing has to
+        -- fit a slab), no minimum-size problem, no raise pass, and no restore.
+        do
+            fake.settings["hammerdeck.opt.window_fan.arrange"] = false
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            local movedBefore, raisedBefore = #fake.windowFrameSets, #fake.raises
+            fake.pressHotkey("f", HYP)
+
+            ok(#fake.liveOutlines() == 5, "label mode still borders every window")
+            ok(#fake.windowFrameSets == movedBefore,
+                "label mode moves NOTHING -- not a single setFrame")
+            ok(#fake.raises == raisedBefore,
+                "label mode runs no raise pass -- the user's own stacking is left alone")
+            local placedOk = true
+            for id, o in pairs(ORIG) do
+                local w = frameOf(id)
+                if w and not (w.x == o.x and w.y == o.y and w.w == o.w and w.h == o.h) then
+                    placedOk = false
+                end
+            end
+            ok(placedOk, "every window is still exactly where it was")
+
+            -- Borders sit on the windows' REAL frames, and the widget's edge swatch is
+            -- blanked (no edge is guaranteed exposed, so claiming one would be a lie).
+            local b101 = borderFor(101)
+            ok(b101 ~= nil and b101.frame.w == ORIG[1].w and b101.frame.h == ORIG[1].h,
+                "a border spans the window's own frame, not a slab")
+            local rows = fake.liveFanWidget().rows
+            local sidesBlank = true
+            for _, r in ipairs(rows) do if r.side ~= "" then sidesBlank = false end end
+            ok(#rows == 5 and sidesBlank, "the widget lists all five with no edge glyph")
+
+            -- LABEL MODE STILL TRACKS: a border must FOLLOW a window the user drags.
+            -- That is the mode's headline claim, and the observer that delivers it
+            -- (onFramesChanged) is ungated -- so drive the real event, not just the poll
+            -- backstop. borderFor matches a border to a window BY FRAME, so finding one
+            -- after the move is proof the border moved with it.
+            local dragged = frameOf(3)
+            -- The target must be BOTH genuinely different from this window's original
+            -- frame (700,300 -- picking that made the "drag" a no-op and every
+            -- assertion vacuous) AND centred well inside SCREEN: 700x500 at 400,450
+            -- centres at 750,700, ~300pt clear of every edge. The earlier 1234,567 sat
+            -- 16pt from the right edge, so nudging this window's width would push its
+            -- centre off-screen, drop it from the labelled set, and make the "left
+            -- where they put it" assertion pass because nothing COULD have moved it.
+            dragged.x, dragged.y = 400, 450
+            fake.fireFrameEvent({ bundleID = "com.mail", wid = 103,
+                x = dragged.x, y = dragged.y, w = dragged.w, h = dragged.h })
+            local movedBorder = borderFor(103)
+            ok(movedBorder ~= nil,
+                "a border FOLLOWS the window the user dragged (label mode tracks)")
+            ok(movedBorder and movedBorder.frame.x == 400 and movedBorder.frame.y == 450,
+                "and it sits on the window's new frame, not its old one")
+
+            -- A window that JOINS mid-session is the case that really tests this: the
+            -- newcomer path captures an original when arranging, so if label mode is
+            -- not excluded there too, dragging a newly-opened window and leaving would
+            -- snap it back to wherever it happened to open.
+            table.insert(fake.windows, { id = 70, wid = 700, title = "Joined",
+                appName = "J", bundleID = "com.join", x = 200, y = 200, w = 600, h = 400 })
+            fake.activateApp("J", "com.join")          -- taken into the labelled set
+            ok(#fake.liveOutlines() == 6, "a window opened during label mode is labelled too")
+            local joined = frameOf(70)
+            -- Drag it, but keep its CENTRE on the screen (600x400 at 888,500 centres
+            -- at 1188,700 inside the 1600x1000 frame). Pushing the centre off would
+            -- drop it from the labelled set altogether, and the assertion below would
+            -- then pass because nothing could restore it -- not because nothing did.
+            joined.x, joined.y = 888, 500
+            fake.fireTimers("every", 2.0)
+
+            fake.pressHotkey("f", HYP)                 -- leave
+            ok(#fake.liveOutlines() == 0, "leaving label mode tears down the borders")
+            local stillMoved = frameOf(3)
+            ok(stillMoved.x == 400 and stillMoved.y == 450,
+                "a window the USER moved during label mode is left where they put it")
+            local stillJoined = frameOf(70)
+            ok(stillJoined.x == 888 and stillJoined.y == 500,
+                "a NEWCOMER the user moved is left alone too -- label mode captures nothing")
+
+            fake.settings["hammerdeck.opt.window_fan.arrange"] = nil
+            fake.windows = freshWindows()
+        end
+
+        -- ===== LABEL MODE HAS NO WINDOW LIMIT.
+        -- The capacity gate exists only because slabs shrink below what apps accept.
+        -- With nothing to fit, there is nothing to refuse -- which is the whole reason
+        -- label mode is worth having on a screen that the fan declines.
+        do
+            fake.settings["hammerdeck.opt.window_fan.arrange"] = false
+            local many = {}
+            for i = 1, 20 do
+                many[i] = { id = 900 + i, wid = 9000 + i, title = "W" .. i, appName = "A" .. i,
+                    bundleID = "com.many" .. i, x = 100 + i, y = 100 + i, w = 700, h = 500 }
+            end
+            fake.windows = many
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 101, y = 101, w = 700, h = 500, screenIndex = 1 }
+            fake.focusedWid = 9001
+            ok(W.fanCapacity(SCREEN, 40, 8) < 20,
+                "20 windows is well past what the screen can FAN (" .. W.fanCapacity(SCREEN, 40, 8) .. ")")
+            local a, moved = #fake.alerts, #fake.windowFrameSets
+            fake.pressHotkey("f", HYP)
+
+            ok(#fake.liveOutlines() == 20, "label mode labels all twenty -- no capacity refusal")
+            ok(#fake.alerts == a, "and no alert: there is no limit to report")
+            ok(#fake.windowFrameSets == moved, "still nothing moved")
+            fake.pressHotkey("f", HYP)                 -- leave
+            fake.settings["hammerdeck.opt.window_fan.arrange"] = nil
+            fake.windows = freshWindows()
+        end
+
         -- ===== LEAVE ON DISABLE: a live mode is torn down + restored on stop.
         do
             fake.windows = freshWindows()

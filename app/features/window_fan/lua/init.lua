@@ -8,7 +8,8 @@
 -- mode: every window wears a live colored border, and clicking any window
 -- switches to it. Press the toggle again -- or the widget's Exit -- to leave
 -- the mode and put every window back where it was (slab shapes are a
--- switcher-only cost; leaving restores the real layout).
+-- switcher-only cost; leaving restores the real layout). The rearranging is
+-- OPTIONAL -- see LABEL MODE below.
 --
 -- FOUR ACTIONS: the toggle, plus next / prev / confirm for keyboard use. There is
 -- still deliberately no separate "restore" action -- the toggle already exits from
@@ -23,6 +24,18 @@
 -- window's RECTANGLE reaches, so it is visible under ANY stacking order -- no
 -- reflow, no re-layer, and the user's own click (raise-to-top) never covers
 -- another window's edge. (Proven in windows_geometry: strip-exclusivity.)
+--
+-- LABEL MODE (`arrange` = false) is the same mode with the ARRANGEMENT REMOVED:
+-- borders, widget list, live tracking and the keyboard ring, with no window ever
+-- moved. It exists because the arrangement is the expensive half and the
+-- identification is the half that demonstrably works -- and dropping it drops every
+-- constraint the arrangement imposes: no window limit (nothing has to fit a slab),
+-- no minimum-size problem, no raise pass, and no restore. Label mode captures NO
+-- originals at all, at entry or later, precisely so that leaving never yanks back a
+-- window the user moved themselves while the labels were up. The option is latched
+-- at enter() for the session, so a live mode is never half-slabbed. Everything
+-- below about slabs, capacity and restore therefore applies to the ARRANGING mode;
+-- `st.arranging` marks each place it forks.
 --
 -- AND WHY IT IS BOUNDED. That proof is sound but it ASSUMES each window occupies
 -- the slab it is handed, and macOS windows have minimum sizes they will not go
@@ -67,10 +80,11 @@
 -- primitives -- but none of its scrim/hero/pick machinery: Window Fan has ONE
 -- state (in the mode), plus its OWN switcher widget (the draggable card below).
 --
--- A LIGHT STATEFUL MODE via ctx.perEnable (deck's pattern): entering CAPTURES
--- each window's original frame; leaving restores every window (matched by stable
--- wid across the re-list). stop() leaves a live mode on disable. Every placement
--- rides ctx.window.setFrameFor, so Window Rewind also undoes a fan.
+-- A LIGHT STATEFUL MODE via ctx.perEnable (deck's pattern): when ARRANGING,
+-- entering CAPTURES each window's original frame and leaving restores every window
+-- (matched by stable wid across the re-list); label mode captures and restores
+-- nothing. stop() leaves a live mode on disable. Every placement rides
+-- ctx.window.setFrameFor, so Window Rewind also undoes a fan.
 --
 -- Needs Accessibility (window enumeration, by-id frame setting, the observers).
 
@@ -127,7 +141,7 @@ local function controllerFor(ctx)
                  bundle = {},
                  borders = {}, order = {}, frames = {}, focusedWid = nil, screen = nil,
                  memberSig = nil, refanning = false, widget = nil, widgetOrder = {},
-                 cursor = nil, recycled = false }
+                 cursor = nil, recycled = false, arranging = true }
 
     -- What the bold border and the highlighted widget row point at: the keyboard
     -- selection when the keyboard is driving, else whatever is really focused.
@@ -184,10 +198,22 @@ local function controllerFor(ctx)
             if b and f then
                 b.o.setFrame(f)
                 b.o.setStyle(wid == selectedWid() and "focus" or "member")
-                local fronts = {}                          -- EVERY window in front of it
+                -- Every window in front of it that can actually cover any of it. The
+                -- INTERSECTION filter is behaviour-identical (rectMinus returns a piece
+                -- untouched when the subtrahend misses it) but it keeps rectMinus from
+                -- fragmenting on rects that cannot contribute -- and fragmentation is
+                -- what makes this pass quadratic. Measured on a worst-case full cascade:
+                -- 8 windows 0.06ms, 24 1.1ms, 40 4.7ms, 80 33ms. Label mode has no
+                -- window limit (the fan's capacity gate does not apply to it), so on a
+                -- real desktop, where most windows do NOT overlap, this filter is what
+                -- keeps the common case near the low end of that curve.
+                local fronts = {}
                 for j = 1, i - 1 do
                     local wf = st.frames[st.order[j]]
-                    if wf then fronts[#fronts + 1] = wf end
+                    if wf and wf.x < f.x + f.w and f.x < wf.x + wf.w
+                       and wf.y < f.y + f.h and f.y < wf.y + wf.h then
+                        fronts[#fronts + 1] = wf
+                    end
                 end
                 local vis = W.rectMinus(f, fronts)         -- the still-visible pieces
                 local visArea = 0
@@ -350,7 +376,7 @@ local function controllerFor(ctx)
         for _, wid in ipairs(st.widgetOrder) do
             local m = meta[wid] or { title = "", bundleID = "" }
             rows[#rows + 1] = {
-                color = st.color[wid], side = st.side[wid] or "T",
+                color = st.color[wid], side = st.side[wid] or "",
                 title = m.title, bundleID = m.bundleID,
                 focused = wid == selectedWid(),
             }
@@ -378,7 +404,12 @@ local function controllerFor(ctx)
     local function place(wins, screen, focusWid, reason)
         local N = fanSizeN()
         if N < 1 then return end
-        local slots = W.fanSlots(screen, N, ctx.opt("edge") or 40, PAD)
+        -- LABEL MODE (st.arranging == false) computes no slab geometry at all: it
+        -- labels the windows WHERE THEY ARE. Slots are still assigned -- they carry
+        -- identity and ring order, not position -- so membership, reservations and
+        -- the keyboard ring all work unchanged; only the geometry is skipped.
+        local slots = st.arranging
+            and W.fanSlots(screen, N, ctx.opt("edge") or 40, PAD) or nil
 
         -- Place each active window on its slot, give any un-bordered one its
         -- PERSISTENT colored border, and record its slot frame. The IMPOSED z-order
@@ -386,15 +417,22 @@ local function controllerFor(ctx)
         -- the async AX frames settle.
         local bundleSet = {}
         for _, w in ipairs(wins) do
-            local s = slots[st.slot[w.wid]]
-            local frame = { x = s.x, y = s.y, w = s.w, h = s.h }
             if not st.borders[w.wid] then
                 local color = st.color[w.wid]
                 st.borders[w.wid] = { o = ctx.outline("member", color), color = color }
             end
-            st.frames[w.wid] = frame
-            st.side[w.wid] = s.side              -- the edge this window exposes (widget swatch)
-            ctx.window.setFrameFor(w.id, frame)
+            if st.arranging then
+                local s = slots[st.slot[w.wid]]
+                st.frames[w.wid] = { x = s.x, y = s.y, w = s.w, h = s.h }
+                st.side[w.wid] = s.side           -- the edge this window exposes (widget swatch)
+                ctx.window.setFrameFor(w.id, st.frames[w.wid])
+            else
+                -- The window's OWN frame, untouched. "" side => the widget draws a
+                -- plain colour chip instead of an edge glyph, because in label mode
+                -- no edge is guaranteed exposed and pointing at one would be a lie.
+                st.frames[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h }
+                st.side[w.wid] = ""
+            end
             if w.bundleID and w.bundleID ~= "" then
                 bundleSet[w.bundleID] = true
                 -- Only NON-EMPTY ids are recorded: "" is truthy in Lua, so storing
@@ -408,10 +446,19 @@ local function controllerFor(ctx)
         -- final z-order matches recency -- the window motion covers the churn.
         -- Then the focused window is lifted with a real focus (a surgical raise
         -- can't beat an app that activated itself when raised).
-        for i = #wins, 1, -1 do ctx.window.raise(wins[i].id) end
-        if focusWid and focusWid ~= 0 then
-            for _, w in ipairs(wins) do
-                if w.wid == focusWid then ctx.window.focus(w.id); break end
+        --
+        -- SKIPPED in label mode, and that is a headline benefit rather than an
+        -- omission: this pass is the raise storm behind the z-order churn, the
+        -- self-activating-app flashes, and (with the seam's per-activation costs) a
+        -- large share of the stalls that started this whole investigation. Labelling
+        -- windows in place needs no reordering, so the user's own stacking is left
+        -- exactly as they arranged it.
+        if st.arranging then
+            for i = #wins, 1, -1 do ctx.window.raise(wins[i].id) end
+            if focusWid and focusWid ~= 0 then
+                for _, w in ipairs(wins) do
+                    if w.wid == focusWid then ctx.window.focus(w.id); break end
+                end
             end
         end
 
@@ -434,39 +481,62 @@ local function controllerFor(ctx)
         -- AX applies setFrameFor ASYNCHRONOUSLY, and a window may not land exactly
         -- on its slot (min-size, clamping). Re-read the REAL frames + z-order once
         -- things settle so the borders sit on the windows, not on where we asked
-        -- them to go. Logs any gap (the alignment diagnostic).
-        if st.settleTimer then st.settleTimer.stop() end
-        local intended = {}
-        for wid, f in pairs(st.frames) do intended[wid] = f end
-        st.settleTimer = ctx.afterSeconds(0.3, function()
-            if not st.active then return end
-            refreshFromList()
-            for wid in pairs(st.borders) do
-                local s, a = intended[wid], st.frames[wid]
-                if s and a and (math.abs(s.x - a.x) > 2 or math.abs(s.y - a.y) > 2
-                    or math.abs(s.w - a.w) > 2 or math.abs(s.h - a.h) > 2) then
-                    ctx.log(string.format(
-                        "fan: wid %d slot=%.0f,%.0f,%.0fx%.0f actual=%.0f,%.0f,%.0fx%.0f (border realigned)",
-                        wid, s.x, s.y, s.w, s.h, a.x, a.y, a.w, a.h))
+        -- them to go. Logs any gap (the alignment diagnostic). Label mode asked
+        -- nothing to move, so there is nothing to settle and nothing to realign --
+        -- st.frames already holds each window's real frame.
+        if st.settleTimer then st.settleTimer.stop(); st.settleTimer = nil end
+        if st.arranging then
+            -- Snapshot the INTENDED frames for the comparison below. Built inside the
+            -- branch so label mode does not copy a table it will never read.
+            local intended = {}
+            for wid, f in pairs(st.frames) do intended[wid] = f end
+            st.settleTimer = ctx.afterSeconds(0.3, function()
+                if not st.active then return end
+                refreshFromList()
+                for wid in pairs(st.borders) do
+                    local s, a = intended[wid], st.frames[wid]
+                    if s and a and (math.abs(s.x - a.x) > 2 or math.abs(s.y - a.y) > 2
+                        or math.abs(s.w - a.w) > 2 or math.abs(s.h - a.h) > 2) then
+                        ctx.log(string.format(
+                            "fan: wid %d slot=%.0f,%.0f,%.0fx%.0f actual=%.0f,%.0f,%.0fx%.0f (border realigned)",
+                            wid, s.x, s.y, s.w, s.h, a.x, a.y, a.w, a.h))
+                    end
                 end
-            end
+                drawOcclusion()
+            end)
+        else
+            -- Arranging mode gets its first honest clip from the settle timer above.
+            -- Label mode has no settle timer, so do the equivalent once, now: without
+            -- it the first draw clips each border only against fan MEMBERS, and a
+            -- non-member window in front (including this feature's own widget card)
+            -- would not clip until the first focus event or the 2s poll. Label mode is
+            -- precisely the case where windows genuinely overlap.
+            refreshFromList()
             drawOcclusion()
-        end)
+        end
 
         st.screen = screen
         st.memberSig = sigOf(wins)
 
         -- Terse arrangement summary so a layout issue (a wasted edge, an off pile)
         -- is diagnosable from the log alone: the slots' bounding box vs the screen.
-        local bx1, by1, bx2, by2 = math.huge, math.huge, -math.huge, -math.huge
-        for _, s in ipairs(slots) do
-            bx1 = math.min(bx1, s.x); by1 = math.min(by1, s.y)
-            bx2 = math.max(bx2, s.x + s.w); by2 = math.max(by2, s.y + s.h)
+        -- Guarded on `slots` rather than st.arranging: the summary needs the slot
+        -- geometry, and only one of those two facts is provable to the type checker.
+        if slots then
+            local bx1, by1, bx2, by2 = math.huge, math.huge, -math.huge, -math.huge
+            for _, s in ipairs(slots) do
+                bx1 = math.min(bx1, s.x); by1 = math.min(by1, s.y)
+                bx2 = math.max(bx2, s.x + s.w); by2 = math.max(by2, s.y + s.h)
+            end
+            ctx.log(string.format(
+                "fan: %s fan -- %d active / %d slots on '%s', edge=%d, margins L=%.0f R=%.0f T=%.0f B=%.0f",
+                reason, #wins, N, screen.name or "?", ctx.opt("edge") or 40,
+                bx1 - screen.x, (screen.x + screen.w) - bx2, by1 - screen.y, (screen.y + screen.h) - by2))
+        else
+            ctx.log(string.format(
+                "fan: %s labels -- %d windows labelled in place on '%s' (nothing moved)",
+                reason, #wins, screen.name or "?"))
         end
-        ctx.log(string.format(
-            "fan: %s fan -- %d active / %d slots on '%s', edge=%d, margins L=%.0f R=%.0f T=%.0f B=%.0f",
-            reason, #wins, N, screen.name or "?", ctx.opt("edge") or 40,
-            bx1 - screen.x, (screen.x + screen.w) - bx2, by1 - screen.y, (screen.y + screen.h) - by2))
 
         updateWidget()   -- reflect the new membership / order / focus in the widget
     end
@@ -556,7 +626,10 @@ local function controllerFor(ctx)
         -- The members keep their exclusive strips relative to each other, and
         -- drawOcclusion already clips their borders against non-member windows, so
         -- the borders stay honest about what is actually visible.
-        local cap = W.fanCapacity(st.screen, ctx.opt("edge") or 40, PAD)
+        -- math.huge in label mode: the ceiling exists only because slabs shrink, and
+        -- label mode has no slabs (see the gate in enter).
+        local cap = st.arranging
+            and W.fanCapacity(st.screen, ctx.opt("edge") or 40, PAD) or math.huge
         -- The high-water index, not a count: reserved slots and holes both mean the
         -- fan is already larger than the number of windows in it (see fanSizeN).
         local held = fanSizeN()
@@ -584,8 +657,13 @@ local function controllerFor(ctx)
                     -- inheriting the dead window's frame would make leave() fling this
                     -- window to a stranger's geometry, which is worse than the bug the
                     -- retention fixes. A different owner means a different window.
+                    -- Gated on st.arranging for the same reason enter() is: label mode
+                    -- must NEVER hold an original, or a window that joins mid-session
+                    -- and is then dragged by the user would be yanked back on leave.
+                    -- This keeps the invariant absolute ("label mode captures nothing")
+                    -- rather than true only for the windows present at entry.
                     local kept = st.originals[w.wid]
-                    if not kept or kept.bundleID ~= (w.bundleID or "") then
+                    if st.arranging and (not kept or kept.bundleID ~= (w.bundleID or "")) then
                         st.originals[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h,
                                                 bundleID = w.bundleID or "" }
                     end
@@ -720,6 +798,13 @@ local function controllerFor(ctx)
             return
         end
 
+        -- The mode's SHAPE, latched for the session rather than read per pass: with
+        -- `arrange` off this is LABEL MODE -- the borders, the widget, the tracking
+        -- and the keyboard ring, with no window ever moved. Latched because flipping
+        -- it under a live mode would leave half the windows slabbed and half not, and
+        -- would make "restore on leave" mean two different things mid-session.
+        st.arranging = ctx.opt("arrange") ~= false
+
         -- CAPACITY GATE. The fan's promise -- every window keeps an edge no other
         -- window can cover -- holds only while each window can actually TAKE the
         -- slab it is handed. Slabs shrink as ~1/N; app minimum sizes do not. Past
@@ -732,8 +817,11 @@ local function controllerFor(ctx)
         -- top-K subset: the mode either keeps its promise for every window on the
         -- screen or does not run, and the alert names the real number so the limit
         -- is visible instead of mysterious.
+        -- ... and it therefore does not apply to LABEL MODE at all: with no slab to
+        -- refuse, there is no minimum size to violate and no strip to bury, so label
+        -- mode has NO window limit. That is the whole reason it exists.
         local edge = ctx.opt("edge") or 40
-        local cap = W.fanCapacity(screen, edge, PAD)
+        local cap = st.arranging and W.fanCapacity(screen, edge, PAD) or math.huge
         if #wins > cap then
             ctx.log(string.format(
                 "fan: REFUSED -- %d windows on '%s' but edge=%d fits only %d "
@@ -760,18 +848,35 @@ local function controllerFor(ctx)
         -- window order. Refan keeps these fixed and only fills in newcomers.
         -- (Originals are captured by VALUE -- setFrameFor mutates the live rows.)
         st.slot, st.color, st.side, st.originals, st.bundle = {}, {}, {}, {}, {}
-        local slots = W.fanSlots(screen, #wins, ctx.opt("edge") or 40, PAD)
-        local winCenters, slotCenters = {}, {}
-        for i, w in ipairs(wins) do winCenters[i] = W.center(w) end
-        for i, s in ipairs(slots) do slotCenters[i] = W.center(s) end
-        local perm = W.assignNearest(winCenters, slotCenters)
+        -- assignNearest matches each window to the slot nearest its CURRENT position,
+        -- which is meaningless without slots -- label mode takes MRU order instead, so
+        -- the ring reads top-to-bottom in recency, and reserves nothing geometric.
+        local perm
+        if st.arranging then
+            local slots = W.fanSlots(screen, #wins, ctx.opt("edge") or 40, PAD)
+            local winCenters, slotCenters = {}, {}
+            for i, w in ipairs(wins) do winCenters[i] = W.center(w) end
+            for i, s in ipairs(slots) do slotCenters[i] = W.center(s) end
+            perm = W.assignNearest(winCenters, slotCenters)
+        else
+            perm = {}
+            for i = 1, #wins do perm[i] = i end
+        end
         for i, w in ipairs(wins) do
             st.slot[w.wid] = perm[i]
             st.color[w.wid] = lowestFreeColor()
+            -- Originals are captured ONLY when we are about to disturb the layout.
+            -- Label mode must not capture them, and the reason is not thrift: it moves
+            -- nothing, so the user stays free to drag their own windows while the
+            -- labels are up -- and a "restore" on exit would then YANK every window
+            -- back to where it happened to be when the mode started, silently undoing
+            -- their own work. Nothing was taken, so nothing is given back.
             -- bundleID rides along so a RECYCLED CGWindowID can be told from the
             -- window that held it before (see the guard in refan).
-            st.originals[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h,
-                                    bundleID = w.bundleID or "" }
+            if st.arranging then
+                st.originals[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h,
+                                        bundleID = w.bundleID or "" }
+            end
         end
 
         place(wins, screen, fwid, "entered")
@@ -858,6 +963,11 @@ local function controllerFor(ctx)
         for wid in pairs(st.borders) do members[#members + 1] = wid end
         teardown()
         local restored, gone = 0, 0
+        -- No `st.arranging` check here on purpose. Label mode holds NO originals at
+        -- all -- neither at entry nor for a window that joins later -- so this loop
+        -- naturally finds nothing to put back. Stating the rule once, as a property of
+        -- the data, beats repeating it as a third branch that could drift out of step
+        -- with the two capture sites.
         if not skipRestore then
             local byWid = {}
             for _, w in ipairs(ctx.window.list()) do
@@ -876,7 +986,9 @@ local function controllerFor(ctx)
         st.active = false
         st.slot, st.color, st.side, st.originals, st.bundle = {}, {}, {}, {}, {}
         st.cursor = nil          -- the next entry starts on real focus, not a stale pick
-        ctx.log("fan: left mode -- " .. (skipRestore
+        ctx.log("fan: left mode -- " .. ((not st.arranging)
+            and (#members .. " labels cleared; nothing was moved, nothing restored")
+            or skipRestore
             and (#members .. " windows left in place (screen gone)")
             or ("restored " .. restored .. " windows" ..
                 (gone > 0 and (" (" .. gone .. " gone)") or ""))))
@@ -955,7 +1067,8 @@ local function controllerFor(ctx)
         -- reserved slots still consume geometry, so a fan with 3 visible members can
         -- still be laid out at N=6 and produce sub-minimum slabs. Comparing #members
         -- here let exactly that through.
-        local shrunkCap = W.fanCapacity(cur, ctx.opt("edge") or 40, PAD)
+        local shrunkCap = st.arranging
+            and W.fanCapacity(cur, ctx.opt("edge") or 40, PAD) or math.huge
         local shrunkN = fanSizeN()
         if shrunkN > shrunkCap then
             ctx.log(string.format(
@@ -1006,8 +1119,10 @@ local function controllerFor(ctx)
         end
         drawOcclusion()
         updateWidget()
-        ctx.log("fan: cursor -> wid " .. st.cursor .. " (slot "
-            .. (st.slot[st.cursor] or "?") .. ", " .. #ring .. " in ring)")
+        -- "position", not "slot": in label mode the index is a pure ring ordinal with
+        -- no slab behind it, and the log is read as the record of what the mode decided.
+        ctx.log("fan: cursor -> wid " .. st.cursor .. " (position "
+            .. (st.slot[st.cursor] or "?") .. " of " .. #ring .. ")")
     end
 
     -- Commit the selection: leave the mode (restoring every window to its real
@@ -1049,9 +1164,19 @@ return {
     id  = "window_fan",
 
     options = {
+        -- The mode's SHAPE. Off = LABEL MODE: the borders, the widget list, the live
+        -- tracking and the keyboard ring, with no window ever moved. It exists because
+        -- the fan's arrangement is the expensive half and the identification is the
+        -- half that demonstrably works -- and turning it off drops every constraint
+        -- the arrangement imposes: no window limit (nothing has to fit a slab), no
+        -- minimum-size problem, no restore, and no raise pass. Listed FIRST because
+        -- it changes what the other options mean (`edge` is arrangement-only).
+        { key = "arrange", type = "bool", default = true,
+          label = "Rearrange windows into the fan",
+          hint = "On: windows are moved into the edge-anchored fan, each keeping a guaranteed visible edge (limited by how many the screen can fit). Off: nothing is moved -- windows just get their live colored border and the switcher list, with no limit on how many. Applies the next time you enter the mode, not to a session already running." },
         { key = "edge", type = "int", default = 40, min = 24, max = 80,
           label = "Edge thickness",
-          hint = "How deep each window's always-visible edge strip is, in points -- no other window can cover it, whatever is on top." },
+          hint = "How deep each window's always-visible edge strip is, in points -- no other window can cover it, whatever is on top. Only applies when 'Rearrange windows into the fan' is on." },
         { key = "widget", type = "bool", default = true,
           label = "Show switcher widget",
           hint = "A small draggable card listing the windows -- click a row to switch, or Exit to leave the mode." },
