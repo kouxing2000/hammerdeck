@@ -127,7 +127,7 @@ local function controllerFor(ctx)
                  bundle = {},
                  borders = {}, order = {}, frames = {}, focusedWid = nil, screen = nil,
                  memberSig = nil, refanning = false, widget = nil, widgetOrder = {},
-                 cursor = nil }
+                 cursor = nil, recycled = false }
 
     -- What the bold border and the highlighted widget row point at: the keyboard
     -- selection when the keyboard is driving, else whatever is really focused.
@@ -140,6 +140,22 @@ local function controllerFor(ctx)
     local function selectedWid()
         if st.cursor and not st.borders[st.cursor] then st.cursor = nil end
         return st.cursor or st.focusedWid
+    end
+
+    -- The fan's SIZE: the high-water slot index, which is what place() hands to
+    -- fanSlots and therefore what actually determines how thin the slabs get.
+    --
+    -- This is NOT the member count, and the difference is the whole point. A slot
+    -- held for a window that moved to another screen or whose app went quiet is
+    -- RESERVED -- it still consumes geometry while its window is absent, and a
+    -- freed slot below it leaves a hole. So counting members (or even counting
+    -- st.slot entries) understates the fan, and a capacity gate built on either
+    -- silently lets the slabs fall below what apps accept. Every capacity decision
+    -- must ask this function, so all of them agree with place().
+    local function fanSizeN()
+        local n = 0
+        for _, idx in pairs(st.slot) do if idx > n then n = idx end end
+        return n
     end
 
     -- The fan's members in a STABLE ring order (by slot index), independent of the
@@ -202,6 +218,29 @@ local function controllerFor(ctx)
                 order[#order + 1] = w.wid
                 frames[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h }
                 live[w.wid] = true
+                -- RECYCLED WINDOW ID. macOS reuses a CGWindowID after a window
+                -- closes, and originals are retained for the whole mode session now,
+                -- so the reuse window is minutes rather than sub-second. A wid whose
+                -- OWNING APP changed is a different window wearing a dead one's id.
+                --
+                -- It has to be caught HERE, on the raw listing. It does not look like
+                -- a newcomer (st.slot[wid] is already set), and -- the part that makes
+                -- it invisible everywhere else -- the member SIGNATURE is keyed by
+                -- wid, so a recycle produces an IDENTICAL signature and refan is never
+                -- even called. Left undetected it inherits the dead window's slot and
+                -- captured original, and leave() "restores" it to a stranger's frame.
+                local owner = st.bundle[w.wid]
+                if owner and w.bundleID and w.bundleID ~= "" and owner ~= w.bundleID then
+                    ctx.log("fan: wid " .. w.wid .. " changed owner ('" .. owner
+                        .. "' -> '" .. w.bundleID .. "') -- recycled window id;"
+                        .. " slot + original reset")
+                    if st.borders[w.wid] then
+                        st.borders[w.wid].o.stop(); st.borders[w.wid] = nil
+                    end
+                    st.slot[w.wid], st.color[w.wid], st.side[w.wid] = nil, nil, nil
+                    st.originals[w.wid], st.bundle[w.wid] = nil, nil
+                    st.recycled = true          -- the signature cannot see this; force a refan
+                end
             end
         end
         for wid, b in pairs(st.borders) do
@@ -337,8 +376,7 @@ local function controllerFor(ctx)
     -- raise pass + focus hand-back, re-arms observers, refreshes the widget.
     ---@param reason string a short trace label ("entered" | "refanned")
     local function place(wins, screen, focusWid, reason)
-        local N = 0
-        for _, idx in pairs(st.slot) do if idx > N then N = idx end end
+        local N = fanSizeN()
         if N < 1 then return end
         local slots = W.fanSlots(screen, N, ctx.opt("edge") or 40, PAD)
 
@@ -508,6 +546,7 @@ local function controllerFor(ctx)
                     (st.slot[wid] or "?") .. " reserved")
             end
         end
+        st.recycled = false        -- consumed: refreshFromList already reset any recycled ids
         -- NEWCOMERS: lowest FREE slot + color (reserved holes are held, never reused
         -- here), original captured NOW before we move it.
         -- The entry gate would be theatre on its own: a screen reaches 30 windows by
@@ -518,17 +557,20 @@ local function controllerFor(ctx)
         -- drawOcclusion already clips their borders against non-member windows, so
         -- the borders stay honest about what is actually visible.
         local cap = W.fanCapacity(st.screen, ctx.opt("edge") or 40, PAD)
-        local held = 0
-        for _ in pairs(st.slot) do held = held + 1 end
+        -- The high-water index, not a count: reserved slots and holes both mean the
+        -- fan is already larger than the number of windows in it (see fanSizeN).
+        local held = fanSizeN()
         for _, w in ipairs(active) do
             if not st.slot[w.wid] then
                 if held >= cap then
                     ctx.log("fan: not taking in wid " .. w.wid .. " -- at capacity ("
                         .. cap .. " on '" .. (st.screen.name or "?") .. "'); left in place")
                 else
-                    held = held + 1
                     st.slot[w.wid] = lowestFreeIndex()
                     st.color[w.wid] = lowestFreeColor()
+                    -- Re-read rather than incrementing: lowestFreeIndex may FILL A
+                    -- HOLE left by a closed window, which does not grow the fan at all.
+                    held = fanSizeN()
                     -- NEVER overwrite a retained original. The branch above keeps one
                     -- alive across an AX blind spot; this guard is what makes that
                     -- retention count, and it also covers the bundle-less case that
@@ -564,6 +606,8 @@ local function controllerFor(ctx)
             return
         end
         if #placeable == 0 then                          -- everything refused
+            ctx.log("fan: refan placed nothing -- all " .. #active
+                .. " active windows are past capacity on '" .. (st.screen.name or "?") .. "'")
             st.memberSig = sigOf(active)
             updateWidget()
             return
@@ -609,7 +653,11 @@ local function controllerFor(ctx)
             st.focusedWid = w
         end
         refreshFromList()          -- the switch changed the stacking order
-        if currentSig() ~= st.memberSig then
+        -- st.recycled is checked alongside the signature because the signature CANNOT
+        -- see a recycled window id: it is keyed by wid, and a recycle leaves the wid
+        -- set identical. Without this the reset that refreshFromList just did would
+        -- never be followed by the re-place that gives the new window a slot.
+        if currentSig() ~= st.memberSig or st.recycled then
             ctx.log("fan: window set changed (" .. source .. ") -- refanning")
             refan()
         else
@@ -868,16 +916,25 @@ local function controllerFor(ctx)
         for _, w in ipairs(ctx.window.list()) do
             if w.wid and st.borders[w.wid] then members[#members + 1] = w; live[w.wid] = true end
         end
+        -- Absence is ambiguous here for the SAME reason it is in refan, and this path
+        -- is the likelier one to hit it -- a display reconfig is exactly when apps
+        -- reflow and their AX reads time out. So apply refan's rule in FULL, not half
+        -- of it: ask the seam which apps went quiet, reserve everything for those, and
+        -- for a genuine close recycle the slot but NEVER the captured original.
+        local reconfigDropped = {}
+        for _, id in ipairs(ctx.window.droppedApps()) do reconfigDropped[id] = true end
         for wid in pairs(st.borders) do
             if not live[wid] then
                 st.borders[wid].o.stop(); st.borders[wid] = nil
-                -- Same rule as refan: recycle the slot, NEVER the captured original.
-                -- This path had the identical destructive bug and is in fact the more
-                -- likely one to hit it -- a display reconfig is exactly when apps
-                -- reflow and their AX reads time out, so "missing from this listing"
-                -- here is more often a blind spot than a close.
-                st.slot[wid], st.color[wid], st.side[wid] = nil, nil, nil
-                st.bundle[wid] = nil
+                local owner = st.bundle[wid]
+                if owner and reconfigDropped[owner] then
+                    ctx.log("fan: screenChanged -- wid " .. wid .. " missing, app '" .. owner
+                        .. "' did not answer AX; slot " .. (st.slot[wid] or "?")
+                        .. " + original RESERVED (not treated as closed)")
+                else
+                    st.slot[wid], st.color[wid], st.side[wid] = nil, nil, nil
+                    st.bundle[wid] = nil
+                end
             end
         end
         if #members == 0 then
@@ -894,15 +951,20 @@ local function controllerFor(ctx)
         -- every member, or leave. Restore IS wanted here (unlike the screen-GONE case
         -- above, which skips it) -- the display still exists, so the captured
         -- originals are still meaningful frames on it.
+        -- Gate on the FAN SIZE place() will actually use, not on the member count:
+        -- reserved slots still consume geometry, so a fan with 3 visible members can
+        -- still be laid out at N=6 and produce sub-minimum slabs. Comparing #members
+        -- here let exactly that through.
         local shrunkCap = W.fanCapacity(cur, ctx.opt("edge") or 40, PAD)
-        if #members > shrunkCap then
+        local shrunkN = fanSizeN()
+        if shrunkN > shrunkCap then
             ctx.log(string.format(
-                "fan: screenChanged -- '%s' now fits only %d, but %d members are fanned"
-                .. " -- leaving and restoring",
-                tostring(cur.name), shrunkCap, #members))
+                "fan: screenChanged -- '%s' now fits only %d, but the fan is laid out"
+                .. " at %d (%d members + reserved slots) -- leaving and restoring",
+                tostring(cur.name), shrunkCap, shrunkN, #members))
             ctx.alert(ctx.t("fan.leftTooSmall",
                 "Left Window Fan -- '%1$s' now fits only %2$d windows, and %3$d are fanned",
-                tostring(cur.name), shrunkCap, #members))
+                tostring(cur.name), shrunkCap, shrunkN))
             st.leave()
             return
         end

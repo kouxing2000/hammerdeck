@@ -391,8 +391,12 @@ end
 --- what windows did when asked for less: replaying a 33-window fan on a
 --- 1496x938 display, every app overshot its slot -- median 3.8x, worst 5.3x --
 --- and the frames they settled on cluster at widths 480-800 and heights 150-520.
---- The floor takes the low end of each: below this, a slab is a request the
---- window will simply refuse.
+---
+--- WIDTH takes the low end of that range (480) -- the narrowest any app accepted.
+--- HEIGHT does NOT: 150 was a single outlier, and the observed heights bunch around
+--- 250-400, so 250 is the level at which most windows stop refusing. Taking 150
+--- there would admit fans that only one app in the sample could actually honour.
+--- Below these, a slab is a request the window will simply refuse.
 ---
 --- Consequence, and the reason fanCapacity exists: a window that refuses its slab
 --- covers its NEIGHBOURS' slabs, strips included -- which voids the whole point of

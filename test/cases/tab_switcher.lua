@@ -101,6 +101,32 @@ return {
         fake.fireTimers("every", 3)
         ok(fake.files[mruPath]:find("localhost:3000", 1, true) ~= nil,
             "the scheme guard keeps localhost dev tabs rankable (unlike getDomain)")
+
+        -- The active-url read is ASYNC and out-of-process (the sync form blocked the
+        -- main thread ~1s per call), and the poll fires every 3s while a read may live
+        -- far longer. Unserialized that piles up subprocesses AND lets answers land out
+        -- of order, so an older url wins the `~= lastActive` test and is stamped with a
+        -- FRESH timestamp -- inverting the MRU ranking the poll exists to maintain.
+        -- One read per browser at a time is what makes that impossible.
+        do
+            fake.deferAsync = true
+            fake.activeUrls["Google Chrome"] = "https://slowpoll.example/one"
+            fake.fireTimers("every", 3)
+            fake.fireTimers("every", 3)
+            fake.fireTimers("every", 3)
+            ok(#fake.pendingAsync == 1,
+                "overlapping MRU polls keep ONE active-url read in flight, not one per tick")
+
+            fake.deliverAsync()
+            fake.deferAsync = false
+            ok(fake.files[mruPath]:find("slowpoll.example", 1, true) ~= nil,
+                "the in-flight read still lands and stamps once delivered")
+            -- ... and the guard released, so polling resumes.
+            fake.activeUrls["Google Chrome"] = "https://after.example/two"
+            fake.fireTimers("every", 3)
+            ok(fake.files[mruPath]:find("after.example", 1, true) ~= nil,
+                "the in-flight flag is cleared on delivery -- the next poll reads again")
+        end
         fake.modifiers.alt = true
         fake.pressHotkey("tab", { "ctrl", "alt" })
         tch = fake.visibleChooser()

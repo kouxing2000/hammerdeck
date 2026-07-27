@@ -728,10 +728,13 @@ return {
             -- SCREEN both SHRINKS and MOVES (same name "Main"). The members are still in
             -- their OLD (larger) slabs, so their centres now fall OUTSIDE the new frame --
             -- a geometry re-classification would strand them. All five must re-fan onto it.
-            -- The new size deliberately still CLEARS capacity (1200x800 fits 8 > 5), so
-            -- this block exercises the re-fan path; the over-capacity shrink is its own
-            -- block below.
-            local SMALL = { x = 100, y = 50, w = 1200, h = 800, name = "Main", index = 1 }
+            -- The size is chosen to satisfy BOTH constraints at once, and it is load-
+            -- bearing: capacity must still clear 5 (1060x400 fits 6) so the re-fan path
+            -- actually runs, AND every member's slot centre must fall OUTSIDE the new
+            -- frame (all 5 do) so the assertion below can still tell "re-fan the KNOWN
+            -- members" from "re-derive membership by geometry". A gentler shrink leaves
+            -- the centres inside and the block silently stops testing its own bug.
+            local SMALL = { x = 100, y = 50, w = 1060, h = 400, name = "Main", index = 1 }
             fake.screenList = { SMALL, SCREEN2 }
             local before = #fake.windowFrameSets
             fake.systemEvent("screenChanged")
@@ -786,6 +789,185 @@ return {
             end
             ok(restoredOk, "every window is restored -- the display still exists")
             fake.screenList = { SCREEN, SCREEN2 }      -- reset for later blocks
+        end
+
+        -- ===== CAPACITY IS ABOUT THE FAN'S SIZE, NOT ITS MEMBER COUNT.
+        -- place() lays the fan out at the HIGH-WATER slot index, so a slot reserved
+        -- for a window that moved to another screen still consumes geometry. Gating
+        -- on the number of visible members therefore lets a shrink through while the
+        -- layout is far larger -- and the slabs fall below what any app accepts,
+        -- which is the exact outcome the gate exists to prevent.
+        do
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)                 -- enter with 5 on SCREEN
+            ok(#fake.liveOutlines() == 5, "entered with five members")
+
+            -- Three members move to the OTHER screen: they keep their slots RESERVED,
+            -- so the fan is still laid out at 5 while only 2 are visible.
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 103 or w.wid == 104 or w.wid == 105 then
+                    w.x, w.y = SCREEN2.x + 40, SCREEN2.y + 40
+                end
+            end
+            fake.activateApp("Code", "com.code")
+            ok(#fake.liveOutlines() == 2, "three members moved off; two remain bordered")
+
+            -- A shrink whose capacity (4) is ABOVE the member count (2) but BELOW the
+            -- fan's real size (5). Gating on members would sail straight through.
+            local MID = { x = 0, y = 0, w = 800, h = 600, name = "Main", index = 1 }
+            ok(W.fanCapacity(MID, 40, 8) == 4, "the shrunk screen fits 4 -- more than the 2 members")
+            local a = #fake.alerts
+            fake.screenList = { MID, SCREEN2 }
+            fake.systemEvent("screenChanged")
+
+            ok(#fake.liveOutlines() == 0,
+                "a reserved-slot fan larger than capacity still leaves the mode")
+            ok(#fake.alerts == a + 1, "and alerts, rather than silently laying out sub-minimum slabs")
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.windows = freshWindows()
+        end
+
+        -- ===== screenChanged HONOURS droppedApps, LIKE refan.
+        -- A display reconfig is the likeliest moment for an app to miss the AX
+        -- timeout, so the reconfig prune must make the same distinction refan makes:
+        -- an app that went quiet keeps its slot AND its original; only a genuine
+        -- close recycles the slot. Half-porting this left the reconfig path re-tiling
+        -- on a blink and its retained-original fix untested.
+        do
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)
+            ok(#fake.liveOutlines() == 5, "entered with five members")
+
+            local slab
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 102 then slab = { x = w.x, y = w.y, w = w.w, h = w.h } end
+            end
+
+            -- Safari goes quiet exactly as the display is reconfigured.
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 102 then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            fake.droppedApps = { "com.saf" }
+            local RESIZED = { x = 0, y = 0, w = 1500, h = 950, name = "Main", index = 1 }
+            fake.screenList = { RESIZED, SCREEN2 }
+            local before = #fake.windowFrameSets
+            fake.systemEvent("screenChanged")
+            ok(#fake.liveOutlines() == 4, "the quiet app's border is dropped")
+
+            -- THE POINT: its slot stays RESERVED. That is only OBSERVABLE once someone
+            -- competes for it -- freeing a slot does not shrink the fan unless it held
+            -- the top index, so the survivors' geometry alone proves nothing. Open a
+            -- new window while the app is still quiet: with the slot reserved the
+            -- newcomer must take a SIXTH slot (fan of 6); if the quiet window's slot
+            -- had been freed the newcomer would drop into its hole and the fan would
+            -- stay at 5, re-tiling everyone when the quiet window came back.
+            table.insert(fake.windows, { id = 60, wid = 601, title = "Newcomer",
+                appName = "N", bundleID = "com.new", x = 300, y = 300, w = 600, h = 400 })
+            before = #fake.windowFrameSets
+            fake.activateApp("N", "com.new")
+            local six = W.fanSlots(RESIZED, 6, 40, 8)
+            local placed, allOnSix = {}, true
+            for i = before + 1, #fake.windowFrameSets do placed[#placed + 1] = fake.windowFrameSets[i] end
+            for _, f in ipairs(placed) do
+                local hit = false
+                for _, s in ipairs(six) do
+                    if f.x == s.x and f.y == s.y and f.w == s.w and f.h == s.h then hit = true end
+                end
+                if not hit then allOnSix = false end
+            end
+            ok(#placed > 0 and allOnSix,
+                "a quiet app's slot is RESERVED across a reconfig -- a newcomer extends the fan instead of stealing it")
+
+            fake.droppedApps = {}
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.windows = freshWindows()
+            registry.runAction("window_fan", "arrange")   -- leave, whatever state we are in
+            if #fake.liveOutlines() > 0 then fake.pressHotkey("f", HYP) end
+        end
+
+        -- ===== ... AND A RECONFIG PRUNE NEVER DISCARDS THE CAPTURED ORIGINAL.
+        -- Separate from the block above on purpose: that one drives the droppedApps
+        -- branch, this one drives the OTHER branch -- a window absent for a reason the
+        -- seam cannot classify (a Space move), where the slot is recycled but the
+        -- original must survive. Testing only the first branch left this one unheld.
+        do
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)
+            ok(#fake.liveOutlines() == 5, "entered with five members")
+
+            local slab
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 102 then slab = { x = w.x, y = w.y, w = w.w, h = w.h } end
+            end
+
+            -- Safari moves to another Space as the display is reconfigured: absent from
+            -- the listing, but its app answers fine, so droppedApps stays EMPTY.
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 102 then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            fake.droppedApps = {}
+            local RESIZED = { x = 0, y = 0, w = 1500, h = 950, name = "Main", index = 1 }
+            fake.screenList = { RESIZED, SCREEN2 }
+            fake.systemEvent("screenChanged")
+
+            -- It comes back reporting the SLAB it was left on -- re-capturing here is
+            -- exactly how the real geometry used to be destroyed.
+            table.insert(fake.windows, 2, { id = 2, wid = 102, title = "Browser",
+                appName = "Safari", bundleID = "com.saf",
+                x = slab.x, y = slab.y, w = slab.w, h = slab.h })
+            fake.activateApp("Safari", "com.saf")
+            fake.pressHotkey("f", HYP)                 -- leave -> restore
+
+            local back = frameOf(2)
+            ok(back and back.x == ORIG[2].x and back.y == ORIG[2].y
+               and back.w == ORIG[2].w and back.h == ORIG[2].h,
+                "a reconfig prune keeps the captured original -- restore is still the TRUE frame")
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.windows = freshWindows()
+        end
+
+        -- ===== A RECYCLED CGWindowID MUST NOT INHERIT A DEAD WINDOW'S ORIGINAL.
+        -- Originals are retained for the whole mode session now (so an AX blind spot
+        -- cannot destroy them), which means the retention window is minutes rather
+        -- than sub-second -- long enough for macOS to recycle a closed window's id.
+        -- Retention is therefore keyed to the owning app: a different owner is a
+        -- different window, and its real frame must be captured fresh.
+        do
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)
+
+            -- Notes (104) closes; a DIFFERENT app's new window reuses its wid.
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 104 then kept[#kept + 1] = w end
+            end
+            local REUSED = { x = 222, y = 333, w = 640, h = 480 }
+            table.insert(kept, { id = 44, wid = 104, title = "Recycled", appName = "Zed",
+                bundleID = "com.zed", x = REUSED.x, y = REUSED.y, w = REUSED.w, h = REUSED.h })
+            fake.windows = kept
+            fake.activateApp("Zed", "com.zed")
+            fake.pressHotkey("f", HYP)                 -- leave -> restore
+
+            local r = frameOf(44)
+            ok(r and r.x == REUSED.x and r.y == REUSED.y and r.w == REUSED.w and r.h == REUSED.h,
+                "a wid-recycling window restores to ITS OWN frame, not the dead window's")
+            fake.windows = freshWindows()
         end
 
         -- ===== ALERTS: nothing fannable, and nothing to restore.
@@ -913,7 +1095,15 @@ return {
                 if w and not (w.x == o.x and w.y == o.y) then restoredOk = false end
             end
             ok(restoredOk, "confirm restores every window to its original frame")
-            ok(#fake.focused > focusesBefore, "confirm focuses the selected window")
+            -- Assert WHICH window, not merely that something was focused: "some window
+            -- got focus" passes even when confirm picks the wrong one, which is the
+            -- only thing the action is for.
+            local lastFocusedWid
+            for _, w in ipairs(fake.windows) do
+                if w.id == fake.focused[#fake.focused] then lastFocusedWid = w.wid end
+            end
+            ok(lastFocusedWid == wrapped,
+                "confirm focuses the SELECTED window (the one the cursor was on)")
         end
 
         -- ===== the navigation actions are inert outside the mode (they are ordinary
