@@ -679,6 +679,16 @@ function adapter.listWindows()
     return fake.windows
 end
 
+-- Apps the last listing could not read. Tests set fake.droppedApps to simulate an
+-- app going quiet under AX (its windows removed from fake.windows AND its bundle
+-- id listed here) -- the case a feature must not mistake for "those windows
+-- closed". Default empty = every listing is clean.
+fake.droppedApps = {}
+
+function adapter.windowsDroppedApps()
+    return fake.droppedApps
+end
+
 function adapter.focusWindow(id)
     fake.focused[#fake.focused + 1] = id
     -- Real focus ALWAYS activates the target app (SLPS front-process), but the
@@ -1241,8 +1251,24 @@ end
 
 fake.activeUrls = {}   -- app -> the url its front tab is showing
 
-function adapter.browserActiveURL(app)
-    return fake.activeUrls[app]
+-- Async at the seam (the real one is an out-of-process read), so it goes through
+-- `oneShot` like every other async fake: that makes it visible to
+-- fake.liveHandles, gives stop() real drop-on-teardown semantics, and -- the
+-- reason it matters here -- lets a test set fake.deferAsync to hold the answer
+-- and drive the ORDERING of concurrent reads, which is exactly what the callers'
+-- serialization guards exist to control.
+--
+-- "" is normalized to nil, matching the real adapter (the script answers "" for
+-- an incognito or window-less browser); a fake that skipped this would let a
+-- caller pass here and fail against the real seam.
+-- The url is snapshotted at ISSUE time, not delivery time -- the real read runs a
+-- subprocess against the browser as it is when the call is made. This is what lets
+-- a test stage two DIFFERENT answers and then deliver them out of order (reverse
+-- fake.pendingAsync) to exercise a caller's ordering guard.
+function adapter.browserActiveURL(app, cb)
+    local u = fake.activeUrls[app]
+    if u == "" then u = nil end
+    return oneShot(function() cb(u) end)
 end
 
 fake.chromeFavicons   = {}   -- set: domain -> true ("Chrome knows this icon")

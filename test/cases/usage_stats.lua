@@ -153,6 +153,72 @@ return {
         ok(chromeRow and chromeRow.secs == 150 and #chromeRow.contexts == 2
             and chromeRow.contexts[1].name == "github.com" and chromeRow.contexts[1].secs == 90,
             "widget aggregates contexts under the app, sorted by time")
+        -- ===== THE BROWSER READ IS ASYNC: A STALE ANSWER MUST NOT WIN.
+        -- Reading the active tab is an out-of-process subprocess call (it blocked the
+        -- main thread for ~1s per call when it was synchronous). Async means two reads
+        -- for the same app can be in flight, and if an OLDER answer lands last it
+        -- would overwrite the newer domain -- after which the next flush banks real
+        -- focus time under the wrong site in a daily CSV the user keeps. A generation
+        -- counter drops any answer a later request has superseded.
+        do
+            fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = true
+            fake.activeUrls["Google Chrome"] = "https://first.example/page"
+            fake.activateApp("Google Chrome")           -- resolves synchronously here
+            -- Slices must clear MIN_ENTRY_SECONDS (30) or the CSV drops them, which
+            -- would make these assertions pass for the wrong reason.
+            fake.clockOffset = fake.clockOffset + 40
+
+            -- Two reads in flight, each snapshotting a DIFFERENT domain at issue time.
+            fake.deferAsync = true
+            fake.activeUrls["Google Chrome"] = "https://second.example/page"
+            fake.fireTimers("every", 30)               -- read A (older)
+            fake.activeUrls["Google Chrome"] = "https://third.example/page"
+            fake.fireTimers("every", 30)               -- read B (newer)
+            ok(#fake.pendingAsync == 2, "two context reads are genuinely in flight")
+
+            -- Deliver them OUT OF ORDER: newest first, then the stale one.
+            local q = fake.pendingAsync
+            fake.pendingAsync = { q[2], q[1] }
+            fake.deliverAsync()
+            fake.deferAsync = false
+            fake.clockOffset = fake.clockOffset + 50
+            fake.fireTimers("every", 600)              -- flush + write
+
+            local csvS = fake.files[appsCsv]
+            ok(csvS:match("\nGoogle Chrome,first%.example,4%d\n") ~= nil,
+                "the pre-switch slice is banked under the domain that was current")
+            ok(csvS:match("\nGoogle Chrome,third%.example,5%d\n") ~= nil,
+                "the NEWEST read's domain wins and the following slice accrues to it")
+            ok(csvS:match("\nGoogle Chrome,second%.example,") == nil,
+                "a stale answer landing last is dropped, not written to the CSV")
+            fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = nil
+        end
+
+        -- ===== AN UNRESOLVED CONTEXT DEFERS, IT DOES NOT BANK A BLANK ONE.
+        -- A browser activation starts its slice before the domain is known (subprocess
+        -- round-trip). Banking time under "" while waiting would file a sliver under a
+        -- context-less row on every single browser activation, and those accumulate
+        -- into a bogus row over a day -- so flushCurrent defers while unresolved and
+        -- the whole span lands under the real domain.
+        do
+            fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = true
+            fake.activeUrls["Google Chrome"] = "https://slow.example/page"
+            fake.deferAsync = true
+            fake.activateApp("Google Chrome")           -- context NOT resolved yet
+            fake.clockOffset = fake.clockOffset + 40
+            fake.fireTimers("every", 600)               -- a flush lands mid-resolve
+            ok(fake.files[appsCsv]:match("\nGoogle Chrome,,%d") == nil,
+                "a flush during the resolve window banks NOTHING under a blank context")
+
+            fake.deliverAsync()                          -- domain arrives
+            fake.deferAsync = false
+            fake.clockOffset = fake.clockOffset + 20
+            fake.fireTimers("every", 600)
+            ok(fake.files[appsCsv]:match("\nGoogle Chrome,slow%.example,6%d\n") ~= nil,
+                "the deferred span is attributed to the real domain once it resolves")
+            fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = nil
+        end
+
         fake.settings["hammerdeck.opt.usage_stats.trackChromeSite"] = nil
         fake.windowTitle = nil
 

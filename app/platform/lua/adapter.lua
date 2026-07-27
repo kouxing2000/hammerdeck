@@ -591,6 +591,17 @@ function adapter.listWindows()
     return native.list_windows()
 end
 
+--- Bundle ids whose windows are MISSING from the most recent listWindows()
+--- because their app did not answer AX in time (empty on a clean listing).
+---
+--- Absence from a listing is ambiguous -- closed and unanswered look the same --
+--- so a caller tracking windows ACROSS listings must consult this before
+--- concluding a window is gone.
+---@return string[]
+function adapter.windowsDroppedApps()
+    return native.windows_dropped_apps()
+end
+
 -- Focus a window by an id from the MOST RECENT listWindows() call.
 function adapter.focusWindow(id)
     return native.focus_window(id)
@@ -1045,10 +1056,23 @@ function adapter.browserFocusTab(app, tabId, winId, url, tabIndex, cb)
     end))
 end
 
--- The URL the browser is showing right now (front window's active tab), or
--- nil. Sync + cheap -- the curated "browser context" read.
-function adapter.browserActiveURL(app)
-    return native.browser_active_url(app)
+-- The URL the browser is showing right now (front window's active tab); cb(url|nil).
+-- The curated "browser context" read.
+--
+-- ASYNC (out-of-process), and that is load-bearing, not incidental: the old
+-- synchronous form measured ~1s per call and up to 6.7s, blocking the main
+-- thread on every app activation (see the seam comment in Native+Browser for the
+-- numbers). A departed browser, an incognito window, or no window all give nil.
+---@param app string   "Google Chrome" | "Safari"
+---@param cb fun(url: string|nil)
+---@return { stop: fun() } handle -- stop() drops the callback if the feature is
+---        torn down while osascript is still running
+function adapter.browserActiveURL(app, cb)
+    return handleFor(native.browser_active_url(app, function(raw)
+        -- The script answers "" for incognito / no window; normalize to nil so
+        -- callers never have to know the difference.
+        if raw and raw ~= "" then cb(raw) else cb(nil) end
+    end))
 end
 
 -- Pull real favicons for `domains` out of Chrome's local icon DB into

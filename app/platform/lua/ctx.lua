@@ -424,6 +424,10 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ---onboard rather than treating empty as "no windows".
     ---@return WindowInfo[]
     function ctx.window.list()           return window_ops.list() end
+    -- Bundle ids the LAST ctx.window.list() could not read (AX timeout), so a
+    -- feature tracking windows across listings can tell "this window closed" from
+    -- "its app went quiet" instead of guessing. Empty on a clean listing.
+    function ctx.window.droppedApps()    return adapter.windowsDroppedApps() end
     ---@param id integer from a CURRENT list() -- ids die at the next list
     ---@return boolean
     function ctx.window.focus(id)        return adapter.focusWindow(id) end
@@ -580,7 +584,11 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
             return adapter.browserFocusTab(app, tabId, winId, url, tabIndex, f)
         end, cb)
     end
-    function ctx.browserActiveURL(app) return adapter.browserActiveURL(app) end
+    -- ASYNC: cb(url|nil). Tracked like the other one-shots so a feature disabled
+    -- mid-flight never receives the answer.
+    function ctx.browserActiveURL(app, cb)
+        return trackOneShot(function(f) return adapter.browserActiveURL(app, f) end, cb)
+    end
     function ctx.extractFavicons(outDir, domains, cb)
         return trackOneShot(function(f) return adapter.extractFavicons(outDir, domains, f) end, cb)
     end

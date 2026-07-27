@@ -51,21 +51,116 @@ extension Native {
     ///
     ///     default   slowest read 1.505-1.515s   (3 runs, tightly clustered)
     ///     2.0s      slowest read 2.008s         <- ABOVE the default: loosens it
-    ///     0.3s      slowest read 0.305s         <- same success count as default
+    ///     0.3s      slowest read 0.305s
     ///
     /// So the default is ~1.5s, and an earlier 2.0s here made the bound WORSE
-    /// while slowing every listWindows pass. 0.3s cost zero successes (the apps
-    /// that miss it were timing out at 1.5s too), and it is what bounds a full
-    /// pass: with several wedged apps, 0.3s each keeps a pass near a second
-    /// instead of the ~7s the default allows -- and window_fan polls every 2s.
+    /// while slowing every listWindows pass. 0.3s is what bounds a full pass:
+    /// with several wedged apps, 0.3s each keeps a pass near a second instead of
+    /// the ~7s the default allows -- and window_fan polls every 2s.
     /// If you change this number, RE-MEASURE; do not trust the header's silence
     /// about the default.
+    ///
+    /// AN EARLIER VERSION OF THIS COMMENT CLAIMED 0.3s "cost zero successes".
+    /// That was WRONG, and the error was expensive (2026-07-25): a re-measure
+    /// across every app owning an on-screen window found 0.3s dropping NINE of
+    /// 23 apps, where 1.0s dropped five and 2.0s four. The cost is not per-call,
+    /// it is a ONE-TIME COLD HANDSHAKE -- five consecutive full passes, same
+    /// 0.3s ceiling, once the connections were warm:
+    ///
+    ///     pass 1  0.527s      pass 2  0.010s      pass 3  0.010s
+    ///     pass 4  0.013s      pass 5  0.016s
+    ///
+    /// A cold app therefore needs far MORE than 0.3s exactly once and ~0.5ms
+    /// forever after -- so a fixed 0.3s ceiling can never pay the handshake, the
+    /// app fails, stays cold, and fails again on every listing. That is a TRAP,
+    /// not a timeout: those nine apps' windows were missing from every listing
+    /// for HOURS (they simply never appear -- see the throttled log line in
+    /// listWindows), which left window_fan blind to a third of the machine's
+    /// windows and unable to ever highlight a focused window living in one.
+    ///
+    /// The fix is NOT a bigger number here -- that would put the cold cost
+    /// (9 apps x 1s) straight onto the main thread, which is the freeze 0.3s
+    /// exists to prevent. It is `warmAXConnection` below: pay the handshake
+    /// ONCE, OFF the main thread, and let the steady-state ceiling stay tight.
     static func applyAXMessagingTimeout() {
         let err = AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.3)
         if err != .success {
             // Silent failure here would leave every AX call on the loose default
             // with nothing to show for it.
             Native.shared.seamLog("AX messaging timeout not applied (AXError \(err.rawValue))")
+        }
+    }
+
+    /// Pay a cold app's one-time AX handshake on a BACKGROUND queue, so the next
+    /// main-thread listing finds it warm and answers inside the 0.3s ceiling.
+    ///
+    /// Called only from listWindows' `.cannotComplete` branch -- i.e. an app that
+    /// just missed the ceiling. Without this the miss is PERMANENT (see the
+    /// measurement in applyAXMessagingTimeout): the app is cold, 0.3s is not
+    /// enough to warm it, and nothing else ever gives it longer.
+    ///
+    /// Why a background queue is safe here, and why it is the whole point: the AX
+    /// *client* attribute-read API is callable off the main thread (only the
+    /// observer callbacks need a run loop, and those stay on main -- see
+    /// FocusObserver / FrameObserverSet). The element is created on that queue and
+    /// never escapes it, so nothing is shared. The generous per-element timeout is
+    /// set on THAT element only -- never via the system-wide element, which would
+    /// change the process-global default and quietly loosen every main-thread read.
+    ///
+    /// The result is DISCARDED: this exists only for its side effect of completing
+    /// the handshake. Warming is also shared between AX clients (proven: an
+    /// external probe warming these apps made a running Hammerdeck see them
+    /// immediately), so the work is never wasted even if the app is listed by
+    /// something else first.
+    /// `ceiling` is the per-element budget for the one cold read; it is a parameter
+    /// only so a test can drive the whole path without paying the real 5s.
+    /// Production callers take the default.
+    func warmAXConnection(pid: pid_t, appName: String, ceiling: Float = 5) {
+        // ONE guard, deliberately: the 30s rate limit also covers "a warm-up is
+        // already in flight", because the ceiling is far below it -- no attempt can
+        // still be running when the window reopens. An in-flight Set alongside this
+        // was redundant state whose only job was to be released, and forgetting to
+        // release it would have silently disabled warming for that app forever.
+        // window_fan lists several times per focus event, so the limit is what stops
+        // the warm-ups from becoming the storm they exist to prevent.
+        if let last = axWarmAttemptedAt[pid], Date().timeIntervalSince(last) < 30 { return }
+        axWarmAttemptedAt[pid] = Date()
+        // A SERIAL queue, not the global concurrent pool. The motivating case is a
+        // cold boot where NINE apps miss the ceiling in the same listing, and each
+        // warm-up is a BLOCKING cross-process read that can sit for the whole
+        // ceiling -- dispatching those concurrently is the classic thread-explosion
+        // shape for blocking IPC. Serialized, the worst case is one wedged app
+        // delaying another app's warm-up by a few seconds, which costs nothing: the
+        // next listing retries, and nobody is waiting on the result.
+        Native.axWarmQueue.async {
+            let element = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(element, ceiling)
+            var ref: CFTypeRef?
+            let err = AXUIElementCopyAttributeValue(
+                element, kAXWindowsAttribute as CFString, &ref)
+            let ok = err == .success && (ref as? [AXUIElement]) != nil
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // Throttled by app, like the miss itself: a chronically dead
+                    // app would otherwise write a line every 30s. The SUCCESS
+                    // line is the one worth having -- it is the evidence that a
+                    // missing app has come back, and it should appear once.
+                    if ok {
+                        Native.shared.seamLog(
+                            "list_windows: '\(appName)' warmed up off the main thread -- "
+                            + "its windows will appear from the next listing")
+                    } else {
+                        // Interpolate the real ceiling: it is a parameter, and a log
+                        // line that states a number the run did not use is worse than
+                        // no number at all.
+                        Native.shared.seamLogThrottled(
+                            "axwarm:" + appName,
+                            "list_windows: '\(appName)' did not answer even with a "
+                            + "\(ceiling)s background warm-up (AXError \(err.rawValue)) "
+                            + "-- it is wedged, not merely cold; its windows stay missing")
+                    }
+                }
+            }
         }
     }
 
@@ -86,6 +181,9 @@ extension Native {
     /// gives the donor). Returns {} when the permission is missing -- features
     /// check ax_trusted/ax_prompt to onboard.
     func listWindows(_ L: OpaquePointer?) -> Int32 {
+        // Rebuilt by every listing (including the untrusted early-out), so
+        // windows_dropped_apps() always describes the listing just returned.
+        lastListingDroppedApps = []
         guard AXIsProcessTrusted() else {
             axWindowCache.removeAll()
             lua_createtable(L, 0, 0)
@@ -152,10 +250,22 @@ extension Native {
                 // switcher. Say so, or that is a silent hole. Throttled per app:
                 // window_fan re-lists every 2s, and a chronically slow app would
                 // otherwise write a line per poll.
+                // Report the hole for ANY failure, not just a timeout: whatever the
+                // reason, this app's windows are absent from the listing, and a
+                // caller tracking windows across listings must be able to tell "this
+                // app went quiet" from "these windows closed". Narrowing this to
+                // .cannotComplete would silently skip the reservation for every other
+                // error.
+                if !bundleID.isEmpty { lastListingDroppedApps.append(bundleID) }
                 if winsErr == .cannotComplete {
                     seamLogThrottled("axwins:" + appName,
                                      "list_windows: '\(appName)' did not answer within the AX "
                                      + "timeout -- its windows are missing from this listing")
+                    // A miss is usually a COLD app, not a wedged one, and at 0.3s
+                    // it can never warm itself -- so pay the handshake off the main
+                    // thread and let the next listing find it. Without this the
+                    // app's windows stay missing indefinitely (see warmAXConnection).
+                    warmAXConnection(pid: pid, appName: appName)
                 }
                 continue
             }
@@ -255,6 +365,25 @@ extension Native {
             lua_pushnumber(L, r.frame.minY);   lua_setfield(L, -2, "y")
             lua_pushnumber(L, r.frame.width);  lua_setfield(L, -2, "w")
             lua_pushnumber(L, r.frame.height); lua_setfield(L, -2, "h")
+            lua_rawseti(L, -2, lua_Integer(i + 1))
+        }
+        return 1
+    }
+
+    /// windows_dropped_apps() -> { bundleID, ... } for the MOST RECENT
+    /// list_windows: the apps whose windows are missing from it because they did
+    /// not answer AX in time. Empty on a clean listing.
+    ///
+    /// This exists because absence from a window listing is AMBIGUOUS -- a window
+    /// that closed and a window whose app went quiet look identical -- and a caller
+    /// that guesses can do real damage: window_fan freed the captured pre-fan frame
+    /// of any window missing from a listing, so one AX hiccup permanently lost the
+    /// user's real window geometry (2026-07-25). The seam is the only layer that
+    /// knows which it was, so it says.
+    func windowsDroppedApps(_ L: OpaquePointer?) -> Int32 {
+        lua_createtable(L, Int32(lastListingDroppedApps.count), 0)
+        for (i, id) in lastListingDroppedApps.enumerated() {
+            lua_pushstring(L, id)
             lua_rawseti(L, -2, lua_Integer(i + 1))
         }
         return 1

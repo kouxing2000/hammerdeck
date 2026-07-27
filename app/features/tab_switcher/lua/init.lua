@@ -55,6 +55,7 @@ local function jumperFor(ctx)
         chooser = nil,
         altTimer = nil,
         lastActive = {},   -- browser name -> last polled url
+        urlReading = {},   -- browser name -> true while an active-url read is in flight
         refreshing = false,
     }
 
@@ -299,11 +300,32 @@ local function jumperFor(ctx)
         local front = ctx.frontmostApp()
         for _, b in ipairs(BROWSERS) do
             if b.name == front then
-                local url = ctx.browserActiveURL(b.name)
-                if url and url ~= st.lastActive[b.name] then
-                    st.lastActive[b.name] = url
-                    stamp(b.name, url)
-                end
+                -- Async (a subprocess read -- the sync form blocked the main
+                -- thread for ~1s per call; see the seam comment in
+                -- Native+Browser).
+                --
+                -- SERIALIZED per browser, the same way relist guards itself with
+                -- st.refreshing. Without this the poll fires every POLL_SECONDS
+                -- while a read may live up to the runJXA watchdog, so a slow
+                -- browser accumulates concurrent subprocesses AND their answers can
+                -- land OUT OF ORDER -- an older url then wins the `~= lastActive`
+                -- test and gets stamped with a fresh timestamp, inverting the very
+                -- MRU ranking this poll exists to maintain. One in flight at a time
+                -- makes ordering impossible to violate; the callback always fires
+                -- (or is dropped wholesale on teardown), so the flag cannot stick.
+                if st.urlReading[b.name] then return end
+                st.urlReading[b.name] = true
+                ctx.browserActiveURL(b.name, function(url)
+                    st.urlReading[b.name] = nil
+                    -- Re-check the front app: the user may have switched away
+                    -- mid-flight, and stamping then would record a tab they are no
+                    -- longer looking at.
+                    if ctx.frontmostApp() ~= b.name then return end
+                    if url and url ~= st.lastActive[b.name] then
+                        st.lastActive[b.name] = url
+                        stamp(b.name, url)
+                    end
+                end)
                 return
             end
         end

@@ -1152,6 +1152,65 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(registryNum("liveHandleCount()"), 0, "disable must leak nothing")
     }
 
+    /// AX COLD-START WARM-UP plumbing. An app whose accessibility tree is cold
+    /// needs far longer than the 0.3s steady-state ceiling for its FIRST kAXWindows
+    /// read (measured: 0.527s cold, ~0.010s warm), so a fixed ceiling can never pay
+    /// the handshake -- the app fails, stays cold, and its windows are missing from
+    /// EVERY listing. warmAXConnection pays it once on a background queue.
+    ///
+    /// Tested against a pid that cannot answer, because the failure mode that would
+    /// silently DISABLE the fix is bookkeeping, not AX: if the rate limit is not
+    /// applied, every listing re-probes a wedged app and the warm-ups become the
+    /// storm they exist to prevent (window_fan lists several times per focus event).
+    /// That shows up as neither a crash nor a log line, so nothing else catches it.
+    func testAXWarmUpRateLimitsARepeatedProbe() {
+        let native = Native.shared
+        // A pid that owns no process (pid 0 is the kernel; AX cannot answer for it).
+        let deadPid: pid_t = 0
+        native.axWarmAttemptedAt.removeValue(forKey: deadPid)
+
+        native.warmAXConnection(pid: deadPid, appName: "WarmUpProbe", ceiling: 0.2)
+        let firstAttempt = native.axWarmAttemptedAt[deadPid]
+        XCTAssertNotNil(firstAttempt, "an accepted warm-up records its attempt time")
+
+        // Every subsequent call inside the window must be a no-op -- not more AX
+        // traffic to an app that just failed to answer.
+        for _ in 0..<5 {
+            native.warmAXConnection(pid: deadPid, appName: "WarmUpProbe", ceiling: 0.2)
+        }
+        XCTAssertEqual(native.axWarmAttemptedAt[deadPid], firstAttempt,
+                       "repeat probes inside the rate-limit window are suppressed")
+
+        // Once the window has passed, the app becomes eligible again -- a wedged app
+        // that later recovers must not be locked out forever. Compare against the
+        // value actually WRITTEN, not a recomputed one: `Date()` moves between the
+        // two calls, so a recomputed expectation makes the assertion pass sometimes
+        // even when the warm-up was wrongly refused.
+        let stale = Date().addingTimeInterval(-31)
+        native.axWarmAttemptedAt[deadPid] = stale
+        native.warmAXConnection(pid: deadPid, appName: "WarmUpProbe", ceiling: 0.2)
+        XCTAssertNotEqual(native.axWarmAttemptedAt[deadPid], stale,
+                          "after the rate-limit window a fresh warm-up is accepted")
+
+        native.axWarmAttemptedAt.removeValue(forKey: deadPid)
+    }
+
+    /// The seam must report which apps it FAILED to read, because absence from a
+    /// window listing is otherwise ambiguous -- a closed window and a window whose
+    /// app went quiet look identical, and window_fan destroyed captured window
+    /// geometry by guessing (2026-07-25). A clean listing reports nothing.
+    /// Deliberately does NOT list first (a real AX enumeration costs seconds when
+    /// the test process is cold, and the post-listing shape is asserted inside
+    /// testRealWindowListingViaAX, which already pays for one): the contract checked
+    /// here is that the reader always answers a table, including before any listing.
+    func testDroppedAppsAlwaysAnswersATable() {
+        let dropped = eval("return require('platform.adapter').windowsDroppedApps()") as? [Any]
+        XCTAssertNotNil(dropped, "windowsDroppedApps always answers a table, never nil")
+        // Deliberately NOT asserting emptiness: whether a listing has run by now
+        // depends on global test order and on whether this machine has a slow app,
+        // neither of which is a property of the code under test.
+    }
+
     func testRealWindowListingViaAX() throws {
         try XCTSkipUnless(AXIsProcessTrusted(),
             "needs Accessibility (grant it to the terminal running `swift test`)")
@@ -1169,6 +1228,15 @@ final class IntegrationTests: XCTestCase {
         let raw = eval("return require('platform.adapter').listWindows()") as? [Any]
         let rows = raw?.compactMap { $0 as? [String: Any] } ?? []
         XCTAssertFalse(rows.isEmpty, "a real desktop session has at least one window")
+
+        // Riding this listing (rather than paying for another): whatever the seam
+        // reports as DROPPED must be usable as the bundle-id key window_fan matches
+        // on -- an empty id there would silently classify a live app as absent.
+        for entry in eval("return require('platform.adapter').windowsDroppedApps()") as? [Any] ?? [] {
+            let id = entry as? String
+            XCTAssertNotNil(id, "dropped entries are bundle id strings")
+            XCTAssertFalse((id ?? "").isEmpty, "a dropped entry is never the empty id")
+        }
         for row in rows.prefix(3) {
             XCTAssertNotNil(row["id"] as? Double, "window rows carry an id")
             XCTAssertFalse((row["title"] as? String ?? "").isEmpty, "windows carry a title")
@@ -1388,8 +1456,12 @@ final class IntegrationTests: XCTestCase {
         let r2 = try? host.lua.eval(
             "return pcall(function() require('platform.adapter').browserFocusTab('Evil App', 0, 1, 'https://x/', 0, function() end) end)")
         XCTAssertEqual(r2 as? Bool, false)
-        XCTAssertNil(eval("return require('platform.adapter').browserActiveURL('Evil App')"),
-                     "active-url for a non-whitelisted app is nil, not a script run")
+        // browserActiveURL is async now (out-of-process), so it refuses the same
+        // way its siblings do -- a raise at the bridge, never a script run.
+        let r3 = try? host.lua.eval(
+            "return pcall(function() require('platform.adapter').browserActiveURL('Evil App', function() end) end)")
+        XCTAssertEqual(r3 as? Bool, false,
+                       "active-url for a non-whitelisted app must raise, not reach a script")
 
         XCTAssertEqual(eval("return require('platform.adapter').isAppRunning('NoSuchApp-77')") as? Bool,
                        false)

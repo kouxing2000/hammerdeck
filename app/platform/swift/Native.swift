@@ -43,6 +43,25 @@ final class Native {
     var axWindowCache: [Int: AXWindowRef] = [:]
     var nextWindowId = 1
 
+    // AX cold-start warming (see Native+Windows.warmAXConnection): when a warm-up
+    // was last ATTEMPTED per app, which both rate-limits retries for a genuinely
+    // wedged app and (because the attempt's own ceiling is far shorter) subsumes
+    // "one at a time" per app.
+    var axWarmAttemptedAt: [pid_t: Date] = [:]
+
+    /// Serial queue for the cold-start AX warm-ups. Serial on purpose: each warm-up
+    /// BLOCKS on a cross-process read, and the case that motivates warming is many
+    /// apps missing the ceiling in one listing -- concurrently that is a thread
+    /// explosion. Nothing waits on these, so serializing costs only latency.
+    static let axWarmQueue = DispatchQueue(label: "hammerdeck.ax-warm", qos: .utility)
+
+    // Bundle ids whose windows were DROPPED from the most recent list_windows
+    // because the app did not answer AX. Rebuilt by every listing, and read via
+    // windows_dropped_apps() -- absence from a listing is otherwise
+    // indistinguishable from "the window closed", and a caller that guesses wrong
+    // can destroy state (see window_fan's refan).
+    var lastListingDroppedApps: [String] = []
+
     func attach(_ lua: LuaState) {
         self.lua = lua
         // Callback errors are the audit trail's highest-value entries (an
@@ -191,6 +210,7 @@ final class Native {
         let fns3: [String: LuaState.Function] = [
             // windows / apps (AXUIElement -- needs the Accessibility permission)
             "list_windows": { L in MainActor.assumeIsolated { Native.shared.listWindows(L) } },
+            "windows_dropped_apps": { L in MainActor.assumeIsolated { Native.shared.windowsDroppedApps(L) } },
             "focus_window": { L in MainActor.assumeIsolated { Native.shared.focusWindow(L) } },
             "raise_window": { L in MainActor.assumeIsolated { Native.shared.raiseWindow(L) } },
             "on_focused_window_changed": { L in MainActor.assumeIsolated { Native.shared.onFocusedWindowChanged(L) } },

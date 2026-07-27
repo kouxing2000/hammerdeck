@@ -705,8 +705,37 @@ extension Native {
         return 1
     }
 
-    // browser_active_url(app) -> url|nil. Sync + cheap (one property read);
-    // this is the curated "what is the browser looking at" call (#9 context).
+    // browser_active_url(app, cb) -> resource id; cb(url|nil). ASYNC and
+    // OUT-OF-PROCESS -- this is the curated "what is the browser looking at" call
+    // (#9 context).
+    //
+    // IT USED TO BE SYNCHRONOUS, and that was the app's worst main-thread stall
+    // (measured 2026-07-25, chasing a Window Fan beachball). "Sync + cheap (one
+    // property read)" -- the old comment here -- was simply false:
+    //
+    //     5 x Chrome, all SUCCEEDING     5.07s total  -> ~1.0s each
+    //     1 x Chrome                     6.67s
+    //     3 x Safari                     >8.77s
+    //     the same script via osascript  0.48s   (out of process, incl. spawn)
+    //
+    // For scale, a full 36-window AX enumeration is 67ms -- so this ONE property
+    // read cost 15x a whole window listing, and was SLOWER in-process than
+    // spawning an entire subprocess. usage_stats calls it on EVERY app activation
+    // (and tab_switcher on a poll), so a burst of activations -- exactly what
+    // window_fan's raise pass produces -- froze the app for seconds at a time.
+    //
+    // The 2s `with timeout` did NOT bound it (6.67s observed): `with timeout`
+    // bounds the Apple Event REPLY only, not NSAppleScript compilation (redone on
+    // every call, resolving the target's scripting dictionary), not connection
+    // setup, and not the TCC check. There is no ceiling to tune here -- a
+    // synchronous main-thread Apple Event is unbounded by construction, which is
+    // why CLAUDE.md's seam rule says to prefer the async out-of-process shape for
+    // anything bigger than one property read. This IS one property read, and it
+    // still needed the subprocess.
+    //
+    // A subprocess cannot hang the host at all: runJXA owns its own SIGTERM
+    // watchdog, and the main thread never waits. Both callers are timer/event
+    // SAMPLERS that already tolerate a late answer, so async costs them nothing.
     //
     // PRIVACY -- incognito is NEVER reported. A Chrome window carries a `mode`
     // property ("normal"/"incognito"); when the front window is incognito this
@@ -718,40 +747,58 @@ extension Native {
     // (usage_stats gates browser domains behind an opt-in and documents the gap).
     func browserActiveUrl(_ L: OpaquePointer?) -> Int32 {
         guard let app = LuaState.string(L, 1), Native.scriptableBrowsers.contains(app) else {
-            lua_pushnil(L)
+            // Refuse a non-whitelisted app at the bridge, like browser_list_tabs --
+            // never let one reach a script.
+            return luaError(L, "browser_active_url: unsupported app")
+        }
+        let ref = lua.makeRef(at: 2)
+        // LIVENESS GATE -- the 2026-07-23 freeze. Kept even though the read is now
+        // out-of-process: `Application(x).windows` LAUNCHES a departed app, and
+        // usage_stats polls keyed on the last ACTIVATED app, so once Chrome quits
+        // every tick would otherwise resurrect it. Answer nil without spawning
+        // anything. Fired through the one-shot machinery so the callback contract
+        // (exactly once, droppable on teardown) is identical on both paths.
+        guard Native.appIsRunning(named: app) else {
+            let id = allocOneShot()
+            armOneShot(id, ref)
+            // fireOneShot already hops to main, so the callback lands AFTER this
+            // call returns -- never re-entering Lua mid-call.
+            Native.fireOneShot(id, ref) { L in lua_pushnil(L); return 1 }
+            lua_pushinteger(L, lua_Integer(id))
             return 1
         }
-        let source = app == "Safari"
-            ? "tell application \"Safari\" to return URL of front document"
-            : """
-              tell application "Google Chrome"
-                  if (count of windows) is 0 then return ""
-                  if (mode of front window) is "incognito" then return ""
-                  return URL of active tab of front window
-              end tell
+        // PRIVACY -- incognito is NEVER reported. A Chrome window carries a `mode`
+        // property ("normal"/"incognito"); when the front window is incognito this
+        // returns "" (-> nil) BEFORE reading the tab URL, so nothing downstream (the
+        // usage_stats site column, tab_switcher's MRU) ever sees or records a
+        // private-browsing URL. Safari's scripting exposes NO private-window flag,
+        // so Safari private tabs CANNOT be excluded here -- callers that must honor
+        // "never record incognito" treat Safari site context as best-effort
+        // (usage_stats gates browser domains behind an opt-in and documents the gap).
+        // This mirrors the guard in browser_list_tabs; keep the two in step.
+        let script = app == "Safari"
+            ? """
+              function run() {
+                var app = Application("Safari");
+                var docs = app.documents();
+                if (docs.length === 0) { return ""; }
+                var u = ""; try { u = docs[0].url() || ""; } catch (e) {}
+                return u;
+              }
               """
-        // LIVENESS-GATED + BOUNDED. This is the call that hung the app on
-        // 2026-07-23: usage_stats polls it on a timer keyed on the LAST ACTIVATED
-        // app, so once Chrome quit it kept addressing a dead app every tick, and
-        // the Apple Event never came back. `requiring: app` makes a departed
-        // browser a nil in microseconds instead of an unbounded wait, and 2s is
-        // still enormous for what is one property read from a live browser.
-        //
-        // The 2s is deliberately FAR tighter than runJXA's 30s, and the difference
-        // is not an oversight: that path is a SUBPROCESS (it can afford to sit
-        // through a first-run TCC prompt because it blocks nobody), while this one
-        // runs ON THE MAIN THREAD. A synchronous call must never wait on a human --
-        // waiting out a permission dialog here would BE the freeze this fix exists
-        // to prevent. Timing out costs one missed poll sample; the next tick
-        // resamples, and the grant, once given, applies from then on. Do not raise
-        // this to "fix" a first-run prompt.
-        let result = runAppleScript(source, requiring: app, timeout: 2,
-                                    label: "browser active url")
-        if let url = result?.stringValue, !url.isEmpty {
-            lua_pushstring(L, url)
-        } else {
-            lua_pushnil(L)
-        }
+            : """
+              function run() {
+                var app = Application("Google Chrome");
+                var wins = app.windows();
+                if (wins.length === 0) { return ""; }
+                var win = wins[0];
+                var mode = ""; try { mode = win.mode(); } catch (e) {}
+                if (mode === "incognito") { return ""; }
+                var u = ""; try { u = win.activeTab().url() || ""; } catch (e) {}
+                return u;
+              }
+              """
+        lua_pushinteger(L, lua_Integer(runJXA(script, ref)))
         return 1
     }
 }

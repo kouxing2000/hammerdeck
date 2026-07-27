@@ -78,13 +78,20 @@ local function start(ctx)
         appDate  = nil,   -- the day appTime belongs to
         dayCache = {},    -- date -> total secs (past days never change)
         widget   = nil,   -- live desktop widget handle (when shown)
+        ctxGen   = {},     -- app -> newest issued context-read id (drops stale answers)
     }
     shared.st = st
 
     -- What is the app looking at right now? Browsers: the active tab's
     -- domain. Editors: the project name from the window title (donor format
     -- "file — Project", with any " [SSH: ...]"-style suffix stripped).
-    local function contextFor(app)
+    -- ASYNC -- cb(context). The browser branch is a subprocess round-trip (~0.3-0.5s),
+    -- because reading a browser's active tab SYNCHRONOUSLY blocked the main thread
+    -- for ~1s (and up to 6.7s) on every activation -- the app's worst stall, found
+    -- 2026-07-25. See the seam comment in Native+Browser for the measurements. The
+    -- editor branch is a cheap local read but answers through the same callback, so
+    -- callers have ONE shape to reason about rather than two.
+    local function contextFor(app, cb)
         local siteOpt = BROWSER_OPT[app]
         if siteOpt then
             -- Site (domain) tracking is OPT-IN per browser: off by default, so the
@@ -92,17 +99,34 @@ local function start(ctx)
             -- toggling applies on the next tick without a restart. For Chrome the
             -- seam excludes incognito (returns nil -> ""); for Safari it cannot,
             -- which is exactly why trackSafariSite is its own risk-flagged toggle.
-            if ctx.opt(siteOpt) ~= true then return "" end
-            return getDomain(ctx.browserActiveURL(app)) or ""
+            if ctx.opt(siteOpt) ~= true then return cb("") end
+            -- ORDERED per browser, via a generation counter: only the answer to the
+            -- NEWEST request for this app is delivered, and any answer overtaken by a
+            -- later request is dropped. Activations and the 30s poll both land here,
+            -- so two reads for the same app can be in flight, and an out-of-order
+            -- landing would let the OLDER domain win -- after which the next flush
+            -- banks up to a full poll interval of real focus time under the wrong site
+            -- in a daily CSV the user keeps.
+            --
+            -- A counter rather than tab_switcher's "skip while one is in flight":
+            -- there, a skipped tick just resamples, but HERE the callback is what
+            -- resolves st.curCtx, so a skip that never calls back would leave this
+            -- app's context permanently unresolved and its time unbanked.
+            local gen = (st.ctxGen[app] or 0) + 1
+            st.ctxGen[app] = gen
+            return ctx.browserActiveURL(app, function(url)
+                if st.ctxGen[app] ~= gen then return end   -- superseded; drop it
+                cb(getDomain(url) or "")
+            end)
         elseif EDITOR_APPS[app] then
             local title = ctx.window.title() or ""
             local project = title:match(" — (.+)$")
             if project then
                 project = project:match("^([^%[]+)") or project
-                return project:match("^%s*(.-)%s*$")
+                return cb(project:match("^%s*(.-)%s*$"))
             end
         end
-        return ""
+        return cb("")
     end
 
     -- Storage root, resolved once via the shared resolver: the `dir` option with
@@ -119,6 +143,14 @@ local function start(ctx)
     -- idle stretch.
     local function flushCurrent()
         if not (st.curApp and st.curSince) then return end
+        -- curCtx == nil means "not resolved yet" (a browser's domain is a subprocess
+        -- round-trip). DEFER rather than banking: st.curSince is left where it is, so
+        -- when the answer lands the whole span -- including the resolve window -- is
+        -- attributed to the real domain. Banking here instead would file a sub-second
+        -- sliver under a BLANK context on every browser activation, and those
+        -- accumulate into a bogus context-less row over a day. Distinct from "" which
+        -- is a RESOLVED empty context (a non-browser app, or tracking switched off).
+        if st.curCtx == nil then return end
         local now = ctx.now()
         local elapsed = now - st.curSince
         st.curSince = now
@@ -272,21 +304,33 @@ local function start(ctx)
         local app = ctx.frontmostApp()
         if app and not IGNORE_APPS[app] then
             st.curApp = app
-            st.curCtx = contextFor(app)
+            st.curCtx = nil          -- UNRESOLVED (flushCurrent defers), not blank
+            -- Async: the slice already started, so the resolved context simply
+            -- labels it when it lands (no flush -- see onAppActivated below).
+            contextFor(app, function(c)
+                if st.curApp == app then st.curCtx = c end
+            end)
         end
         ctx.log("wake at " .. os.date("%H:%M:%S", now))
     end
 
     -- Tab/project switches WITHIN an app don't fire an activation event; the
     -- donor polled for them. On change: flush the old slice, start the new.
+    -- The flush is REQUIRED here (unlike the activation path): real time has
+    -- accrued under the OLD context, so it must be banked before relabelling.
     local function pollContext()
         if not st.curApp or ctx.idleSeconds() > IDLE_POLL_SKIP then return end
         rollover()
-        local newCtx = contextFor(st.curApp)
-        if newCtx ~= st.curCtx then
-            flushCurrent()
-            st.curCtx = newCtx
-        end
+        local app = st.curApp
+        contextFor(app, function(newCtx)
+            -- The app may have changed during the round-trip; that activation
+            -- already set its own context, so this answer is stale -- drop it.
+            if st.curApp ~= app then return end
+            if newCtx ~= st.curCtx then
+                flushCurrent()
+                st.curCtx = newCtx
+            end
+        end)
     end
 
     local function recordSession()
@@ -323,8 +367,18 @@ local function start(ctx)
         rollover()
         flushCurrent()
         st.curApp = app
-        st.curCtx = contextFor(app)
+        -- The new slice starts NOW, before its context is known: resolving a
+        -- browser tab is a subprocess round-trip. Start it UNRESOLVED (nil, not "")
+        -- and let the answer label it -- flushCurrent defers while nil, so the whole
+        -- span lands under the real domain instead of banking a sub-second sliver
+        -- into a blank-context bucket on every browser activation. Do not flush when
+        -- the answer arrives either. A stale answer (the user moved on, or a newer
+        -- read superseded this one) is dropped.
+        st.curCtx = nil
         st.curSince = ctx.now()
+        contextFor(app, function(c)
+            if st.curApp == app then st.curCtx = c end
+        end)
     end)
     ctx.onSystemEvent("wake", onWake)
     ctx.onSystemEvent("screenUnlock", onWake)
