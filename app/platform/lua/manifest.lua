@@ -46,7 +46,7 @@
 --       "name":        "Rest Timer",          -- shown in config UI
 --       "description": "Reminds you to rest",
 --       "version":     "1.0.0",
---       "category":    "health",              -- domain tag, shown as a small label
+--       "category":    "health",              -- domain tag: the Settings/README section
 --       "context":     "automatic",           -- WHEN it applies: textField|window|web|anywhere|automatic
 --       "requires":    ["accessibility"],     -- OS preconditions the user must grant
 --       "recommended": false,                 -- part of the curated Essentials set?
@@ -140,6 +140,32 @@ for cap in pairs(CAPABILITY_METHODS) do KNOWN_CAPABILITIES[cap] = true end
 --   automatic -- runs itself on a schedule/event, no user action (wallpaper, sleep)
 local KNOWN_CONTEXTS = {
     textField = true, window = true, web = true, anywhere = true, automatic = true,
+}
+
+-- `category` is the DOMAIN tag -- "what kind of thing is this" -- and is what the
+-- Settings sidebar and the generated README group by. Orthogonal to `context`
+-- above (WHEN it applies): a switcher is `switching` whether it switches windows,
+-- tabs or clipboard entries, though those sit in three different contexts.
+--
+-- Controlled vocabulary, ENFORCED. It was free-form until 2026-07-28, and drifted
+-- into a single 18-of-25 `productivity` bucket that grouped nothing; an unchecked
+-- typo is worse than the drift, because Swift's `categoryLabel` falls back to the
+-- raw value capitalized, so a misspelling silently mints a section with no
+-- translation, no tint and no glyph. Keep this list in step with categoryLabel /
+-- categoryColor / categoryIcon + CATEGORY_ORDER (FeatureChrome.swift) and GROUPS
+-- (scripts/gen-readme-features.py).
+--   windows    -- arranging the focused window / a screen's windows (snap, grid, deck)
+--   switching  -- pick one of many from a searchable panel (windows, tabs, sites,
+--                 clipboard, commands) -- the chooser family, whatever it lists
+--   text       -- acts on the selection or types into the focused field
+--   health     -- looks after the person, not the machine (breaks, sleep, display off)
+--   utilities  -- self-contained one-offs (password, countdown, pointer)
+--   visibility -- shows what the app itself did (confirm chip, run notice, usage)
+--   appearance -- how the desktop looks (wallpaper)
+--   general    -- the default when a feature.json omits the field
+local KNOWN_CATEGORIES = {
+    windows = true, switching = true, text = true, health = true,
+    utilities = true, visibility = true, appearance = true, general = true,
 }
 
 -- `requires` lists OS preconditions a user must grant before the feature works
@@ -324,6 +350,13 @@ function manifest.validate(m)
         end
     end
 
+    -- category: the domain tag (Settings sidebar + README sections). Optional;
+    -- defaults to "general" so an unannotated feature still lands somewhere.
+    if m.category ~= nil then
+        assert(type(m.category) == "string" and KNOWN_CATEGORIES[m.category],
+            "feature '" .. m.id .. "': unknown category '" .. tostring(m.category) ..
+            "' (expected windows|switching|text|health|utilities|visibility|appearance|general)")
+    end
     m.category = m.category or "general"
 
     -- context: the primary grouping axis (when the feature applies). Optional;
@@ -487,6 +520,14 @@ manifest.CAPABILITY_METHODS = CAPABILITY_METHODS
 -- rather than re-listing it and drifting.
 ---@type table<string, boolean>
 manifest.KNOWN_CAPABILITIES = KNOWN_CAPABILITIES
+
+-- Every category a feature may declare, as a set. Exposed for the SAME reason as
+-- the capabilities above -- so the gate that keeps the Swift and Python copies of
+-- this vocabulary honest (testCategoryVocabularyIsConsistent) can enumerate the
+-- real set instead of re-listing it here and drifting, which is precisely the
+-- failure this whole re-cut exists to fix.
+---@type table<string, boolean>
+manifest.KNOWN_CATEGORIES = KNOWN_CATEGORIES
 
 function manifest.hasCapability(m, name)
     for _, cap in ipairs(m.capabilities or {}) do

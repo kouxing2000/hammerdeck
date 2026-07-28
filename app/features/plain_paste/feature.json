@@ -2,7 +2,7 @@
   "name": "Paste as Plain Text",
   "version": "1.2.0",
   "description": "Paste without formatting: strips fonts/colors/links from the copied text and pastes it (or types it as keystrokes).",
-  "category": "productivity",
+  "category": "text",
   "icon": "doc.on.clipboard",
   "context": "textField",
   "capabilities": [

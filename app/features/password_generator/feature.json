@@ -2,7 +2,7 @@
   "name": "Password Generator",
   "version": "1.0.0",
   "description": "Generate a strong random password and copy it to the clipboard.",
-  "category": "productivity",
+  "category": "utilities",
   "icon": "key.horizontal",
   "context": "anywhere",
   "recommended": true

@@ -143,7 +143,14 @@ struct SettingsPane: View {
         for f in store.features where (!f.preference || f.failed) && matches(f) && !seen.contains(f.category) {
             seen.append(f.category)
         }
-        return seen
+        // Sort into the CANONICAL order rather than leaving it to catalog scan
+        // order, which is really the alphabetical directory walk and puts the
+        // sections wherever their first member happens to sort. Ties (an unranked
+        // category, e.g. the synthesized "failed" one) fall back to their label so
+        // the order is still stable rather than scan-dependent.
+        return seen.sorted {
+            (categoryRank($0), categoryLabel($0)) < (categoryRank($1), categoryLabel($1))
+        }
     }
 }
 

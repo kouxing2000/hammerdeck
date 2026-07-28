@@ -2,7 +2,7 @@
   "name": "Command Palette",
   "version": "1.0.0",
   "description": "Fuzzy-search and run any action of any enabled feature from one keystroke.",
-  "category": "platform",
+  "category": "switching",
   "selfEvident": true,
   "icon": "command",
   "context": "anywhere",

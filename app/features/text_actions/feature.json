@@ -2,7 +2,7 @@
   "name": "Text Actions",
   "version": "1.1.0",
   "description": "Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- refine/translate/summarize via AI. Results paste back in place.",
-  "category": "productivity",
+  "category": "text",
   "icon": "textformat",
   "context": "textField",
   "capabilities": [

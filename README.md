@@ -37,26 +37,29 @@ subscription.
 
 Every feature ships **off by default** -- switch one on in Settings and bind it to any trigger.
 
-### Productivity
+### Windows
+
+- **Pointer Follows Moved Window** -- Comfort: when Snap, Window Mode, Grid or Deck repositions the focused window, the pointer rides along, keeping its place inside it.
+- **Window Deck** -- A focus workflow: tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.
+- **Window Fan** -- Every-window switching with zero setup: fan the focused screen's windows against the screen edges so each keeps a full, always-visible edge no other window can cover. Click any one to switch, or step through them from the keyboard. Turn the rearranging off and nothing on screen moves -- the borders, the list and the switching stay. With it on, the fan declines to run when a screen holds more windows than it can honestly fit, and says how many that is.
+- **Window Grid** -- Precise placement: put the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle.
+- **Window Mode** -- Fine control, one key at a time: a modal keyboard layer for move/resize/corners/center/undo, live until Escape. For arranging by feel without spending a global hotkey on every arrangement.
+- **Window Rewind** -- Undo for any window move: one hotkey (Hyper+Z) restores every window a snap, screen-swap, grid, or deck move just repositioned, and returns the pointer with them. Single-step -- it rewinds the most recent change.
+- **Window Snap** -- One-key common cases: snap to a half, toggle maximize/75%, throw to the next screen (the pointer follows). Beyond Sequoia's built-in tiling -- a 75% toggle, a next-screen throw that carries the pointer, and every move undoable through Window Rewind -- and it runs from macOS 13.
+
+### Switching & Search
 
 - **Clipboard History** -- Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded. <sub>Reaches: types keystrokes, reads/writes files.</sub>
-- **Countdown** -- Ask for minutes, then run a thin progress strip along the bottom of the screen; notifies when time is up.
-- **Insert Date/Time** -- Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern). <sub>Reaches: types keystrokes.</sub>
-- **Password Generator** -- Generate a strong random password and copy it to the clipboard.
-- **Paste as Plain Text** -- Paste without formatting: strips fonts/colors/links from the copied text and pastes it (or types it as keystrokes). <sub>Reaches: types keystrokes.</sub>
-- **Pointer** -- On-demand pointer helpers -- flash a crosshair to find the mouse, or center it on the focused window or a screen.
-- **Pointer Follows Moved Window** -- When a window-movement feature (Snap, Window Mode, Grid) repositions the focused window, the pointer rides along, keeping its place inside it.
+- **Command Palette** -- Fuzzy-search and run any action of any enabled feature from one keystroke. <sub>Reaches: runs other features.</sub>
 - **Quick Sites** -- Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether to open it as a standalone app window. cmd+<number> jumps straight to a row. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
 - **Tab Switcher** -- Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
-- **Text Actions** -- Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- refine/translate/summarize via AI. Results paste back in place. <sub>Reaches: types keystrokes, network.</sub>
-- **Usage Stats** -- Tracks wake/sleep sessions and per-app focus time to daily CSV files (idle time excluded), with an optional desktop widget. <sub>Reaches: reads browser tabs, reads/writes files.</sub>
-- **Window Deck** -- Tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.
-- **Window Fan** -- A window-switcher mode: fan every window on the focused screen against the screen's edges so each keeps a full, always-visible edge no other window can cover -- whatever is on top. Stay in the mode with every window live-bordered (the selected one bold), click any to switch or step through them from the keyboard; press again to leave and restore. Because a window cannot shrink below its own minimum size, the fan declines to run when the screen holds more windows than it can honestly fit, and says how many that is. Or turn the rearranging off entirely: the borders, the list and the switching stay, nothing on your screen moves, and there is no limit on how many windows.
-- **Window Grid** -- Place the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle. Pairs with Window Snap and Window Mode.
-- **Window Mode** -- A modal keyboard layer for finer arranging -- move/resize/corners/center/undo under one key until Escape. Best when you want control without many global hotkeys. Pairs with Window Snap.
-- **Window Rewind** -- Undo the last window layout change -- one hotkey (Hyper+Z) restores every window a snap, screen-swap, grid, or deck move just repositioned, and returns the pointer with them. Single-step: it rewinds the most recent change.
-- **Window Snap** -- Direct hotkeys for the common arrangements -- snap to a half, toggle maximize/75%, throw to the next screen (pointer follows). Best for one-key snaps. Pairs with Window Mode.
 - **Window Switcher** -- Searchable Alt-Tab: switch windows across all apps, most recently used first.
+
+### Text
+
+- **Insert Date/Time** -- Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern). <sub>Reaches: types keystrokes.</sub>
+- **Paste as Plain Text** -- Paste without formatting: strips fonts/colors/links from the copied text and pastes it (or types it as keystrokes). <sub>Reaches: types keystrokes.</sub>
+- **Text Actions** -- Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- refine/translate/summarize via AI. Results paste back in place. <sub>Reaches: types keystrokes, network.</sub>
 
 ### Health
 
@@ -64,15 +67,21 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 - **Sleep Schedule** -- Forces system sleep at a set time, with graduated warnings, a one-time snooze, and a weekend shift. <sub>Reaches: sleep/lock.</sub>
 - **Turn Off Display When Idle** -- Turns the display off after a period of no activity, with a countdown warning on every screen first. Stands down while video, a call or a presentation is holding the display awake. <sub>Reaches: sleep/lock.</sub>
 
+### Utilities
+
+- **Countdown** -- Ask for minutes, then run a thin progress strip along the bottom of the screen; notifies when time is up.
+- **Password Generator** -- Generate a strong random password and copy it to the clipboard.
+- **Pointer** -- On-demand pointer helpers -- flash a crosshair to find the mouse, or center it on the focused window or a screen.
+
+### Visibility & Trust
+
+- **Confirm Shortcut Presses** -- When you fire a feature with a hotkey or chord, briefly flash which action ran -- a quiet, single-slot chip (glyph + name, top-center) that fades on its own. Confirms the press registered and, if you reached for the wrong shortcut, shows what you actually triggered. Automated triggers use the separate notification instead.
+- **Notify on Automated Run** -- Show a brief on-screen notification naming a feature when one of its actions fires from an AUTOMATED trigger -- a schedule or a system event (sleep/wake/screen lock/...). Lets you see what ran while you were away. Manual shortcuts (hotkeys, chords) and menubar runs never notify -- you started those yourself.
+- **Usage Stats** -- Tracks wake/sleep sessions and per-app focus time to daily CSV files (idle time excluded), with an optional desktop widget. <sub>Reaches: reads browser tabs, reads/writes files.</sub>
+
 ### Appearance
 
 - **Bing Daily Wallpaper** -- Sets Bing's picture of the day as your wallpaper, refreshed on a schedule. <sub>Reaches: network.</sub>
-
-### Platform
-
-- **Command Palette** -- Fuzzy-search and run any action of any enabled feature from one keystroke. <sub>Reaches: runs other features.</sub>
-- **Confirm Shortcut Presses** -- When you fire a feature with a hotkey or chord, briefly flash which action ran -- a quiet, single-slot chip (glyph + name, top-center) that fades on its own. Confirms the press registered and, if you reached for the wrong shortcut, shows what you actually triggered. Automated triggers use the separate notification instead.
-- **Notify on Automated Run** -- Show a brief on-screen notification naming a feature when one of its actions fires from an AUTOMATED trigger -- a schedule or a system event (sleep/wake/screen lock/...). Lets you see what ran while you were away. Manual shortcuts (hotkeys, chords) and menubar runs never notify -- you started those yourself.
 
 <!-- FEATURES:END -->
 

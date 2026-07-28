@@ -56,6 +56,13 @@ private struct TLItem: Identifiable {
     // use the `__rules__` featureId sentinel; clicking one deep-links to its editor.
     var isRule: Bool { featureId == "__rules__" }
 
+    /// The marker tint. A rule is not a feature and has no category, so it gets
+    /// the purple its own legend entry (the wand) already uses, rather than
+    /// borrowing a feature category for the color -- which is what this did until
+    /// 2026-07-28, when the borrowed name was retired from the vocabulary and every
+    /// rule marker silently fell through categoryColor's default to gray.
+    var tint: Color { isRule ? .purple : categoryColor(category) }
+
     // The rule's id when this item is a rule (parsed from the `id` sentinel
     // "rule|<id>", 5-char prefix), else nil -- the deep-link target.
     var ruleId: String? { isRule ? String(id.dropFirst(5)) : nil }
@@ -124,12 +131,25 @@ struct AutomationTimelineView: View {
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
+    /// The category dots to explain -- DERIVED from what is actually on the axis,
+    /// in canonical order. It used to be a hardcoded four-name list, which is a
+    /// fourth copy of the category vocabulary and drifted the moment that
+    /// vocabulary was re-cut: it went on advertising two retired names (as gray
+    /// dots, since categoryColor no longer knew them) while every category that
+    /// had reached the timeline went unlabelled. Deriving it deletes that copy
+    /// rather than updating it, so the drift cannot recur.
+    private var legendCategories: [String] {
+        Array(Set(items.filter { !$0.isRule }.map(\.category))).sorted {
+            (categoryRank($0), $0) < (categoryRank($1), $1)
+        }
+    }
+
     private var legend: some View {
         HStack(spacing: 14) {
-            ForEach(["health", "appearance", "productivity", "platform"], id: \.self) { c in
+            ForEach(legendCategories, id: \.self) { c in
                 HStack(spacing: 4) {
                     Circle().fill(categoryColor(c)).frame(width: 7, height: 7)
-                    Text(c).font(.caption2).foregroundStyle(.secondary)
+                    Text(categoryLabel(c)).font(.caption2).foregroundStyle(.secondary)
                 }
             }
             HStack(spacing: 4) {
@@ -193,7 +213,9 @@ struct AutomationTimelineView: View {
             out.append(TLItem(id: "rule|\(r.id)", featureId: "__rules__",
                               featureName: String(format: Strings.t("timeline.ruleName", default: "Rule -- %@"), r.triggerDesc),
                               label: r.effectDesc, kind: kind,
-                              category: "platform", enabled: r.enabled,
+                              // Tint comes from `isRule` (see TLItem.tint); a rule is not
+                              // a feature, so this is only the neutral fallback.
+                              category: "general", enabled: r.enabled,
                               actionId: nil, optionKey: nil, optionType: nil))
         }
         return out
@@ -341,7 +363,7 @@ private struct DayMarker: View {
     var body: some View {
         Button { open() } label: {
             HStack(spacing: 5) {
-                Circle().fill(categoryColor(item.category).opacity(item.enabled ? 1 : 0.4))
+                Circle().fill(item.tint.opacity(item.enabled ? 1 : 0.4))
                     .frame(width: 8, height: 8)
                 Text(fmtHM(item.minutesOfDay ?? 0))
                     .font(.caption.monospacedDigit().weight(.medium))
@@ -408,7 +430,7 @@ private struct LaneChip: View {
         Button { open() } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.caption2)
-                    .foregroundStyle(categoryColor(item.category))
+                    .foregroundStyle(item.tint)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.label).font(.caption).lineLimit(1)
                     Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -529,7 +551,7 @@ private struct AgendaRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Circle().fill(categoryColor(item.category).opacity(item.enabled ? 1 : 0.4))
+            Circle().fill(item.tint.opacity(item.enabled ? 1 : 0.4))
                 .frame(width: 8, height: 8)
             Text(lead).font(.callout.monospacedDigit().weight(.medium))
                 .frame(width: 78, alignment: .leading)

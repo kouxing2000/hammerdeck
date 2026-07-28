@@ -5,15 +5,36 @@ import SwiftUI
 // the Feature Gallery (discovery). Kept in one place so a feature's category
 // color, glyph, and compact shortcut render identically wherever it appears.
 
+/// The canonical display order for the manifest categories -- Settings sidebar
+/// sections, and the same order `scripts/gen-readme-features.py` prints under.
+/// Windows leads: it is the deepest capability and the anchor of the product
+/// story, so it should be the first thing both surfaces show.
+///
+/// Anything absent sorts to the end rather than being dropped -- that path
+/// carries the synthesized "failed" pseudo-category (registry_view.lua) for a
+/// feature whose module would not load, whose red row must never vanish.
+/// `manifest.KNOWN_CATEGORIES` is the enforcement source of truth; keep the two
+/// in step.
+let CATEGORY_ORDER = ["windows", "switching", "text", "health",
+                      "utilities", "visibility", "appearance", "general"]
+
+/// Sort key for a category: its index in CATEGORY_ORDER, or past the end.
+func categoryRank(_ category: String) -> Int {
+    CATEGORY_ORDER.firstIndex(of: category) ?? CATEGORY_ORDER.count
+}
+
 /// The accent color for a manifest category. Drives category dots/tags across
 /// the views; falls back to gray for anything uncategorized.
 func categoryColor(_ category: String) -> Color {
     switch category {
-    case "health":       return .green
-    case "appearance":   return .purple
-    case "productivity": return .blue
-    case "platform":     return .orange
-    default:             return .gray
+    case "windows":    return .blue
+    case "switching":  return .indigo
+    case "text":       return .teal
+    case "health":     return .green
+    case "utilities":  return .orange
+    case "visibility": return .pink
+    case "appearance": return .purple
+    default:           return .gray
     }
 }
 
@@ -30,12 +51,15 @@ func usageTimeString(_ secs: Double) -> String {
 /// header). Unknown categories fall back to their capitalized raw value.
 func categoryLabel(_ category: String) -> String {
     switch category {
-    case "health":       return Strings.t("category.health", default: "Health")
-    case "appearance":   return Strings.t("category.appearance", default: "Appearance")
-    case "productivity": return Strings.t("category.productivity", default: "Productivity")
-    case "platform":     return Strings.t("category.platform", default: "Platform")
-    case "general":      return Strings.t("category.general", default: "General")
-    default:             return category.capitalized
+    case "windows":    return Strings.t("category.windows", default: "Windows")
+    case "switching":  return Strings.t("category.switching", default: "Switching & Search")
+    case "text":       return Strings.t("category.text", default: "Text")
+    case "health":     return Strings.t("category.health", default: "Health")
+    case "utilities":  return Strings.t("category.utilities", default: "Utilities")
+    case "visibility": return Strings.t("category.visibility", default: "Visibility & Trust")
+    case "appearance": return Strings.t("category.appearance", default: "Appearance")
+    case "general":    return Strings.t("category.general", default: "General")
+    default:           return category.capitalized
     }
 }
 
@@ -43,11 +67,14 @@ func categoryLabel(_ category: String) -> String {
 /// feature declares no `icon` of its own (and still the tint source everywhere).
 func categoryIcon(_ category: String) -> String {
     switch category {
-    case "health":       return "heart.fill"
-    case "appearance":   return "paintbrush.fill"
-    case "productivity": return "bolt.fill"
-    case "platform":     return "gearshape.2.fill"
-    default:             return "puzzlepiece.fill"
+    case "windows":    return "macwindow"
+    case "switching":  return "magnifyingglass"
+    case "text":       return "textformat"
+    case "health":     return "heart.fill"
+    case "utilities":  return "wrench.and.screwdriver.fill"
+    case "visibility": return "eye.fill"
+    case "appearance": return "paintbrush.fill"
+    default:           return "puzzlepiece.fill"
     }
 }
 

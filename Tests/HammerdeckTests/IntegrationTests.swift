@@ -697,6 +697,94 @@ final class IntegrationTests: XCTestCase {
                        "clearing the override leaves no conflict")
     }
 
+    // THE CATEGORY VOCABULARY GATE.
+    //
+    // `category` is declared in feature.json, ENFORCED in Lua, and rendered by
+    // three consumers that cannot import each other: Swift owns the label, tint,
+    // glyph and section order; a standalone Python script groups the README by it
+    // WITHOUT booting Lua (deliberately -- see its header); the zh-Hans catalog
+    // translates it. Four runtimes, one vocabulary, and until this test the only
+    // thing holding them together was a comment saying "keep these in step".
+    //
+    // That convention demonstrably does not hold. The re-cut of 2026-07-28 updated
+    // three copies and missed a FOURTH -- a hardcoded category list in the
+    // Automation Timeline's legend -- which went on advertising two retired names
+    // as gray dots. Nothing failed: the build was clean, every test green, and
+    // `gen-readme-features.py --check` in sync, because a stale category name is
+    // not a type error anywhere. It is only wrong pixels. (That copy is now
+    // derived rather than listed, so it cannot drift again; this gate covers the
+    // three that must stay hand-written.)
+    func testCategoryVocabularyIsConsistent() throws {
+        // 1. The enforcement set, read off the Lua module rather than re-listed
+        //    here -- a test that hardcodes the vocabulary is just a fifth copy.
+        guard let joined = eval("""
+            local m = require('platform.manifest')
+            local out = {}
+            for c in pairs(m.KNOWN_CATEGORIES) do out[#out + 1] = c end
+            table.sort(out)
+            return table.concat(out, ',')
+            """) as? String, !joined.isEmpty else {
+            return XCTFail("manifest.KNOWN_CATEGORIES is not exported -- the gate has nothing to compare against")
+        }
+        let vocabulary = Set(joined.split(separator: ",").map(String.init))
+
+        // 2. Swift: CATEGORY_ORDER must be the same SET (so a new category gets a
+        //    deterministic slot instead of silently sorting last) and carry no
+        //    duplicate, which would render one section twice.
+        XCTAssertEqual(Set(CATEGORY_ORDER), vocabulary,
+                       "CATEGORY_ORDER (FeatureChrome.swift) and KNOWN_CATEGORIES (manifest.lua) disagree")
+        XCTAssertEqual(CATEGORY_ORDER.count, Set(CATEGORY_ORDER).count,
+                       "CATEGORY_ORDER lists a category twice")
+
+        // 3. Swift presentation. Assert against the documented FALLBACKS -- gray and
+        //    puzzlepiece are what an unknown category gets -- rather than sniffing
+        //    whether a label "looks" localized: `categoryLabel("text")` legitimately
+        //    returns "Text", which is exactly what the raw-value fallback would also
+        //    produce, so a sniffing check would fail on a correctly-presented value.
+        //    `general` IS the unknown-ish default and opts out of both.
+        for c in vocabulary where c != "general" {
+            XCTAssertNotEqual(categoryColor(c), .gray,
+                              "category '\(c)' has no categoryColor case -- it renders in the fallback gray")
+            XCTAssertNotEqual(categoryIcon(c), "puzzlepiece.fill",
+                              "category '\(c)' has no categoryIcon case -- it renders the fallback glyph")
+        }
+
+        // 4. The README generator's grouping. Parsed from source because the script
+        //    is intentionally standalone; a category missing here still renders, but
+        //    under its raw id as a heading in the PUBLIC README.
+        let genPath = TestHost.repoRoot + "/scripts/gen-readme-features.py"
+        let gen = try String(contentsOfFile: genPath, encoding: .utf8)
+        guard let block = gen.range(of: "GROUPS = ["),
+              let end = gen.range(of: "]", range: block.upperBound..<gen.endIndex) else {
+            return XCTFail("could not find the GROUPS list in \(genPath)")
+        }
+        let groups = Set(
+            gen[block.upperBound..<end.lowerBound]
+                .split(separator: "\n")
+                .compactMap { line -> String? in
+                    guard let l = line.range(of: "(\""), let r = line.range(of: "\",", range: l.upperBound..<line.endIndex)
+                    else { return nil }
+                    return String(line[l.upperBound..<r.lowerBound])
+                }
+        )
+        XCTAssertEqual(groups, vocabulary,
+                       "GROUPS (gen-readme-features.py) and KNOWN_CATEGORIES (manifest.lua) disagree")
+
+        // 5. Translation. Every category needs a `category.<id>` key -- and because
+        //    the only thing that MINTS such a key is a Strings.t call in
+        //    categoryLabel (testEveryChromeStringIsTranslated forces the catalog to
+        //    carry every key, testCatalogHasNoOrphanedKeys forbids the reverse), a
+        //    present key transitively proves the label case exists.
+        let catalog = TestHost.repoRoot + "/app/i18n/zh-Hans.json"
+        let data = try Data(contentsOf: URL(fileURLWithPath: catalog))
+        let keys = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        for c in vocabulary {
+            XCTAssertNotNil(keys["category.\(c)"],
+                            "category '\(c)' has no 'category.\(c)' key in zh-Hans.json -- so it has no "
+                            + "categoryLabel case either, and its section header renders untranslated")
+        }
+    }
+
     // The card data the Gallery renders, end to end through the real bridge:
     // category + one-line description, the service/action distinction (a pure
     // service has no actions, so its card shows "always on"), and the
@@ -705,7 +793,7 @@ final class IntegrationTests: XCTestCase {
         host.store.refresh()
 
         let palette = host.store.features.first { $0.id == "command_palette" }
-        XCTAssertEqual(palette?.category, "platform")
+        XCTAssertEqual(palette?.category, "switching")
         XCTAssertFalse(palette?.description.isEmpty ?? true,
                        "a card needs the one-line description")
 

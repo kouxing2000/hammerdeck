@@ -1,8 +1,8 @@
 {
   "name": "Window Grid",
   "version": "1.0.0",
-  "description": "Place the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle. Pairs with Window Snap and Window Mode.",
-  "category": "productivity",
+  "description": "Precise placement: put the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle.",
+  "category": "windows",
   "selfEvident": true,
   "icon": "square.grid.3x3",
   "context": "window",

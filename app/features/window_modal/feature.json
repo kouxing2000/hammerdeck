@@ -1,8 +1,8 @@
 {
   "name": "Window Mode",
   "version": "1.0.0",
-  "description": "A modal keyboard layer for finer arranging -- move/resize/corners/center/undo under one key until Escape. Best when you want control without many global hotkeys. Pairs with Window Snap.",
-  "category": "productivity",
+  "description": "Fine control, one key at a time: a modal keyboard layer for move/resize/corners/center/undo, live until Escape. For arranging by feel without spending a global hotkey on every arrangement.",
+  "category": "windows",
   "selfEvident": true,
   "icon": "keyboard",
   "context": "window",

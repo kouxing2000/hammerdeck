@@ -71,7 +71,7 @@ Every key below is real, but this is a SCHEMA illustration, not a template to co
   "name": "My Feature",
   "version": "1.0.0",
   "description": "One sentence, user-facing -- this is what the Gallery card shows.",
-  "category": "productivity",
+  "category": "windows",
   "context": "window",
   "icon": "macwindow.on.rectangle",
   "selfEvident": true,
@@ -86,8 +86,18 @@ capabilities), `app/features/usage_stats/feature.json` (capabilities + a `swift/
 
 - **`context`** is a CONTROLLED vocabulary and drives Gallery grouping + Tour order --
   it answers "what must I be doing for this to be useful": `textField` | `window` |
-  `web` | `anywhere` | `automatic`. Orthogonal to `category` (the domain tag,
-  defaults to `"general"`).
+  `web` | `anywhere` | `automatic`.
+- **`category`** is ALSO a controlled vocabulary (since 2026-07-28) and is what the
+  Settings sidebar and the generated README group by -- the DOMAIN tag, orthogonal to
+  `context`: a switcher is `switching` whether it switches windows, tabs or clipboard
+  entries, though those sit in three different contexts. Read the legal values off
+  `KNOWN_CATEGORIES` in `app/platform/lua/manifest.lua` (that assert is what runs) --
+  an unknown one now FAILS validation and quarantines the feature into a red "Failed
+  to load" row, where it used to pass silently. Defaults to `"general"` if omitted.
+  Adding a NEW category is a four-file change: `manifest.lua`, `categoryLabel` /
+  `categoryColor` / `categoryIcon` / `CATEGORY_ORDER` in `FeatureChrome.swift`,
+  `GROUPS` in `scripts/gen-readme-features.py`, and a `category.<id>` key in
+  `app/i18n/zh-Hans.json` -- `testCategoryVocabularyIsConsistent` fails until they agree.
 - **`icon`** is an SF Symbol name.
 - **`capabilities`** -- see Step 3. Declared HERE, never in `lua/init.lua`.
 - **`page`** -- only if the feature contributes a `swift/` page (Step 8).
