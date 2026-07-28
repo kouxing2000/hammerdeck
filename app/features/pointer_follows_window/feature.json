@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Comfort: when Snap, Window Mode, Grid or Deck repositions the focused window, the pointer rides along, keeping its place inside it.",
   "category": "windows",
+  "order": 7,
   "icon": "cursorarrow.motionlines",
   "context": "window",
   "requires": ["accessibility"],

@@ -299,6 +299,10 @@ function view.describe()
         local row = {
             id = m.id, name = view.locName(m), description = view.locDesc(m),
             category = m.category, version = m.version or "",
+            -- Slot within the category section, low first; nil (the common case)
+            -- means "sort me after the ranked ones, alphabetically". Carried to
+            -- the host as-is so Settings and the README order identically.
+            order = m.order,
             -- Optional per-feature SF Symbol; nil falls back host-side to the
             -- shared category glyph (see featureIcon in FeatureChrome.swift).
             icon = m.icon,

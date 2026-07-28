@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Every-window switching with zero setup: fan the focused screen's windows against the screen edges so each keeps a full, always-visible edge no other window can cover. Click any one to switch, or step through them from the keyboard. Turn the rearranging off and nothing on screen moves -- the borders, the list and the switching stay. With it on, the fan declines to run when a screen holds more windows than it can honestly fit, and says how many that is.",
   "category": "windows",
+  "order": 5,
   "selfEvident": true,
   "icon": "square.stack.3d.down.right",
   "context": "window",

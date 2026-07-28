@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "One-key common cases: snap to a half, toggle maximize/75%, throw to the next screen (the pointer follows). Beyond Sequoia's built-in tiling -- a 75% toggle, a next-screen throw that carries the pointer, and every move undoable through Window Rewind -- and it runs from macOS 13.",
   "category": "windows",
+  "order": 1,
   "icon": "rectangle.lefthalf.inset.filled",
   "context": "window",
   "requires": ["accessibility"],

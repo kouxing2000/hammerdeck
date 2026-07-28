@@ -39,13 +39,13 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 
 ### Windows
 
-- **Pointer Follows Moved Window** -- Comfort: when Snap, Window Mode, Grid or Deck repositions the focused window, the pointer rides along, keeping its place inside it.
-- **Window Deck** -- A focus workflow: tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.
-- **Window Fan** -- Every-window switching with zero setup: fan the focused screen's windows against the screen edges so each keeps a full, always-visible edge no other window can cover. Click any one to switch, or step through them from the keyboard. Turn the rearranging off and nothing on screen moves -- the borders, the list and the switching stay. With it on, the fan declines to run when a screen holds more windows than it can honestly fit, and says how many that is.
+- **Window Snap** -- One-key common cases: snap to a half, toggle maximize/75%, throw to the next screen (the pointer follows). Beyond Sequoia's built-in tiling -- a 75% toggle, a next-screen throw that carries the pointer, and every move undoable through Window Rewind -- and it runs from macOS 13.
 - **Window Grid** -- Precise placement: put the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle.
 - **Window Mode** -- Fine control, one key at a time: a modal keyboard layer for move/resize/corners/center/undo, live until Escape. For arranging by feel without spending a global hotkey on every arrangement.
+- **Window Deck** -- A focus workflow: tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.
+- **Window Fan** -- Every-window switching with zero setup: fan the focused screen's windows against the screen edges so each keeps a full, always-visible edge no other window can cover. Click any one to switch, or step through them from the keyboard. Turn the rearranging off and nothing on screen moves -- the borders, the list and the switching stay. With it on, the fan declines to run when a screen holds more windows than it can honestly fit, and says how many that is.
 - **Window Rewind** -- Undo for any window move: one hotkey (Hyper+Z) restores every window a snap, screen-swap, grid, or deck move just repositioned, and returns the pointer with them. Single-step -- it rewinds the most recent change.
-- **Window Snap** -- One-key common cases: snap to a half, toggle maximize/75%, throw to the next screen (the pointer follows). Beyond Sequoia's built-in tiling -- a 75% toggle, a next-screen throw that carries the pointer, and every move undoable through Window Rewind -- and it runs from macOS 13.
+- **Pointer Follows Moved Window** -- Comfort: when Snap, Window Mode, Grid or Deck repositions the focused window, the pointer rides along, keeping its place inside it.
 
 ### Switching & Search
 

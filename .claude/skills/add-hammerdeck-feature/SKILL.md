@@ -72,6 +72,7 @@ Every key below is real, but this is a SCHEMA illustration, not a template to co
   "version": "1.0.0",
   "description": "One sentence, user-facing -- this is what the Gallery card shows.",
   "category": "windows",
+  "order": 3,
   "context": "window",
   "icon": "macwindow.on.rectangle",
   "selfEvident": true,
@@ -98,6 +99,13 @@ capabilities), `app/features/usage_stats/feature.json` (capabilities + a `swift/
   `categoryColor` / `categoryIcon` / `CATEGORY_ORDER` in `FeatureChrome.swift`,
   `GROUPS` in `scripts/gen-readme-features.py`, and a `category.<id>` key in
   `app/i18n/zh-Hans.json` -- `testCategoryVocabularyIsConsistent` fails until they agree.
+- **`order`** is your slot WITHIN the category section (Settings sidebar + README),
+  low first. **Omit it** unless the section has a real reading order -- unranked
+  features sort after every ranked one, alphabetically, which is right for a bag of
+  peers. Today only the window suite declares it (snap 1 -> pointer-follow 7,
+  simplest to most specialized). If you join a section that IS ranked, take the next
+  free integer: two features sharing a slot make `gen-readme-features.py` die, since
+  the tie would break alphabetically and quietly ship an order nobody declared.
 - **`icon`** is an SF Symbol name.
 - **`capabilities`** -- see Step 3. Declared HERE, never in `lua/init.lua`.
 - **`page`** -- only if the feature contributes a `swift/` page (Step 8).

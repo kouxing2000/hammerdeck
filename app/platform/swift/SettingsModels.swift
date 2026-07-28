@@ -270,6 +270,9 @@ struct FeatureInfo: Identifiable {
     let category: String        // domain tag (text/windows/web/...), shown as a small label
     let icon: String?           // per-feature SF Symbol; nil -> fall back to the category glyph
     let context: String         // WHEN it applies -- the primary grouping axis (FeatureContext)
+    // Slot within the category section (Settings sidebar + generated README), low
+    // first. nil for most features -- those sort after the ranked ones by name.
+    let order: Int?
     let requires: [String]      // OS preconditions, e.g. ["accessibility"]
     // What the feature is allowed to reach (network / input / power / browser /
     // files / commands). Usually EMPTY, which is the informative case: most
@@ -297,6 +300,7 @@ struct FeatureInfo: Identifiable {
         self.category = dict.str("category", "general")
         self.icon = (dict["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.context = dict.str("context", "anywhere")
+        self.order = dict.intOpt("order")
         self.requires = dict.strArray("requires")
         self.capabilities = dict.strArray("capabilities")
         self.recommended = dict.bool("recommended")

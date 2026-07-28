@@ -359,6 +359,22 @@ function manifest.validate(m)
     end
     m.category = m.category or "general"
 
+    -- order: this feature's slot WITHIN its category section (Settings sidebar +
+    -- the generated README), low first. Optional, and most features should omit
+    -- it: unranked ones sort after every ranked one, alphabetically, which is the
+    -- right default for a bag of peers. Declare it only where a section has a real
+    -- reading order -- the window suite runs snap -> grid -> mode -> deck -> fan ->
+    -- rewind -> pointer-follow, simplest to most specialized, and alphabetical put
+    -- the comfort setting first and the one-key workhorse last.
+    --
+    -- Deliberately NOT applied to the Gallery, which groups by `context`: a rank
+    -- that means "position among my category siblings" is noise once the members
+    -- are drawn from a different axis.
+    if m.order ~= nil then
+        assert(type(m.order) == "number" and m.order == math.floor(m.order),
+            "feature '" .. m.id .. "': order must be an integer, got " .. tostring(m.order))
+    end
+
     -- context: the primary grouping axis (when the feature applies). Optional;
     -- defaults to "anywhere" (ambient) so an unannotated feature still slots in.
     if m.context ~= nil then

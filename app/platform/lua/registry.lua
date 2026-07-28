@@ -56,7 +56,7 @@ local commandLabel   = view.commandLabel
 -- an unknown key in feature.json is IGNORED rather than merged, so a typo can't
 -- silently redefine part of the manifest.
 local META_FIELDS = {
-    "name", "version", "description", "category", "context",
+    "name", "version", "description", "category", "context", "order",
     "requires", "recommended", "page", "preference", "icon", "defaultEnabled",
     "selfEvident",
     -- What the feature is allowed to reach (see manifest.CAPABILITY_METHODS).

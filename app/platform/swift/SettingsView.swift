@@ -120,10 +120,17 @@ struct SettingsPane: View {
 
     /// The catalog features in a category that pass the filter (healthy preferences
     /// still hidden -- they live in General; a FAILED preference stays for its red row).
+    ///
+    /// Ordered by the manifest's optional `order`, then by name. Unranked features
+    /// (`order` nil, the common case) sort after every ranked one. Without this the
+    /// rows arrived in catalog scan order -- the alphabetical directory walk -- which
+    /// led the Windows section with the pointer-follow comfort setting and buried
+    /// Window Snap, the one-key workhorse, at the bottom. The README generator sorts
+    /// by the same two keys, so the two surfaces cannot disagree.
     private func featuresIn(_ category: String) -> [FeatureInfo] {
-        store.features.filter {
-            $0.category == category && (!$0.preference || $0.failed) && matches($0)
-        }
+        store.features
+            .filter { $0.category == category && (!$0.preference || $0.failed) && matches($0) }
+            .sorted { ($0.order ?? Int.max, $0.name) < ($1.order ?? Int.max, $1.name) }
     }
 
     /// Show the host "General" row unless a search is active that it doesn't match.

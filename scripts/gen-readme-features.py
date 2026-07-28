@@ -127,12 +127,18 @@ def load_features():
         except json.JSONDecodeError as e:
             die(f"{fj.relative_to(ROOT)}: invalid JSON -- {e}")
 
+        order = d.get("order")
+        if order is not None and not isinstance(order, int):
+            die(f"{fdir.name}: order must be an integer, got {order!r}")
+
         out.append(
             {
                 "name": clean(d.get("name", ""), "name", fdir.name),
                 "description": clean(d.get("description", ""), "description", fdir.name),
                 "category": clean(d.get("category", "general"), "category", fdir.name),
                 "capabilities": capability_note(d.get("capabilities", []), fdir.name),
+                # Slot within the category section; None sorts last, alphabetically.
+                "order": order,
             }
         )
     return out
@@ -159,9 +165,24 @@ def render(features):
         items = by_cat.get(cat)
         if not items:
             continue
+        # Two features in one section claiming the same slot means the tie breaks
+        # alphabetically and the declared order silently isn't the order shipped --
+        # exactly the quiet kind of wrong this whole ordering exists to remove. Die
+        # instead; CI runs --check, so it cannot ship unnoticed.
+        ranks = [f["order"] for f in items if f["order"] is not None]
+        dupes = sorted({r for r in ranks if ranks.count(r) > 1})
+        if dupes:
+            clash = ", ".join(
+                f"order={r}: " + " + ".join(sorted(f["name"] for f in items if f["order"] == r))
+                for r in dupes
+            )
+            die(f"category '{cat}' has features sharing an order -- {clash}")
+
         lines.append(f"### {heading}")
         lines.append("")
-        for f in sorted(items, key=lambda x: x["name"]):
+        # Ranked features first in declared order, then the unranked ones by name.
+        # SettingsView.featuresIn sorts by the same two keys.
+        for f in sorted(items, key=lambda x: (x["order"] is None, x["order"] or 0, x["name"])):
             reach = f" <sub>Reaches: {f['capabilities']}.</sub>" if f["capabilities"] else ""
             lines.append(f"- **{f['name']}** -- {f['description']}{reach}")
         lines.append("")
