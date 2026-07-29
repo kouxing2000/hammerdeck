@@ -58,6 +58,35 @@ final class HostChromeTests: XCTestCase {
                        + "instead. Found:\n  " + sites.joined(separator: "\n  "))
     }
 
+    // `mode` sanitizes what it reads out of the defaults domain. That is the half
+    // worth a gate, and it is NOT covered by the mode -> NSAppearance mapping:
+    // `mode` also feeds the Settings picker's `selection`, so an unrecognized raw
+    // value yields a tag no segment carries and the control renders with NOTHING
+    // selected. The value is a raw string on disk, so a hand-edited `defaults
+    // write`, a downgrade, or a renamed mode can all deliver one -- and the
+    // earlier shape of this bug in this codebase (set_appearance's unknown-mode
+    // note) was to silently pick a branch, wrong half the time.
+    func testAppearancePreferenceSanitizesWhatItReadsFromDefaults() {
+        let key = AppearancePreference.key
+        let saved = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let saved { UserDefaults.standard.set(saved, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+
+        UserDefaults.standard.removeObject(forKey: key)
+        XCTAssertEqual(AppearancePreference.mode, AppearancePreference.system,
+                       "an unset key must follow macOS")
+        UserDefaults.standard.set("dark", forKey: key)
+        XCTAssertEqual(AppearancePreference.mode, "dark", "a known mode survives the round trip")
+        UserDefaults.standard.set("sepia", forKey: key)
+        XCTAssertEqual(AppearancePreference.mode, AppearancePreference.system,
+                       "an unrecognized mode must fall back, not reach the picker as a dead tag")
+        UserDefaults.standard.set(42, forKey: key)
+        XCTAssertEqual(AppearancePreference.mode, AppearancePreference.system,
+                       "a non-string value must fall back too")
+    }
+
     private func repoRoot(file: StaticString = #filePath) -> String {
         URL(fileURLWithPath: "\(file)")            // .../Tests/HammerdeckTests/HostChromeTests.swift
             .deletingLastPathComponent()           // .../Tests/HammerdeckTests

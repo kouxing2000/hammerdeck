@@ -22,10 +22,13 @@ enum DebugShot {
         // cacheDisplay re-rasterizes SwiftUI's already-resolved (dark) layer colors, and
         // forcing the NSView's .appearance does NOT re-resolve them (SwiftUI bakes colors
         // at its own update cycle, not on a synchronous AppKit appearance change). The
-        // reliable workaround for a dark system is to toggle the app to light for the
-        // shot (adapter.setAppearance("light")) and restore after. A true in-process fix
-        // would need a runloop-spin to re-render SwiftUI light -- a visible flicker, not
-        // worth it for a debug tool.
+        // workaround is to put the APP in light for the shot and restore after:
+        // Settings > General > App > Appearance = Light. Flipping the whole SYSTEM
+        // (adapter.setAppearance("light")) also works, but ONLY while that preference
+        // is "system" -- a pinned NSApp.appearance ignores the system, so that route
+        // silently no-ops for anyone who chose Light or Dark. A true in-process fix
+        // would need a runloop-spin to re-render SwiftUI light -- a visible flicker,
+        // not worth it for a debug tool.
         guard bounds.width > 1, bounds.height > 1,
               let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else {
             return "ERROR: could not make bitmap for \(bounds)"

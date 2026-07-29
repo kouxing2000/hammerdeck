@@ -43,23 +43,104 @@ struct UsageWidgetData {
     }
 }
 
-/// NSView with a top-down coordinate system (widget layout reads like a list).
-private final class FlippedView: NSView {
+/// NSView with a top-down coordinate system (widget layout reads like a list),
+/// drawing the card's own fill + edge.
+///
+/// Layer colors are the one place a theme flip needs care: a CGColor is a
+/// resolved value, not a promise, so it cannot re-resolve itself. `updateLayer`
+/// is AppKit's answer -- the default `viewDidChangeEffectiveAppearance` already
+/// invalidates the view, so this re-runs on every flip, and inside it a plain
+/// `.cgColor` resolves against the view's NEW appearance. Doing the same work
+/// from `viewDidChangeEffectiveAppearance` instead is the trap: there the
+/// current drawing appearance is still the OLD one.
+private final class CardView: NSView {
     override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.cornerRadius = 12
+        layer?.borderWidth = 1
+        layer?.backgroundColor = UsageWidgetPanel.cardFill.cgColor
+        layer?.borderColor = UsageWidgetPanel.cardBorder.cgColor
+    }
 }
 
-/// The donor usageWidget rebuilt natively: a dark card pinned to the
-/// bottom-left of the screen at DESKTOP level (above the wallpaper, below all
-/// windows -- the Hammerspoon hs.drawing.windowLevels.desktop trick), showing
-/// today's total, the top apps with bars, and a 7-day chart. Click-through.
+/// A solid rounded rect that re-resolves its own tint on a theme flip -- the
+/// bars, tracks and dividers. Same `updateLayer` contract as CardView; holding
+/// the NSColor (not a CGColor) is what keeps it re-resolvable.
+private final class TintView: NSView {
+    var tint: NSColor = .clear
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = tint.cgColor
+    }
+}
+
+/// The donor usageWidget rebuilt natively: a card pinned to the bottom-left of
+/// the screen at DESKTOP level (above the wallpaper, below all windows -- the
+/// Hammerspoon hs.drawing.windowLevels.desktop trick), showing today's total,
+/// the top apps with bars, and a 7-day chart. Click-through.
+///
+/// Unlike the `.hudWindow` key legends, this one FOLLOWS the app theme
+/// (AppearancePreference): it is persistent desktop furniture the user looks at
+/// all day, not a two-second overlay flashed over another app's window, so a
+/// permanently dark card is the thing that would look foreign on a light
+/// desktop. That means the panel pins no appearance of its own -- it inherits
+/// NSApp's -- and every non-semantic color below has a light and a dark form.
 @MainActor
 final class UsageWidgetPanel {
     private let panel: NSPanel
-    private let card = FlippedView()
+    private let card = CardView()
     static let width: CGFloat = 300
     static let height: CGFloat = 430
     private static let pad: CGFloat = 14
     private static let margin: CGFloat = 10
+
+    /// A two-form color that stays dynamic THROUGH `withAlphaComponent`, which is
+    /// why every non-semantic color here is built this way rather than derived
+    /// from a semantic one. `NSColor.labelColor.withAlphaComponent(0.10)` looks
+    /// like the obvious way to write a track that inverts with the card, but it
+    /// silently collapses to a static `_NSTaggedPointerColor`, resolved eagerly
+    /// against whatever drawing appearance is current at construction -- so it
+    /// bakes the SYSTEM theme and goes invisible whenever the app's pinned theme
+    /// differs from it. Measured: `labelColor` is an NSDynamicSystemColor,
+    /// `labelColor.withAlphaComponent(_:)` is not; a color from this factory
+    /// stays an NSDynamicModifiedColor with alpha applied. (Semantic colors used
+    /// WHOLE -- .labelColor, .separatorColor -- are dynamic and fine as-is.)
+    private static func dynamic(_ name: String,
+                                light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: NSColor.Name(name)) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        }
+    }
+
+    /// The card itself. Translucent either way so the wallpaper shows through,
+    /// like the donor did.
+    static let cardFill = dynamic("usageWidgetCard",
+        light: NSColor(calibratedWhite: 0.99, alpha: 0.90),
+        dark:  NSColor(calibratedWhite: 0.12, alpha: 0.88))
+
+    /// A near-white card on a pale wallpaper needs an edge to read as a card;
+    /// the dark one never did, so it keeps none.
+    static let cardBorder = dynamic("usageWidgetBorder",
+        light: NSColor(calibratedWhite: 0, alpha: 0.12),
+        dark:  .clear)
+
+    /// Bars + the today column. The donor's sky blue stays for dark; on a light
+    /// card it is too pale against white, so light gets a deeper blue.
+    private static let accent = dynamic("usageWidgetAccent",
+        light: NSColor(calibratedRed: 0.086, green: 0.463, blue: 0.780, alpha: 1),
+        dark:  NSColor(calibratedRed: 0.310, green: 0.765, blue: 0.969, alpha: 1))
+
+    /// The bar track and the section divider: ink over the card, so they must
+    /// invert with it.
+    private static let track = dynamic("usageWidgetTrack",
+        light: NSColor(calibratedWhite: 0, alpha: 0.10),
+        dark:  NSColor(calibratedWhite: 1, alpha: 0.10))
+    private static let divider = dynamic("usageWidgetDivider",
+        light: NSColor(calibratedWhite: 0, alpha: 0.10),
+        dark:  NSColor(calibratedWhite: 1, alpha: 0.08))
 
     /// screenIndex: 1 = primary; 2 = the second display when present (falls
     /// back to primary on single-display setups).
@@ -76,19 +157,15 @@ final class UsageWidgetPanel {
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // The card is ALWAYS a dark card, but the labels use adaptive semantic
-        // colors (.labelColor / .secondaryLabelColor / ...). Pin the widget
-        // subtree to dark appearance so those colors resolve light-on-dark in
-        // BOTH light and system dark mode -- otherwise light mode paints near-
-        // black text on the dark card and it's unreadable.
-        panel.appearance = NSAppearance(named: .darkAqua)
+        // No `panel.appearance` pin: the widget inherits NSApp's, so the theme
+        // preference reaches it. The text already uses adaptive semantic colors
+        // (.labelColor / .secondaryLabelColor / ...), which is what makes that
+        // safe -- they flip with the card instead of staying light-on-light.
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
         panel.ignoresMouseEvents = true
 
         card.frame = NSRect(origin: .zero, size: rect.size)
         card.wantsLayer = true
-        card.layer?.backgroundColor = NSColor(calibratedWhite: 0.12, alpha: 0.88).cgColor
-        card.layer?.cornerRadius = 12
         panel.contentView = card
         panel.orderFrontRegardless()
     }
@@ -112,22 +189,23 @@ final class UsageWidgetPanel {
         }
         func bar(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat,
                  color: NSColor, radius: CGFloat) {
-            let v = NSView(frame: NSRect(x: x, y: y, width: max(width, 2), height: height))
+            let v = TintView(frame: NSRect(x: x, y: y, width: max(width, 2), height: height))
             v.wantsLayer = true
-            v.layer?.backgroundColor = color.cgColor
+            v.tint = color
             v.layer?.cornerRadius = radius
             card.addSubview(v)
         }
 
-        let accent = NSColor(calibratedRed: 0.31, green: 0.765, blue: 0.969, alpha: 1)
-        let trackColor = NSColor(calibratedWhite: 1, alpha: 0.08)
+        let accent = Self.accent
+        let trackColor = Self.track
+        let dividerColor = Self.divider
 
         // Header: "Today" + total (+ avg of past days).
         _ = label("Today", size: 13, weight: .semibold, color: .secondaryLabelColor,
                   x: Self.pad, y: y + 4, width: 80)
         var totalText = Self.formatTime(d.total)
         if let avg = d.avg { totalText += "   avg " + Self.formatTime(avg) }
-        _ = label(totalText, size: 18, weight: .bold, color: .white,
+        _ = label(totalText, size: 18, weight: .bold, color: .labelColor,
                   x: Self.pad + 60, y: y, width: w - 60, align: .right)
         y += 26
         _ = label("Updated " + d.updated, size: 10, weight: .regular,
@@ -187,8 +265,7 @@ final class UsageWidgetPanel {
 
         // Divider + week header.
         y += 6
-        bar(x: Self.pad, y: y, width: w, height: 1,
-            color: NSColor(calibratedWhite: 1, alpha: 0.06), radius: 0)
+        bar(x: Self.pad, y: y, width: w, height: 1, color: dividerColor, radius: 0)
         y += 10
         _ = label("This Week", size: 10, weight: .semibold, color: .secondaryLabelColor,
                   x: Self.pad, y: y, width: 120)

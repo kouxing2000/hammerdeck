@@ -72,6 +72,66 @@ enum DockPreference {
     }
 }
 
+/// The app's own light/dark theme: "system" (follow macOS), "light" or "dark".
+/// Applied by pinning `NSApp.appearance`, which every window and panel that does
+/// NOT pin its own inherits -- Settings, the Homepage/gallery, the chooser, the
+/// pickers. Default "system": an app that ignores the OS toggle is the
+/// surprising one, and it is also the pre-existing behavior.
+///
+/// The overlays that pin their own appearance stay out of this on purpose --
+/// the `.hudWindow` legends (VibrancyHUDPanel) and the usage widget are dark
+/// cards drawn over OTHER apps' content, not app chrome. See their own notes.
+///
+/// Mirrors DockPreference (host presentation, no per-action surface), so it is
+/// a Swift preference rather than a Lua feature option.
+enum AppearancePreference {
+    static let key = "hammerdeck.appearance"
+    static let system = "system"
+
+    /// macOS System Settings order: Light, Dark, then the follow-the-OS row.
+    static let modes = ["light", "dark", system]
+
+    /// Unset -- or a stored value no longer in `modes` -- counts as "system", so
+    /// a renamed mode degrades to following macOS instead of pinning a theme
+    /// nothing maps any more.
+    static var mode: String {
+        let raw = UserDefaults.standard.string(forKey: key) ?? system
+        return modes.contains(raw) ? raw : system
+    }
+
+    static func set(_ mode: String) {
+        if mode == system {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else {
+            UserDefaults.standard.set(mode, forKey: key)
+        }
+    }
+
+    /// Pure mode -> NSAppearance mapping (nil = follow the system, which is what
+    /// NSApp does out of the box). Split out so it is testable without an NSApp.
+    static func appearance(for mode: String) -> NSAppearance? {
+        switch mode {
+        case "light": return NSAppearance(named: .aqua)
+        case "dark":  return NSAppearance(named: .darkAqua)
+        default:      return nil
+        }
+    }
+
+    static func label(for mode: String) -> String {
+        switch mode {
+        case "light": return Strings.t("settings.appearance.light", default: "Light")
+        case "dark":  return Strings.t("settings.appearance.dark", default: "Dark")
+        default:      return Strings.t("settings.appearance.system", default: "System")
+        }
+    }
+
+    /// Apply the current preference to the running app. Safe to call repeatedly;
+    /// takes effect live (AppKit re-draws every inheriting window).
+    @MainActor static func apply() {
+        NSApp.appearance = appearance(for: mode)
+    }
+}
+
 /// "Caps Lock acts as Hyper (⌘⌥⌃)": when ON, the physical Caps key becomes a
 /// momentary Hyper modifier (CapsHyperTap does the work). Default OFF -- it
 /// remaps Caps and needs the Accessibility grant, so it stays opt-in. A pure
@@ -184,6 +244,8 @@ public func hammerdeckMain() {
     // The app object must exist before any panel is created by feature start().
     let app = NSApplication.shared
     DockPreference.apply()   // .regular (Dock icon) or .accessory (menubar-only)
+    // Before any window or panel exists, so the first frame is already themed.
+    AppearancePreference.apply()
     app.applicationIconImage = makeDockIcon()   // replace the generic "exec" tile
 
     let lua = LuaState()

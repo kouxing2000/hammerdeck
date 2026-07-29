@@ -167,12 +167,18 @@ struct SettingsPane: View {
     }
 
     /// Show the host "General" row unless a search is active that it doesn't match
-    /// -- by its own name, or by any behavior preference it contains.
+    /// -- by its own name, by any behavior preference it contains, or by the
+    /// theme picker (searching "dark" is how a user looks for that setting, and
+    /// the word appears nowhere else in the sidebar).
     private var showGeneralRow: Bool {
         if !isSearching { return true }
         let q = trimmedQuery
         return Strings.t("settings.general", default: "General").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.app", default: "App").localizedCaseInsensitiveContains(q)
+            || Strings.t("settings.appearance", default: "Appearance").localizedCaseInsensitiveContains(q)
+            || AppearancePreference.modes.contains {
+                AppearancePreference.label(for: $0).localizedCaseInsensitiveContains(q)
+            }
             || matchedPreferenceNames != nil
     }
 
@@ -242,6 +248,7 @@ private struct GeneralSettingsDetail: View {
     @ObservedObject var store: SettingsStore
     @State private var capsHyper = CapsHyperPreference.enabled
     @State private var showInDock = DockPreference.showInDock
+    @State private var appearance = AppearancePreference.mode
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
 
@@ -280,6 +287,19 @@ private struct GeneralSettingsDetail: View {
                 Text(String(format: Strings.t("settings.dock_caption", default: "Keep a %@ icon in the Dock (and a Cmd-Tab entry); click it to open Home. Off = a pure menubar app."), AppInfo.displayName))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Picker(Strings.t("settings.appearance", default: "Appearance"), selection: $appearance) {
+                    ForEach(AppearancePreference.modes, id: \.self) { mode in
+                        Text(AppearancePreference.label(for: mode)).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appearance) { mode in
+                    AppearancePreference.set(mode)
+                    AppearancePreference.apply()
+                }
+                Text(String(format: Strings.t("settings.appearance_caption", default: "Theme for %@'s own windows and panels, or follow the macOS system setting. Overlays drawn on top of other apps -- the key legends, the window-mode cards -- stay dark either way."), AppInfo.displayName))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Section(Strings.t("settings.language", default: "Language")) {
                 Picker(Strings.t("settings.language", default: "Language"), selection: $language) {
@@ -316,6 +336,7 @@ private struct GeneralSettingsDetail: View {
         .onAppear {
             capsHyper = CapsHyperPreference.enabled
             showInDock = DockPreference.showInDock
+            appearance = AppearancePreference.mode
             language = LocalePreference.override
         }
     }
