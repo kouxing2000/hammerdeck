@@ -177,3 +177,16 @@ struct WallpaperSwapArchetypeScene: View {
         }
     }
 }
+
+
+// `preview.sample` name -> payload. Rationale for the split (and for returning
+// nil rather than a default) lives once, on FeatureArchetype.of.
+extension ScreenOffSample {
+    static func named(_ name: String?) -> ScreenOffSample? {
+        switch name {
+        case "sleep": return .sleep
+        case "displayOff": return .displayOff
+        default: return nil
+        }
+    }
+}

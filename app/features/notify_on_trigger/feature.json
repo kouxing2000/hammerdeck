@@ -5,5 +5,9 @@
   "category": "visibility",
   "icon": "bell.badge",
   "context": "automatic",
-  "preference": true
+  "preference": true,
+  "preview": {
+    "archetype": "banner",
+    "sample": "notifyOnTrigger"
+  }
 }

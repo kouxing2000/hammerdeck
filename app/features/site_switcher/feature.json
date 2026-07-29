@@ -3,6 +3,7 @@
   "version": "1.4.0",
   "description": "Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether to open it as a standalone app window. cmd+<number> jumps straight to a row.",
   "category": "switching",
+  "order": 4,
   "selfEvident": true,
   "icon": "bookmark",
   "context": "web",
@@ -10,5 +11,9 @@
     "browser",
     "files",
     "network"
-  ]
+  ],
+  "preview": {
+    "archetype": "chooser",
+    "sample": "sites"
+  }
 }

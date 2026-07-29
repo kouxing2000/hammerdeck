@@ -5,5 +5,8 @@
   "category": "utilities",
   "icon": "key.horizontal",
   "context": "anywhere",
-  "recommended": true
+  "recommended": true,
+  "preview": {
+    "archetype": "passwordReveal"
+  }
 }

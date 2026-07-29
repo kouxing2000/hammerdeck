@@ -3,8 +3,13 @@
   "version": "1.2.0",
   "description": "Searchable Alt-Tab: switch windows across all apps, most recently used first.",
   "category": "switching",
+  "order": 2,
   "selfEvident": true,
   "icon": "macwindow.on.rectangle",
   "context": "window",
-  "requires": ["accessibility"]
+  "requires": ["accessibility"],
+  "preview": {
+    "archetype": "chooser",
+    "sample": "windows"
+  }
 }

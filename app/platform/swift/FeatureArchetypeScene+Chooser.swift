@@ -182,3 +182,20 @@ struct ChooserArchetypeScene: View {
         .scaleEffect(isSel ? 1.03 : 1, anchor: .leading)
     }
 }
+
+
+// `preview.sample` name -> payload. Rationale for the split (and for returning
+// nil rather than a default) lives once, on FeatureArchetype.of.
+extension ChooserSample {
+    static func named(_ name: String?) -> ChooserSample? {
+        switch name {
+        case "windows": return .windows
+        case "clipboard": return .clipboard
+        case "commands": return .commands
+        case "tabs": return .tabs
+        case "sites": return .sites
+        case "textActions": return .textActions
+        default: return nil
+        }
+    }
+}

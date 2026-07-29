@@ -7,5 +7,9 @@
   "selfEvident": true,
   "icon": "keyboard",
   "context": "window",
-  "requires": ["accessibility"]
+  "requires": ["accessibility"],
+  "preview": {
+    "archetype": "windowArrange",
+    "sample": "windowMode"
+  }
 }

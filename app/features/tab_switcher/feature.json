@@ -3,6 +3,7 @@
   "version": "1.1.0",
   "description": "Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons.",
   "category": "switching",
+  "order": 3,
   "selfEvident": true,
   "icon": "rectangle.stack",
   "context": "web",
@@ -10,5 +11,9 @@
     "browser",
     "files",
     "network"
-  ]
+  ],
+  "preview": {
+    "archetype": "chooser",
+    "sample": "tabs"
+  }
 }

@@ -7,5 +7,9 @@
   "context": "automatic",
   "capabilities": [
     "power"
-  ]
+  ],
+  "preview": {
+    "archetype": "screenOff",
+    "sample": "sleep"
+  }
 }

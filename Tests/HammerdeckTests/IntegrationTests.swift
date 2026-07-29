@@ -470,15 +470,50 @@ final class IntegrationTests: XCTestCase {
         // through the filter below. Assert we actually have features to check.
         XCTAssertFalse(host.store.features.isEmpty, "catalog read produced no features")
         let previewExempt: Set<String> = []   // none: every feature earns a preview
+
+        // A DECLARED preview must resolve -- even for an exempt feature. Exemption
+        // means "this one needs no preview", not "this one's declaration is
+        // unchecked": filtering exempt ids out before the resolution check would
+        // let a typo'd archetype/sample sit there permanently unverified, and the
+        // exemption would be silently doing double duty as a suppression.
+        let brokenDeclaration = host.store.features
+            .filter { !$0.failed && $0.previewArchetype != nil }
+            .filter { if case .none = FeatureArchetype.of($0) { return true } else { return false } }
+            .map(\.id)
+            .sorted()
+        XCTAssertEqual(brokenDeclaration, [],
+            "these features DECLARE a preview that does not resolve -- the archetype or "
+            + "sample name is wrong (an unknown name falls back to no preview rather than "
+            + "to a wrong one, by design): \(brokenDeclaration)")
+
+        // A sample named for an archetype that takes none is a declaration that
+        // lies: it resolves fine and the extra word is silently dropped, so the
+        // file claims a payload the Gallery never shows.
+        let sampleless: Set<String> = ["windowGrid", "windowDeck", "windowFan", "windowRewind",
+                                       "countdownStrip", "pointerPulse", "pointerFollow",
+                                       "passwordReveal", "chart", "wallpaperSwap"]
+        let straySample = host.store.features
+            .filter { !$0.failed && $0.previewSample != nil }
+            .filter { sampleless.contains($0.previewArchetype ?? "") }
+            .map { "\($0.id) (\($0.previewArchetype ?? "?"))" }
+            .sorted()
+        XCTAssertEqual(straySample, [],
+            "these features name a preview.sample for an archetype that takes none -- "
+            + "the value is ignored, so the declaration is misleading: \(straySample)")
+
         let missing = host.store.features
             .filter { !$0.failed && !previewExempt.contains($0.id) }
             .filter { if case .none = FeatureArchetype.of($0) { return true } else { return false } }
             .map(\.id)
             .sorted()
         XCTAssertEqual(missing, [],
-            "these Gallery features have no archetype preview -- add a case in "
-            + "FeatureArchetype.of(...) (or, if there is truly nothing to show, add "
-            + "the id to previewExempt with a reason): \(missing)")
+            "these Gallery features have no archetype preview -- give each a "
+            + "\"preview\": { \"archetype\": ..., \"sample\": ... } in its feature.json "
+            + "(this is ALSO what a typo'd archetype or sample name looks like, since "
+            + "an unresolved name deliberately falls back to no preview rather than to "
+            + "a wrong one -- check the names against FeatureArchetype.of and the "
+            + "sample type's `named(_:)`). If there is truly nothing to show, add the "
+            + "id to previewExempt with a reason: \(missing)")
     }
 
     func testSettingsBridgeRoundTrip() {

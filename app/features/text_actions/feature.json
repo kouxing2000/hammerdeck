@@ -11,5 +11,9 @@
   ],
   "requires": [
     "accessibility"
-  ]
+  ],
+  "preview": {
+    "archetype": "chooser",
+    "sample": "textActions"
+  }
 }

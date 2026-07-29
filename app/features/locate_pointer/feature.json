@@ -5,5 +5,8 @@
   "category": "utilities",
   "icon": "cursorarrow.rays",
   "context": "anywhere",
-  "requires": ["accessibility"]
+  "requires": ["accessibility"],
+  "preview": {
+    "archetype": "pointerPulse"
+  }
 }

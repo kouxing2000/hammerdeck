@@ -58,7 +58,7 @@ local commandLabel   = view.commandLabel
 local META_FIELDS = {
     "name", "version", "description", "category", "context", "order",
     "requires", "recommended", "page", "preference", "icon", "defaultEnabled",
-    "selfEvident",
+    "selfEvident", "preview",
     -- What the feature is allowed to reach (see manifest.CAPABILITY_METHODS).
     -- feature.json is its HOME: the declarative file a reader opens to see what a
     -- feature can do, without reading its Lua. A synthetic test feature with no

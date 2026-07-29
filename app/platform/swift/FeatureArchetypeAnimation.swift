@@ -42,38 +42,54 @@ enum FeatureArchetype {
     case chart                      // per-app focus-time bars grow into a usage dashboard (usage stats)
     case wallpaperSwap              // the desktop wallpaper crossfades to a fresh photo (bing daily)
     case textTransform(TextTransformSample) // selected text transforms in place (case change / strip formatting)
-    case typeText(String)                   // a generated string is typed out as keystrokes (insert date/time)
+    case typeText(TypeTextSample)           // a generated string is typed out as keystrokes (insert date/time)
 
-    /// POC mapping. Will become metadata-driven (manifest `archetype` + sample,
-    /// or derived from which adapter primitives the feature uses).
+    /// Resolve a feature's Gallery preview from its DECLARATION -- feature.json's
+    /// `"preview": { "archetype": ..., "sample": ... }` -- rather than from its id.
+    ///
+    /// This was a `switch feature.id` over the whole catalog until 2026-07-28: a
+    /// table of per-feature knowledge living in a Swift file nowhere near the
+    /// feature, which its own comment already called a POC. Two OTHER tables of
+    /// that exact shape (the timeline's category legend, the authoring skill's
+    /// feature.json template) silently went stale in a single afternoon, so the
+    /// shape was retired rather than repaired: a feature now names its own
+    /// preview, in the same declarative file that names its category and
+    /// capabilities, and a Lua-only feature that fits an existing archetype needs
+    /// no Swift edit at all.
+    ///
+    /// What did NOT move: the sample PAYLOADS (mock chooser rows, demo glyphs,
+    /// window move sequences). Those are presentation fixtures for an animation,
+    /// not feature configuration -- putting them in feature.json would bury what a
+    /// feature actually does under a pile of fake UI copy. So feature.json carries
+    /// the binding, Swift carries the artwork.
+    ///
+    /// Deliberately NO archetype vocabulary in Lua. Enumerating these names on the
+    /// Lua side would create a fifth list to keep in step, which is the failure
+    /// this change exists to remove; manifest.lua validates only the SHAPE. An
+    /// unknown archetype or sample therefore resolves to `.none`, and
+    /// `testEveryGalleryFeatureHasAPreview` is what fails -- the gate already
+    /// existed and is in the right place.
     static func of(_ feature: FeatureInfo) -> FeatureArchetype {
-        switch feature.id {
-        case "window_switcher":   return .chooser(.windows)
-        case "clipboard_history": return .chooser(.clipboard)
-        case "command_palette":   return .chooser(.commands)
-        case "tab_switcher":      return .chooser(.tabs)
-        case "site_switcher":     return .chooser(.sites)
-        case "locate_pointer":    return .pointerPulse
-        case "pointer_follows_window": return .pointerFollow
-        case "password_generator": return .passwordReveal
-        case "window_snap":       return .windowArrange(.snap)
-        case "window_modal":      return .windowArrange(.windowMode)
-        case "window_grid":       return .windowGrid
-        case "window_deck":       return .windowDeck
-        case "window_fan":      return .windowFan
-        case "window_rewind":     return .windowRewind
-        case "confirm_shortcut":  return .banner(.confirmShortcut)
-        case "notify_on_trigger": return .banner(.notifyOnTrigger)
-        case "break_reminder":    return .banner(.breakReminder)
-        case "sleep_schedule":    return .screenOff(.sleep)
-        case "display_off":       return .screenOff(.displayOff)
-        case "count_down":        return .countdownStrip
-        case "usage_stats":       return .chart
-        case "bing_daily":        return .wallpaperSwap
-        case "text_actions":      return .chooser(.textActions)
-        case "plain_paste":       return .textTransform(.stripFormat)
-        case "insert_datetime":   return .typeText("06/23/2026 03:04 PM")  // matches the default format's shape
-        default:                  return .none
+        guard let archetype = feature.previewArchetype else { return .none }
+        let sample = feature.previewSample
+        switch archetype {
+        case "chooser":       return ChooserSample.named(sample).map { .chooser($0) } ?? .none
+        case "windowArrange": return WindowArrangeSample.named(sample).map { .windowArrange($0) } ?? .none
+        case "banner":        return BannerSample.named(sample).map { .banner($0) } ?? .none
+        case "screenOff":     return ScreenOffSample.named(sample).map { .screenOff($0) } ?? .none
+        case "textTransform": return TextTransformSample.named(sample).map { .textTransform($0) } ?? .none
+        case "typeText":      return TypeTextSample.named(sample).map { .typeText($0) } ?? .none
+        case "windowGrid":      return .windowGrid
+        case "windowDeck":      return .windowDeck
+        case "windowFan":       return .windowFan
+        case "windowRewind":    return .windowRewind
+        case "countdownStrip":  return .countdownStrip
+        case "pointerPulse":    return .pointerPulse
+        case "pointerFollow":   return .pointerFollow
+        case "passwordReveal":  return .passwordReveal
+        case "chart":           return .chart
+        case "wallpaperSwap":   return .wallpaperSwap
+        default:                return .none
         }
     }
 
@@ -100,7 +116,7 @@ enum FeatureArchetype {
         case .chart:                return 1.6 * 2     // grow + reset
         case .wallpaperSwap:        return 1.9 * 2     // two wallpapers
         case .textTransform:        return 1.5 * 2     // before + after
-        case .typeText(let s):      return 0.16 * Double(s.count + 6)  // heartbeat x (chars + hold)
+        case .typeText(let s):      return 0.16 * Double(s.full.count + 6)  // heartbeat x (chars + hold)
         }
     }
 
@@ -123,7 +139,7 @@ enum FeatureArchetype {
         case .chart:                 UsageChartArchetypeScene(playing: playing)
         case .wallpaperSwap:         WallpaperSwapArchetypeScene(playing: playing)
         case .textTransform(let s):  TextTransformArchetypeScene(sample: s, playing: playing)
-        case .typeText(let s):       TypeKeystrokesArchetypeScene(playing: playing, full: s, caption: "Date & time typed in")
+        case .typeText(let s):       TypeKeystrokesArchetypeScene(playing: playing, full: s.full, caption: s.caption)
         }
     }
 }

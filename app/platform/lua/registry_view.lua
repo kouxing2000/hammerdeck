@@ -332,6 +332,11 @@ function view.describe()
             -- Pure metadata; the host renders the view registered for this id.
             page = m.page and { title = i18n.tFeature(m.id, "page.title", m.page.title),
                                 icon = m.page.icon or "doc" } or nil,
+            -- Which Gallery animation stands in for this feature. Names only --
+            -- the scene and its fixture payload live host-side (see
+            -- FeatureArchetype.of); Lua never learns the vocabulary, on purpose.
+            preview = m.preview and { archetype = m.preview.archetype,
+                                      sample = m.preview.sample } or nil,
         }
         -- Each action carries its editable trigger (current + default) and
         -- whether a user override is in effect, so the config UI renders one

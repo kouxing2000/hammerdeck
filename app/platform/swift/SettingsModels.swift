@@ -291,6 +291,11 @@ struct FeatureInfo: Identifiable {
     let actions: [ActionInfo]   // one trigger editor per entry; empty for pure services
     let schedule: [ScheduleEntry]   // self-reported internal schedule (Timeline); may be empty
     let page: PageInfo?         // a contributed native Homepage page, if declared
+    // Which Gallery preview animation stands in for this feature, declared in
+    // feature.json. Resolved by FeatureArchetype.of; nil -> no preview (which
+    // testEveryGalleryFeatureHasAPreview treats as a defect, not a default).
+    let previewArchetype: String?
+    let previewSample: String?
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String, let name = dict["name"] as? String else { return nil }
@@ -321,6 +326,9 @@ struct FeatureInfo: Identifiable {
             .compactMap { $0 as? [String: Any] }
             .compactMap(ScheduleEntry.init) ?? []
         self.page = PageInfo(dict["page"] as? [String: Any])
+        let preview = dict["preview"] as? [String: Any]
+        self.previewArchetype = preview?.strOpt("archetype")
+        self.previewSample = preview?.strOpt("sample")
     }
 }
 

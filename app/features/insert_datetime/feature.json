@@ -10,5 +10,9 @@
   ],
   "requires": [
     "accessibility"
-  ]
+  ],
+  "preview": {
+    "archetype": "typeText",
+    "sample": "datetimeDefault"
+  }
 }

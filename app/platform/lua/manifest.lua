@@ -375,6 +375,28 @@ function manifest.validate(m)
             "feature '" .. m.id .. "': order must be an integer, got " .. tostring(m.order))
     end
 
+    -- preview: which Gallery animation stands in for this feature --
+    -- { archetype = "chooser", sample = "windows" }. Only the SHAPE is checked
+    -- here, deliberately: the archetype and sample names are a Swift vocabulary
+    -- (the scenes and their fixture payloads live there), and re-listing them in
+    -- Lua would create another copy to keep in step -- the exact failure mode this
+    -- field was introduced to remove. An unknown name resolves to no preview
+    -- host-side, which testEveryGalleryFeatureHasAPreview already fails on, so the
+    -- gate exists without the duplication.
+    if m.preview ~= nil then
+        assert(type(m.preview) == "table",
+            "feature '" .. m.id .. "': preview must be a table { archetype = ..., sample = ... }")
+        assert(type(m.preview.archetype) == "string" and m.preview.archetype ~= "",
+            "feature '" .. m.id .. "': preview.archetype must be a non-empty string")
+        -- Non-EMPTY, mirroring archetype above. An empty string is not a missing
+        -- field: it survives to the host as a real value, and for the one
+        -- archetype that used to take free content it resolved to a scene that
+        -- typed nothing -- a blank animation, with every gate green.
+        assert(m.preview.sample == nil
+                   or (type(m.preview.sample) == "string" and m.preview.sample ~= ""),
+            "feature '" .. m.id .. "': preview.sample must be a non-empty string when present")
+    end
+
     -- context: the primary grouping axis (when the feature applies). Optional;
     -- defaults to "anywhere" (ambient) so an unannotated feature still slots in.
     if m.context ~= nil then

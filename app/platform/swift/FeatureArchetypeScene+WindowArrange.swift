@@ -315,3 +315,16 @@ struct WindowRewindArchetypeScene: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
+
+
+// `preview.sample` name -> payload. Rationale for the split (and for returning
+// nil rather than a default) lives once, on FeatureArchetype.of.
+extension WindowArrangeSample {
+    static func named(_ name: String?) -> WindowArrangeSample? {
+        switch name {
+        case "snap": return .snap
+        case "windowMode": return .windowMode
+        default: return nil
+        }
+    }
+}

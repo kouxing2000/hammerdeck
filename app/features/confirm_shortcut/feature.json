@@ -6,5 +6,9 @@
   "icon": "keyboard",
   "context": "anywhere",
   "preference": true,
-  "defaultEnabled": true
+  "defaultEnabled": true,
+  "preview": {
+    "archetype": "banner",
+    "sample": "confirmShortcut"
+  }
 }

@@ -7,5 +7,9 @@
   "icon": "rectangle.lefthalf.inset.filled",
   "context": "window",
   "requires": ["accessibility"],
-  "recommended": true
+  "recommended": true,
+  "preview": {
+    "archetype": "windowArrange",
+    "sample": "snap"
+  }
 }

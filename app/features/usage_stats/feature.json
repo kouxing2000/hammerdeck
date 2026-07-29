@@ -12,5 +12,8 @@
   "page": {
     "title": "Usage",
     "icon": "chart.bar.xaxis"
+  },
+  "preview": {
+    "archetype": "chart"
   }
 }

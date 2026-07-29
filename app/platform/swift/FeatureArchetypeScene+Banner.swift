@@ -96,3 +96,17 @@ struct BannerArchetypeScene: View {
         )
     }
 }
+
+
+// `preview.sample` name -> payload. Rationale for the split (and for returning
+// nil rather than a default) lives once, on FeatureArchetype.of.
+extension BannerSample {
+    static func named(_ name: String?) -> BannerSample? {
+        switch name {
+        case "breakReminder": return .breakReminder
+        case "confirmShortcut": return .confirmShortcut
+        case "notifyOnTrigger": return .notifyOnTrigger
+        default: return nil
+        }
+    }
+}

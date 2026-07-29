@@ -7,6 +7,42 @@ import SwiftUI
 
 // MARK: - Type-as-keystrokes effect (plain_paste, "type" action)
 
+/// The content a `typeText` preview types out: the line, and the badge caption
+/// naming what it is.
+///
+/// This is a NAMED sample like every other archetype's, not a bare string, and
+/// deliberately so. When the archetype binding moved into feature.json, this one
+/// case passed its sample straight through as literal content -- which meant
+/// feature.json carried fixture copy (the design says payloads stay in Swift),
+/// and the caption stayed hardcoded to insert_datetime's wording at the
+/// dispatcher. Any second feature adopting `typeText` -- the whole point of
+/// making archetypes declarative -- would have typed ITS string under a badge
+/// reading "Date & time typed in". Naming the sample fixes both: uniform field
+/// semantics, and the caption travels with the content it describes.
+struct TypeTextSample {
+    let full: String
+    let caption: String
+
+    /// insert_datetime. The line mirrors the shape of the default format preset
+    /// (see `app/features/insert_datetime/lua/init.lua`) rather than its exact
+    /// output -- it is an illustration, not a rendering, so it does not track the
+    /// preset's seconds field.
+    static let datetimeDefault = TypeTextSample(full: "06/23/2026 03:04 PM",
+                                                caption: "Date & time typed in")
+
+    /// plain_paste's "type the clipboard out" action -- the scene's own origin.
+    static let clipboard = TypeTextSample(full: "Hello, clipboard",
+                                          caption: "Typed as keystrokes")
+
+    static func named(_ name: String?) -> TypeTextSample? {
+        switch name {
+        case "datetimeDefault": return .datetimeDefault
+        case "clipboard":       return .clipboard
+        default:                return nil
+        }
+    }
+}
+
 /// Previews plain_paste's "Type clipboard as keystrokes" action: the clipboard
 /// text is typed into a document one character at a time (a blinking caret
 /// trailing), with a keyboard glyph to signal it's synthesized keystrokes -- not
@@ -132,10 +168,12 @@ struct TextTransformArchetypeScene: View {
 
     @ViewBuilder private var lineView: some View {
         switch sample.kind {
-        // NOTE: .caseChange is currently UNROUTED -- text_actions now maps to
-        // .chooser(.textActions) (it pops a menu, not a single transform), so no
-        // live feature produces this sample. Kept for a future direct
-        // change-case action; the Kind case is still needed for exhaustiveness.
+        // NOTE: no feature currently declares .caseChange -- text_actions maps to
+        // chooser/textActions instead (it pops a menu, not a single transform).
+        // It is no longer dead code, though: since previews became declarative it
+        // is reachable by any feature writing `"sample": "caseChange"` in its
+        // feature.json, with no Swift edit. Kept as an offered sample, not a
+        // leftover.
         case .caseChange:
             Text(done ? "RESIZE WINDOW" : "resize window")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -151,6 +189,19 @@ struct TextTransformArchetypeScene: View {
                     .foregroundStyle(done ? .primary : Color.purple)
             }
             .font(.system(size: 11, weight: .medium))
+        }
+    }
+}
+
+
+// `preview.sample` name -> payload. Rationale for the split (and for returning
+// nil rather than a default) lives once, on FeatureArchetype.of.
+extension TextTransformSample {
+    static func named(_ name: String?) -> TextTransformSample? {
+        switch name {
+        case "caseChange": return .caseChange
+        case "stripFormat": return .stripFormat
+        default: return nil
         }
     }
 }

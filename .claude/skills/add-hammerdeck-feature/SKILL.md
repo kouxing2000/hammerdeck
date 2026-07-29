@@ -78,7 +78,8 @@ Every key below is real, but this is a SCHEMA illustration, not a template to co
   "selfEvident": true,
   "requires": ["accessibility"],
   "capabilities": ["network"],
-  "page": { "title": "Usage", "icon": "chart.bar.xaxis" }
+  "page": { "title": "Usage", "icon": "chart.bar.xaxis" },
+  "preview": { "archetype": "windowArrange", "sample": "snap" }
 }
 ```
 
@@ -297,20 +298,38 @@ Worked examples: `usage_stats`, `window_deck`, `window_fan`.
 
 ## Step 9 -- Gallery preview card (DON'T silently skip -- decide consciously)
 
-A feature's visual card in the Settings Feature Gallery comes from
-`FeatureArchetype.of(_:)` in `app/platform/swift/FeatureArchetypeAnimation.swift` -- a
-switch on feature `id`. A feature NOT listed there falls to `.none`: it still works, but
-shows only a static icon, looking unfinished next to its peers. **This is the step most
-easily missed.** Choose one:
+A feature's visual card in the Settings Feature Gallery comes from its OWN
+`feature.json` -- `"preview": { "archetype": ..., "sample": ... }` -- resolved by
+`FeatureArchetype.of(_:)` in `app/platform/swift/FeatureArchetypeAnimation.swift`. A
+feature that declares none falls to `.none`: it still works, but shows only a static
+icon, looking unfinished next to its peers. **This is the step most easily missed.**
+Choose one:
 
-1. **Reuse an existing archetype** -- map your `id` to the closest case. Archetypes
-   preview the visible EFFECT, not the trigger: `.chooser` (a panel pops),
-   `.windowArrange` (a rect moves), `.windowGrid`, `.windowDeck`, `.windowFan`,
-   `.windowRewind`, `.banner`, `.screenOff`, `.countdownStrip`, `.pointerPulse`,
-   `.pointerFollow`, `.passwordReveal`, `.chart`, `.wallpaperSwap`, `.textTransform`,
-   `.typeText(String)`. Add a `loopDuration` arm and a `scene(...)` arm if the case
-   carries new content; keep `loopDuration` = the scene's heartbeat interval × cycle
-   length (the playback bar relies on it).
+1. **Reuse an existing archetype** -- usually NO Swift edit at all, just the declaration.
+   Archetypes preview the visible EFFECT, not the trigger. The ones taking a `sample`
+   name a payload defined in the matching `FeatureArchetypeScene+*.swift` (see that
+   type's `named(_:)` for the legal names):
+
+   | `archetype` | `sample` |
+   |---|---|
+   | `chooser` | `windows` \| `clipboard` \| `commands` \| `tabs` \| `sites` \| `textActions` |
+   | `windowArrange` | `snap` \| `windowMode` |
+   | `banner` | `breakReminder` \| `confirmShortcut` \| `notifyOnTrigger` |
+   | `screenOff` | `sleep` \| `displayOff` |
+   | `textTransform` | `caseChange` \| `stripFormat` |
+   | `typeText` | `datetimeDefault` \| `clipboard` |
+   | `windowGrid`, `windowDeck`, `windowFan`, `windowRewind`, `countdownStrip`, `pointerPulse`, `pointerFollow`, `passwordReveal`, `chart`, `wallpaperSwap` | none |
+
+   Need a new *payload* for an existing archetype (your own chooser rows, say)? Add a
+   `static let` to that sample struct and a case to its `named(_:)`, then name it here.
+   The payloads stay in Swift on purpose: they are animation fixtures (mock rows,
+   glyphs), not feature configuration, and feature.json should say what your feature
+   DOES, not carry fake UI copy.
+
+   Note there is deliberately NO archetype vocabulary in `manifest.lua` -- it validates
+   only the SHAPE. Adding one would be a second list to keep in step, which is the exact
+   failure this field was introduced to remove. A typo'd name therefore does not raise;
+   it resolves to no preview, and the test in option 3 is what catches it.
 2. **Add a new archetype** -- only if no existing effect fits. Add the enum `case`, a
    `loopDuration`, a `scene(...)` arm, and a `FeatureArchetypeScene+*` view. Prefer
    parameterizing an existing scene (as `.typeText` reuses `TypeKeystrokesArchetypeScene`).
@@ -382,13 +401,21 @@ Settings window.
   `app/features/`. (`app/hammerdeck.lua` does hold a hand-maintained
   `registry.loadCatalog({...})` list, but it is a fallback for the case where the
   script's own path can't be resolved -- not a registry to keep current.) The only
-  hardcoded-by-id Swift touchpoints are the gallery archetype (Step 9) and the OPTIONAL
-  page registration (Step 8).
+  hardcoded-by-id Swift touchpoints left are the OPTIONAL page registration (Step 8),
+  the menubar's `command_palette` pin (`StatusBar.swift`), and -- the one you may
+  actually hit -- `FeatureArchetype.actionScene`, which special-cases a few
+  individual ACTIONS whose preview differs from their feature's
+  (`locate_pointer/center`, `plain_paste/type`, `window_snap/swap_screens`). The
+  per-FEATURE archetype is no longer among them: it is declared in your own
+  `feature.json` (Step 9), so reusing an existing preview needs no Swift edit. If a
+  multi-action feature needs a DIFFERENT preview per action, that table is still
+  the place, and it is still keyed by id.
 
 ## Quick checklist
 
-- [ ] `app/features/<id>/feature.json` -- name, version, description, category,
-      `context` (controlled vocab), icon, `capabilities`
+- [ ] `app/features/<id>/feature.json` -- name, version, description, `category`
+      (controlled vocab), `context` (controlled vocab), icon, `capabilities`,
+      `preview`, and `order` only if the section is ranked
 - [ ] `app/features/<id>/lua/init.lua` -- manifest, `api = 1`, unique `id` matching folder
 - [ ] ACTION (`action`/`actions` + trigger) or SERVICE (`start`/`stop`)
 - [ ] `ctx`-only; leaf-util requires only; time via `ctx.now()`
@@ -401,8 +428,8 @@ Settings window.
 - [ ] LuaLS `---@` annotations on cross-file shapes; `__jsontype` if it crosses the bridge
 - [ ] `test/cases/<id>.lua` -- hermetic, order-independent, covers edge cases
 - [ ] `Package.swift` `exclude`/`sources` updated; `gen-readme-features.py` re-run
-- [ ] gallery archetype mapped in `FeatureArchetypeAnimation.swift` (or exempted in
-      `previewExempt` WITH a reason -- a bare `.none` fails CI)
+- [ ] `preview` declared in feature.json (or exempted in `previewExempt` WITH a
+      reason -- resolving to `.none` fails CI, and so does a typo'd archetype/sample)
 - [ ] permanent `ctx.log` decision traces in place
 - [ ] `lua test/run.lua` + `scripts/test-lua.sh` green; `swift build` clean
 - [ ] `scripts/test-swift.sh` green -- REQUIRED even for a pure-Lua feature
