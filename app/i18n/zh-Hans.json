@@ -460,6 +460,7 @@
   "settings.filter_clear": "清除筛选",
   "settings.follow_keys": "后续按键",
   "settings.general": "通用",
+  "settings.general.hit": "行为设置: %@",
   "settings.no_matches": "没有匹配的功能",
   "settings.interval": "间隔",
   "settings.interval_value": "%d 分钟",

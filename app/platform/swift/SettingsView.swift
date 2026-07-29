@@ -35,8 +35,23 @@ struct SettingsPane: View {
                     // when a search is active that it doesn't match.
                     if showGeneralRow {
                         Section(Strings.t("settings.app", default: "App")) {
-                            Label(Strings.t("settings.general", default: "General"), systemImage: "gearshape")
-                                .tag(Self.generalId)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(Strings.t("settings.general", default: "General"), systemImage: "gearshape")
+                                // When the query matched a BEHAVIOR PREFERENCE rather than
+                                // the word "General", say so and name it -- otherwise the
+                                // row looks like an unrelated leftover and the user
+                                // concludes the feature they searched for is missing.
+                                if let hit = matchedPreferenceNames, !hit.isEmpty {
+                                    Text(String(format: Strings.t("settings.general.hit",
+                                                                  default: "Behavior: %@"), hit))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        // A one-character query matches all three
+                                        // preferences at once; their joined names
+                                        // wrap to four lines in a 220pt sidebar.
+                                        .lineLimit(1).truncationMode(.tail)
+                                }
+                            }
+                            .tag(Self.generalId)
                         }
                     }
                     ForEach(groupedCategories, id: \.self) { category in
@@ -133,12 +148,32 @@ struct SettingsPane: View {
             .sorted { ($0.order ?? Int.max, $0.name) < ($1.order ?? Int.max, $1.name) }
     }
 
-    /// Show the host "General" row unless a search is active that it doesn't match.
+    /// The healthy BEHAVIOR PREFERENCES matching the query, comma-joined, or nil
+    /// when not searching / nothing matched.
+    ///
+    /// These features are deliberately kept out of the catalog list (they live in
+    /// General > Behavior), but until this existed the search did not reach them
+    /// EITHER -- so searching "pointer follows" answered "No matching features"
+    /// for a feature the README documents by name under Windows. Two surfaces
+    /// disagreeing about whether a thing exists is worse than either arrangement
+    /// on its own; the fix is to let the search find them where they actually
+    /// live, not to move them back into the catalog.
+    private var matchedPreferenceNames: String? {
+        guard isSearching else { return nil }
+        let hits = store.features
+            .filter { $0.preference && !$0.failed && matches($0) }
+            .map(\.name)
+        return hits.isEmpty ? nil : hits.joined(separator: ", ")
+    }
+
+    /// Show the host "General" row unless a search is active that it doesn't match
+    /// -- by its own name, or by any behavior preference it contains.
     private var showGeneralRow: Bool {
         if !isSearching { return true }
         let q = trimmedQuery
         return Strings.t("settings.general", default: "General").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.app", default: "App").localizedCaseInsensitiveContains(q)
+            || matchedPreferenceNames != nil
     }
 
     private var groupedCategories: [String] {
