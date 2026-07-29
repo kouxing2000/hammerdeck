@@ -23,8 +23,18 @@ func categoryRank(_ category: String) -> Int {
     CATEGORY_ORDER.firstIndex(of: category) ?? CATEGORY_ORDER.count
 }
 
-/// The accent color for a manifest category. Drives category dots/tags across
-/// the views; falls back to gray for anything uncategorized.
+/// The accent color for a manifest category. Falls back to gray for anything
+/// uncategorized.
+///
+/// THE TINT RULE, since the two color scales here look like a contradiction and
+/// are not: a FEATURE is always tinted by its CATEGORY -- Settings row, Gallery
+/// card, Timeline dot, Tour card -- so one feature is one color wherever it
+/// appears. `FeatureContext.color` below tints SECTION CHROME only: the Gallery's
+/// headers and filter chips, and the Tour's "works when" badge. The two encode
+/// different facts (what KIND of thing this is vs WHEN it applies) and a section
+/// is therefore deliberately NOT monochrome -- seeing an indigo Window Switcher
+/// card inside the teal "Windows" context section is the system working, telling
+/// you that one is a switcher among window features.
 func categoryColor(_ category: String) -> Color {
     switch category {
     case "windows":    return .blue
