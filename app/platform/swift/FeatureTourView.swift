@@ -87,13 +87,13 @@ struct FeatureTourView: View {
     @ViewBuilder private func card(_ f: FeatureInfo) -> some View {
         let archetype = FeatureArchetype.of(f)
         // A FEATURE is tinted by its category, everywhere -- Settings row, Gallery
-        // card, Timeline dot, and here. `FeatureContext.color` is SECTION chrome
-        // (the Gallery's headers and filter chips, the badge below), and stays
-        // that. This card used to take the context color for the feature itself,
-        // which made one feature two colors depending on which view you were in;
-        // invisible while 17 of 22 categories were the same blue, obvious once
-        // they weren't. The split is deliberate: the tint says what KIND of thing
-        // this is, the badge says WHEN it applies.
+        // card, Timeline dot, and here. This card used to take the CONTEXT color
+        // for the feature itself, which made one feature two colors depending on
+        // which view you were in; invisible while 17 of 22 categories were the
+        // same blue, obvious once they weren't. `FeatureContext.color` now
+        // survives only for the badge below, which carries no category tint
+        // beside it -- the tint says what KIND of thing this is, the badge says
+        // WHEN it applies, and the two no longer share a palette.
         let tint = categoryColor(f.category)
         VStack(spacing: 16) {
             // The large preview band. Auto-plays (unlike the Gallery's hover-gated

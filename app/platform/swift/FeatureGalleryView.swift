@@ -105,7 +105,8 @@ struct FeatureGalleryView: View {
                 if case .context(let c) = f {
                     Image(systemName: c.icon)
                         .font(.system(size: 9))
-                        .foregroundStyle(active ? .white : c.color)
+                        // Neutral, not the context hue -- see FeatureContext.color.
+                        .foregroundStyle(active ? .white : Color.secondary)
                 } else if case .conflict = f {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 9)).foregroundStyle(active ? .white : .orange)
@@ -132,7 +133,10 @@ struct FeatureGalleryView: View {
                     if !cards.isEmpty {
                         HStack(spacing: 7) {
                             Image(systemName: context.icon)
-                                .font(.system(size: 12)).foregroundStyle(context.color)
+                                // Neutral: hue in this view means CATEGORY and nothing
+                                // else, so the header must not compete. See
+                                // FeatureContext.color for why the second scale went away.
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
                             Text(context.title)
                                 .font(.subheadline.weight(.semibold))
                             Text(context.scenario)

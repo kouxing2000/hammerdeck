@@ -26,15 +26,22 @@ func categoryRank(_ category: String) -> Int {
 /// The accent color for a manifest category. Falls back to gray for anything
 /// uncategorized.
 ///
-/// THE TINT RULE, since the two color scales here look like a contradiction and
-/// are not: a FEATURE is always tinted by its CATEGORY -- Settings row, Gallery
-/// card, Timeline dot, Tour card -- so one feature is one color wherever it
-/// appears. `FeatureContext.color` below tints SECTION CHROME only: the Gallery's
-/// headers and filter chips, and the Tour's "works when" badge. The two encode
-/// different facts (what KIND of thing this is vs WHEN it applies) and a section
-/// is therefore deliberately NOT monochrome -- seeing an indigo Window Switcher
-/// card inside the teal "Windows" context section is the system working, telling
-/// you that one is a switcher among window features.
+/// THE TINT RULE: hue means CATEGORY, and nothing else. A feature carries its
+/// category color everywhere it appears -- Settings row, Gallery card, Timeline
+/// dot, Tour card -- so one feature is one color, and a mixed-color section is
+/// informative rather than noisy (an indigo Window Switcher among blue window
+/// features says "this one is a switcher").
+///
+/// There used to be a SECOND scale: `FeatureContext.color` tinted the Gallery's
+/// section headers and filter chips. It shared five hues with this one and
+/// inverted two of them -- `windows` was blue as a category while `window` was
+/// teal as a context, and vice versa for text -- so two adjacent Gallery sections
+/// showed the same pair of hues meaning opposite things. That is not a legible
+/// two-axis system, it is one axis wearing another's colors, and the mixed-section
+/// signal above only reads once a hue is unambiguous. The section chrome is now
+/// neutral. `FeatureContext.color` survives for the Tour's "works when" badge,
+/// where it appears alone with no category tint to collide with; do not
+/// reintroduce it anywhere a feature is also on screen.
 func categoryColor(_ category: String) -> Color {
     switch category {
     case "windows":    return .blue
@@ -137,6 +144,10 @@ enum FeatureContext: String, CaseIterable {
         }
     }
 
+    /// ONLY for the Tour's "works when" badge, which appears with no category
+    /// tint beside it. Everything else showing a feature uses `categoryColor` --
+    /// see THE TINT RULE at the top of this file for why this scale was pulled
+    /// out of the Gallery's headers and chips.
     var color: Color {
         switch self {
         case .textField: return .blue
