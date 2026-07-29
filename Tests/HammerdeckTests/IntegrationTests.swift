@@ -758,17 +758,27 @@ final class IntegrationTests: XCTestCase {
               let end = gen.range(of: "]", range: block.upperBound..<gen.endIndex) else {
             return XCTFail("could not find the GROUPS list in \(genPath)")
         }
-        let groups = Set(
-            gen[block.upperBound..<end.lowerBound]
-                .split(separator: "\n")
-                .compactMap { line -> String? in
-                    guard let l = line.range(of: "(\""), let r = line.range(of: "\",", range: l.upperBound..<line.endIndex)
-                    else { return nil }
-                    return String(line[l.upperBound..<r.lowerBound])
-                }
-        )
-        XCTAssertEqual(groups, vocabulary,
+        let groups = gen[block.upperBound..<end.lowerBound]
+            .split(separator: "\n")
+            .compactMap { line -> String? in
+                guard let l = line.range(of: "(\""), let r = line.range(of: "\",", range: l.upperBound..<line.endIndex)
+                else { return nil }
+                return String(line[l.upperBound..<r.lowerBound])
+            }
+        XCTAssertEqual(Set(groups), vocabulary,
                        "GROUPS (gen-readme-features.py) and KNOWN_CATEGORIES (manifest.lua) disagree")
+
+        // The two lists must agree on the SEQUENCE, not merely the membership.
+        // Comparing sets is what the first cut of this gate did, and it left the
+        // hole the gate was written to close: CATEGORY_ORDER exists precisely so
+        // section order stops being an accident, but with a set comparison the
+        // README could print Health before Windows while Settings printed the
+        // reverse, and nothing would fail. Same eight names, two different
+        // products.
+        XCTAssertEqual(groups, CATEGORY_ORDER,
+                       "GROUPS (gen-readme-features.py) and CATEGORY_ORDER (FeatureChrome.swift) "
+                       + "hold the same categories in a DIFFERENT order -- the README and the "
+                       + "Settings sidebar would show their sections in different orders")
 
         // 5. Translation. Every category needs a `category.<id>` key -- and because
         //    the only thing that MINTS such a key is a Strings.t call in
