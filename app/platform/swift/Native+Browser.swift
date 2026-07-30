@@ -292,34 +292,49 @@ extension Native {
         return 1
     }
 
-    // open_site(bundleId, profile, app, url) -> launched. Open `url` in a
-    // SPECIFIC browser. For a Chromium browser this launches its executable with
-    // `--profile-directory=<profile>` (when set) and either `--app=<url>` (a
-    // chromeless app window) or `<url>` (a tab) -- the only reliable way to
-    // target a profile / app window. For a non-Chromium browser (Safari,
-    // Firefox) it opens the URL as a plain tab; profile/app don't apply.
+    // open_site(bundleId, profile, app, url, incognito) -> launched. Open `url` in
+    // a SPECIFIC browser. For a Chromium browser this launches its executable with
+    // `--profile-directory=<profile>` (when set), `--incognito` (when asked) and
+    // either `--app=<url>` (a chromeless app window) or `<url>` (a tab) -- the only
+    // reliable way to target a profile / app window. For a non-Chromium browser
+    // (Safari, Firefox) it opens the URL as a plain tab; profile/app don't apply.
+    //
+    // TWO RULES ABOUT `incognito`, both there so a window can never LOOK private
+    // while being recorded:
+    //   * A browser not VERIFIED to honor `--incognito` REFUSES (returns false)
+    //     instead of opening a normal window -- see BrowserCatalog's
+    //     privateWindowBundleIds for why membership is narrower than "is Chromium".
+    //     The honest answer is "I can't", not a window the caller will describe to
+    //     the user as private.
+    //   * `--incognito` WINS over app mode: private-but-with-browser-chrome is a
+    //     cosmetic loss, while an app window that quietly persists the visit is a
+    //     broken promise. (Chrome's own UI offers no incognito app window; rather
+    //     than depend on how it resolves the flag pair, this decides.)
+    // Both live in `chromiumArgs`, which is pure and unit-tested -- they are the
+    // whole of the guarantee, so they must not be a detail buried in a bridge
+    // function no test can reach.
     func openSite(_ L: OpaquePointer?) -> Int32 {
         guard let bundleId = LuaState.string(L, 1), let url = LuaState.string(L, 4) else {
             return luaError(L, "open_site: bundleId and url required")
         }
         let profile = LuaState.string(L, 2) ?? ""
         let app = LuaState.bool(L, 3)
+        let incognito = LuaState.bool(L, 5)
+        // Refuse BEFORE resolving the app: a private open the seam cannot honor
+        // must fail the same way whether the browser is missing or merely unvouched.
+        if incognito && !BrowserCatalog.supportsPrivateWindow(bundleId) {
+            seamLog("open_site: refusing a private open for '\(bundleId)' -- not a browser "
+                    + "verified to honor --incognito")
+            lua_pushboolean(L, 0)
+            return 1
+        }
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
-            print("[hammerdeck] open_site: no app for bundle id \(bundleId)")
+            seamLog("open_site: no app for bundle id '\(bundleId)'")
             lua_pushboolean(L, 0)
             return 1
         }
         if BrowserCatalog.isChromium(bundleId), let exe = Bundle(url: appURL)?.executableURL {
-            var args: [String] = []
-            if !profile.isEmpty { args.append("--profile-directory=\(profile)") }
-            if app {
-                args.append("--app=\(url)")          // `=`-bound: cannot introduce a new switch
-            } else {
-                // `--` ends switch parsing, so a URL that happens to start with
-                // `-` can't be read as a Chrome flag (e.g. --disable-web-security).
-                args.append("--")
-                args.append(url)
-            }
+            let args = Self.chromiumArgs(profile: profile, app: app, incognito: incognito, url: url)
             lua_pushboolean(L, launchChromium(exe, bundleId: bundleId, args: args) ? 1 : 0)
             return 1
         }
@@ -333,6 +348,28 @@ extension Native {
         }
         lua_pushboolean(L, 0)
         return 1
+    }
+
+    /// The Chromium launch switches for one site open. PURE (no OS calls) so the
+    /// two rules the private-window promise rests on are unit-testable: private
+    /// WINS over app mode, and `--incognito` is actually in the vector. The caller
+    /// has already refused an unvouched browser -- this only builds the argv.
+    /// `nonisolated` because it genuinely is: no shared state, no OS call. Without
+    /// it the function inherits Native's @MainActor and a test cannot call it.
+    nonisolated static func chromiumArgs(profile: String, app: Bool, incognito: Bool,
+                                         url: String) -> [String] {
+        var args: [String] = []
+        if !profile.isEmpty { args.append("--profile-directory=\(profile)") }
+        if incognito { args.append("--incognito") }
+        if app && !incognito {
+            args.append("--app=\(url)")              // `=`-bound: cannot introduce a new switch
+        } else {
+            // `--` ends switch parsing, so a URL that happens to start with `-`
+            // can't be read as a Chrome flag (e.g. --disable-web-security).
+            args.append("--")
+            args.append(url)
+        }
+        return args
     }
 
     // default_browser_bundle_id() -> bundleId|nil. The app macOS would use to

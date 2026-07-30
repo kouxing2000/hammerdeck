@@ -17,8 +17,9 @@ struct SiteRow: Identifiable, Equatable, Codable {
     var browser = ""    // bundle id; "" = system default browser
     var profile = ""    // Chrome profile directory; "" = default/current profile
     var app = false
+    var incognito = false   // open a fresh private window (Chromium only)
 
-    enum CodingKeys: String, CodingKey { case id, name, url, browser, profile, app }
+    enum CodingKeys: String, CodingKey { case id, name, url, browser, profile, app, incognito }
 
     init() {}
 
@@ -39,6 +40,7 @@ struct SiteRow: Identifiable, Equatable, Codable {
         browser = try c.decodeIfPresent(String.self, forKey: .browser) ?? ""
         profile = try c.decodeIfPresent(String.self, forKey: .profile) ?? ""
         app = try c.decodeIfPresent(Bool.self, forKey: .app) ?? false
+        incognito = try c.decodeIfPresent(Bool.self, forKey: .incognito) ?? false
     }
 
     static func encode(_ rows: [SiteRow]) -> String {
@@ -215,13 +217,34 @@ struct SiteListEditor: View {
     @ViewBuilder
     private func detail(_ row: Binding<SiteRow>) -> some View {
         let isChrome = row.wrappedValue.browser == "com.google.Chrome"
+        // "System default" ("") counts as available: the default browser can change
+        // between now and the moment the site opens, so the honest answer is not
+        // knowable here -- offer it and let the runtime refuse (with a message) if
+        // it turns out to be Safari. Never HIDE the toggle: a hidden control with
+        // the flag still set is state the user can neither see nor undo.
+        let canGoPrivate = row.wrappedValue.browser.isEmpty
+            || BrowserCatalog.supportsPrivateWindow(row.wrappedValue.browser)
         // Native grouped-Form rows (title = label): clean macOS settings look,
         // proper alignment, far less layout code than hand-rolled label columns.
         VStack(alignment: .leading, spacing: 7) {
             TextField(Strings.t("sites.name", default: "Name"), text: row.name,
                       prompt: Text(Strings.t("sites.name.ph", default: "optional")))
             TextField(Strings.t("sites.url", default: "URL"), text: row.url, prompt: Text("example.com"))
-            Picker(Strings.t("sites.browser", default: "Browser"), selection: row.browser) {
+            // Switching to a browser with no private-window switch clears the flag
+            // rather than leaving it set-but-invisible (the toggle below hides
+            // itself for such a browser, so the user could not see or undo it).
+            Picker(Strings.t("sites.browser", default: "Browser"), selection: Binding(
+                get: { row.wrappedValue.browser },
+                set: { b in
+                    row.browser.wrappedValue = b
+                    // Switching to a browser that definitely cannot go private clears
+                    // the flag (the toggle below greys out, and a set-but-unreachable
+                    // flag would just alert on every open). "System default" is left
+                    // alone -- it is unknown, not impossible.
+                    if !b.isEmpty && !BrowserCatalog.supportsPrivateWindow(b) {
+                        row.incognito.wrappedValue = false
+                    }
+                })) {
                 Text(Strings.t("sites.systemDefault", default: "System default")).tag("")
                 ForEach(browsers) { Text($0.name).tag($0.bundleId) }
             }
@@ -231,8 +254,28 @@ struct SiteListEditor: View {
                     ForEach(profiles) { Text($0.name).tag($0.dir) }
                 }
             }
-            Toggle(Strings.t("sites.standalone", default: "Open as a standalone app window"), isOn: row.app)
+            // App mode and private are MUTUALLY EXCLUSIVE, enforced by turning the
+            // other off rather than by disabling it: an app window that quietly
+            // persisted the visit would be a broken promise, and the seam resolves
+            // the pair the same way (private wins). Keeping both clickable means a
+            // user is never stuck wondering why a control is greyed.
+            Toggle(Strings.t("sites.standalone", default: "Open as a standalone app window"), isOn: Binding(
+                get: { row.wrappedValue.app },
+                set: { on in
+                    row.app.wrappedValue = on
+                    if on { row.incognito.wrappedValue = false }
+                }))
                 .help(Strings.t("sites.standalone.help", default: "Chrome / Chromium only -- a chromeless app-style window. Other browsers open a tab."))
+            Toggle(Strings.t("sites.private", default: "Open in a private window"), isOn: Binding(
+                get: { row.wrappedValue.incognito },
+                set: { on in
+                    row.incognito.wrappedValue = on
+                    if on { row.app.wrappedValue = false }
+                }))
+                .disabled(!canGoPrivate)
+                .help(canGoPrivate
+                      ? Strings.t("sites.private.help", default: "Opens a fresh private window every time -- it never focuses an existing tab, and the visit is never recorded.")
+                      : Strings.t("sites.private.unavailable", default: "This browser has no private-window switch a launch can set, so Hammerdeck will not promise one. Chrome and Chromium are supported."))
             HStack {
                 Spacer()
                 Button(role: .destructive) {
@@ -284,6 +327,7 @@ struct SiteListEditor: View {
             parts.append(profiles.first { $0.dir == site.profile }?.name ?? site.profile)
         }
         if site.app { parts.append("App") }
+        if site.incognito { parts.append(Strings.t("sites.private.badge", default: "Private")) }
         return parts.joined(separator: " · ")
     }
 

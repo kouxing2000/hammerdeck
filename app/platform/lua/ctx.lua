@@ -571,8 +571,10 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.openSiteApp(pattern, url)
         return adapter.openSiteApp(pattern, url)
     end
-    function ctx.openSite(bundleId, profile, app, url)
-        return adapter.openSite(bundleId, profile, app, url)
+    -- `incognito` (a private window) is Chromium-only and returns false when the
+    -- browser cannot do it -- never a normal window; see adapter.openSite.
+    function ctx.openSite(bundleId, profile, app, url, incognito)
+        return adapter.openSite(bundleId, profile, app, url, incognito)
     end
     function ctx.isAppRunning(name)  return adapter.isAppRunning(name) end
     -- Async out-of-process reads; scope-tracked one-shots (see the network note).

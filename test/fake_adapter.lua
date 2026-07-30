@@ -1150,12 +1150,19 @@ function adapter.openSiteApp(pattern, url)
     return false
 end
 
-fake.siteOpens = {}   -- recorded openSite calls {bundleId, profile, app, url}
+fake.siteOpens = {}   -- recorded openSite calls {bundleId, profile, app, url, incognito}
+-- Make the next openSite REFUSE, the way the real seam does when a private window
+-- is asked of a browser that has no such switch (Safari, Firefox). A flag rather
+-- than a browser-matrix model on purpose: which bundle ids can go private is the
+-- seam's business (BrowserCatalog), and duplicating that list here would just be a
+-- second copy to drift. This lets a test drive the CALLER's refusal handling.
+fake.refuseSiteOpen = false
 
-function adapter.openSite(bundleId, profile, app, url)
+function adapter.openSite(bundleId, profile, app, url, incognito)
     fake.siteOpens[#fake.siteOpens + 1] =
-        { bundleId = bundleId, profile = profile, app = app, url = url }
-    return true
+        { bundleId = bundleId, profile = profile, app = app, url = url,
+          incognito = incognito == true }
+    return not fake.refuseSiteOpen
 end
 
 -- Safari focus-or-open mirrors focusBrowserTab (same recorders) -- the routing
@@ -1593,6 +1600,7 @@ function fake.reset()
     fake.tabJumps      = {}
     fake.appWindows    = {}
     fake.siteOpens     = {}
+    fake.refuseSiteOpen = false
     fake.minimized     = {}
     fake.hidden        = {}
     fake.quit          = {}

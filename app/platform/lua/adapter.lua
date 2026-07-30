@@ -992,8 +992,13 @@ end
 -- and/or opening it as a chromeless `app` window when that browser is Chromium.
 -- Non-Chromium browsers (Safari, Firefox) open a plain tab; profile/app are
 -- ignored. An empty profile means the browser's default/current profile.
-function adapter.openSite(bundleId, profile, app, url)
-    return native.open_site(bundleId, profile, app == true, url) == true
+--
+-- `incognito` asks for a PRIVATE window. It is honored only by a Chromium browser
+-- (`--incognito`); anything else REFUSES and returns false rather than opening a
+-- normal window that a caller would go on to describe as private. It also wins
+-- over `app` -- see the seam's own note for both rules.
+function adapter.openSite(bundleId, profile, app, url, incognito)
+    return native.open_site(bundleId, profile, app == true, url, incognito == true) == true
 end
 
 -- Is an app with this localized name currently running?

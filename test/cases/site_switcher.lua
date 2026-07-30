@@ -174,6 +174,69 @@ return {
         ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://news.ycombinator.com",
             "a Safari-routed site with no open tab opens it")
 
+        -- PRIVATE WINDOWS: a site marked incognito always OPENS a fresh private
+        -- window and NEVER focuses an existing tab -- the seam refuses to look inside
+        -- a private window at all (which is what stops usage_stats recording the
+        -- visit), so there is nothing to focus. It therefore always routes through
+        -- openSite, the only path that can pass the flag, even for the Chrome /
+        -- default-profile / tab combination that otherwise takes the AppleScript
+        -- focus path.
+        fake.settings["hammerdeck.opt.site_switcher.sites"] =
+            '[{"id":"p1","name":"Search","url":"duckduckgo.com",'
+            .. '"browser":"com.google.Chrome","incognito":true}]'
+        fake.browserTabs = { "https://duckduckgo.com/?q=x" }   -- a MATCHING tab is open
+        fake.siteOpens = {}
+        fake.focusedTabs = {}
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        ok(#fake.siteOpens == 1 and fake.siteOpens[1].incognito == true
+            and fake.siteOpens[1].url == "https://duckduckgo.com",
+            "a private site opens through openSite with the incognito flag")
+        ok(#fake.focusedTabs == 0,
+            "... and never focuses the matching open tab (nothing can see a private window)")
+
+        -- a Chrome profile still applies: each profile has its own private session
+        fake.settings["hammerdeck.opt.site_switcher.sites"] =
+            '[{"id":"p1","name":"Work","url":"mail.google.com","browser":"com.google.Chrome",'
+            .. '"profile":"Profile 2","incognito":true}]'
+        fake.siteOpens = {}
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        ok(#fake.siteOpens == 1 and fake.siteOpens[1].profile == "Profile 2"
+            and fake.siteOpens[1].incognito == true,
+            "a private site keeps its Chrome profile")
+
+        -- a browser with no private-window switch (Safari, Firefox) makes the seam
+        -- REFUSE. Say so, rather than let the user believe a recorded visit was
+        -- private -- the one failure mode this whole path exists to avoid.
+        fake.refuseSiteOpen = true
+        fake.siteOpens = {}
+        fake.alerts = {}
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        ok(#fake.siteOpens == 1 and #fake.alerts == 1
+            and fake.alerts[1]:match("private window") ~= nil,
+            "a refused private open alerts instead of silently opening a normal window")
+        fake.refuseSiteOpen = false
+
+        -- picking a private row from the CHOOSER carries the flag through: a row
+        -- carries its action id and the site is re-resolved on select, so no field
+        -- can be dropped between the list and the jump.
+        fake.settings["hammerdeck.opt.site_switcher.sites"] =
+            '[{"id":"n1","name":"Normal","url":"example.com","browser":"com.google.Chrome"},'
+            .. '{"id":"p2","name":"Private","url":"duckduckgo.com",'
+            .. '"browser":"com.google.Chrome","incognito":true}]'
+        fake.browserTabs = {}
+        fake.siteOpens = {}
+        fake.openedNewTabs = {}
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        fake.visibleChooser().userSelect(2)
+        ok(#fake.siteOpens == 1 and fake.siteOpens[1].incognito == true
+            and fake.siteOpens[1].url == "https://duckduckgo.com",
+            "picking a private row from the chooser opens it privately")
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        fake.visibleChooser().userSelect(1)
+        ok(#fake.siteOpens == 1
+            and fake.openedNewTabs[#fake.openedNewTabs] == "https://example.com",
+            "... and a normal row still takes the focus-or-open path, not openSite")
+
         -- no sites at all -> a clear hint, not silence
         fake.settings["hammerdeck.opt.site_switcher.sites"] = nil
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })

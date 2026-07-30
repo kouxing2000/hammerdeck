@@ -21,6 +21,35 @@ enum BrowserCatalog {
 
     static func isChromium(_ bundleId: String) -> Bool { chromiumBundleIds.contains(bundleId) }
 
+    /// Browsers VERIFIED to open a private window from `--incognito`.
+    ///
+    /// Deliberately NOT `chromiumBundleIds`: that set answers a different question
+    /// ("takes `--app=` and `--profile-directory=`"), and reusing it would vouch for
+    /// browsers nobody checked. Edge documents `--inprivate`, Arc ignores most
+    /// Chromium switches, and a launch cannot tell us it went wrong -- the process
+    /// starts fine either way, so an unhonored switch yields a NORMAL window that
+    /// this app would go on to call private. That is the one failure this feature
+    /// must not have, so the list fails CLOSED: a browser earns a line here only
+    /// once someone has watched `--incognito` actually produce a private window in
+    /// it, and everything else is refused with a message the user can act on.
+    ///
+    /// Residual limit, unfixable from a launch: enterprise policy
+    /// (IncognitoModeAvailability) can disable incognito in a browser that is on
+    /// this list, and Chrome then opens a normal window without complaint.
+    private static let privateWindowBundleIds: Set<String> = [
+        "com.google.Chrome", "com.google.Chrome.canary", "com.google.Chrome.beta",
+        "org.chromium.Chromium",
+    ]
+
+    /// Can a site routed to THIS browser be opened in a private window? Strict
+    /// membership -- an empty bundle id ("System default") is not resolved here,
+    /// because the default can change between now and the moment the site opens;
+    /// the caller decides what to do with "unknown" (the editor keeps the toggle
+    /// available; the seam is only ever handed a resolved id).
+    static func supportsPrivateWindow(_ bundleId: String) -> Bool {
+        privateWindowBundleIds.contains(bundleId)
+    }
+
     /// Every installed app that can open an https URL, as (bundleId, name),
     /// deduped and sorted -- the candidate browsers a site can be routed to.
     static func installedBrowsers() -> [Browser] {

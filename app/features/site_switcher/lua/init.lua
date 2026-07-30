@@ -87,10 +87,11 @@ local function parseSite(line)
     end
     url = normalizeURL(url)
     if name == nil or name == "" then name = siteName(url) end
-    return { id = "", url = url, name = name, app = app, browser = "", profile = "" }
+    return { id = "", url = url, name = name, app = app, browser = "", profile = "",
+             incognito = false }   -- the legacy text format has no private-window token
 end
 
--- New storage: a JSON array of { id, name, url, browser, profile, app } records
+-- New storage: a JSON array of { id, name, url, browser, profile, app, incognito } records
 -- (written by the Settings row editor). Returns nil when `raw` isn't a JSON
 -- array, so the caller can fall back to the legacy text format. `id` is the
 -- editor's stable per-row UUID -- what a per-site shortcut binds to (see
@@ -109,6 +110,7 @@ local function recordsFromJSON(raw)
                 browser = type(rec.browser) == "string" and rec.browser or "",
                 profile = type(rec.profile) == "string" and rec.profile or "",
                 app = rec.app == true,
+                incognito = rec.incognito == true,
             }
         end
     end
@@ -205,6 +207,7 @@ end
 --     ...) -> launch into that browser (Chrome profile / app window) via the CLI
 --     seam. Routing is authoritative; focus-if-already-open is best-effort.
 --     Non-scriptable browsers (Firefox) just open a plain tab.
+--   * PRIVATE (incognito) -> always OPENS, never focuses; see below.
 -- An unset browser falls back to the system default browser.
 ---@param ctx Ctx
 local function jump(ctx, site)
@@ -218,6 +221,30 @@ local function jump(ctx, site)
     local isChrome = browser == CHROME_BUNDLE
     local isSafari = browser == SAFARI_BUNDLE
     local hasProfile = site.profile ~= nil and site.profile ~= ""
+
+    -- A PRIVATE site always opens a fresh window and never focuses an existing
+    -- one. That is not a shortcut: the seam refuses to look inside a private
+    -- window AT ALL (browserListTabs skips them, browserFocusTab won't resolve
+    -- into one, browserActiveURL never reports one -- which is what stops
+    -- usage_stats recording a private visit), so there is nothing to focus, and
+    -- teaching it to look would trade the guarantee away for a convenience.
+    -- openSite is also the only path that can pass --incognito; it REFUSES for a
+    -- browser that has no private-window switch (Safari, Firefox) rather than
+    -- open a normal window, so say so instead of leaving the user believing a
+    -- recorded visit was private.
+    if site.incognito then
+        local opened = ctx.openSite(browser or "", site.profile or "",
+                                    site.app == true, site.url, true)
+        if opened then
+            ctx.log(("opened private %s [%s]%s"):format(site.url, browser or "default",
+                hasProfile and (" /" .. site.profile) or ""))
+        else
+            ctx.alert(ctx.t("alert.noPrivateWindow",
+                "A private window needs a Chrome-family browser -- pick one for this site"))
+            ctx.log(("refused private %s [%s]"):format(site.url, browser or "default"))
+        end
+        return
+    end
 
     if isChrome and not hasProfile and not site.app then
         local found = ctx.focusBrowserTab(pattern, site.url)
@@ -255,7 +282,8 @@ return {
         { key = "sites", type = "siteList", default = "",
           label = "Sites",
           hint = "Each site: a name, its URL, the browser to open it in, a Chrome "
-              .. "profile (Chrome only), and whether to open it as a standalone app window." },
+              .. "profile (Chrome only), and whether it opens as a standalone app "
+              .. "window or a fresh private one." },
     },
 
     -- Turn each configured site into its own action, so it gets a row in the
@@ -331,21 +359,34 @@ return {
             if not st.chooser then
                 st.chooser = ctx.chooser {
                     searchSubText = true,
+                    -- A row carries its ACTION ID, not a copy of the site's fields.
+                    -- Copying them out and rebuilding a site on the way back meant
+                    -- every new field had to be added in two places or it was
+                    -- silently dropped between the list and the jump (the private
+                    -- flag would have been exactly that bug). Resolving the id
+                    -- against the live config is also what the per-site actions do,
+                    -- so both entry points read one definition of a site.
                     onSelect = function(choice)
-                        if choice and choice.url then
-                            jump(ctx, {
-                                url = choice.url, name = choice.text, app = choice.app,
-                                browser = choice.browser, profile = choice.profile,
-                            })
+                        if not (choice and choice.siteId) then return end
+                        local _, live = assignActionIds(configuredSites(ctx))
+                        local site = live[choice.siteId]
+                        if site then
+                            jump(ctx, site)
+                        else
+                            -- Deleted while the picker was up. Log it: a pick that
+                            -- does nothing is otherwise indistinguishable from a
+                            -- jump that silently failed.
+                            ctx.log(choice.siteId .. ": no longer configured, ignoring")
                         end
                     end,
                 }
             end
             local choices = {}
-            for _, site in ipairs(sites) do
+            local ids, byId = assignActionIds(sites)
+            for _, id in ipairs(ids) do
+                local site = byId[id]
                 choices[#choices + 1] = {
-                    text = site.name, subText = site.url, url = site.url,
-                    app = site.app, browser = site.browser, profile = site.profile,
+                    text = site.name, subText = site.url, siteId = id,
                     image = st.fav.iconFor(site.url),
                 }
             end

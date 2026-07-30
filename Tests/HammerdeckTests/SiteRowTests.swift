@@ -8,14 +8,19 @@ import XCTest
 // silently corrupts stored config. No bridge needed -- SiteRow is plain Swift.
 final class SiteRowTests: XCTestCase {
 
+    // `incognito` defaults to false here on purpose: every existing assertion then
+    // also pins "a site is not private unless it says so" -- the one default in this
+    // struct where a wrong value would silently downgrade a privacy promise.
     private func assertRow(_ r: SiteRow, name: String, url: String,
                            browser: String = "", profile: String = "", app: Bool = false,
+                           incognito: Bool = false,
                            _ msg: String = "", file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(r.name, name, "name \(msg)", file: file, line: line)
         XCTAssertEqual(r.url, url, "url \(msg)", file: file, line: line)
         XCTAssertEqual(r.browser, browser, "browser \(msg)", file: file, line: line)
         XCTAssertEqual(r.profile, profile, "profile \(msg)", file: file, line: line)
         XCTAssertEqual(r.app, app, "app \(msg)", file: file, line: line)
+        XCTAssertEqual(r.incognito, incognito, "incognito \(msg)", file: file, line: line)
     }
 
     // MARK: Legacy text (the pre-JSON `Name | URL | app` format)
@@ -63,6 +68,17 @@ final class SiteRowTests: XCTestCase {
         let rows = SiteRow.decode(json)
         XCTAssertEqual(rows.count, 1)
         assertRow(rows[0], name: "X", url: "x.com", browser: "com.apple.Safari", profile: "", app: true)
+    }
+
+    func testJSONDecodePrivateFlag() {
+        let json = #"[{"name":"P","url":"p.com","browser":"com.google.Chrome","incognito":true}]"#
+        let rows = SiteRow.decode(json)
+        XCTAssertEqual(rows.count, 1)
+        assertRow(rows[0], name: "P", url: "p.com", browser: "com.google.Chrome",
+                  profile: "", app: false, incognito: true)
+        // And it survives the round trip, since the Lua side reads this key to
+        // decide whether to pass --incognito.
+        XCTAssertEqual(SiteRow.decode(SiteRow.encode(rows)).first?.incognito, true)
     }
 
     func testMalformedJSONDecodesToEmpty() {
