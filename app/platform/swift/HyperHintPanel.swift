@@ -24,6 +24,9 @@ final class HyperHintPanel {
         let key: String; let label: String; let chord: Bool; let icon: String?; let desc: String?
         /// The registry.runAction pair a click on this key fires.
         let featureId: String; let actionId: String
+        /// The feature is enabled but its start/bind threw, so this binding is
+        /// configured and cannot fire. Shown, not hidden -- see hyperLegend.
+        let failed: Bool; let failReason: String?
     }
 
     private let hud = VibrancyHUDPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 260))
@@ -66,8 +69,10 @@ final class HyperHintPanel {
          K("⌘",nil,1.3),K("⌥",nil,1.1)],
     ]
 
-    init(rows: [Row], onActivate: ((Row) -> Void)? = nil) {
+    init(rows: [Row], onActivate: ((Row) -> Void)? = nil, onDismiss: (() -> Void)? = nil) {
         self.onActivate = onActivate
+        // hyperLegend already emits exactly one row per cap, so this cannot
+        // silently drop a binding the way a last-one-wins merge used to.
         var byKey: [String: Row] = [:]
         for r in rows { byKey[r.key.lowercased()] = r }
 
@@ -76,6 +81,11 @@ final class HyperHintPanel {
         // non-activating, so pointing at it never steals keyboard focus and the
         // held-Caps tap keeps firing.
         hud.ignoresMouseEvents = false
+        // Clicking anywhere that ISN'T a live key dismisses. The card covers a
+        // wide strip of screen while Caps is held, and a lit cap now fires an
+        // action -- so "I changed my mind, click to get on with my work" must
+        // mean dismiss, not whatever the pointer happened to land on.
+        hud.onBackgroundClick = onDismiss
 
         defaultCaption = Strings.t("hyper.caption",
             default: "press or click a key  ·  amber … = chord  ·  hover for details  ·  release Caps to dismiss")
@@ -182,10 +192,16 @@ final class HyperHintPanel {
         let w = Self.unit * k.u + Self.gap * (k.u - 1)   // wide keys span units + the gaps between them
         let v = HyperKeyView(width: w)
         if let name = k.name, let row = byKey[name] {
-            v.setLit(face: k.face, symbol: row.icon, label: row.label, chord: row.chord)
+            if row.failed {
+                // Visible but inert: the shortcut is configured and cannot run,
+                // so there is nothing to click. Its hover hint carries why.
+                v.setFailed(face: k.face, label: row.label)
+            } else {
+                v.setLit(face: k.face, symbol: row.icon, label: row.label, chord: row.chord)
+                if let onActivate { v.onClick = { onActivate(row) } }
+            }
             v.hint = hintText(face: k.face, row: row)
             v.onHover = { [weak self] in self?.showHint($0) }
-            if let onActivate { v.onClick = { onActivate(row) } }
         } else {
             v.setDim(face: k.face)
         }
@@ -204,6 +220,13 @@ final class HyperHintPanel {
         }
         var s = "⌃⌥⌘ " + readable + (row.chord ? " then a key" : "") + "   " + row.label
         if let d = row.desc, !d.isEmpty { s += "  —  " + d }
+        if row.failed {
+            // The whole point of keeping a failed binding on the board: the one
+            // place a user can find out WHY their shortcut stopped working
+            // without going to the log.
+            s += "  ·  " + Strings.t("hyper.failed", default: "not running")
+            if let why = row.failReason, !why.isEmpty { s += ": " + why }
+        }
         return s
     }
 }
@@ -310,6 +333,28 @@ private final class HyperKeyView: NSView {
         needsLayout = true
     }
 
+    /// A configured binding that CANNOT fire (its feature is enabled but its
+    /// start/bind threw). Deliberately its own look rather than reusing the dim
+    /// cap: dim means "no shortcut here", and losing that distinction would hide
+    /// the fact that something the user set up is broken. Red, muted, no glyph.
+    func setFailed(face: String, label: String) {
+        lit = true                 // it HAS a binding: keep the lit layout + hover
+        let red = NSColor.systemRed
+        baseFill = red.withAlphaComponent(0.16).cgColor
+        pressedFill = nil          // inert -- there is nothing to press
+        layer?.backgroundColor = baseFill
+        layer?.borderColor = red.withAlphaComponent(0.45).cgColor
+        baseBorder = layer?.borderColor
+        faceLabel.stringValue = face
+        faceLabel.font = .systemFont(ofSize: 8.5, weight: .semibold)
+        faceLabel.textColor = red.blended(withFraction: 0.45, of: .white) ?? red
+        glyph.isHidden = true
+        nameLabel.stringValue = label
+        nameLabel.textColor = NSColor.white.withAlphaComponent(0.6)
+        nameLabel.isHidden = false
+        needsLayout = true
+    }
+
     // Only lit keys are hoverable; `.activeAlways` so enter/exit fire even though
     // the panel is non-activating.
     //
@@ -350,12 +395,29 @@ private final class HyperKeyView: NSView {
 
     // MARK: - Click
 
-    /// The panel is never key (non-activating, canBecomeKey == false), so without
-    /// this the FIRST click on a cap would only be swallowed as an activation.
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { onClick != nil }
+    /// MEASURED (2026-07-30, real posted CGEvent while another app was
+    /// frontmost): this panel is never key and its app never active, yet AppKit
+    /// delivers the mouseDown regardless of what this returns -- a click on a
+    /// DIM cap, which answers `false` in every version of this code, still
+    /// reached the window and dismissed the card. So the first-mouse gate does
+    /// NOT apply to a `.nonactivatingPanel`, and an earlier comment here saying
+    /// the click "would only be swallowed as an activation" was wrong.
+    ///
+    /// Kept, and made unconditional rather than deleted: it costs nothing, and
+    /// were the gate ever to apply, `onClick != nil` would have silently broken
+    /// exactly the paths that route a click onward -- dim caps falling through
+    /// to the panel's dismiss, and failed caps swallowing it.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
-        guard onClick != nil else { super.mouseDown(with: event); return }
+        guard onClick != nil else {
+            // A DIM cap is background -- let the click fall through the
+            // responder chain to the panel's dismiss. A lit-but-FAILED cap is
+            // not: swallow it, so aiming at a broken shortcut doesn't close the
+            // card out from under the hint that explains it.
+            if !lit { super.mouseDown(with: event) }
+            return
+        }
         pressing = true
         setPressedLook(true)
     }

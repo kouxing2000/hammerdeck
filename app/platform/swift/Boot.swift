@@ -262,7 +262,10 @@ public func hammerdeckMain() {
                                       icon: (d["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 },
                                       desc: (d["desc"] as? String).flatMap { $0.isEmpty ? nil : $0 },
                                       featureId: (d["featureId"] as? String) ?? "",
-                                      actionId: (d["actionId"] as? String) ?? "")
+                                      actionId: (d["actionId"] as? String) ?? "",
+                                      failed: (d["failed"] as? Bool) ?? false,
+                                      failReason: (d["failReason"] as? String)
+                                          .flatMap { $0.isEmpty ? nil : $0 })
         }
     }
     // Clicking a key on that legend runs its action -- the same registry entry

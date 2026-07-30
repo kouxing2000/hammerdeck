@@ -92,9 +92,10 @@ enum DebugControl {
                         .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
                     out = DebugShot.capture(to: path.isEmpty ? "/tmp/hammerdeck-shot.png" : path)
                 } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@chordhint" {
-                    // Preview the chord which-key hint card (pixels only).
-                    ChordCenter.shared.debugPreviewHint()
-                    out = "showed chord hint"
+                    // Preview the chord which-key hint card (pixels only;
+                    // toggles -- no armed chord to time it out).
+                    out = ChordCenter.shared.debugPreviewHint()
+                        ? "showed chord hint" : "hid chord hint"
                 } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@hyperhint" {
                     // Preview the Hyper which-key legend from the live catalog
                     // (toggles -- there is no Caps release to dismiss it).

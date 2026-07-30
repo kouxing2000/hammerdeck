@@ -1312,6 +1312,81 @@ final class IntegrationTests: XCTestCase {
         XCTAssertFalse(chord.isArmed, "and leaves nothing armed")
     }
 
+    /// The RESPONDER-CHAIN half of the background-click dismissal: a click no
+    /// view claims has to walk all the way to the WINDOW -- the only place to
+    /// catch "clicked the chrome" without blanketing the card in a swallowing
+    /// overlay that would shadow its real controls.
+    ///
+    /// SCOPE, deliberately stated: `sendEvent` enters below the layer where
+    /// AppKit decides first-mouse delivery, so this cannot tell you whether a
+    /// REAL click reaches the panel at all -- it would pass either way. That
+    /// half was settled separately, on-device, with a posted CGEvent (see
+    /// HyperKeyView.acceptsFirstMouse). Do not let this test's green stand in
+    /// for that question.
+    func testUnclaimedClickReachesThePanelBackground() {
+        // Parked far off every display: AppKit only hit-tests an ON-SCREEN
+        // window, so the panel has to be ordered in -- but nothing should flash.
+        let panel = FloatingPanel(contentRect: NSRect(x: -9000, y: -9000, width: 200, height: 100),
+                                  mouseTransparent: false)
+        // A plain NSView does not implement mouseDown, so it passes the event on.
+        panel.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        panel.orderFrontRegardless()
+        defer { panel.orderOut(nil) }
+        var clicks = 0
+        panel.onBackgroundClick = { clicks += 1 }
+        guard let click = NSEvent.mouseEvent(
+            with: .leftMouseDown, location: NSPoint(x: 100, y: 50), modifierFlags: [],
+            timestamp: 0, windowNumber: panel.windowNumber, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 1) else {
+            return XCTFail("could not synthesize the click")
+        }
+        panel.sendEvent(click)
+        XCTAssertEqual(clicks, 1, "an unclaimed click reaches the window's background handler")
+
+        // Default (nil) must stay inert -- the informational HUDs share this base.
+        panel.onBackgroundClick = nil
+        panel.sendEvent(click)
+        XCTAssertEqual(clicks, 1, "a panel that declares no handler is unaffected")
+    }
+
+    /// The other half of the mouse path: after a click ARMS a chord, clicking a
+    /// row on the follow-key card must pick that key. chooseFollow defers a
+    /// main-loop pass (the click is still unwinding and advance() can run the
+    /// action), so the assertions wait on the run loop rather than the return.
+    func testClickingAFollowKeyCompletesTheChord() {
+        let chord = ChordCenter.shared
+        var fired = 0
+        guard let id = chord.bind(mods: ["cmd", "alt", "ctrl"], key: "y", follows: ["b"],
+                                  label: "follow probe", handler: { fired += 1 }) else {
+            return XCTFail("could not register the probe chord")
+        }
+        defer { chord.unbind(id) }
+
+        XCTAssertTrue(chord.pressPrefix(mods: ["cmd", "alt", "ctrl"], key: "y"))
+
+        // A key that is NOT live at this level must be ignored, not disarm.
+        chord.chooseFollow("q")
+        pumpRunLoop()
+        XCTAssertTrue(chord.isArmed, "a follow key that isn't live leaves the chord armed")
+        XCTAssertEqual(fired, 0, "and fires nothing")
+
+        chord.chooseFollow("b")
+        pumpRunLoop()
+        XCTAssertEqual(fired, 1, "clicking the live follow key completes the chord")
+        XCTAssertFalse(chord.isArmed, "and disarms it")
+
+        // With nothing armed, a stray click (a card racing its own teardown)
+        // must be inert rather than reviving the chord.
+        chord.chooseFollow("b")
+        pumpRunLoop()
+        XCTAssertEqual(fired, 1, "a click with nothing armed fires nothing")
+    }
+
+    /// Let queued main-queue work (chooseFollow's deferral) run.
+    private func pumpRunLoop() {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+
     func testChordRegistersARealPrefixHotkey() {
         host.store.setEnabled("plain_paste", true)
         // Rebind onto a chord: ChordCenter registers the prefix via the real

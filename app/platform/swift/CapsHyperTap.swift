@@ -169,7 +169,10 @@ final class CapsHyperTap {
     /// The legend card, wired so CLICKING a lit key does what pressing it would.
     private func makeLegendPanel() -> HyperHintPanel {
         HyperHintPanel(rows: legendProvider?() ?? [],
-                       onActivate: { [weak self] row in self?.activateLegendRow(row) })
+                       onActivate: { [weak self] row in self?.activateLegendRow(row) },
+                       // Same teardown a key press takes: the card is done for
+                       // this hold and does not come back until Caps is re-held.
+                       onDismiss: { [weak self] in self?.cancelAndHideLegend() })
     }
 
     /// A key cap on the legend was clicked -- the pointer twin of pressing it.

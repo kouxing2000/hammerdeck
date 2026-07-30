@@ -56,6 +56,10 @@ final class ChordCenter {
     private var hintShown = false
     /// Delay from arming to showing the hint. Under `timeout` so it's useful.
     var hintDelay: TimeInterval = 0.35
+#if DEBUG
+    /// `@chordhint`'s own shown-flag, kept apart from the armed session's.
+    private var debugHintShown = false
+#endif
 
     /// Register a chord. Returns its id, or nil if the prefix key or any follow
     /// key is unknown (or there are no follow keys -- that would be a plain
@@ -129,6 +133,37 @@ final class ChordCenter {
         guard idsByPrefix[prefix] != nil else { return false }
         arm(prefix)
         return true
+    }
+
+    /// A follow key CHOSEN BY CLICK on the which-key hint -- the pointer twin of
+    /// typing it, and the other half of the mouse path pressPrefix opens.
+    ///
+    /// Deferred a main-loop pass, and re-checked there rather than here: the
+    /// click is still unwinding, and `advance` tears the hint card down and may
+    /// run the chord's action (which can open panels of its own).
+    ///
+    /// The re-check pins the exact LEVEL the clicked row was drawn for, not just
+    /// that `key` is live. A physical follow key pressed in that same gap
+    /// advances the chord, and if the clicked key happens to be live at the new
+    /// level too, a bare liveness check would let the deferred pass complete a
+    /// DIFFERENT chord than the row the user aimed at.
+    func chooseFollow(_ key: String) {
+        let k = key.lowercased()
+        let level = armedPrefix
+        let pos = armedPos
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let c = ChordCenter.shared
+                guard let level, c.armedPrefix == level, c.armedPos == pos,
+                      c.isLiveFollow(k) else { return }
+                c.advance(k)
+            }
+        }
+    }
+
+    /// Is `key` one of the follow keys live at the CURRENT level?
+    private func isLiveFollow(_ key: String) -> Bool {
+        armedCandidates.contains { armedPos < $0.follows.count && $0.follows[armedPos] == key }
     }
 
     // MARK: - Armed session
@@ -252,8 +287,19 @@ final class ChordCenter {
 #if DEBUG
     /// Render the hint card with sample rows for a visual check (DebugControl
     /// `@chordhint`). Bypasses the real arm/event path -- pixels only.
-    func debugPreviewHint() {
-        if hintPanel == nil { hintPanel = ChordHintPanel() }
+    /// TOGGLES, like its Hyper sibling: shown this way there is no armed chord
+    /// to time out and tear it down, and the card is mouse-opaque now, so
+    /// without a second call it would sit on the screen swallowing clicks.
+    /// Returns true when it just showed the card.
+    ///
+    /// Tracks its OWN flag rather than reusing `hintShown`: that one belongs to
+    /// the live armed session, so toggling it here would leave a real chord
+    /// armed believing its card is down -- and `disarm` would then skip closing
+    /// a card that is still on screen.
+    @discardableResult
+    func debugPreviewHint() -> Bool {
+        if debugHintShown { hintPanel?.close(); debugHintShown = false; return false }
+        ensureHintPanel()
         let rows = [
             ChordHintPanel.Row(key: "w", label: "Window switcher", icon: "macwindow.on.rectangle"),
             ChordHintPanel.Row(key: "p", label: "Command palette", icon: "command"),
@@ -263,9 +309,21 @@ final class ChordCenter {
         ]
         hintPanel?.update(prefixMods: ["cmd", "shift"], prefixKey: "a", rows: rows,
                           remaining: timeout, total: timeout)
-        hintShown = true
+        debugHintShown = true
+        return true
     }
 #endif
+
+    /// Build the (reused) hint card on first use and wire its POINTER path:
+    /// pick a follow key by clicking its row, or click the card's chrome to
+    /// cancel -- the mouse twin of the `esc` its own footer advertises.
+    private func ensureHintPanel() {
+        guard hintPanel == nil else { return }
+        let p = ChordHintPanel()
+        p.onChoose = { ChordCenter.shared.chooseFollow($0) }
+        p.onDismiss = { ChordCenter.shared.disarm() }
+        hintPanel = p
+    }
 
     /// Show the hint after `hintDelay`, reading live state when it fires.
     private func scheduleHint() {
@@ -282,7 +340,7 @@ final class ChordCenter {
         guard let prefix = armedPrefix else { return }
         let rows = hintRows()
         guard !rows.isEmpty else { return }
-        if hintPanel == nil { hintPanel = ChordHintPanel() }
+        ensureHintPanel()
         // Remaining time on the current level so the bar depletes in step with
         // the real timeout (and ends exactly when it auto-disarms).
         let remaining = max(0, armedDeadline?.timeIntervalSinceNow ?? timeout)

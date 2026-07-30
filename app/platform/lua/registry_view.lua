@@ -155,11 +155,26 @@ end
 
 -- A "which-key" legend of every ENABLED binding on the Hyper prefix
 -- (cmd+alt+ctrl), for the held-Caps HUD. Returns a key-sorted list of rows
--- { key, label, chord, icon, desc, featureId, actionId }; the renderer turns
--- `key` into a key-cap glyph (chords get a trailing "…"), shows `desc` in its
--- hover hint, and fires the featureId/actionId pair when the key is CLICKED
--- (the mouse twin of pressing it) -- the same registry.runAction pair the
--- menubar's quick triggers use.
+-- { key, label, chord, icon, desc, featureId, actionId, failed, failReason };
+-- the renderer turns `key` into a key-cap glyph (chords get a trailing "…"),
+-- shows `desc` in its hover hint, and fires the featureId/actionId pair when
+-- the key is CLICKED (the mouse twin of pressing it) -- the same
+-- registry.runAction pair the menubar's quick triggers use.
+--
+-- EXACTLY ONE ROW PER KEY CAP, because the board has exactly one cap to say it
+-- with. A chord PREFIX is shared by every chord hanging off it (locate_pointer
+-- alone hangs five off Hyper+M), so a group is collapsed here rather than left
+-- for the renderer to pick a winner from -- which used to be genuinely random,
+-- since table.sort is not stable in Lua and the renderer kept whichever row
+-- landed last. That mattered more once the cap became clickable: clicking a
+-- prefix ARMS the chord, so a cap labelled with one arbitrary member named an
+-- action the click was guaranteed not to run.
+--
+-- A feature whose start/bind THREW keeps its enabled flag (registry.lua's
+-- "enabled but failed"), so its binding still belongs on the board -- the
+-- shortcut is configured, it just cannot fire. Those rows are marked `failed`
+-- rather than dropped: hiding them would hide the only on-screen evidence that
+-- something is broken, and the renderer shows the reason in its hover hint.
 function view.hyperLegend()
     local function isHyper(t)
         if not t or (t.type ~= "hotkey" and t.type ~= "chord") then return false end
@@ -169,6 +184,7 @@ function view.hyperLegend()
         for _, x in ipairs(m) do s[x:lower()] = true end
         return (s.cmd or s.command) and (s.alt or s.option) and (s.ctrl or s.control)
     end
+    local startFailures = deps.startFailures()
     local items = {}
     for _, m in ipairs(deps.all()) do
         if deps.isEnabled(m.id) then
@@ -182,9 +198,6 @@ function view.hyperLegend()
                         label = (#m.actions > 1) and view.locActionLabel(m, a) or view.locName(m),
                         chord = (t.type == "chord"),
                         -- The runAction pair, for a CLICK on the HUD's key cap.
-                        -- (A chord row's key is only a PREFIX -- several actions
-                        -- can share it -- so the HUD arms the chord there rather
-                        -- than running this one; the pair stays for symmetry.)
                         featureId = m.id,
                         actionId = a.id,
                         -- Leading glyph for the Hyper cheat-sheet row; resolved
@@ -194,13 +207,87 @@ function view.hyperLegend()
                         -- One-line "what it does", shown in the keyboard HUD's
                         -- hover hint (falls back to the feature description).
                         desc = desc,
+                        failed = startFailures[m.id] ~= nil,
+                        failReason = startFailures[m.id],
+                        -- Collapse-only: read while grouping, never emitted.
+                        featureName = view.locName(m),
                     }
                 end
             end
         end
     end
-    table.sort(items, function(a, b) return a.key < b.key end)
-    return items
+
+    -- Group by cap, then emit one row per group.
+    local groups, order = {}, {}
+    for _, it in ipairs(items) do
+        local k = it.key:lower()
+        if not groups[k] then groups[k] = {}; order[#order + 1] = k end
+        table.insert(groups[k], it)
+    end
+
+    local out = {}
+    for _, k in ipairs(order) do
+        local g = groups[k]
+        -- No sort: `items` is built in a deterministic order (deps.all() is
+        -- id-sorted, actions keep their declared order) and grouping appends in
+        -- that order, so each group already holds it.
+        local first = g[1]
+        local row = {
+            key = first.key, label = first.label, chord = first.chord,
+            featureId = first.featureId, actionId = first.actionId,
+            icon = first.icon, desc = first.desc,
+            failed = first.failed, failReason = first.failReason,
+        }
+        if #g > 1 then
+            local oneFeature, allChord, allFailed, labels = true, true, true, {}
+            for i, it in ipairs(g) do
+                if it.featureId ~= first.featureId then oneFeature = false end
+                if not it.chord then allChord = false end
+                if not it.failed then allFailed = false end
+                labels[i] = it.label
+            end
+            -- A blank/absent feature name must not blank the cap ("" is TRUTHY
+            -- in Lua, so it would win the `and`/`or` below).
+            if first.featureName == nil or first.featureName == "" then oneFeature = false end
+            row.desc = table.concat(labels, i18n.t("list.separator", ", "))
+
+            if allChord then
+                -- The designed case: one chord PREFIX, several chords hanging
+                -- off it. A click arms the prefix (featureId/actionId go
+                -- unused), so name the FEATURE when the group is one -- all
+                -- five of Hyper+M are locate_pointer -- and just count when it
+                -- spans features. Never one arbitrary member.
+                row.chord = true
+                row.label = oneFeature and first.featureName
+                    or i18n.format("trigger.actions", "%d actions", #g)
+                row.icon = oneFeature and first.icon or nil
+                -- Inert only when NOTHING on the cap can fire. A PARTLY failed
+                -- prefix is still live: arming it offers whichever chords bound,
+                -- and the ones that did not were never registered.
+                row.failed = allFailed
+                row.failReason = allFailed and first.failReason or nil
+            else
+                -- Several DIFFERENT bindings claim one physical key (two plain
+                -- hotkeys, or a hotkey and a chord prefix). At most one can win
+                -- at the OS level, and no single cap can honestly say which --
+                -- so say THAT instead of picking one. Reachable without an
+                -- author bug: triggerConflict only scans ENABLED features, and
+                -- shipped default triggers are never conflict-checked at all.
+                -- Marked inert via the same channel a failed binding uses, so
+                -- the cap is never clickable and its reason reaches the hover
+                -- hint rather than a click that quietly does the wrong thing.
+                row.chord = false
+                row.icon = nil
+                row.label = i18n.format("trigger.actions", "%d actions", #g)
+                row.failed = true
+                row.failReason = i18n.format("hyper.conflict",
+                    "%d bindings claim this key", #g)
+            end
+        end
+        out[#out + 1] = row
+    end
+    table.sort(out, function(a, b) return a.key < b.key end)
+    return json.asArray(out)
 end
 
 function view.describeTrigger(m)

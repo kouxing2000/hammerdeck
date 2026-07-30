@@ -23,6 +23,22 @@ class FloatingPanel: NSPanel {
     private let keyable: Bool
     override var canBecomeKey: Bool { keyable }
 
+    /// Called when a click lands on the panel but NO view claimed it -- the
+    /// gaps, the chrome, an inert cap. A mouse event walks the responder chain
+    /// and ends at the window, so this is the one place a "clicked the
+    /// background" gesture can be caught without blanketing the card in a
+    /// swallowing overlay that would shadow its real controls.
+    ///
+    /// nil (the default) keeps NSPanel's own behavior, so the informational
+    /// HUDs are unaffected. Set it on an INTERACTIVE panel to give "I clicked
+    /// to get rid of this" the outcome the gesture already implies -- which
+    /// matters most where a stray click would otherwise hit something live.
+    var onBackgroundClick: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if let onBackgroundClick { onBackgroundClick() } else { super.mouseDown(with: event) }
+    }
+
     init(contentRect: NSRect,
          level: NSWindow.Level = .statusBar,
          collectionBehavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary],

@@ -7,9 +7,13 @@ import QuartzCore
 // MARK: - Chord which-key hint (floating card listing the follow keys)
 
 /// The "which-key" hint for an armed chord: a small floating card listing the
-/// follow keys live at the current level and what each does. Non-activating and
-/// mouse-transparent -- purely informational, like BannerPanel. ChordCenter
-/// shows it after a short delay and updates it as the chord descends levels.
+/// follow keys live at the current level and what each does. Non-activating,
+/// and -- like HyperHintPanel, whose amber caps arm the chord this card
+/// completes -- it answers the POINTER: a row highlights on hover and picks its
+/// follow key on click, so a chord started with the mouse can be finished with
+/// it. Clicking anywhere else on the card cancels, the pointer twin of the `esc`
+/// its own footer advertises. ChordCenter shows it after a short delay and
+/// updates it as the chord descends levels.
 ///
 /// Styled to match its sibling HUDs (HyperHintPanel / WindowModeHUDPanel): a
 /// real macOS `.hudWindow` vibrancy card with boxed key-caps and fixed-width
@@ -28,7 +32,17 @@ final class ChordHintPanel {
     /// timeout window -- the "press a key before this runs out" cue.
     private let barLayer = CALayer()
 
+    /// Called with the follow key of the row the user CLICKED -- the pointer
+    /// twin of typing it. The owner decides whether that key is still live.
+    var onChoose: ((String) -> Void)?
+    /// Called on a click that hit the card but no row: cancel, same as `esc`.
+    var onDismiss: (() -> Void)?
+
     init() {
+        // Interactive, unlike its informational siblings -- see the class note.
+        hud.ignoresMouseEvents = false
+        hud.onBackgroundClick = { [weak self] in self?.onDismiss?() }
+
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 15, right: 18)
@@ -143,7 +157,8 @@ final class ChordHintPanel {
                                            fixedWidth: 26, tint: tint))
             line.addArrangedSubview(iconView(r.icon))
             line.addArrangedSubview(labelField(r.label))
-            col.addArrangedSubview(line)
+            col.addArrangedSubview(ChordRowView(line, key: r.key,
+                                                onClick: { [weak self] k in self?.onChoose?(k) }))
         }
         return col
     }
@@ -190,5 +205,81 @@ final class ChordHintPanel {
     private func keyCap(_ glyph: String, fontSize: CGFloat, height: CGFloat,
                         fixedWidth: CGFloat? = nil, tint: NSColor? = nil) -> NSView {
         KeyCap.make(glyph, fontSize: fontSize, height: height, fixedWidth: fixedWidth, tint: tint)
+    }
+}
+
+/// One clickable follow-key row: wraps the [cap  glyph  label] line in a hit
+/// target that highlights on hover and reports its key on click. The wrapper
+/// exists because the line itself is an NSStackView sized to its content --
+/// hovering the GAPS between cap, glyph and label has to count as hovering the
+/// row, or the target would be three disjoint slivers.
+@MainActor
+private final class ChordRowView: NSView {
+    private let key: String
+    private let onClick: (String) -> Void
+    private var tracking: NSTrackingArea?
+    private var pressing = false
+
+    init(_ content: NSView, key: String, onClick: @escaping (String) -> Void) {
+        self.key = key
+        self.onClick = onClick
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        // A small bleed so the highlight reads as a row band, not a tight box.
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+        ])
+    }
+    required init?(coder: NSCoder) { nil }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = tracking { removeTrackingArea(t); tracking = nil }
+        // `.activeAlways`: the panel is non-activating and never key.
+        // `.inVisibleRect`: this view is created at .zero and sized entirely by
+        // Auto Layout inside the stack, so a rect captured now would be stale.
+        let t = NSTrackingArea(rect: .zero,
+                               options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                               owner: self, userInfo: nil)
+        addTrackingArea(t); tracking = t
+    }
+
+    private func setFill(_ alpha: CGFloat) {
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(alpha).cgColor
+    }
+
+    override func mouseEntered(with event: NSEvent) { setFill(0.10) }
+    override func mouseExited(with event: NSEvent) { pressing = false; setFill(0) }
+
+    /// The panel is never key, so without this the first click would be
+    /// swallowed as an activation instead of picking the row.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        pressing = true
+        setFill(0.20)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard pressing else { return }
+        setFill(isInside(event) ? 0.20 : 0)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard pressing else { return }
+        pressing = false
+        setFill(isInside(event) ? 0.10 : 0)
+        if isInside(event) { onClick(key) }
+    }
+
+    private func isInside(_ event: NSEvent) -> Bool {
+        bounds.contains(convert(event.locationInWindow, from: nil))
     }
 }
