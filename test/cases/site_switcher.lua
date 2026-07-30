@@ -3,7 +3,9 @@
 -- it, or open it as a standalone app window. Covers the chooser list + subtext, single-
 -- site straight-jump, no-match fallback, scheme-less normalization, the legacy openURL
 -- migration, `Name | URL [| app]` parsing + favicons, per-site browser/profile routing
--- (plain + JSON storage), Safari's focus-tab path, and the empty-config hint.
+-- (plain + JSON storage), Safari's focus-tab path, and the empty-config hint. The final
+-- block covers the dynamicActions hook that gives each site its own action (its menubar
+-- submenu row / palette entry / bindable shortcut).
 --
 -- Migrated from run.lua T23 (RUN_LUA_SPLIT_SPEC Phase 2). Hermetic: registers its own
 -- feature and seeds its own site list / tabs per assertion; freshWorld() before + handle
@@ -177,6 +179,173 @@ return {
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
         ok(fake.alerts[#fake.alerts]:match("No sites yet") ~= nil,
             "empty config alerts instead of doing nothing")
+
+        -- PER-SITE ACTIONS: the dynamicActions hook turns each configured site into
+        -- its own action ("site_<key>"), which is what puts every site in the
+        -- menubar's Quick Sites submenu / the command palette and lets it take a
+        -- shortcut of its own. Exercises expansion, firing one, the stable id
+        -- (a binding survives a re-register and a rename), the slug fallback for a
+        -- config with no ids, same-domain uniqueness, and tolerance of a corrupt
+        -- value -- plus that the picker action is untouched by all of it.
+        do
+            local sitesKey = "hammerdeck.opt.site_switcher.sites"
+
+            -- Re-register from a FRESH module (what reload() does): register()
+            -- appends the dynamic actions to the manifest IN PLACE, so a cached
+            -- module would double-append them on the next register.
+            local function reregister()
+                pcall(registry.setEnabled, "site_switcher", false)
+                registry.unregister("site_switcher")
+                package.loaded["features.site_switcher"] = nil
+                registry.register(require("features.site_switcher"))
+                registry.setEnabled("site_switcher", true)
+            end
+            -- How many actions the feature describes (the picker + one per site).
+            local function actionCount()
+                for _, f in ipairs(registry.describe()) do
+                    if f.id == "site_switcher" then return #f.actions end
+                end
+                return 0
+            end
+            -- The described action row for an id, or nil.
+            local function siteAction(id)
+                for _, f in ipairs(registry.describe()) do
+                    if f.id == "site_switcher" then
+                        for _, a in ipairs(f.actions) do
+                            if a.id == id then return a end
+                        end
+                    end
+                end
+                return nil
+            end
+
+            -- (1) each stored site becomes an action, labelled with its name
+            fake.settings[sitesKey] =
+                '[{"id":"aaa","name":"GitHub","url":"github.com"},'
+                .. '{"id":"bbb","name":"Example","url":"example.com"}]'
+            reregister()
+            ok(siteAction("site_aaa") ~= nil and siteAction("site_bbb") ~= nil,
+                "each configured site becomes its own action")
+            ok(siteAction("site_aaa").label == "GitHub",
+                "the action takes the site's name as its label")
+            ok(siteAction("site_aaa").dynamic == true,
+                "a site action is tagged dynamic (Settings hides its duplicate trigger section)")
+            ok(siteAction("site_aaa").defaultTrigger == nil,
+                "a site ships dormant -- no default trigger (no uninvited hotkey grab)")
+            ok(registry.isActionAutomatable("site_switcher", "site_aaa") == true,
+                "a site action is automatable -- a schedule/event rule can open it")
+            -- The picker is unaffected: same id (so an existing rebind still
+            -- applies), still bound to Hyper+U, still not dynamic.
+            local main = siteAction("main")
+            ok(main ~= nil and main.dynamic == false and main.trigger
+                and main.trigger.type == "hotkey" and main.trigger.key == "u",
+                "the picker action keeps its id and its Hyper+U default")
+
+            -- (2) firing a site action jumps to that site (no chooser in between)
+            fake.browserTabs = { "https://github.com/pulls" }
+            fake.focusedTabs = {}
+            assert(registry.runAction("site_switcher", "site_aaa"))
+            ok(fake.visibleChooser() == nil
+                and fake.focusedTabs[#fake.focusedTabs] == "https://github.com/pulls",
+                "running a site action focuses that site's tab directly")
+
+            -- (2b) the action resolves its site WHEN IT FIRES, not from a record
+            -- captured at register time: re-point the URL with NO re-register and
+            -- the same action must open the new destination. A closure over the
+            -- register-time record would still open github.com here -- and the
+            -- label would agree with it, so nothing would look wrong.
+            fake.settings[sitesKey] =
+                '[{"id":"aaa","name":"GitHub","url":"example.com"},'
+                .. '{"id":"bbb","name":"Example","url":"example.com"}]'
+            fake.browserTabs = { "https://example.com/moved" }
+            fake.focusedTabs = {}
+            assert(registry.runAction("site_switcher", "site_aaa"))
+            ok(fake.focusedTabs[#fake.focusedTabs] == "https://example.com/moved",
+                "a site action re-reads the live config on every fire (an edited URL " ..
+                "applies with no reload)")
+
+            -- ... and a leftover action whose site was DELETED does nothing, rather
+            -- than opening a destination the user removed.
+            fake.settings[sitesKey] = '[{"id":"bbb","name":"Example","url":"example.com"}]'
+            fake.focusedTabs = {}
+            fake.siteOpens = {}
+            fake.openedNewTabs = {}
+            assert(registry.runAction("site_switcher", "site_aaa"))
+            ok(#fake.focusedTabs == 0 and #fake.siteOpens == 0 and #fake.openedNewTabs == 0,
+                "a site action whose site was deleted no-ops instead of jumping")
+
+            fake.settings[sitesKey] =
+                '[{"id":"aaa","name":"GitHub","url":"github.com"},'
+                .. '{"id":"bbb","name":"Example","url":"example.com"}]'
+
+            -- (3) stable id: a bound shortcut survives a re-register (reload's
+            -- essence), because the trigger override keys on the site's id.
+            ok(registry.setTrigger("site_switcher", "site_aaa",
+                { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "1" }),
+                "a site action binds a hotkey")
+            reregister()
+            local a = siteAction("site_aaa")
+            ok(a ~= nil and a.triggerOverridden == true and a.trigger and a.trigger.key == "1",
+                "the bound shortcut survives a re-register (stable site id)")
+
+            -- (4) rename + re-point the URL (same id) -> new label, SAME binding
+            fake.settings[sitesKey] =
+                '[{"id":"aaa","name":"Pull requests","url":"github.com/pulls"},'
+                .. '{"id":"bbb","name":"Example","url":"example.com"}]'
+            reregister()
+            a = siteAction("site_aaa")
+            ok(a ~= nil and a.label == "Pull requests", "a rename updates the action label")
+            ok(a.triggerOverridden == true,
+                "a rename / URL edit keeps the shortcut (the id is unchanged)")
+            fake.settings["hammerdeck.trigger.site_switcher.site_aaa"] = nil
+
+            -- (5) a config with no ids (legacy text, or JSON written before them)
+            -- still binds: the key falls back to a slug of the URL.
+            fake.settings[sitesKey] = "GitHub | github.com\nExample | example.com\n"
+            reregister()
+            ok(siteAction("site_github_com") ~= nil and siteAction("site_example_com") ~= nil,
+                "an id-less config keys its site actions off a URL slug")
+
+            -- (6) two sites on ONE domain (e.g. two Chrome profiles) slug to the
+            -- same key -- they must still get distinct ids, because a duplicate
+            -- would fail validation and quarantine the whole feature.
+            fake.settings[sitesKey] =
+                '[{"name":"Work","url":"mail.google.com","profile":"Profile 1"},'
+                .. '{"name":"Personal","url":"mail.google.com","profile":"Profile 2"}]'
+            reregister()
+            local first, second = siteAction("site_mail_google_com"), siteAction("site_mail_google_com_2")
+            ok(first ~= nil and first.label == "Work"
+                and second ~= nil and second.label == "Personal",
+                "two sites on one domain get distinct action ids")
+            ok(actionCount() == 3,
+                "... and both survive alongside the picker (a duplicate id would " ..
+                "have thrown at register and quarantined the feature)")
+
+            -- (7) a half-written row -- what "Add site" leaves in the stored JSON
+            -- until a URL is typed -- must contribute NO action. An empty url would
+            -- otherwise mint an action with an empty label (and, with two of them,
+            -- a duplicate id that quarantines the feature at register).
+            fake.settings[sitesKey] =
+                '[{"id":"aaa","name":"GitHub","url":"github.com"},'
+                .. '{"id":"new1","name":"","url":""},{"id":"new2","name":"","url":""}]'
+            reregister()
+            ok(actionCount() == 2 and siteAction("site_aaa") ~= nil,
+                "a blank row contributes no action (and two of them cannot collide)")
+
+            -- (8) tolerance: a corrupt value yields NO site actions, but the picker
+            -- still binds (a bad setting must never disable the feature). Counted,
+            -- not spot-checked: broken JSON must not read as one absurd site either.
+            fake.settings[sitesKey] = "[{ not json"
+            reregister()
+            ok(actionCount() == 1 and siteAction("main") ~= nil,
+                "a corrupt sites value drops the site actions, leaving just the picker")
+
+            fake.settings[sitesKey] = nil
+            pcall(registry.setEnabled, "site_switcher", false)
+            ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
+                "clean after the per-site actions block")
+            registry.setEnabled("site_switcher", true)
+        end
 
         registry.setEnabled("site_switcher", false)
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after site_switcher test")

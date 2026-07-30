@@ -7,8 +7,9 @@
 
 import SwiftUI
 
-// One configured site. Stored as JSON; `id` is editor-only (excluded from the
-// CodingKeys so it never reaches the JSON or the Lua side).
+// One configured site. Stored as JSON -- `id` included: the Lua side turns each
+// site into a bindable action keyed by it ("site_<id>"), so a stable id is what
+// lets a per-site shortcut survive a rename, a URL edit, and a reorder.
 struct SiteRow: Identifiable, Equatable, Codable {
     var id = UUID()
     var name = ""
@@ -17,7 +18,7 @@ struct SiteRow: Identifiable, Equatable, Codable {
     var profile = ""    // Chrome profile directory; "" = default/current profile
     var app = false
 
-    enum CodingKeys: String, CodingKey { case name, url, browser, profile, app }
+    enum CodingKeys: String, CodingKey { case id, name, url, browser, profile, app }
 
     init() {}
 
@@ -27,6 +28,12 @@ struct SiteRow: Identifiable, Equatable, Codable {
     // partially-written record must not wipe the list).
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        // No id -- a config written before sites became actions. Keep the freshly
+        // generated one, but note that minting it here does NOT persist it: the
+        // first real edit does (see the guard in .onChange(of: rows)), and only
+        // then does the site's action key change from the URL slug the Lua side
+        // falls back to, taking any shortcut bound to that slug with it.
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
         browser = try c.decodeIfPresent(String.self, forKey: .browser) ?? ""
@@ -78,10 +85,24 @@ struct SiteRow: Identifiable, Equatable, Codable {
 struct SiteListEditor: View {
     let json: String
     let onChange: (String) -> Void
+    /// Re-register the catalog, so an added / removed / renamed site's row appears
+    /// in the menubar submenu and the palette. Only the action SET and its LABELS
+    /// need this: a site action resolves its site when it fires, so a URL /
+    /// browser / profile / app-mode edit takes effect with no reload at all.
+    /// Called from `commit()` at the two discrete moments (removing a row,
+    /// collapsing an edited one) -- never from `.onChange`, which fires on every
+    /// keystroke and would rebind every feature in the app mid-typing.
+    let reload: () -> Void
 
     @State private var rows: [SiteRow] = []
     @State private var expanded: Set<UUID> = []
     @State private var seeded = false
+    /// What the last persist wrote (initially: what was decoded). Anything else in
+    /// `rows` is a real edit -- see the guard in `.onChange(of: rows)`.
+    @State private var persisted: [SiteRow] = []
+    /// An edit is stored but the catalog has not re-registered yet, so a site's
+    /// menu row / label may still be missing or stale.
+    @State private var dirty = false
 
     // Enumerated once when the editor appears (cheap; reopen Settings to pick up
     // a newly-installed browser / profile).
@@ -116,14 +137,37 @@ struct SiteListEditor: View {
             .buttonStyle(.borderless)
             .controlSize(.small)
         }
-        .onAppear { if !seeded { rows = SiteRow.decode(json); seeded = true } }
+        .onAppear {
+            if !seeded { rows = SiteRow.decode(json); persisted = rows; seeded = true }
+        }
         .onChange(of: json) { new in
             if new.isEmpty && !rows.isEmpty { rows = [] }
         }
         .onChange(of: rows) { new in
-            let encoded = SiteRow.encode(new)
-            if encoded != json { onChange(encoded) }
+            // DECODING IS NOT AN EDIT. For a config written before ids, decode
+            // MINTS one per row, so `SiteRow.encode(rows)` already differs from
+            // `json` with the user having touched nothing -- and comparing against
+            // `json` here meant merely OPENING this page rewrote stored config,
+            // flipping every site's action id from its URL slug to the new UUID and
+            // silently orphaning any shortcut bound to the slug. So compare against
+            // what was last persisted (initially: what was decoded), which a mint
+            // equals and a real edit never does.
+            guard new != persisted else { return }
+            persisted = new
+            onChange(SiteRow.encode(new))
+            dirty = true
         }
+    }
+
+    /// Persist the rows AND re-register, so an added / removed / renamed site's
+    /// menu row follows immediately. Persist FIRST -- the reload re-reads the
+    /// stored value. Called only from user actions (never from `.onChange`, which
+    /// would publish a store change from inside a view update).
+    private func commit() {
+        persisted = rows
+        onChange(SiteRow.encode(rows))
+        dirty = false
+        reload()
     }
 
     // MARK: Row
@@ -194,6 +238,7 @@ struct SiteListEditor: View {
                 Button(role: .destructive) {
                     let id = row.wrappedValue.id
                     rows.removeAll { $0.id == id }
+                    commit()   // drop its menubar row now, not at the next reload
                 } label: {
                     Text(Strings.t("sites.remove", default: "Remove site"))
                 }
@@ -203,8 +248,16 @@ struct SiteListEditor: View {
         .padding(.top, 2)
     }
 
+    /// Collapsing a row is the "done editing this site" moment, so an edit made in
+    /// it commits here -- that is what puts a new site (or a new name) in the
+    /// menubar. Collapsing a row nobody edited re-registers nothing.
     private func toggle(_ id: UUID) {
-        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+        if expanded.contains(id) {
+            expanded.remove(id)
+            if dirty { commit() }
+        } else {
+            expanded.insert(id)
+        }
     }
 
     // MARK: Summary helpers

@@ -695,7 +695,13 @@ private struct OptionEditor: View {
                 SiteListEditor(
                     json: store.optionValue(featureId, opt) as? String
                         ?? (opt.defaultValue as? String ?? ""),
-                    onChange: { store.setOptionValue(featureId, opt, $0) }
+                    onChange: { store.setOptionValue(featureId, opt, $0) },
+                    // Each site is its own action (menubar submenu row, palette
+                    // entry, bindable in the Shortcut Map), and an action set +
+                    // its labels only re-derive on register -- so adding,
+                    // removing or renaming one reloads the catalog. The editor
+                    // picks those moments (never per keystroke).
+                    reload: { store.reload() }
                 )
             }
         case "placementList":

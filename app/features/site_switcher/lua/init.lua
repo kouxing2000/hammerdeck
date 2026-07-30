@@ -13,6 +13,12 @@
 -- row (shared cache with Tab Switcher). A single configured site skips the list
 -- and jumps straight (the donor's behavior).
 --
+-- Every configured site is ALSO its own action (the dynamicActions hook below),
+-- so it shows up as a row in the menubar's Quick Sites submenu and the command
+-- palette, and can take a shortcut of its own -- the no-picker path for the two
+-- or three sites you open all day. The picker stays the one action bound by
+-- default; the per-site rows ship dormant.
+--
 -- Per-line format ("sites" option, one site per line; all parts optional but
 -- the URL):
 --     github.com                       -- bare URL; name derived from the domain
@@ -81,12 +87,14 @@ local function parseSite(line)
     end
     url = normalizeURL(url)
     if name == nil or name == "" then name = siteName(url) end
-    return { url = url, name = name, app = app, browser = "", profile = "" }
+    return { id = "", url = url, name = name, app = app, browser = "", profile = "" }
 end
 
--- New storage: a JSON array of { name, url, browser, profile, app } records
+-- New storage: a JSON array of { id, name, url, browser, profile, app } records
 -- (written by the Settings row editor). Returns nil when `raw` isn't a JSON
--- array, so the caller can fall back to the legacy text format.
+-- array, so the caller can fall back to the legacy text format. `id` is the
+-- editor's stable per-row UUID -- what a per-site shortcut binds to (see
+-- actionKey); a record from an older write has none, and reads as "".
 local function recordsFromJSON(raw)
     local decoded = json.decode(raw)
     if type(decoded) ~= "table" then return nil end
@@ -96,6 +104,7 @@ local function recordsFromJSON(raw)
             local url = normalizeURL(trim(rec.url))
             local name = (type(rec.name) == "string" and rec.name ~= "") and rec.name or siteName(url)
             sites[#sites + 1] = {
+                id = type(rec.id) == "string" and rec.id or "",
                 url = url, name = name,
                 browser = type(rec.browser) == "string" and rec.browser or "",
                 profile = type(rec.profile) == "string" and rec.profile or "",
@@ -106,19 +115,29 @@ local function recordsFromJSON(raw)
     return sites
 end
 
--- The configured sites: the JSON record list when present, else the legacy
--- multiline text (`Name | URL | app`, one per line) or the even older single-URL
--- "openURL" key. One-way migration -- nothing is rewritten until the user edits
--- in Settings (which then saves JSON).
----@param ctx Ctx
-local function configuredSites(ctx)
-    local raw = ctx.opt("sites")
+-- The configured sites, from the stored option values: the JSON record list when
+-- present, else the legacy multiline text (`Name | URL | app`, one per line) or
+-- the even older single-URL "openURL" key. One-way migration -- nothing is
+-- rewritten until the user edits in Settings (which then saves JSON).
+--
+-- Takes the RAW values rather than a ctx, so the register-time dynamicActions
+-- hook (which has no ctx -- the registry hands it an option reader) and the live
+-- chooser parse a site identically: the menu row and the picker row can never
+-- disagree about what a site is. Tolerant by design -- a corrupt value yields an
+-- empty list, never an error, because a throw inside the hook would quarantine
+-- the whole feature.
+---@param raw any     the "sites" option: a JSON array, or the legacy text
+---@param legacy any  the retired single-site "openURL" key
+local function sitesFromRaw(raw, legacy)
+    -- A value that opens with "[" is the JSON format, full stop: if it fails to
+    -- decode it yields NO sites rather than falling through to the line parser,
+    -- which would read the broken JSON as one absurd site ("https://[{ not json").
+    -- The fallback exists for the legacy `Name | URL` text, and that never starts
+    -- with a bracket.
     if type(raw) == "string" and raw:match("^%s*%[") then
-        local sites = recordsFromJSON(raw)
-        if sites then return sites end
+        return recordsFromJSON(raw) or {}
     end
     if type(raw) ~= "string" or trim(raw) == "" then
-        local legacy = ctx.opt("openURL")
         raw = (type(legacy) == "string" and legacy ~= "") and legacy or ""
     end
     local sites = {}
@@ -127,6 +146,51 @@ local function configuredSites(ctx)
         if site then sites[#sites + 1] = site end
     end
     return sites
+end
+
+---@param ctx Ctx
+local function configuredSites(ctx)
+    return sitesFromRaw(ctx.opt("sites"), ctx.opt("openURL"))
+end
+
+-- The action key for one site (the action id is "site_" .. this). Prefers the
+-- record's stable id -- the Settings editor persists a UUID per row -- so a
+-- shortcut bound to a site survives renaming it, editing its URL, and reordering
+-- the list. A config written before ids (legacy text, or older JSON) falls back
+-- to a slug of the URL: stable enough to bind. Non-alphanumerics collapse to "_"
+-- because the key becomes part of a settings key
+-- (hammerdeck.trigger.site_switcher.site_<key>).
+--
+-- The slug -> id transition is NOT migrated: when an id-less config gains ids (on
+-- the user's next real edit in Settings), a site's key changes from its slug to
+-- its UUID, and a shortcut bound to the slug is orphaned rather than carried
+-- across. That is why the editor mints ids only on a real edit and never on a
+-- read-only visit (see SiteListEditor) -- the transition happens once, when the
+-- user is already editing, instead of behind their back.
+local function actionKey(site)
+    local key = (site.id ~= nil and site.id ~= "") and site.id or site.url
+    key = key:gsub("^https?://", ""):gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
+    return key ~= "" and key or "site"
+end
+
+-- Assign every site its action id, in list order: "site_" .. actionKey, with a
+-- numeric suffix when two sites share a key (one domain, two Chrome profiles) --
+-- a duplicate action id would fail validation and quarantine the whole feature.
+-- ONE walk, shared by the dynamicActions hook and the fire-time lookup below, so
+-- an id can never name one site at register time and a different one when the
+-- action fires.
+---@return string[] ids ordered action ids
+---@return table byId id -> site record
+local function assignActionIds(sites)
+    local ids, byId = {}, {}
+    for _, site in ipairs(sites) do
+        local base = "site_" .. actionKey(site)
+        local id, n = base, 1
+        while byId[id] do n = n + 1; id = base .. "_" .. n end
+        byId[id] = site
+        ids[#ids + 1] = id
+    end
+    return ids, byId
 end
 
 
@@ -194,50 +258,101 @@ return {
               .. "profile (Chrome only), and whether to open it as a standalone app window." },
     },
 
-    defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "u" },
-    mnemonic = "U for URL",
-
-    ---@param ctx Ctx
-    action = function(ctx)
-        local sites = configuredSites(ctx)
-        if #sites == 0 then
-            ctx.alert(ctx.t("alert.noSites", "No sites yet -- add one per line in Settings"))
-            return
-        end
-        -- One site needs no list: jump straight there (no chooser, no favicons).
-        if #sites == 1 then
-            jump(ctx, sites[1])
-            return
-        end
-
-        local st = state(ctx)
-        local urls = {}
-        for _, site in ipairs(sites) do urls[#urls + 1] = site.url end
-        st.fav.prefetch(urls)
-        if not st.chooser then
-            st.chooser = ctx.chooser {
-                searchSubText = true,
-                onSelect = function(choice)
-                    if choice and choice.url then
-                        jump(ctx, {
-                            url = choice.url, name = choice.text, app = choice.app,
-                            browser = choice.browser, profile = choice.profile,
-                        })
+    -- Turn each configured site into its own action, so it gets a row in the
+    -- menubar's Quick Sites submenu + the command palette and can take a shortcut
+    -- of its own (bind it in the Shortcut Map). Invoked by the REGISTRY at
+    -- register time with a reader scoped to this feature's options, so the feature
+    -- never touches the seam. Sites ship DORMANT (no defaultTrigger) -- the picker
+    -- is the one binding this feature takes uninvited.
+    ---@param read fun(key: string): any
+    dynamicActions = function(read)
+        local out = {}
+        local ids, byId = assignActionIds(sitesFromRaw(read("sites"), read("openURL")))
+        for _, id in ipairs(ids) do
+            out[#out + 1] = {
+                id    = id,
+                label = byId[id].name,
+                -- No live UI context to read -- the destination is configured, not
+                -- selected -- so an automated trigger may fire it: "open the
+                -- dashboard every weekday morning" is a rule, not a keypress.
+                automatable = true,
+                ---@param ctx Ctx
+                run   = function(ctx)
+                    -- Resolve the site when the action FIRES, never from a record
+                    -- captured up here. An action set is only re-derived at
+                    -- register time, so a closure over the register-time record
+                    -- would keep opening the OLD url after the user edits it,
+                    -- until something reloaded the catalog -- and the label would
+                    -- agree with it, so nothing would look wrong. The picker
+                    -- action re-reads the live config on every fire too: one
+                    -- answer to "what is a site", not two.
+                    local _, live = assignActionIds(configuredSites(ctx))
+                    local site = live[id]
+                    if not site then
+                        -- Deleted, and this leftover action has not been re-derived
+                        -- away yet: do nothing rather than open a destination the
+                        -- user removed.
+                        ctx.log(id .. ": no longer configured, ignoring")
+                        return
                     end
+                    jump(ctx, site)
                 end,
             }
         end
-        local choices = {}
-        for _, site in ipairs(sites) do
-            choices[#choices + 1] = {
-                text = site.name, subText = site.url, url = site.url,
-                app = site.app, browser = site.browser, profile = site.profile,
-                image = st.fav.iconFor(site.url),
-            }
-        end
-        st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Jump to site"))
-        st.chooser.setChoices(choices)
-        st.chooser.setQuery(nil)
-        st.chooser.show()
+        return out
     end,
+
+    actions = {
+        -- The picker. Keeps the id "main" that the single-action sugar used to
+        -- synthesize, so a shortcut the user already rebound (stored under
+        -- ".main", or the legacy pre-multi-action key) still applies now that the
+        -- feature has more than one action.
+        { id = "main", label = "Search sites…",
+          description = "Open the searchable list of your sites and jump to one.",
+          defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "u" },
+          mnemonic = "U for URL",
+          ---@param ctx Ctx
+          run = function(ctx)
+            local sites = configuredSites(ctx)
+            if #sites == 0 then
+                ctx.alert(ctx.t("alert.noSites", "No sites yet -- add one per line in Settings"))
+                return
+            end
+            -- One site needs no list: jump straight there (no chooser, no favicons).
+            if #sites == 1 then
+                jump(ctx, sites[1])
+                return
+            end
+
+            local st = state(ctx)
+            local urls = {}
+            for _, site in ipairs(sites) do urls[#urls + 1] = site.url end
+            st.fav.prefetch(urls)
+            if not st.chooser then
+                st.chooser = ctx.chooser {
+                    searchSubText = true,
+                    onSelect = function(choice)
+                        if choice and choice.url then
+                            jump(ctx, {
+                                url = choice.url, name = choice.text, app = choice.app,
+                                browser = choice.browser, profile = choice.profile,
+                            })
+                        end
+                    end,
+                }
+            end
+            local choices = {}
+            for _, site in ipairs(sites) do
+                choices[#choices + 1] = {
+                    text = site.name, subText = site.url, url = site.url,
+                    app = site.app, browser = site.browser, profile = site.profile,
+                    image = st.fav.iconFor(site.url),
+                }
+            end
+            st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Jump to site"))
+            st.chooser.setChoices(choices)
+            st.chooser.setQuery(nil)
+            st.chooser.show()
+          end },
+    },
 }

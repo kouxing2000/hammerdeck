@@ -93,8 +93,27 @@ final class SiteRowTests: XCTestCase {
         XCTAssertFalse(s.contains(#"\/"#), "slashes should not be escaped: \(s)")
     }
 
-    func testEncodeOmitsEditorOnlyId() {
-        // `id` is editor-only -- it must never reach the JSON (or the Lua side).
-        XCTAssertFalse(SiteRow.encode([SiteRow()]).contains("\"id\""))
+    // `id` IS persisted (it stopped being editor-only when each site became a
+    // bindable action): the Lua side keys a site's action on it as "site_<id>", so
+    // a shortcut bound to a site survives a rename, a URL edit, and a reorder.
+    // Round-tripping it unchanged is exactly that promise.
+    func testEncodePersistsIdUnchanged() {
+        var a = SiteRow(); a.name = "Example"; a.url = "example.com"
+        let s = SiteRow.encode([a])
+        XCTAssertTrue(s.contains("\"id\""), "id must reach the JSON: \(s)")
+        let decoded = SiteRow.decode(s)
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded[0].id, a.id, "the id must round-trip unchanged")
+    }
+
+    func testIdlessRecordGetsAFreshId() {
+        // A config written before ids: decode must mint one (the Lua side falls
+        // back to a URL slug until the next save persists it) rather than throw or
+        // drop the record.
+        let rows = SiteRow.decode(#"[{"name":"X","url":"x.com"}]"#)
+        XCTAssertEqual(rows.count, 1)
+        assertRow(rows[0], name: "X", url: "x.com")
+        XCTAssertTrue(SiteRow.encode(rows).contains("\"id\""),
+                      "the next save persists the minted id")
     }
 }
