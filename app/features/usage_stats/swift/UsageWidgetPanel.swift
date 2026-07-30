@@ -65,17 +65,8 @@ private final class CardView: NSView {
     }
 }
 
-/// A solid rounded rect that re-resolves its own tint on a theme flip -- the
-/// bars, tracks and dividers. Same `updateLayer` contract as CardView; holding
-/// the NSColor (not a CGColor) is what keeps it re-resolvable.
-private final class TintView: NSView {
-    var tint: NSColor = .clear
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        layer?.backgroundColor = tint.cgColor
-    }
-}
+// The bars, tracks and dividers use the shared `TintedView` from Panels.swift --
+// same updateLayer contract as CardView above.
 
 /// The donor usageWidget rebuilt natively: a card pinned to the bottom-left of
 /// the screen at DESKTOP level (above the wallpaper, below all windows -- the
@@ -97,50 +88,35 @@ final class UsageWidgetPanel {
     private static let pad: CGFloat = 14
     private static let margin: CGFloat = 10
 
-    /// A two-form color that stays dynamic THROUGH `withAlphaComponent`, which is
-    /// why every non-semantic color here is built this way rather than derived
-    /// from a semantic one. `NSColor.labelColor.withAlphaComponent(0.10)` looks
-    /// like the obvious way to write a track that inverts with the card, but it
-    /// silently collapses to a static `_NSTaggedPointerColor`, resolved eagerly
-    /// against whatever drawing appearance is current at construction -- so it
-    /// bakes the SYSTEM theme and goes invisible whenever the app's pinned theme
-    /// differs from it. Measured: `labelColor` is an NSDynamicSystemColor,
-    /// `labelColor.withAlphaComponent(_:)` is not; a color from this factory
-    /// stays an NSDynamicModifiedColor with alpha applied. (Semantic colors used
-    /// WHOLE -- .labelColor, .separatorColor -- are dynamic and fine as-is.)
-    private static func dynamic(_ name: String,
-                                light: NSColor, dark: NSColor) -> NSColor {
-        NSColor(name: NSColor.Name(name)) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-        }
-    }
+    // The DESIGN colors below (no semantic equivalent) are two-form via
+    // `NSColor.dynamic`. Anything that is really just ink over the card uses the
+    // semantic color with its alpha applied late by TintedView instead -- see
+    // trackAlpha/dividerAlpha and that class's note.
 
     /// The card itself. Translucent either way so the wallpaper shows through,
     /// like the donor did.
-    static let cardFill = dynamic("usageWidgetCard",
+    static let cardFill = NSColor.dynamic("usageWidgetCard",
         light: NSColor(calibratedWhite: 0.99, alpha: 0.90),
         dark:  NSColor(calibratedWhite: 0.12, alpha: 0.88))
 
     /// A near-white card on a pale wallpaper needs an edge to read as a card;
     /// the dark one never did, so it keeps none.
-    static let cardBorder = dynamic("usageWidgetBorder",
+    static let cardBorder = NSColor.dynamic("usageWidgetBorder",
         light: NSColor(calibratedWhite: 0, alpha: 0.12),
         dark:  .clear)
 
     /// Bars + the today column. The donor's sky blue stays for dark; on a light
     /// card it is too pale against white, so light gets a deeper blue.
-    private static let accent = dynamic("usageWidgetAccent",
+    private static let accent = NSColor.dynamic("usageWidgetAccent",
         light: NSColor(calibratedRed: 0.086, green: 0.463, blue: 0.780, alpha: 1),
         dark:  NSColor(calibratedRed: 0.310, green: 0.765, blue: 0.969, alpha: 1))
 
-    /// The bar track and the section divider: ink over the card, so they must
-    /// invert with it.
-    private static let track = dynamic("usageWidgetTrack",
-        light: NSColor(calibratedWhite: 0, alpha: 0.10),
-        dark:  NSColor(calibratedWhite: 1, alpha: 0.10))
-    private static let divider = dynamic("usageWidgetDivider",
-        light: NSColor(calibratedWhite: 0, alpha: 0.10),
-        dark:  NSColor(calibratedWhite: 1, alpha: 0.08))
+    // The bar track and the section divider are ink over the card, so they are
+    // `.labelColor` with the alpha applied LATE by TintedView -- these alphas are
+    // the donor's original dark values (0.08 / 0.06), which hand-written two-form
+    // colors had quietly drifted to 0.10 / 0.08.
+    private static let trackAlpha: CGFloat = 0.08
+    private static let dividerAlpha: CGFloat = 0.06
 
     /// screenIndex: 1 = primary; 2 = the second display when present (falls
     /// back to primary on single-display setups).
@@ -188,17 +164,15 @@ final class UsageWidgetPanel {
             return l
         }
         func bar(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat,
-                 color: NSColor, radius: CGFloat) {
-            let v = TintView(frame: NSRect(x: x, y: y, width: max(width, 2), height: height))
-            v.wantsLayer = true
-            v.tint = color
+                 color: NSColor, alpha: CGFloat? = nil, radius: CGFloat) {
+            let v = TintedView(frame: NSRect(x: x, y: y, width: max(width, 2), height: height))
+            v.fill = color
+            v.fillAlpha = alpha
             v.layer?.cornerRadius = radius
             card.addSubview(v)
         }
 
         let accent = Self.accent
-        let trackColor = Self.track
-        let dividerColor = Self.divider
 
         // Header: "Today" + total (+ avg of past days).
         _ = label("Today", size: 13, weight: .semibold, color: .secondaryLabelColor,
@@ -229,7 +203,8 @@ final class UsageWidgetPanel {
                           color: .secondaryLabelColor,
                           x: Self.pad + w - 70, y: y, width: 70, align: .right)
                 y += 20
-                bar(x: Self.pad, y: y, width: w, height: 4, color: trackColor, radius: 2)
+                bar(x: Self.pad, y: y, width: w, height: 4,
+                    color: .labelColor, alpha: Self.trackAlpha, radius: 2)
                 bar(x: Self.pad, y: y, width: w * row.secs / maxSecs, height: 4,
                     color: accent, radius: 2)
                 y += 8
@@ -265,7 +240,8 @@ final class UsageWidgetPanel {
 
         // Divider + week header.
         y += 6
-        bar(x: Self.pad, y: y, width: w, height: 1, color: dividerColor, radius: 0)
+        bar(x: Self.pad, y: y, width: w, height: 1,
+            color: .labelColor, alpha: Self.dividerAlpha, radius: 0)
         y += 10
         _ = label("This Week", size: 10, weight: .semibold, color: .secondaryLabelColor,
                   x: Self.pad, y: y, width: 120)
@@ -287,7 +263,7 @@ final class UsageWidgetPanel {
             }
             let h = max(chartH * day.secs / maxDay, 2)
             bar(x: x, y: y + 12 + (chartH - h), width: colW, height: h,
-                color: day.isToday ? accent.withAlphaComponent(0.7) : accent, radius: 2)
+                color: accent, alpha: day.isToday ? 0.7 : nil, radius: 2)
             _ = label(day.label, size: 9, weight: .regular,
                       color: day.isToday ? .secondaryLabelColor : .tertiaryLabelColor,
                       x: x, y: y + 14 + chartH, width: colW, align: .center)

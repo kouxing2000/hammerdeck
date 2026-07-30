@@ -87,6 +87,125 @@ final class HostChromeTests: XCTestCase {
                        "a non-string value must fall back too")
     }
 
+    // A THEMED layer color must actually re-resolve when the theme flips. This is
+    // the mechanism behind TintedView, and it has two halves that both broke once:
+    //
+    //   1. The alpha must be applied LATE. `labelColor.withAlphaComponent(0.10)`
+    //      is a static color -- frozen at construction -- so passing one in would
+    //      pin whatever theme was current then. TintedView takes the alpha as a
+    //      separate field for exactly this reason.
+    //   2. Resolution must fold VIBRANCY. A subview of a `.menu` effect view has a
+    //      vibrant appearance, where `.separatorColor` is an OPAQUE gray rather
+    //      than a faint white/black -- which silently restyled a divider from a
+    //      light hairline into a dark rule the first time these views were used.
+    //
+    // Asserting on the resolved LAYER colors (not on the NSColors) is what makes
+    // this catch either regression: both failures are invisible at the type level
+    // and produce a perfectly valid CGColor.
+    @MainActor
+    func testThemedLayerColorsReResolveAcrossAThemeFlip() throws {
+        // A .menu vibrancy host, so the vibrant-folding half is under test too.
+        let host = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 100, height: 40))
+        host.material = .menu
+        host.state = .active
+        host.wantsLayer = true
+
+        let ink = TintedView(frame: NSRect(x: 0, y: 0, width: 100, height: 1))
+        ink.fill = .labelColor
+        ink.fillAlpha = 0.10
+        let separator = TintedView(frame: NSRect(x: 0, y: 2, width: 100, height: 1))
+        separator.fill = .separatorColor
+        host.addSubview(ink)
+        host.addSubview(separator)
+
+        func paint(_ appearance: NSAppearance.Name) -> [CGColor] {
+            host.appearance = NSAppearance(named: appearance)
+            for v in [ink, separator] { v.needsDisplay = true; v.displayIfNeeded() }
+            return [ink, separator].map { $0.layer?.backgroundColor ?? .clear }
+        }
+        let light = paint(.aqua), dark = paint(.darkAqua)
+
+        // Each color must actually DIFFER between themes -- a frozen color would
+        // return byte-identical CGColors here, which is the whole failure mode.
+        for (i, name) in ["labelColor+alpha", "separatorColor"].enumerated() {
+            XCTAssertFalse(light[i] == dark[i],
+                           "\(name) resolved identically in light and dark (\(light[i])) -- "
+                           + "it is frozen, not themed")
+        }
+        // ... and in the right DIRECTION: ink over the card is dark-on-light and
+        // light-on-dark. A vibrant opaque gray would fail the alpha check, which is
+        // what pins the vibrancy folding.
+        for (i, name) in ["labelColor+alpha", "separatorColor"].enumerated() {
+            let l = try XCTUnwrap(light[i].components), d = try XCTUnwrap(dark[i].components)
+            XCTAssertEqual(l[0], 0, accuracy: 0.01, "\(name) light form should be black ink")
+            XCTAssertEqual(d[0], 1, accuracy: 0.01, "\(name) dark form should be white ink")
+            XCTAssertLessThan(try XCTUnwrap(l.last), 0.5,
+                              "\(name) light form should be faint, not opaque (vibrant leak?)")
+            XCTAssertLessThan(try XCTUnwrap(d.last), 0.5,
+                              "\(name) dark form should be faint, not opaque (vibrant leak?)")
+        }
+    }
+
+    // The call-site half of the same bug class, as a source scan, because the class
+    // is open-ended -- any future panel can reintroduce it, and CLAUDE.md prefers a
+    // lint for a whole bug class over per-instance assertions. It is exactly what
+    // would have caught the chooser's accent band shipping half-fixed:
+    // `headerBackground.fill = NSColor.controlAccentColor.withAlphaComponent(0.18)`
+    // type-checks, looks themed, and is frozen.
+    //
+    // Deliberately scoped to `TintedView`'s own `fill`/`stroke` and NOT to raw
+    // `layer?.backgroundColor` writes. Baking an alpha into a TintedView defeats
+    // the one thing the class exists for, so it is unambiguous. Baking one into a
+    // plain view is a LIFETIME question a source scan cannot answer: it is a real
+    // bug for a view that outlives a theme change and perfectly correct for one
+    // rebuilt on every show, which is what WindowPickerPanel / DisplayPickerPanel
+    // do. Flagging those would demand an allowlist saying "this one is fine",
+    // which is how a gate turns into noise nobody reads.
+    func testNoFrozenAlphaAssignedToAThemedLayerColor() throws {
+        let root = repoRoot()
+        // Only a DYNAMIC receiver is a defect. `NSColor.white.withAlphaComponent(_:)`
+        // is static by design and correct -- the always-dark HUD overlays are built
+        // on exactly that. So capture the color the alpha is applied TO and judge
+        // it, rather than flagging the call. The allowlist is the small, stable set
+        // of device-constant colors; every semantic name (labelColor, separator,
+        // controlAccent, system*) is dynamic and therefore caught BY DEFAULT, so a
+        // new one Apple adds needs no edit here.
+        let staticBasics: Set<String> = [
+            "white", "black", "clear", "gray", "darkGray", "lightGray",
+            "red", "green", "blue", "cyan", "magenta", "yellow", "orange",
+            "purple", "brown",
+        ]
+        let pattern = try NSRegularExpression(
+            pattern: #"\.(?:fill|stroke)\s*=\s*"#
+                   + #"[^\n]*?(?:NSColor)?\.([A-Za-z][A-Za-z0-9]*)\s*\.withAlphaComponent"#)
+        var offenders: [String] = [], scanned = 0
+
+        let enumerator = FileManager.default.enumerator(atPath: root + "/app")
+        while let rel = enumerator?.nextObject() as? String {
+            guard rel.hasSuffix(".swift"),
+                  let src = try? String(contentsOfFile: root + "/app/" + rel, encoding: .utf8)
+            else { continue }
+            scanned += 1
+            let ns = src as NSString
+            for m in pattern.matches(in: src, range: NSRange(location: 0, length: ns.length)) {
+                let receiver = ns.substring(with: m.range(at: 1))
+                guard !staticBasics.contains(receiver) else { continue }
+                let line = ns.substring(with: ns.lineRange(for: m.range))
+                offenders.append("\(rel) [\(receiver)]: "
+                                 + line.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+
+        XCTAssertGreaterThan(scanned, 0, "scanned no Swift sources under \(root)/app")
+        XCTAssertTrue(offenders.isEmpty,
+                      "\(offenders.count) themed layer color(s) bake their alpha at the call "
+                      + "site. `someSemanticColor.withAlphaComponent(x)` is a STATIC color -- it "
+                      + "freezes whatever theme was current when it was built. Pass the whole "
+                      + "color and set TintedView's fillAlpha/strokeAlpha instead, or use "
+                      + "NSColor.dynamic for a design color with no semantic equivalent:\n  "
+                      + offenders.joined(separator: "\n  "))
+    }
+
     private func repoRoot(file: StaticString = #filePath) -> String {
         URL(fileURLWithPath: "\(file)")            // .../Tests/HammerdeckTests/HostChromeTests.swift
             .deletingLastPathComponent()           // .../Tests/HammerdeckTests

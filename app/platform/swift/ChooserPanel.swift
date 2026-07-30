@@ -23,11 +23,11 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private let badgeLabel = NSTextField(labelWithString: "")  // optional right-flush count badge
     private let searchField = NSTextField()
     private let searchIcon = NSImageView()    // leading magnifier glyph (the "type to filter" affordance)
-    private let searchDivider = NSView()
+    private let searchDivider = TintedView()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
-    private let footerDivider = NSView()
-    private let footerView = NSView()     // pinned, non-scrolling strip for info/stat lines
+    private let footerDivider = TintedView()
+    private let footerView = TintedView() // pinned, non-scrolling strip for info/stat lines
 
     private var entries: [ChooserEntry] = []
     private var filtered: [Int] = []     // indices into entries
@@ -39,8 +39,8 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private let searchSubText: Bool
     private let onSelect: (Int?) -> Void
     private let onHide: () -> Void
-    private let badgePill = NSView()          // inline pill wrapping the badge text
-    private let headerBackground = NSView()   // tinted accent band behind the header
+    private let badgePill = TintedView()      // inline pill wrapping the badge text
+    private let headerBackground = TintedView()   // tinted accent band behind the header
     private var keyMonitor: Any?              // quick keys: digit pick + tab/⌥-arrow stepping, live while shown
     // Re-entrancy guard for the close cascade: any deliberate teardown
     // (finish/select/hide/close) sets this before orderOut so the resulting
@@ -83,8 +83,14 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
         // Tinted accent band: added first so it renders behind all header elements.
         // Fills the full header zone from the top rounded corner down to the divider.
-        headerBackground.wantsLayer = true
-        headerBackground.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor
+        // Whole semantic color + a LATE alpha (see TintedView): passing
+        // controlAccentColor.withAlphaComponent(0.18) here would freeze it, which
+        // for this color shows up not on a theme flip (it measures identically
+        // under aqua and darkAqua) but when the user changes their accent color --
+        // the band would keep the old accent while the selection pill and title
+        // icon follow the new one.
+        headerBackground.fill = .controlAccentColor
+        headerBackground.fillAlpha = 0.18
         headerBackground.isHidden = true
         content.addSubview(headerBackground)
 
@@ -106,11 +112,12 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         badgeLabel.alignment = .center
 
         // Pill container: rounded capsule rendered inline with the title group.
-        badgePill.wantsLayer = true
         badgePill.layer?.cornerRadius = 10
-        badgePill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.10).cgColor
         badgePill.layer?.borderWidth = 1
-        badgePill.layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.18).cgColor
+        badgePill.fill = .labelColor
+        badgePill.fillAlpha = 0.10
+        badgePill.stroke = .labelColor
+        badgePill.strokeAlpha = 0.18
         badgePill.isHidden = true
         badgePill.addSubview(badgeLabel)
         content.addSubview(badgePill)
@@ -133,8 +140,10 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         searchIcon.setAccessibilityElement(false)
         content.addSubview(searchIcon)
 
-        searchDivider.wantsLayer = true
-        searchDivider.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        // The whole semantic constant: TintedView folds the vibrant appearance
+        // (this is a subview of a .menu effect view) onto its plain equivalent, so
+        // this is separatorColor's real hairline rather than a hand-copied alpha.
+        searchDivider.fill = .separatorColor
         content.addSubview(searchDivider)
 
         tableView.headerView = nil
@@ -165,10 +174,15 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
         // Footer strip: a darker, pinned (non-scrolling) band that holds the
         // non-actionable info/stat lines, kept visually distinct from the rows.
-        footerDivider.wantsLayer = true
-        footerDivider.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        footerDivider.fill = .separatorColor
         content.addSubview(footerDivider)
-        footerView.wantsLayer = true
+        // Adaptive tone so the strip reads in both themes (the old hardcoded
+        // black was invisible in dark mode). Re-resolved on every flip, which the
+        // former per-layout() assignment was not: a flip landing while the panel
+        // is VISIBLE -- the sunset auto-switch this class exists for -- repainted
+        // the four other TintedViews and left this band behind.
+        footerView.fill = .labelColor
+        footerView.fillAlpha = 0.06
         // Background tone is set in layout() resolved for the live appearance --
         // a hardcoded color here can't adapt to light/dark.
         content.addSubview(footerView)
@@ -574,12 +588,6 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             footerView.isHidden = false
             footerDivider.frame = NSRect(x: E, y: y, width: W - 2 * E, height: 1)
             footerView.frame = NSRect(x: 0, y: bottomPad, width: W, height: footerHeight)
-            // Adaptive tone, resolved for the panel's live appearance so the strip
-            // reads in both light and dark (the old hardcoded black was invisible
-            // in dark mode).
-            footerView.effectiveAppearance.performAsCurrentDrawingAppearance {
-                footerView.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
-            }
             // Lay the lines top-down inside the strip's own coordinate space.
             let fx = ChooserPanel.footerInset
             footerView.subviews.forEach { $0.removeFromSuperview() }

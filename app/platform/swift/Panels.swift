@@ -104,6 +104,100 @@ final class VibrancyHUDPanel: FloatingPanel {
     }
 }
 
+extension NSColor {
+    /// A two-form color, for a DESIGN color with no semantic equivalent (a card
+    /// fill, a chart accent). For anything the system already names -- label,
+    /// separator, controlAccent -- use the semantic color and let `TintedView`
+    /// apply any alpha; don't hand-copy its values here, or they drift when Apple
+    /// retunes them.
+    ///
+    /// The name is the color's IDENTITY: two colors built with the same name
+    /// compare EQUAL even with different bodies (measured), so give each its own.
+    static func dynamic(_ name: String, light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: NSColor.Name(name)) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        }
+    }
+
+}
+
+/// A layer-backed rect that re-resolves its own colors when the theme flips --
+/// use it for any divider, pill or band whose color comes from a semantic or
+/// dynamic NSColor.
+///
+/// Why it exists rather than assigning `.cgColor` to a layer directly: a CGColor
+/// is a RESOLVED value, not a promise, so a layer color set once is frozen at
+/// whatever appearance was current when it was assigned. For a panel rebuilt on
+/// every show that is harmless. For one that OUTLIVES a theme flip -- a chooser
+/// handle is created when its feature is enabled and reused for the app's whole
+/// run -- the frozen color is a bug that surfaces hours later: macOS switches
+/// light/dark on its own schedule (System Settings > Appearance > Auto), so the
+/// divider baked at 09:00 is still the light one at sunset. Holding the NSColor
+/// and painting in `updateLayer` fixes it structurally: AppKit's default
+/// `viewDidChangeEffectiveAppearance` invalidates the view, and inside
+/// `updateLayer` the current drawing appearance IS the view's, so a plain
+/// `.cgColor` there resolves against the NEW theme.
+///
+/// It handles two AppKit traps for its callers, which is why an alpha goes in the
+/// `fillAlpha`/`strokeAlpha` field rather than into the color you pass:
+///
+///   - **Apply alpha LATE.** `NSColor.labelColor.withAlphaComponent(0.10)` is the
+///     obvious spelling and it is a trap: `labelColor` is an NSDynamicSystemColor,
+///     the alpha form is a static `_NSTaggedPointerColor`. It is not *incurably*
+///     static though -- it is resolved at CONSTRUCTION, so built inside the right
+///     drawing appearance it is correct. Measured: built early it is black@0.10 in
+///     both themes; built late, black@0.10 under aqua and white@0.10 under
+///     darkAqua. `updateLayer` runs at exactly that moment, so the alpha is
+///     applied here and the caller passes the whole semantic color.
+///   - **Fold VIBRANCY.** A subview of a `.menu` NSVisualEffectView has a vibrant
+///     appearance, and a semantic color's vibrant form can be a different color
+///     rather than a different shade: `.separatorColor` measures OPAQUE gray 0.14
+///     under vibrantDark against white@0.098 under plain darkAqua (and opaque
+///     0.90 under vibrantLight). Resolving against the view as-is therefore turns
+///     a light hairline into a dark rule -- measured 0.48 -> 0.18 luminance on a
+///     0.41 card, which is exactly what happened the first time these dividers
+///     moved onto this class. So resolution is pinned to the PLAIN appearance via
+///     `bestMatch(from: [.aqua, .darkAqua])`, which also folds the accessibility
+///     high-contrast names onto their plain equivalents.
+final class TintedView: NSView {
+    var fill: NSColor = .clear { didSet { needsDisplay = true } }
+    /// nil = use `fill`'s own alpha. Set it to apply an alpha to a SEMANTIC color
+    /// (see the class note -- doing it at the call site freezes the theme).
+    var fillAlpha: CGFloat? { didSet { needsDisplay = true } }
+    /// nil clears the border color; `borderWidth` stays the caller's business.
+    var stroke: NSColor? { didSet { needsDisplay = true } }
+    var strokeAlpha: CGFloat? { didSet { needsDisplay = true } }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    /// Own `wantsLayer` rather than trusting callers: with no layer-backed
+    /// ancestor, `layer` is nil and `updateLayer` silently paints nothing.
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    override func updateLayer() {
+        // The view's own appearance may be vibrant; resolve against its plain
+        // equivalent instead (see the class note).
+        let plain = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+            .flatMap(NSAppearance.init(named:)) ?? effectiveAppearance
+        plain.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = Self.resolve(fill, fillAlpha).cgColor
+            layer?.borderColor = stroke.map { Self.resolve($0, strokeAlpha).cgColor }
+        }
+    }
+
+    private static func resolve(_ color: NSColor, _ alpha: CGFloat?) -> NSColor {
+        alpha.map(color.withAlphaComponent) ?? color
+    }
+}
+
 /// A boxed key-cap: a glyph in a faint rounded rect, like a keyboard key -- the
 /// chip the dark HUDs (ChordHint / HyperHint / WindowModeHUD) all draw.
 /// `fixedWidth` pins the cap to a constant width so a column of single-key caps
