@@ -204,6 +204,23 @@ return {
             and fake.siteOpens[1].incognito == true,
             "a private site keeps its Chrome profile")
 
+        -- app mode and private COMPOSE (measured against Chrome, 2026-07-30: both
+        -- switches together give a chromeless AND private window). They were briefly
+        -- forced apart, so pin that the feature passes BOTH through rather than
+        -- dropping one.
+        fake.settings["hammerdeck.opt.site_switcher.sites"] =
+            '[{"id":"p1","name":"Search","url":"duckduckgo.com","browser":"com.google.Chrome",'
+            .. '"app":true,"incognito":true}]'
+        fake.siteOpens = {}
+        fake.appWindows = {}
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        ok(#fake.siteOpens == 1 and fake.siteOpens[1].app == true
+            and fake.siteOpens[1].incognito == true,
+            "a private app-window site passes both flags through openSite")
+        ok(#fake.appWindows == 0,
+            "... and never takes the focus-or-open app-window path (that one can see "
+            .. "only normal windows)")
+
         -- a browser with no private-window switch (Safari, Firefox) makes the seam
         -- REFUSE. Say so, rather than let the user believe a recorded visit was
         -- private -- the one failure mode this whole path exists to avoid.

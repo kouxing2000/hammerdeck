@@ -238,8 +238,8 @@ struct SiteListEditor: View {
                 set: { b in
                     row.browser.wrappedValue = b
                     // Switching to a browser that definitely cannot go private clears
-                    // the flag (the toggle below greys out, and a set-but-unreachable
-                    // flag would just alert on every open). "System default" is left
+                    // the flag: the toggle below greys out, and a set-but-unreachable
+                    // flag would just alert on every open. "System default" is left
                     // alone -- it is unknown, not impossible.
                     if !b.isEmpty && !BrowserCatalog.supportsPrivateWindow(b) {
                         row.incognito.wrappedValue = false
@@ -254,24 +254,13 @@ struct SiteListEditor: View {
                     ForEach(profiles) { Text($0.name).tag($0.dir) }
                 }
             }
-            // App mode and private are MUTUALLY EXCLUSIVE, enforced by turning the
-            // other off rather than by disabling it: an app window that quietly
-            // persisted the visit would be a broken promise, and the seam resolves
-            // the pair the same way (private wins). Keeping both clickable means a
-            // user is never stuck wondering why a control is greyed.
-            Toggle(Strings.t("sites.standalone", default: "Open as a standalone app window"), isOn: Binding(
-                get: { row.wrappedValue.app },
-                set: { on in
-                    row.app.wrappedValue = on
-                    if on { row.incognito.wrappedValue = false }
-                }))
+            // App mode and private COMBINE (measured -- see the seam's note): both
+            // on gives a chromeless window that is also private. They were briefly
+            // forced apart here on the assumption that Chrome would not honor the
+            // pair, which cost a real combination for no gain.
+            Toggle(Strings.t("sites.standalone", default: "Open as a standalone app window"), isOn: row.app)
                 .help(Strings.t("sites.standalone.help", default: "Chrome / Chromium only -- a chromeless app-style window. Other browsers open a tab."))
-            Toggle(Strings.t("sites.private", default: "Open in a private window"), isOn: Binding(
-                get: { row.wrappedValue.incognito },
-                set: { on in
-                    row.incognito.wrappedValue = on
-                    if on { row.app.wrappedValue = false }
-                }))
+            Toggle(Strings.t("sites.private", default: "Open in a private window"), isOn: row.incognito)
                 .disabled(!canGoPrivate)
                 .help(canGoPrivate
                       ? Strings.t("sites.private.help", default: "Opens a fresh private window every time -- it never focuses an existing tab, and the visit is never recorded.")
@@ -326,7 +315,10 @@ struct SiteListEditor: View {
         if site.browser == "com.google.Chrome", !site.profile.isEmpty {
             parts.append(profiles.first { $0.dir == site.profile }?.name ?? site.profile)
         }
-        if site.app { parts.append("App") }
+        // Both badges can appear on one row now that app mode and private compose,
+        // so "App" goes through Strings too -- a hardcoded literal next to a
+        // translated one reads as "Chrome · App · 隐私".
+        if site.app { parts.append(Strings.t("sites.app.badge", default: "App")) }
         if site.incognito { parts.append(Strings.t("sites.private.badge", default: "Private")) }
         return parts.joined(separator: " · ")
     }

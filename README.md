@@ -52,7 +52,7 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 - **Command Palette** -- Fuzzy-search and run any action of any enabled feature from one keystroke. <sub>Reaches: runs other features.</sub>
 - **Window Switcher** -- Searchable Alt-Tab: switch windows across all apps, most recently used first.
 - **Tab Switcher** -- Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
-- **Quick Sites** -- Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether it opens as a standalone app window or a fresh private window. cmd+<number> jumps straight to a row in the picker, and every site is also a menubar row you can give its own shortcut. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
+- **Quick Sites** -- Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether it opens as a standalone app window, a fresh private window, or both. cmd+<number> jumps straight to a row in the picker, and every site is also a menubar row you can give its own shortcut. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
 - **Clipboard History** -- Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded. <sub>Reaches: types keystrokes, reads/writes files.</sub>
 
 ### Text

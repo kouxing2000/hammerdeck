@@ -196,7 +196,11 @@ local function assignActionIds(sites)
 end
 
 
--- Jump to a site. Behaviors, picked by the site's routing:
+-- Jump to a site. Behaviors, picked by the site's routing. PRIVATE is checked
+-- FIRST and preempts every row below it -- a private site can also be an app
+-- window (the two switches compose), so the combinations overlap and the order
+-- here is what resolves them:
+--   * PRIVATE -> always opens a fresh private window, never focuses; see below.
 --   * Chrome, default profile, tab  -> focus the exact existing tab, else open
 --     it (the precise AppleScript "jumper" -- the common case).
 --   * Chrome, default profile, app  -> focus the existing app window, else open
@@ -207,7 +211,6 @@ end
 --     ...) -> launch into that browser (Chrome profile / app window) via the CLI
 --     seam. Routing is authoritative; focus-if-already-open is best-effort.
 --     Non-scriptable browsers (Firefox) just open a plain tab.
---   * PRIVATE (incognito) -> always OPENS, never focuses; see below.
 -- An unset browser falls back to the system default browser.
 ---@param ctx Ctx
 local function jump(ctx, site)
@@ -228,20 +231,25 @@ local function jump(ctx, site)
     -- into one, browserActiveURL never reports one -- which is what stops
     -- usage_stats recording a private visit), so there is nothing to focus, and
     -- teaching it to look would trade the guarantee away for a convenience.
-    -- openSite is also the only path that can pass --incognito; it REFUSES for a
-    -- browser that has no private-window switch (Safari, Firefox) rather than
-    -- open a normal window, so say so instead of leaving the user believing a
-    -- recorded visit was private.
+    -- openSite is also the only path that can pass --incognito; it REFUSES for any
+    -- browser not verified to honor it (Safari and Firefox have no such switch, and
+    -- a Chromium fork is not vouched for until someone checks) rather than open a
+    -- normal window, so say so instead of leaving the user believing a recorded
+    -- visit was private. App mode still applies: the two compose into a chromeless
+    -- private window.
     if site.incognito then
         local opened = ctx.openSite(browser or "", site.profile or "",
                                     site.app == true, site.url, true)
         if opened then
-            ctx.log(("opened private %s [%s]%s"):format(site.url, browser or "default",
-                hasProfile and (" /" .. site.profile) or ""))
+            ctx.log(("opened private %s [%s]%s%s"):format(site.url, browser or "default",
+                hasProfile and (" /" .. site.profile) or "",
+                site.app and " (app)" or ""))
         else
             ctx.alert(ctx.t("alert.noPrivateWindow",
                 "A private window needs a Chrome-family browser -- pick one for this site"))
-            ctx.log(("refused private %s [%s]"):format(site.url, browser or "default"))
+            ctx.log(("refused private %s [%s]%s%s"):format(site.url, browser or "default",
+                hasProfile and (" /" .. site.profile) or "",
+                site.app and " (app)" or ""))
         end
         return
     end
@@ -283,7 +291,7 @@ return {
           label = "Sites",
           hint = "Each site: a name, its URL, the browser to open it in, a Chrome "
               .. "profile (Chrome only), and whether it opens as a standalone app "
-              .. "window or a fresh private one." },
+              .. "window, a fresh private one, or both." },
     },
 
     -- Turn each configured site into its own action, so it gets a row in the

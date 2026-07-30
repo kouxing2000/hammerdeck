@@ -251,7 +251,10 @@ extension Native {
         do {
             try p.run()
         } catch {
-            print("[hammerdeck] open_site: launch failed for \(bundleId): \(error)")
+            // seamLog, not print: this sits on the private-open failure path, and
+            // app.sh redirects stdout, which is then BLOCK-buffered -- a print here
+            // would simply never appear (the trap CLAUDE.md documents).
+            seamLog("open_site: launch failed for \(bundleId): \(error)")
             return false
         }
         // SLPS front-process (reliable from our non-active accessory; see
@@ -299,20 +302,25 @@ extension Native {
     // reliable way to target a profile / app window. For a non-Chromium browser
     // (Safari, Firefox) it opens the URL as a plain tab; profile/app don't apply.
     //
-    // TWO RULES ABOUT `incognito`, both there so a window can never LOOK private
-    // while being recorded:
+    // ONE RULE ABOUT `incognito`, so a window can never LOOK private while being
+    // recorded -- plus one measured fact that used to be a second rule:
     //   * A browser not VERIFIED to honor `--incognito` REFUSES (returns false)
     //     instead of opening a normal window -- see BrowserCatalog's
     //     privateWindowBundleIds for why membership is narrower than "is Chromium".
     //     The honest answer is "I can't", not a window the caller will describe to
     //     the user as private.
-    //   * `--incognito` WINS over app mode: private-but-with-browser-chrome is a
-    //     cosmetic loss, while an app window that quietly persists the visit is a
-    //     broken promise. (Chrome's own UI offers no incognito app window; rather
-    //     than depend on how it resolves the flag pair, this decides.)
-    // Both live in `chromiumArgs`, which is pure and unit-tested -- they are the
-    // whole of the guarantee, so they must not be a detail buried in a bridge
-    // function no test can reach.
+    //   * `--incognito` COMPOSES with app mode -- MEASURED, not assumed. Chrome's
+    //     own UI offers no incognito app window, so this first shipped forcing the
+    //     pair apart on the theory that an app window might quietly persist the
+    //     visit. A probe settled it (2026-07-30): launched with both switches in
+    //     the order below, Chrome opens a window that is chromeless AND private --
+    //     confirmed by eye, and by its absence from browser_list_tabs while an
+    //     otherwise identical `--app=` window IS enumerated. Deciding it instead of
+    //     measuring it cost the user a real combination, so: if you change this
+    //     ordering, re-run that probe rather than reasoning about it.
+    // The refusal lives in `openSite`; the argv rules live in `chromiumArgs`, which
+    // is pure and unit-tested -- they carry the guarantee, so they must not be a
+    // detail buried in a bridge function no test can reach.
     func openSite(_ L: OpaquePointer?) -> Int32 {
         guard let bundleId = LuaState.string(L, 1), let url = LuaState.string(L, 4) else {
             return luaError(L, "open_site: bundleId and url required")
@@ -351,17 +359,18 @@ extension Native {
     }
 
     /// The Chromium launch switches for one site open. PURE (no OS calls) so the
-    /// two rules the private-window promise rests on are unit-testable: private
-    /// WINS over app mode, and `--incognito` is actually in the vector. The caller
-    /// has already refused an unvouched browser -- this only builds the argv.
+    /// rule the private-window promise rests on is unit-testable: `--incognito` is
+    /// actually in the vector, alongside whatever else was asked for. The caller has
+    /// already refused an unvouched browser -- this only builds the argv.
     /// `nonisolated` because it genuinely is: no shared state, no OS call. Without
     /// it the function inherits Native's @MainActor and a test cannot call it.
+    /// The switch ORDER here is the one the probe in the note above exercised.
     nonisolated static func chromiumArgs(profile: String, app: Bool, incognito: Bool,
                                          url: String) -> [String] {
         var args: [String] = []
         if !profile.isEmpty { args.append("--profile-directory=\(profile)") }
         if incognito { args.append("--incognito") }
-        if app && !incognito {
+        if app {
             args.append("--app=\(url)")              // `=`-bound: cannot introduce a new switch
         } else {
             // `--` ends switch parsing, so a URL that happens to start with `-`

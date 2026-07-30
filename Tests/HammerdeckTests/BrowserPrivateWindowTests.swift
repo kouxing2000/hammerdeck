@@ -3,8 +3,10 @@ import XCTest
 
 // The private-window promise, pinned. Quick Sites can mark a site "open in a
 // private window", and the whole value of that checkbox is that a window it
-// produces is NEVER recorded. Two rules carry it, and both used to sit inline in
-// `openSite`'s bridge function where no test could reach them -- so a green Lua
+// produces is NEVER recorded. What carries the promise is the ALLOWLIST of
+// browsers verified to honor `--incognito` (plus the seam's refusal of everything
+// else) and the switch vector itself -- both of which used to sit inline in
+// `openSite`'s bridge function where no test could reach them, so a green Lua
 // suite (which only sees the fake adapter) was not evidence for any of this.
 //
 // The failure these guard against is specific: a window the UI calls private that
@@ -59,16 +61,29 @@ final class BrowserPrivateWindowTests: XCTestCase {
         XCTAssertFalse(args.contains("--incognito"), "got: \(args)")
     }
 
-    /// Private WINS over app mode. An app window that quietly persisted the visit
-    /// would be a broken promise, so the chromeless window is what yields -- the
-    /// one place this pair is resolved, rather than depending on how Chrome
-    /// happens to resolve the two switches together.
-    func testPrivateWinsOverAppWindow() {
+    /// Private and app mode COMPOSE: Chrome opens a window that is chromeless AND
+    /// private. This was briefly forced apart on the assumption it would not work;
+    /// a probe (2026-07-30) showed otherwise -- the window was confirmed private by
+    /// eye and by its absence from browser_list_tabs. Keep both switches.
+    func testPrivateAndAppWindowCompose() {
         let args = Native.chromiumArgs(profile: "", app: true, incognito: true,
                                        url: "https://example.com")
-        XCTAssertTrue(args.contains("--incognito"), "got: \(args)")
-        XCTAssertFalse(args.contains { $0.hasPrefix("--app=") },
-                       "app mode must yield to private: \(args)")
+        // Whole-vector equality, not `contains`: the seam's note says the ORDER is
+        // the one the probe exercised and tells the next person to re-probe rather
+        // than reason about it. A `contains` pair would stay green while a refactor
+        // emitted `--app=` first -- the one variant nobody has watched Chrome
+        // resolve -- so the assertion has to see the dimension the comment claims
+        // matters.
+        XCTAssertEqual(args, ["--incognito", "--app=https://example.com"])
+    }
+
+    /// In app mode the URL rides INSIDE the `=`-bound `--app=` token, so it is a
+    /// single argv element and needs no `--` terminator to stay un-parseable as a
+    /// switch. Worth pinning now that the private path can take this branch too.
+    func testAppModeKeepsTheURLInsideItsOwnToken() {
+        let args = Native.chromiumArgs(profile: "", app: true, incognito: true,
+                                       url: "--disable-web-security")
+        XCTAssertEqual(args, ["--incognito", "--app=--disable-web-security"])
     }
 
     func testAppWindowSurvivesWhenNotPrivate() {

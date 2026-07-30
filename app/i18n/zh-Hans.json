@@ -536,6 +536,7 @@
   "sites.private.help": "每次都新开一个无痕窗口 -- 不会聚焦已有标签页, 访问也不会被记录.",
   "sites.private.unavailable": "这个浏览器没有可通过启动参数设置的隐私窗口开关, 所以 Hammerdeck 不会作此承诺. 目前支持 Chrome 和 Chromium.",
   "sites.private.badge": "隐私",
+  "sites.app.badge": "应用",
   "sites.systemDefault": "系统默认",
   "sites.url": "网址",
   "timeline.agenda": "日程",
