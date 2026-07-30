@@ -1,6 +1,7 @@
 -- test/cases/_integration/platform/hyper_legend.lua -- registry.hyperLegend() -- the which-key legend of enabled Hyper
--- bindings: lists a Hyper binding as { key, label }, excludes non-Hyper
--- bindings, and drops a disabled feature's bindings.
+-- bindings: lists a Hyper binding as { key, label }, carries the runAction pair
+-- a click on the HUD key fires, excludes non-Hyper bindings, and drops a
+-- disabled feature's bindings.
 --
 -- Migrated from run.lua T19b (RUN_LUA_SPLIT_SPEC Block A: platform-lifecycle core).
 -- Integration (platform core, not a single feature under test). Hermetic:
@@ -48,6 +49,9 @@ return {
             "hyperLegend row carries the action glyph (feature icon when no per-action icon)")
         ok(legendField(legend, "h", "desc") == "Jump to it",
             "hyperLegend row carries the action description (for the keyboard HUD's hover hint)")
+        ok(legendField(legend, "h", "featureId") == "hyperprobe"
+            and legendField(legend, "h", "actionId") == "go",
+            "hyperLegend row carries the runAction pair (so clicking the HUD key runs it)")
         ok(not legendHasLabel(legend, "NotHyper"), "hyperLegend excludes non-Hyper bindings")
         registry.setEnabled("hyperprobe", false)
         ok(not legendHasLabel(registry.hyperLegend(), "Go"),

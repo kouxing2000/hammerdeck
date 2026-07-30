@@ -260,8 +260,22 @@ public func hammerdeckMain() {
                   let label = d["label"] as? String else { return nil }
             return HyperHintPanel.Row(key: key, label: label, chord: (d["chord"] as? Bool) ?? false,
                                       icon: (d["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 },
-                                      desc: (d["desc"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+                                      desc: (d["desc"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                                      featureId: (d["featureId"] as? String) ?? "",
+                                      actionId: (d["actionId"] as? String) ?? "")
         }
+    }
+    // Clicking a key on that legend runs its action -- the same registry entry
+    // the menubar's quick triggers use. `results: 2` because runAction answers
+    // (false, reason) and the caller LOGS that reason: the HUD is already torn
+    // down by then, so a discarded failure would leave a click that did nothing
+    // with no trace anywhere.
+    CapsHyperTap.shared.actionRunner = { id, actionId in
+        let ret = (try? Native.shared.lua.call("platform.registry", "runAction",
+                                               [.string(id), .string(actionId)],
+                                               results: 2)) ?? []
+        if ret.first as? Bool == true { return nil }
+        return (ret.count > 1 ? ret[1] as? String : nil) ?? "registry.runAction did not answer"
     }
     CapsHyperPreference.apply()   // start the Caps->Hyper tap if opted in
 

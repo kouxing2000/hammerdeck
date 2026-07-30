@@ -1267,6 +1267,51 @@ final class IntegrationTests: XCTestCase {
         eval("_G.itWidget.stop(); _G.itWidget = nil; return true")
     }
 
+    /// CLICKING an amber (chord-prefix) cap on the Hyper board must ARM the
+    /// chord, never fire one -- the board shows only ONE of the several actions
+    /// that can share a prefix, so firing would pick arbitrarily.
+    ///
+    /// The trap this pins is the self-referential chord, whose follow key IS its
+    /// prefix key (locate_pointer ships exactly that: Hyper+M then M). Routing
+    /// the click through `prefixPressed` would hit its "already armed -> treat
+    /// this as the follow key" fast path, whose entire justification is that the
+    /// keyboard leader is HELD -- which a click never is. A user who clicks the
+    /// cap, re-opens the board and clicks again (the natural "did that work?"
+    /// reaction, well inside the 2.1s window) would then RUN the action.
+    ///
+    /// Bound directly on ChordCenter rather than through a feature, so a
+    /// regression asserts on a counter instead of firing a real action into
+    /// whatever the developer has focused.
+    func testClickingAChordPrefixArmsAndNeverFires() {
+        let chord = ChordCenter.shared
+        var fired = 0
+        guard let id = chord.bind(mods: ["cmd", "alt", "ctrl"], key: "m", follows: ["m"],
+                                  label: "click probe", handler: { fired += 1 }) else {
+            return XCTFail("could not register the probe chord")
+        }
+        defer { chord.unbind(id) }   // unbind disarms if this prefix is still armed
+
+        XCTAssertTrue(chord.pressPrefix(mods: ["cmd", "alt", "ctrl"], key: "m"),
+                      "clicking a bound chord cap arms it")
+        XCTAssertTrue(chord.isArmed, "the chord is armed after the click")
+        XCTAssertTrue(chord.pressPrefix(mods: ["cmd", "alt", "ctrl"], key: "m"),
+                      "a second click re-arms")
+        XCTAssertTrue(chord.isArmed, "still armed after the second click")
+        XCTAssertEqual(fired, 0, "a click must never complete the chord, however many times")
+
+        // Modifier ORDER/alias must not matter -- the prefix is canonicalized.
+        XCTAssertTrue(chord.pressPrefix(mods: ["control", "command", "option"], key: "M"),
+                      "the clicked prefix is canonicalized before lookup")
+
+        // An unbound prefix is a no-op: arming it would grab Escape system-wide
+        // for the timeout window and show a hint with no rows.
+        chord.unbind(id)
+        XCTAssertFalse(chord.isArmed, "unbinding the last chord disarms its prefix")
+        XCTAssertFalse(chord.pressPrefix(mods: ["cmd", "alt", "ctrl"], key: "m"),
+                       "clicking a prefix nobody has bound arms nothing")
+        XCTAssertFalse(chord.isArmed, "and leaves nothing armed")
+    }
+
     func testChordRegistersARealPrefixHotkey() {
         host.store.setEnabled("plain_paste", true)
         // Rebind onto a chord: ChordCenter registers the prefix via the real

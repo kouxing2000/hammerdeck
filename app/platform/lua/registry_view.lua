@@ -155,8 +155,11 @@ end
 
 -- A "which-key" legend of every ENABLED binding on the Hyper prefix
 -- (cmd+alt+ctrl), for the held-Caps HUD. Returns a key-sorted list of rows
--- { key = <raw key>, label = <feature/action name>, chord = <bool> }; the
--- renderer turns `key` into a key-cap glyph (chords get a trailing "…").
+-- { key, label, chord, icon, desc, featureId, actionId }; the renderer turns
+-- `key` into a key-cap glyph (chords get a trailing "…"), shows `desc` in its
+-- hover hint, and fires the featureId/actionId pair when the key is CLICKED
+-- (the mouse twin of pressing it) -- the same registry.runAction pair the
+-- menubar's quick triggers use.
 function view.hyperLegend()
     local function isHyper(t)
         if not t or (t.type ~= "hotkey" and t.type ~= "chord") then return false end
@@ -178,6 +181,12 @@ function view.hyperLegend()
                         key = t.key,
                         label = (#m.actions > 1) and view.locActionLabel(m, a) or view.locName(m),
                         chord = (t.type == "chord"),
+                        -- The runAction pair, for a CLICK on the HUD's key cap.
+                        -- (A chord row's key is only a PREFIX -- several actions
+                        -- can share it -- so the HUD arms the chord there rather
+                        -- than running this one; the pair stays for symmetry.)
+                        featureId = m.id,
+                        actionId = a.id,
                         -- Leading glyph for the Hyper cheat-sheet row; resolved
                         -- action icon -> feature icon, the same glyph the palette
                         -- / menubar / chord hint show for this action.

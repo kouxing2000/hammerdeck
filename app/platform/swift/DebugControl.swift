@@ -96,9 +96,10 @@ enum DebugControl {
                     ChordCenter.shared.debugPreviewHint()
                     out = "showed chord hint"
                 } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@hyperhint" {
-                    // Preview the Hyper which-key legend from the live catalog.
-                    CapsHyperTap.shared.debugPreviewLegend()
-                    out = "showed hyper hint"
+                    // Preview the Hyper which-key legend from the live catalog
+                    // (toggles -- there is no Caps release to dismiss it).
+                    out = CapsHyperTap.shared.debugPreviewLegend()
+                        ? "showed hyper hint" : "hid hyper hint"
                 } else if code.trimmingCharacters(in: .whitespacesAndNewlines) == "@tour" {
                     DebugControl.presentTour?()
                     out = "presented tour"

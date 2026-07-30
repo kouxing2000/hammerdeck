@@ -83,7 +83,7 @@
   "home.take_tour": "开始导览",
   "home.take_tour_help": "通过实时预览浏览每个功能并添加你想要的",
   "home.tip_of_day": "每日提示",
-  "hyper.caption": "按下快捷键  ·  松开大写锁定键关闭",
+  "hyper.caption": "按下或点击按键  ·  琥珀色 … 表示和弦  ·  悬停查看详情  ·  松开大写锁定键关闭",
   "menu.capsHyper": "大写锁定键用作 Hyper (⌘⌥⌃)",
   "menu.capsHyper.tip": "按住大写锁定键作为 ⌘⌥⌃ Hyper 修饰键, 让 Hyper 快捷键变成一个键; 双击大写锁定键执行其正常锁定 (重新映射大写锁定键; 需要辅助功能)",
   "menu.gallery": "功能库…",

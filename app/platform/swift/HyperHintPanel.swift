@@ -12,13 +12,25 @@ import AppKit
 /// so spatial memory finds the key. Chord PREFIXES (press-then-a-follow-key) are
 /// tinted amber with a trailing "…"; unbound keys sit dim for spatial context.
 /// CapsHyperTap shows it after a short hold and tears it down on key-press or
-/// release. Styled to match WindowModeHUDPanel / ChordHintPanel: non-activating,
-/// mouse-transparent, purely informational, never steals focus.
+/// release. Styled to match WindowModeHUDPanel / ChordHintPanel: non-activating
+/// and never steals focus -- but, unlike them, NOT mouse-transparent: a lit key
+/// answers to the pointer (hover for details, CLICK to run it), so the board is
+/// a launcher as well as a cheat-sheet. The panel stays non-activating through
+/// the click, so the user's frontmost window keeps focus and a window action
+/// still targets what they were looking at.
 @MainActor
 final class HyperHintPanel {
-    struct Row { let key: String; let label: String; let chord: Bool; let icon: String?; let desc: String? }
+    struct Row {
+        let key: String; let label: String; let chord: Bool; let icon: String?; let desc: String?
+        /// The registry.runAction pair a click on this key fires.
+        let featureId: String; let actionId: String
+    }
 
     private let hud = VibrancyHUDPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 260))
+    /// Called with the row whose key the user CLICKED (the mouse twin of
+    /// pressing that key). The owner decides what that means -- run the action,
+    /// or arm the chord for a prefix key.
+    private let onActivate: ((Row) -> Void)?
 
     // Bottom line: the dim caption by default; a hovered key's full name + what
     // it does while the pointer is over it (the on-key label truncates, so this
@@ -54,17 +66,19 @@ final class HyperHintPanel {
          K("⌘",nil,1.3),K("⌥",nil,1.1)],
     ]
 
-    init(rows: [Row]) {
+    init(rows: [Row], onActivate: ((Row) -> Void)? = nil) {
+        self.onActivate = onActivate
         var byKey: [String: Row] = [:]
         for r in rows { byKey[r.key.lowercased()] = r }
 
         // This panel (unlike its sibling HUDs) accepts mouse events so a key can
-        // reveal its full name on hover. It stays non-activating, so hovering
-        // never steals keyboard focus and the held-Caps tap keeps firing.
+        // reveal its full name on hover and RUN on click. It stays
+        // non-activating, so pointing at it never steals keyboard focus and the
+        // held-Caps tap keeps firing.
         hud.ignoresMouseEvents = false
 
         defaultCaption = Strings.t("hyper.caption",
-            default: "press a shortcut  ·  amber … = chord  ·  hover a key for details  ·  release Caps to dismiss")
+            default: "press or click a key  ·  amber … = chord  ·  hover for details  ·  release Caps to dismiss")
         hintLine.font = .systemFont(ofSize: 10.5)
         hintLine.textColor = .tertiaryLabelColor
         hintLine.alignment = .center
@@ -171,6 +185,7 @@ final class HyperHintPanel {
             v.setLit(face: k.face, symbol: row.icon, label: row.label, chord: row.chord)
             v.hint = hintText(face: k.face, row: row)
             v.onHover = { [weak self] in self?.showHint($0) }
+            if let onActivate { v.onClick = { onActivate(row) } }
         } else {
             v.setDim(face: k.face)
         }
@@ -207,6 +222,12 @@ private final class FixedHintField: NSTextField {
 /// One key cap. Dim = a plain gray keycap with its face centered. Lit = an
 /// accent (or amber, for a chord prefix) cap with the key face tucked top-left,
 /// the action glyph centered, and a truncated label along the bottom.
+///
+/// A lit cap is also a BUTTON: hover lights its border, press darkens its fill,
+/// and releasing inside fires `onClick` (releasing outside cancels, like any
+/// AppKit button). Dim caps are inert -- they exist for spatial context only.
+/// The border IS the hover affordance; a cursor change is not available here
+/// (see updateTrackingAreas).
 @MainActor
 private final class HyperKeyView: NSView {
     private let faceLabel = NSTextField(labelWithString: "")
@@ -217,8 +238,14 @@ private final class HyperKeyView: NSView {
     var hint: String?
     /// Called with `hint` on mouse-enter and `nil` on exit.
     var onHover: ((String?) -> Void)?
+    /// Called when this cap is clicked. nil = not clickable (a dim key).
+    var onClick: (() -> Void)?
     private var tracking: NSTrackingArea?
     private var baseBorder: CGColor?
+    private var baseFill: CGColor?
+    private var pressedFill: CGColor?
+    /// True between mouse-down and mouse-up on this cap.
+    private var pressing = false
 
     init(width: CGFloat) {
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: HyperHintPanel.keyH))
@@ -243,7 +270,9 @@ private final class HyperKeyView: NSView {
 
     func setDim(face: String) {
         lit = false
-        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
+        baseFill = NSColor.white.withAlphaComponent(0.05).cgColor
+        pressedFill = nil
+        layer?.backgroundColor = baseFill
         layer?.borderColor = NSColor.white.withAlphaComponent(0.09).cgColor
         faceLabel.stringValue = face
         faceLabel.font = .systemFont(ofSize: 13, weight: .regular)
@@ -256,7 +285,11 @@ private final class HyperKeyView: NSView {
     func setLit(face: String, symbol: String?, label: String, chord: Bool) {
         lit = true
         let accent: NSColor = chord ? .systemOrange : .controlAccentColor
-        layer?.backgroundColor = accent.withAlphaComponent(0.92).cgColor
+        baseFill = accent.withAlphaComponent(0.92).cgColor
+        // Pressed = the same cap pushed darker, the AppKit button convention.
+        pressedFill = (accent.blended(withFraction: 0.32, of: .black) ?? accent)
+            .withAlphaComponent(0.95).cgColor
+        layer?.backgroundColor = baseFill
         layer?.borderColor = accent.blended(withFraction: 0.35, of: .white)?.cgColor
             ?? accent.cgColor
         baseBorder = layer?.borderColor
@@ -279,6 +312,23 @@ private final class HyperKeyView: NSView {
 
     // Only lit keys are hoverable; `.activeAlways` so enter/exit fire even though
     // the panel is non-activating.
+    //
+    // NO POINTING-HAND CURSOR HERE, and that is a HARD CONSTRAINT, not an
+    // oversight -- do not "fix" it. This panel is never key and its app is never
+    // active, which defeats every cursor mechanism AppKit has. Measured
+    // 2026-07-30, both with a real hover (proven by the hint line updating):
+    //   - `.cursorUpdate` on the tracking area: NSTrackingArea.h says of
+    //     `.activeAlways` verbatim "Not supported for NSTrackingCursorUpdate",
+    //     so `cursorUpdate(with:)` is simply never called. The other activity
+    //     options (first-responder / key-window / active-app) can never be
+    //     satisfied by this window, so there is no working combination.
+    //   - `NSCursor.pointingHand.set()` from mouseEntered: overridden within the
+    //     frame by the ACTIVE app's cursor -- hovering a cap over a VSCode
+    //     editor showed VSCode's I-beam, straight through the panel.
+    //     `disableCursorRects()` on our window changes nothing: the cursor is
+    //     not ours to set while another app is frontmost.
+    // The affordance that DOES work is the border lighting up (below) plus the
+    // hint line and the "press or click a key" caption.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let t = tracking { removeTrackingArea(t); tracking = nil }
@@ -296,6 +346,39 @@ private final class HyperKeyView: NSView {
     override func mouseExited(with event: NSEvent) {
         onHover?(nil)
         layer?.borderColor = baseBorder
+    }
+
+    // MARK: - Click
+
+    /// The panel is never key (non-activating, canBecomeKey == false), so without
+    /// this the FIRST click on a cap would only be swallowed as an activation.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { onClick != nil }
+
+    override func mouseDown(with event: NSEvent) {
+        guard onClick != nil else { super.mouseDown(with: event); return }
+        pressing = true
+        setPressedLook(true)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard pressing else { super.mouseDragged(with: event); return }
+        setPressedLook(isInside(event))   // dragging off the cap un-presses it
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard pressing else { super.mouseUp(with: event); return }
+        pressing = false
+        setPressedLook(false)
+        // Releasing outside the cap cancels -- the standard button escape hatch.
+        if isInside(event) { onClick?() }
+    }
+
+    private func isInside(_ event: NSEvent) -> Bool {
+        bounds.contains(convert(event.locationInWindow, from: nil))
+    }
+
+    private func setPressedLook(_ on: Bool) {
+        layer?.backgroundColor = (on ? pressedFill : baseFill) ?? baseFill
     }
 
     override func layout() {

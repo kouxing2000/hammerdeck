@@ -111,6 +111,26 @@ final class ChordCenter {
         }
     }
 
+    /// Arm a prefix from a CLICK on the Hyper board -- the pointer twin of
+    /// pressing it. Returns false (and does nothing) for a prefix nobody has
+    /// bound: arming that would grab Escape and show an empty hint for the whole
+    /// timeout window.
+    ///
+    /// Always `arm`, deliberately NOT `prefixPressed`. That fast path treats a
+    /// re-press as the FOLLOW key, and its whole justification is that the
+    /// keyboard leader is a HELD combo -- "the user kept Hyper down, so this
+    /// press is the follow key". A click holds no leader, so the same reasoning
+    /// does not transfer: for a chord whose follow key equals its prefix key
+    /// (locate_pointer's Hyper+M then M), routing through it would make a
+    /// SECOND click on the amber cap fire the action instead of re-arming it.
+    @discardableResult
+    func pressPrefix(mods: [String], key: String) -> Bool {
+        let prefix = Prefix(mods: Self.canonicalMods(mods), key: key.lowercased())
+        guard idsByPrefix[prefix] != nil else { return false }
+        arm(prefix)
+        return true
+    }
+
     // MARK: - Armed session
 
     private func arm(_ prefix: Prefix) {

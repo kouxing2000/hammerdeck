@@ -51,9 +51,16 @@ final class CapsHyperTap {
     /// Supplies the which-key legend rows (the host wires this to read the live
     /// catalog). Shown in a HUD card when Caps is HELD past a short delay.
     var legendProvider: (() -> [HyperHintPanel.Row])?
+    /// Runs one feature action by (featureId, actionId) -- the host wires it to
+    /// registry.runAction, the same entry the menubar's quick triggers use. Kept
+    /// as a closure (like legendProvider) so this file knows nothing about Lua.
+    /// Returns nil on success, or WHY it did not run, which the caller logs.
+    var actionRunner: ((String, String) -> String?)?
     private var legendPanel: HyperHintPanel?
     private var legendTask: Task<Void, Never>?
     private static let legendDelayNs: UInt64 = 300_000_000  // hold this long -> show
+    /// The prefix a legend row's key sits on, by construction of hyperLegend.
+    private static let hyperModNames = ["cmd", "alt", "ctrl"]
 
     // nonisolated: read from the C tap callback, which runs outside the actor.
     fileprivate nonisolated static let hyperFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl]
@@ -155,8 +162,49 @@ final class CapsHyperTap {
         legendTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.legendDelayNs)
             guard !Task.isCancelled, self.f18Held, self.legendPanel == nil else { return }
-            let rows = self.legendProvider?() ?? []
-            self.legendPanel = HyperHintPanel(rows: rows)
+            self.legendPanel = self.makeLegendPanel()
+        }
+    }
+
+    /// The legend card, wired so CLICKING a lit key does what pressing it would.
+    private func makeLegendPanel() -> HyperHintPanel {
+        HyperHintPanel(rows: legendProvider?() ?? [],
+                       onActivate: { [weak self] row in self?.activateLegendRow(row) })
+    }
+
+    /// A key cap on the legend was clicked -- the pointer twin of pressing it.
+    private func activateLegendRow(_ row: HyperHintPanel.Row) {
+        // A click IS a use of this hold: without marking it, releasing Caps
+        // could still read as a clean tap and arm the double-tap Caps Lock.
+        usedAsModifier = true
+        cancelAndHideLegend()
+
+        // Capture as plain values, then run on the NEXT main-loop pass: the HUD
+        // is already gone when the action starts, so an action that opens its
+        // own panel isn't building one while this click is still unwinding.
+        let chord = row.chord, key = row.key
+        let featureId = row.featureId, actionId = row.actionId
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                // A click that does NOTHING is this HUD's worst failure -- the
+                // card is already gone, so the only evidence left is what we
+                // log. It is reachable: a feature whose bind threw keeps its
+                // enabled flag (registry.lua "enabled but failed"), so its cap
+                // still lights up while neither path below can act on it.
+                if chord {
+                    // A chord key is only a PREFIX -- several actions can share
+                    // it, and the board shows just one of them -- so a click
+                    // ARMS the chord (which pops its own follow-key hint)
+                    // instead of picking one arbitrarily.
+                    if !ChordCenter.shared.pressPrefix(mods: Self.hyperModNames, key: key) {
+                        Native.shared.seamLog(
+                            "hyper legend: clicked chord key '\(key)' but no chord is bound on it")
+                    }
+                } else if let why = CapsHyperTap.shared.actionRunner?(featureId, actionId) {
+                    Native.shared.seamLog(
+                        "hyper legend: clicked \(featureId).\(actionId) but it did not run -- \(why)")
+                }
+            }
         }
     }
 
@@ -170,9 +218,14 @@ final class CapsHyperTap {
 #if DEBUG
     /// Show the which-key legend on demand for a visual check (DebugControl
     /// `@hyperhint`), reading the live catalog -- bypasses the Caps-hold path.
-    func debugPreviewLegend() {
-        legendPanel?.close()
-        legendPanel = HyperHintPanel(rows: legendProvider?() ?? [])
+    /// TOGGLES: shown this way the card has no Caps release to tear it down, so
+    /// without a second call it sits on the screen (mouse-opaque) until the app
+    /// restarts. Returns true when it just showed the card.
+    @discardableResult
+    func debugPreviewLegend() -> Bool {
+        guard legendPanel == nil else { cancelAndHideLegend(); return false }
+        legendPanel = makeLegendPanel()
+        return true
     }
 #endif
 
