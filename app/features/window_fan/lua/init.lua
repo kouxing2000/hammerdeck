@@ -881,6 +881,19 @@ local function controllerFor(ctx)
 
         place(wins, screen, fwid, "entered")
 
+        -- ACTIVE the moment the windows have MOVED, not at the end of enter --
+        -- window_deck marks its own mode active on the same boundary (init.lua:920,
+        -- before it binds anything). Every seam call below can RAISE (the seam
+        -- errors rather than returning nil), and every exit path -- st.leave, the
+        -- widget's Exit, forceExit on disable -- is gated on st.active. Setting it
+        -- last meant a throw in the tail left the fan ENTERED BUT UNEXITABLE:
+        -- windows fanned, no way out, and a re-press re-running enter() would
+        -- overwrite st.originals with the FANNED frames, destroying the pre-fan
+        -- layout for good. Nothing between here and the end reads st.active (the
+        -- watchers that check it are registered below), so moving it up costs
+        -- nothing and closes that hole.
+        st.active = true
+
         -- The switcher widget (a draggable card listing the fan's windows). Opt-out
         -- via the "widget" option. Its position is persisted as an OFFSET from the
         -- mode's screen top-left, so it survives a screen move; a click on a row
@@ -944,7 +957,6 @@ local function controllerFor(ctx)
         -- leaves every slab stale, and a moved display leaves the widget adrift.
         st.screenWatcher = ctx.onSystemEvent("screenChanged", function() st.onScreenChanged() end)
 
-        st.active = true
     end
 
     -- Leave the mode: tear down borders + observers, then put every captured
@@ -1201,36 +1213,49 @@ return {
             ---@param ctx Ctx
             run = function(ctx) with(ctx).toggle() end,
         },
-        -- KEYBOARD NAVIGATION. Ordinary rebindable actions, NOT a modal layer:
-        -- the fan is a mode you STAY in, so grabbing bare keys (the modal shape
-        -- window_grid/window_modal use) would swallow every keystroke aimed at the
-        -- window you just switched to. Modified hotkeys leave typing alone.
-        -- All three are no-ops while the mode is off, and none is automatable --
-        -- they act on the live selection, which means nothing unattended.
+        -- KEYBOARD NAVIGATION -- MODE-SCOPED and UNBOUND BY DEFAULT.
+        --
+        -- Two deliberate absences, and they answer two different failures.
+        --
+        -- No `defaultTrigger`: nobody asked for these keys. Shipping them on
+        -- Hyper+N / B / J spent three prime caps, around the clock, on a ring most
+        -- users will never reach for -- and the mode is fully usable without them
+        -- (the switcher widget lists every window; a click switches). An action
+        -- with no default is dormant until the user binds one in Settings, which is
+        -- exactly the right default for a capability rather than a headline.
+        -- (`swap_screens` in window_snap is the same shape and says so too.)
+        --
+        -- `modeScoped`: these no-op outside a live fan, so the menubar and the
+        -- command palette -- both "run this now" surfaces -- must not offer them.
+        -- Three rows that silently do nothing is what the fan's submenu WAS, and it
+        -- read as broken next to Window Deck's single row. modeScoped hides them
+        -- there while keeping them in Settings, where binding them is the whole
+        -- point. It is a property of the ACTION, not of its binding state: bound or
+        -- not, clicking one from a menu can never work.
+        --
+        -- None is automatable -- they act on the live selection, which means
+        -- nothing unattended.
         {
             id = "next",
             label = "Select next window in the fan",
-            description = "Move the fan's selection one window forward (wrapping). Only the highlight moves -- the window is not focused until you confirm.",
-            defaultTrigger = { type = "hotkey", mods = HYPER, key = "n" },
-            mnemonic = "Hyper+N -- N for Next",
+            description = "Move the fan's selection one window forward (wrapping). Only the highlight moves -- the window is not focused until you confirm. Bind a shortcut to use it; the fan works without one.",
+            modeScoped = true,
             ---@param ctx Ctx
             run = function(ctx) with(ctx).step(1) end,
         },
         {
             id = "prev",
             label = "Select previous window in the fan",
-            description = "Move the fan's selection one window back (wrapping). Only the highlight moves -- the window is not focused until you confirm.",
-            defaultTrigger = { type = "hotkey", mods = HYPER, key = "b" },
-            mnemonic = "Hyper+B -- B for Back",
+            description = "Move the fan's selection one window back (wrapping). Only the highlight moves -- the window is not focused until you confirm. Bind a shortcut to use it; the fan works without one.",
+            modeScoped = true,
             ---@param ctx Ctx
             run = function(ctx) with(ctx).step(-1) end,
         },
         {
             id = "confirm",
             label = "Jump to the selected window",
-            description = "Leave Window Fan, restore every window to its original position, and focus the selected one. This is the switcher's payoff -- the plain toggle exits without changing focus.",
-            defaultTrigger = { type = "hotkey", mods = HYPER, key = "j" },
-            mnemonic = "Hyper+J -- J for Jump",
+            description = "Leave Window Fan, restore every window to its original position, and focus the selected one. This is the keyboard ring's payoff -- the plain toggle exits without changing focus.",
+            modeScoped = true,
             ---@param ctx Ctx
             run = function(ctx) with(ctx).confirm() end,
         },

@@ -194,6 +194,12 @@ struct ActionInfo: Identifiable {
     // inline shortcut), so the detail view hides it from the generic per-action
     // trigger sections -- otherwise it appears twice.
     let dynamic: Bool
+    // Only meaningful while the owning feature's MODE is live (window_fan's
+    // selection ring): it no-ops the moment the mode is off. Kept OUT of the
+    // "run this now" surfaces -- the menubar quick triggers here, the command
+    // palette in registry_view -- because a row that silently does nothing reads
+    // as broken. Settings still lists it; binding a key to one is the point.
+    let modeScoped: Bool
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
@@ -208,6 +214,7 @@ struct ActionInfo: Identifiable {
         self.automatable = dict.bool("automatable")
         self.icon = (dict["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.dynamic = dict.bool("dynamic")
+        self.modeScoped = dict.bool("modeScoped")
     }
 }
 

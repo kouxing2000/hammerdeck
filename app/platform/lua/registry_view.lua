@@ -123,14 +123,25 @@ function view.commandList(selfId)
     local out = {}
     for _, m in ipairs(deps.all()) do
         if m.id ~= selfId and deps.isEnabled(m.id) then
+            -- Mode-scoped actions are NOT offered: the palette is a "run this now"
+            -- list, and one of these does nothing at all unless its feature's mode
+            -- happens to be live. Offering it would be a row that silently fails --
+            -- the same defect this flag removes from the menubar. Filtered FIRST so
+            -- the label rule below counts what the user can actually see: a feature
+            -- left with one visible action reads as its own name, exactly like a
+            -- feature that only ever declared one.
+            local shown = {}
             for _, a in ipairs(m.actions) do
+                if not a.modeScoped then shown[#shown + 1] = a end
+            end
+            for _, a in ipairs(shown) do
                 out[#out + 1] = {
                     featureId   = m.id,
                     featureName = view.locName(m),
                     actionId    = a.id,
                     -- single-action features read better as the feature name;
                     -- multi-action ones need the per-action label to disambiguate.
-                    label       = (#m.actions > 1) and view.locActionLabel(m, a) or view.locName(m),
+                    label       = (#shown > 1) and view.locActionLabel(m, a) or view.locName(m),
                     -- Leading glyph for the palette row: the action's own icon
                     -- when it declares one (distinct per shortcut for a
                     -- multi-action feature), else the feature icon. Always set --
@@ -456,6 +467,10 @@ function view.describe()
                 -- Created + bound by an option editor (its inline shortcut), so the
                 -- UI hides it from the generic per-action trigger sections.
                 dynamic = a.dynamic == true,
+                -- Only meaningful while the feature's mode is live, so the host
+                -- keeps it OUT of the menubar quick triggers (see manifest.lua).
+                -- Settings still lists it -- that is where it gets bound.
+                modeScoped = a.modeScoped == true,
             }
         end
         row.actions = actions

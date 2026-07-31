@@ -1106,8 +1106,58 @@ return {
                 "confirm focuses the SELECTED window (the one the cursor was on)")
         end
 
-        -- ===== the navigation actions are inert outside the mode (they are ordinary
-        -- global hotkeys, so they fire whether or not the fan is up).
+        -- ===== THE RING TAKES NO KEY, AND IS OFFERED FROM NO MENU.
+        -- Two independent properties, both regressions worth pinning.
+        --
+        -- (1) The three navigation actions ship with NO defaultTrigger. They used to
+        -- claim Hyper+N / B / J out of the box -- three prime caps spent, around the
+        -- clock, on a ring the fan does not need (the widget lists every window and a
+        -- click switches). Dormant until the user binds one, which is the right
+        -- default for a capability rather than a headline.
+        --
+        -- (2) They are modeScoped, so the "run this now" surfaces skip them. Each is
+        -- a no-op unless the mode is live, and three menu rows that silently do
+        -- nothing is exactly how the fan's submenu read next to Window Deck's single
+        -- row. The menubar filter is Swift-side (StatusBar.featureMenuItem); the
+        -- palette half is asserted here, and the flag itself is on describe().
+        do
+            local RING = { next = true, prev = true, confirm = true }
+            local seen = {}
+            for _, f in ipairs(registry.describe()) do
+                if f.id == "window_fan" then
+                    for _, a in ipairs(f.actions) do
+                        seen[a.id] = a
+                        if RING[a.id] then
+                            ok(a.defaultTrigger == nil and a.trigger == nil,
+                                "fan action '" .. a.id .. "' binds no key by default")
+                            ok(a.modeScoped == true,
+                                "fan action '" .. a.id .. "' is marked modeScoped")
+                        end
+                    end
+                end
+            end
+            ok(seen.next and seen.prev and seen.confirm,
+                "the ring actions are still DECLARED -- bindable in Settings")
+            ok(seen.arrange ~= nil and seen.arrange.modeScoped == false
+                and seen.arrange.defaultTrigger ~= nil,
+                "the toggle keeps its default Hyper+F and is NOT mode-scoped")
+
+            -- The palette lists the toggle and nothing else from this feature. Its
+            -- label falls back to the FEATURE name, because one visible action is one
+            -- visible action however many are hidden behind it.
+            local rows = {}
+            local view = require("platform.registry_view")
+            for _, c in ipairs(view.commandList("some_other_feature")) do
+                if c.featureId == "window_fan" then rows[#rows + 1] = c end
+            end
+            ok(#rows == 1 and rows[1].actionId == "arrange",
+                "the command palette offers only the toggle, not the mode-scoped ring")
+            ok(rows[1].label == "Window Fan",
+                "and labels it with the feature name, like any one-action feature")
+        end
+
+        -- ===== the ring is inert outside the mode. A user who DOES bind one of these
+        -- can press it anywhere; it must do nothing at all when no fan is up.
         do
             fake.windows = freshWindows()
             local moved, focused = #fake.windowFrameSets, #fake.focused

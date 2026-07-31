@@ -63,8 +63,12 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         // field -- the SAME axis the Gallery/Tour group by (FeatureContext) -- so a
         // new feature slots into its group with no menu code. Command Palette is
         // excluded (pinned above).
+        // `contains { !modeScoped }`, not `!actions.isEmpty`: a feature whose every
+        // action is mode-scoped has nothing runnable from a menu, and would
+        // otherwise contribute a row opening an EMPTY submenu (and inflate its
+        // context's fold count on the way).
         let triggerFeatures = store.features.filter {
-            $0.enabled && !$0.actions.isEmpty && $0.id != "command_palette"
+            $0.enabled && $0.actions.contains { !$0.modeScoped } && $0.id != "command_palette"
         }
         if !triggerFeatures.isEmpty { anyTrigger = true }
 
@@ -245,7 +249,15 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
     /// placements) below a separator so they read as "yours". Used both inline at
     /// the top level and nested inside a context group.
     private func featureMenuItem(_ feature: FeatureInfo) -> NSMenuItem {
-        if feature.actions.count == 1, let action = feature.actions.first {
+        // MODE-SCOPED actions never appear here. They no-op unless their feature's
+        // mode is live (window_fan's selection ring), so a quick-trigger row for one
+        // is a row that silently does nothing -- which is exactly how Window Fan's
+        // four-item submenu read next to Window Deck's single row. Filtered before
+        // the count test below, so a feature left with ONE visible action collapses
+        // to a single row with its shortcut flush-right, like any other one-action
+        // feature. They remain in Settings, where they get bound.
+        let visible = feature.actions.filter { !$0.modeScoped }
+        if visible.count == 1, let action = visible.first {
             // triggerItem already sets the glyph (action icon -> feature icon);
             // don't override with the feature glyph or a single-action feature's
             // own per-action icon would be dropped here but honored in the palette.
@@ -254,10 +266,10 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         let parent = NSMenuItem(title: feature.name, action: nil, keyEquivalent: "")
         parent.image = featureImage(feature)
         let sub = NSMenu()
-        for action in feature.actions where !action.dynamic {
+        for action in visible where !action.dynamic {
             sub.addItem(triggerItem(feature: feature, action: action, title: action.label))
         }
-        let saved = feature.actions.filter { $0.dynamic }
+        let saved = visible.filter { $0.dynamic }
         if !saved.isEmpty {
             // Separate saved from built-ins only when both exist -- a feature with
             // ONLY dynamic actions must not get a leading separator.

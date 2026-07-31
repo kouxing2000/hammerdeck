@@ -307,6 +307,25 @@ function manifest.validate(m)
                 "' automatable must be true/false")
         end
         a.automatable = (a.automatable == true)
+        -- modeScoped: does this action only mean anything while its feature's MODE
+        -- is live? A mode's in-mode keys (window_fan's selection ring) are real,
+        -- bindable actions, but they no-op the instant the mode is off -- so the
+        -- "run this now" surfaces, the menubar quick triggers and the command
+        -- palette, must not offer them: a row that silently does nothing reads as
+        -- broken, and the fan's four-row submenu (three of them dead) is what
+        -- prompted this. They stay in SETTINGS, where binding a key to one is the
+        -- whole point, and on the Hyper board once bound (the cap is genuinely
+        -- claimed then, and the board's job is to say so).
+        --
+        -- A property of the ACTION, not of its binding state -- bound or not,
+        -- clicking one from a menu can never work -- so the host filters on this
+        -- flag alone and never on whether a trigger happens to be attached.
+        if a.modeScoped ~= nil then
+            assert(type(a.modeScoped) == "boolean",
+                "feature '" .. m.id .. "': action '" .. a.id ..
+                "' modeScoped must be true/false")
+        end
+        a.modeScoped = (a.modeScoped == true)
         -- mnemonic: optional one-line "why this key" hint for the DEFAULT trigger
         -- (e.g. "P for Password", "arrows = screen edges"). Surfaced read-only in
         -- the Shortcut Map / Settings / palette to make the defaults memorable;
