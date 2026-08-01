@@ -489,7 +489,12 @@ end
 -- 1-based lit cell or 0, onSwitch(i) }, hero = initial Hero toggle (true
 -- default), onToggleHero(bool), onRearrange(), onMove(x,y), onExit() }.
 -- Returns { reanchor(pos, screen), setHero(i), setDirty(bool), setSwitchHint(t),
--- setCells(colors) [recolor the mini-map after a drag-swap], hide, show, stop }.
+-- setCells(colors, dead, cols), hide, show, stop }.
+-- setCells recolors the mini-map (after a drag-swap); `dead` is a parallel array
+-- of booleans marking cells whose window has closed (drawn hollow + dashed, and
+-- inert -- no click, no drag); `cols` is OPTIONAL and only needed when the cell
+-- COUNT changes (a reflow after a close) -- passing it rebuilds the mini-map at
+-- the new geometry, omitting it leaves the current grid alone.
 -- Passed as ONE table (deck_widget_show is field-read Swift-side, not ~20
 -- positional args).
 function adapter.deckWidget(opts)
@@ -519,7 +524,9 @@ function adapter.deckWidget(opts)
         setHero = function(i) native.deck_widget_set_hero(id, i or 0) end,
         setDirty = function(d) native.deck_widget_set_dirty(id, d and true or false) end,
         setSwitchHint = function(t) native.deck_widget_set_switch_hint(id, t or "") end,
-        setCells = function(colors) native.deck_widget_set_cells(id, colors or {}) end,
+        setCells = function(colors, dead, cols)
+            native.deck_widget_set_cells(id, colors or {}, dead or {}, cols)
+        end,
         hide = function() native.deck_widget_hide(id) end,
         show = function() native.deck_widget_show_again(id) end,
         stop = function() native.stop(id) end,

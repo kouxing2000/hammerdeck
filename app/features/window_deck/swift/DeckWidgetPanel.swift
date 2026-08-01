@@ -29,6 +29,16 @@ final class DeckWidgetPanel {
     private var cells: [MiniCellView] = []
     private let rearrangeButton: RearrangeButtonView
     private let hintLabel = NSTextField(labelWithString: "")
+    // Kept so the mini-map can be REBUILT in place when the deck reflows to a new
+    // window count (see setCells): the row that hosts it, the current map view to
+    // swap out, the column count to compare against, and the click handler to
+    // re-attach to the fresh cells. Defaults so `init` can touch `self` (the
+    // buildMiniMap call below writes into `cells`) before assigning them.
+    private var bottomRow = NSStackView()
+    private var mapView: NSView = NSView()
+    private var gridCols = 2
+    private var onSwitch: (Int) -> Void = { _ in }
+    private var heroIndex = 0   // last lit cell, so a rebuild can re-light it
 
     init(title: String, hint: String, displayName: String, switchHint: String,
          heroLabel: String, exitLabel: String, rearrangeLabel: String,
@@ -106,15 +116,18 @@ final class DeckWidgetPanel {
         topRow.spacing = 14
 
         // --- Bottom row: mini-map + hint -------------------------------------
+        self.gridCols = max(1, gridCols)
+        self.onSwitch = onSwitch
         let map = Self.buildMiniMap(gridCols: gridCols, colors: cellColors,
                                     onSwitch: onSwitch, into: &cells)
+        mapView = map
         hintLabel.stringValue = switchHint
         hintLabel.font = .systemFont(ofSize: 12, weight: .regular)
         hintLabel.textColor = NSColor.white.withAlphaComponent(0.5)
         let bottomSpacer = NSView()
         bottomSpacer.setContentHuggingPriority(.init(1), for: .horizontal)
         bottomSpacer.translatesAutoresizingMaskIntoConstraints = false
-        let bottomRow = NSStackView(views: [map, hintLabel, bottomSpacer, rearrangeButton])
+        bottomRow = NSStackView(views: [map, hintLabel, bottomSpacer, rearrangeButton])
         bottomRow.orientation = .horizontal
         bottomRow.alignment = .centerY
         bottomRow.spacing = 14
@@ -150,13 +163,7 @@ final class DeckWidgetPanel {
         // Wire mini-map cell drag-and-drop now that self is fully initialized:
         // a floating ghost follows the cursor, the cell under it highlights, and
         // dropping swaps.
-        for c in cells {
-            c.onDragBegan = { [weak self, weak c] img, p in
-                self?.beginCellDrag(from: c?.index ?? 0, image: img, at: p) }
-            c.onDragMoved = { [weak self] p in self?.updateCellDrag(at: p) }
-            c.onDragEnded = { [weak self, weak c] p in
-                guard let c else { return }; self?.finishCellDrag(from: c.index, at: p) }
-        }
+        wireCellDrags()
 
         card.layoutSubtreeIfNeeded()
         panel.setContentSize(card.fittingSize)
@@ -170,9 +177,23 @@ final class DeckWidgetPanel {
     private var dragSource: Int?   // 1-based faded source cell
     private var dragActive = false
 
+    /// Attach the drag callbacks to the current `cells`. Re-run after a rebuild
+    /// (the old views are gone, so their closures went with them).
+    private func wireCellDrags() {
+        for c in cells {
+            c.onDragBegan = { [weak self, weak c] img, p in
+                self?.beginCellDrag(from: c?.index ?? 0, image: img, at: p) }
+            c.onDragMoved = { [weak self] p in self?.updateCellDrag(at: p) }
+            c.onDragEnded = { [weak self, weak c] p in
+                guard let c else { return }; self?.finishCellDrag(from: c.index, at: p) }
+        }
+    }
+
     /// The cell whose on-screen rect contains screen point `p` (0-based), or nil.
+    /// Dead cells are skipped -- a swap with a closed window means nothing, and
+    /// the cell is about to disappear in the next reflow.
     private func cellIndex(atScreenPoint p: NSPoint) -> Int? {
-        for (i, c) in cells.enumerated() {
+        for (i, c) in cells.enumerated() where !c.isDead {
             let inWindow = c.convert(c.bounds, to: nil)
             if let sr = c.window?.convertToScreen(inWindow), sr.contains(p) { return i }
         }
@@ -264,16 +285,61 @@ final class DeckWidgetPanel {
 
     /// Light the cell for the 1-based hero index (0 = grid mode, none lit).
     func setHero(_ index: Int) {
+        heroIndex = index   // re-applied after a rebuild: fresh cells start unlit
         for (i, c) in cells.enumerated() { c.setHero(i + 1 == index) }
     }
 
     /// Enable the Rearrange button only when a window is off its grid slot.
     func setDirty(_ dirty: Bool) { rearrangeButton.setEnabled(dirty) }
 
-    /// Recolor the mini-map cells (row-major) after a drag-swap rearranges which
-    /// window sits in which slot.
-    func setCellColors(_ colors: [String]) {
+    /// Sync the mini-map cells (row-major): recolor after a drag-swap, mark the
+    /// cells whose window has CLOSED as dead, and -- when `cols` is supplied and
+    /// the geometry actually changed -- rebuild the map at a new cell count (the
+    /// deck reflowed after a close). Only a reflow changes the cell count and it
+    /// always supplies `cols`, so `cols: nil` never resizes: that is what keeps
+    /// the per-render dead-marking from rebuilding the view on every focus event.
+    /// The COUNT is checked as well as the column width, because a reflow can
+    /// drop a whole row at the same width (9 windows in a 3x3 -> 6 in a 3x2).
+    func setCells(_ colors: [String], dead: [Bool], cols: Int?) {
+        if let cols {
+            let want = max(1, cols)
+            if want != gridCols || colors.count != cells.count {
+                rebuildMap(cols: want, colors: colors)
+            } else {
+                recolor(colors)
+            }
+        } else {
+            recolor(colors)
+        }
+        for (i, c) in cells.enumerated() { c.setDead(i < dead.count && dead[i]) }
+    }
+
+    private func recolor(_ colors: [String]) {
         for (i, c) in cells.enumerated() where i < colors.count { c.setColor(colors[i]) }
+    }
+
+    /// Swap in a freshly built mini-map at a new cell count / column count. The
+    /// panel is re-sized to fit and re-pinned by its TOP-left corner: AppKit
+    /// origins are bottom-left, so a plain resize would drag the card's visible
+    /// top edge down as it shrinks.
+    private func rebuildMap(cols: Int, colors: [String]) {
+        cancelCellDrag()   // a drag in flight refers to cells about to be freed
+        bottomRow.removeArrangedSubview(mapView)
+        mapView.removeFromSuperview()
+        cells.removeAll()
+        let map = Self.buildMiniMap(gridCols: cols, colors: colors,
+                                    onSwitch: onSwitch, into: &cells)
+        bottomRow.insertArrangedSubview(map, at: 0)
+        mapView = map
+        gridCols = cols
+        wireCellDrags()
+        setHero(heroIndex)   // fresh cells start unlit -- put the hero's back
+        let top = panel.frame.maxY
+        card.layoutSubtreeIfNeeded()
+        panel.setContentSize(card.fittingSize)
+        panel.setFrameOrigin(clamped(NSPoint(x: panel.frame.minX,
+                                             y: top - panel.frame.height)))
+        reportMove()   // clamping may have nudged it -- keep Lua's saved offset true
     }
 
     /// Update the mini-map hint (the deck swaps it with the Hero mode).
@@ -347,6 +413,8 @@ private final class MiniCellView: NSView {
     private var dragging = false
     private var downPoint: NSPoint?
     private var hero = false
+    private(set) var isDead = false
+    private var dashLayer: CAShapeLayer?   // the dead cell's dashed outline
 
     init(number: Int, index: Int, colorHex: String) {
         self.index = index
@@ -373,6 +441,7 @@ private final class MiniCellView: NSView {
 
     func setHero(_ on: Bool) {
         hero = on
+        guard !isDead else { return }   // a dead cell keeps its hollow look
         layer?.backgroundColor = on ? color.cgColor
                                     : color.withAlphaComponent(0.22).cgColor
         layer?.borderColor = on ? NSColor.white.withAlphaComponent(0.85).cgColor
@@ -380,14 +449,66 @@ private final class MiniCellView: NSView {
         label.textColor = .white
     }
 
-    /// Recolor (after a swap re-homes windows); keeps the hero / drop styling.
+    /// This cell's window has CLOSED: draw it as an empty slot -- no fill, a
+    /// DASHED outline in the window's own color (so you can still tell which one
+    /// went) and a dimmed number -- and make it inert (no click, no drag; the
+    /// panel's hit-test skips it too). Dashes need a shape layer: CALayer's own
+    /// border is solid-only. Same idiom as the hero's dashed home-slot ghost.
+    func setDead(_ on: Bool) {
+        guard isDead != on else { return }
+        isDead = on
+        if on {
+            layer?.backgroundColor = NSColor.clear.cgColor
+            layer?.borderWidth = 0
+            let s = CAShapeLayer()
+            s.fillColor = nil
+            s.strokeColor = color.withAlphaComponent(0.35).cgColor
+            s.lineWidth = 1
+            s.lineDashPattern = [3, 2]
+            // Retina + no implicit animation, matching OutlinePanel's dashed
+            // ghost: a manually added sublayer defaults to 1x (blurry dashes) and
+            // has implicit actions ON, which would animate the outline in from
+            // an empty path on creation and again on every layout pass.
+            s.contentsScale = window?.backingScaleFactor ?? 2
+            s.actions = ["path": NSNull(), "frame": NSNull(), "bounds": NSNull()]
+            layer?.addSublayer(s)
+            dashLayer = s
+            label.textColor = NSColor.white.withAlphaComponent(0.3)
+            updateDashPath()
+        } else {
+            dashLayer?.removeFromSuperlayer()
+            dashLayer = nil
+            layer?.borderWidth = 1
+            setHero(hero)   // restores fill, border and label color
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        updateDashPath()
+    }
+
+    private func updateDashPath() {
+        guard let s = dashLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        s.contentsScale = window?.backingScaleFactor ?? s.contentsScale
+        s.frame = bounds
+        s.path = CGPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                        cornerWidth: 5, cornerHeight: 5, transform: nil)
+        CATransaction.commit()
+    }
+
+    /// Recolor (after a swap re-homes windows); keeps the hero / dead / drop styling.
     func setColor(_ hex: String) {
         color = NSColor(hexRGB: hex) ?? .controlAccentColor
+        if isDead { dashLayer?.strokeColor = color.withAlphaComponent(0.35).cgColor; return }
         setHero(hero)
     }
 
     /// Highlight this cell as the drop target during a mini-map drag.
     func setDropTarget(_ on: Bool) {
+        guard !isDead else { return }
         if on {
             layer?.borderColor = NSColor.white.cgColor
             layer?.borderWidth = 2
@@ -408,6 +529,7 @@ private final class MiniCellView: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with e: NSEvent) {
+        guard !isDead else { return }   // inert: nothing to focus, nothing to swap
         pressed = true; dragging = false; downPoint = NSEvent.mouseLocation
     }
     override func mouseDragged(with e: NSEvent) {
@@ -420,11 +542,17 @@ private final class MiniCellView: NSView {
         if dragging { onDragMoved?(now) }
     }
     override func mouseUp(with e: NSEvent) {
+        // Reset the state and END any in-flight drag FIRST, then gate only the
+        // click. Returning early on `isDead` here would strand a cell that died
+        // MID-DRAG (a background close repaints the mini-map): onDragEnded would
+        // never fire, so cancelCellDrag never runs and the floating ghost window
+        // + pushed cursor leak for the rest of the session. A dead cell is a
+        // harmless drop TARGET anyway -- cellIndex(atScreenPoint:) skips it.
         let wasDragging = dragging
         pressed = false; dragging = false; downPoint = nil
         if wasDragging {
             onDragEnded?(NSEvent.mouseLocation)   // a drag: swap on drop
-        } else if bounds.contains(convert(e.locationInWindow, from: nil)) {
+        } else if !isDead, bounds.contains(convert(e.locationInWindow, from: nil)) {
             onClick?()                            // a plain click: switch hero
         }
     }

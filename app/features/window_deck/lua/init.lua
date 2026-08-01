@@ -274,12 +274,52 @@ local function controllerFor(ctx)
         return 0
     end
 
+    -- The deck members whose windows are still OPEN. `m.gone` is maintained by
+    -- reconcile's presence bookkeeping; a gone member keeps its row (so a
+    -- resolveIds adoption can bind it back) but holds a slot nothing can fill --
+    -- the hole st.reflow closes.
+    local function liveMembers()
+        local out = {}
+        for _, m in ipairs(st.group or {}) do
+            if not m.gone then out[#out + 1] = m end
+        end
+        return out
+    end
+
+    -- Has any member's window closed? The grid is tiled for exactly #st.group
+    -- windows (st.commit and st.reflow are the only writers of st.group, and each
+    -- re-tiles), so a single gone member means the tiling no longer matches what
+    -- is on screen -- a hole nothing can fill until a reflow.
+    local function anyGone()
+        for _, m in ipairs(st.group or {}) do
+            if m.gone then return true end
+        end
+        return false
+    end
+
+    -- Per mini-map cell (row-major, parallel to st.widgetOrder): has that cell's
+    -- window closed? Recomputed on every render rather than cached with the cell
+    -- order, because m.gone moves with reconcile while the order only changes on
+    -- a swap or a reflow.
+    local function deadCellFlags()
+        local flags = {}
+        for i, key in ipairs(st.widgetOrder or {}) do
+            local m = memberByKey(key)
+            flags[i] = (m == nil) or (m.gone == true)
+        end
+        return flags
+    end
+
     -- Is any deck window off its home frame (its slot, or the hero frame for the
     -- hero)? Drives the widget's Rearrange button -- enabled only when re-tiling
     -- would actually move something. m.cur is our last dispatched target for our
     -- own moves and the reported frame after a USER drag, so a drag makes it far
     -- (frameFar's >6px threshold lives in identity.lua).
     local function isDirty()
+        -- A CLOSED member is dirty on its own: its slot is a permanent hole, so
+        -- Rearrange has real work (a reflow) even with every survivor sitting
+        -- exactly on its home frame.
+        if anyGone() then return true end
         for _, m in ipairs(st.group or {}) do
             if not m.gone and m.cur then
                 local target = (m.key == st.heroKey) and heroFrame() or m.slot
@@ -358,11 +398,7 @@ local function controllerFor(ctx)
         end
         ctx.log("mini-map reorder: cell", from, "<-> cell", to)
         rebuildWidgetOrder()
-        if st.widget then
-            st.widget.setCells(st.widgetColors)
-            st.widget.setHero(heroCellIndex())
-        end
-        renderBorders()
+        renderBorders()   -- pushes the re-ordered colors + dead flags + hero cell
     end
 
     -- Border overlays (click-through). Every deck member gets a subtle "member"
@@ -459,7 +495,12 @@ local function controllerFor(ctx)
         syncScrim()   -- keep the container holes on the same frames the rings bound
         if st.widget then
             st.widget.setHero(heroCellIndex())   -- light the hero's cell
-            st.widget.setDirty(isDirty())        -- enable Rearrange only when off-grid
+            -- Mark the cells whose window has closed (hollow + dashed, Swift side).
+            -- No `cols` -> the grid is left alone; only st.reflow resizes it. The
+            -- mark is the whole tell for WHY Rearrange lit up, so it must not wait
+            -- for the reflow to be honest.
+            st.widget.setCells(st.widgetColors, deadCellFlags())
+            st.widget.setDirty(isDirty())        -- Rearrange: off-grid OR a member closed
         end
     end
 
@@ -916,6 +957,11 @@ local function controllerFor(ctx)
 
         st.screen  = screen
         st.group   = group
+        -- Members a reflow dropped from the grid. They keep their `orig`, so
+        -- exitDeck can still restore a window that turns out to be alive -- see
+        -- st.reflow. Discarding an original is the one irreversible act here,
+        -- and (window_fan's rule) it is simply never done while the mode is live.
+        st.pruned  = {}
         dropToGrid("enter")   -- start flat: no hero (heroKey nil after any prior exit, so silent)
         st.active  = true
 
@@ -1068,8 +1114,29 @@ local function controllerFor(ctx)
         -- presence bookkeeping (resolveIds also ADOPTS retitled members -- see
         -- its header): mark truly closed members gone; if the hero vanished,
         -- fall back to the flat grid.
+        -- Absence from a listing has SEVERAL causes and only some are
+        -- distinguishable: the window CLOSED, or its APP did not answer AX in
+        -- time -- Native+Windows drops ALL of an app's windows from a listing
+        -- when that happens, and reports which apps via droppedApps(). Guessing
+        -- "absent = closed" was a live bug in window_fan (2026-07-25) that fired
+        -- routinely. Here it is worse than cosmetic: a gone member lights
+        -- Rearrange, and one click PRUNES it -- so a Chrome that went quiet for
+        -- one listing would be evicted from the deck for good. So ASK the seam
+        -- and RESERVE those members instead of marking them gone. (Read after
+        -- resolveIds: droppedApps reports on the LAST listing, which it just made.)
         local ids = resolveIds()
-        for _, m in ipairs(st.group) do m.gone = not ids[m.key] end
+        local dropped = {}
+        for _, bid in ipairs(ctx.window.droppedApps()) do dropped[bid] = true end
+        for _, m in ipairs(st.group) do
+            if ids[m.key] then
+                m.gone = false
+            elseif m.bundleID and dropped[m.bundleID] then
+                ctx.log("reconcile:", m.key, "absent but '" .. (m.appName or "?")
+                    .. "' did not answer AX -- RESERVED (not treated as closed)")
+            else
+                m.gone = true
+            end
+        end
         if st.heroKey and not ids[st.heroKey] then
             dropToGrid("hero vanished")
             renderBorders()
@@ -1356,10 +1423,16 @@ local function controllerFor(ctx)
             -- resolveIds adopts retitled members, so a window that renamed
             -- itself mid-deck (a browser does on every tab switch) is still
             -- restored instead of being left wherever the deck put it.
+            -- st.pruned too: a reflow drops a member from the GRID, but never
+            -- gives up on restoring it. If that window is in fact still open
+            -- (its app had merely gone quiet), this is what puts it back where
+            -- the user left it instead of stranding it at a deck slot.
             local ids = resolveIds()
-            for _, m in ipairs(st.group) do
-                if ids[m.key] then
-                    ctx.window.setFrameFor(ids[m.key], m.orig)
+            for _, list in ipairs({ st.group, st.pruned or {} }) do
+                for _, m in ipairs(list) do
+                    if ids[m.key] then
+                        ctx.window.setFrameFor(ids[m.key], m.orig)
+                    end
                 end
             end
         end
@@ -1372,17 +1445,111 @@ local function controllerFor(ctx)
         if st.widget       then st.widget.stop() end
         st.active = false
         st.group, st.screen, st.heroKey, st.mode = nil, nil, nil, nil
+        st.pruned = nil
         st.appWatcher, st.focusWatcher, st.escHotkey = nil, nil, nil
         st.scrim, st.widget = nil, nil
+    end
+
+    -- Re-tile for the windows that are ACTUALLY open, after some member closed.
+    -- The grid was sized for a count that no longer exists, so the closed
+    -- members' slots are holes nothing can fill; this recomputes the whole tiling
+    -- for the survivors (5 windows in a 3x2 -> 4 in a 2x2) and shrinks the
+    -- mini-map to match.
+    --
+    -- The closed members are PRUNED for good: Rearrange means "commit to what is
+    -- actually here". Reopening that window does NOT rejoin the deck -- but
+    -- nothing is really lost, because the saved last-deck template is untouched
+    -- (saveLastDeck only writes on a FRESH pick, see st.commit), so re-entering
+    -- still offers the full set as "N of M available". Nor is the prune
+    -- DESTRUCTIVE: the member row is parked in st.pruned with its `orig`, so
+    -- restore-on-exit still covers a window that is in fact still open.
+    --
+    -- Cell NUMBERS shift: the mini-map number IS the row-major cell index, so a
+    -- 4-window deck has cells 1-4 and the old ⌥5 window may become ⌥3. Unavoidable
+    -- once the grid genuinely shrinks. The surplus ⌥N hotkeys stay bound and go
+    -- silent -- switchToCell returns early on a missing widgetOrder entry -- so
+    -- nothing needs rebinding.
+    function st.reflow()
+        if not st.active or not st.screen then return end
+        local live = liveMembers()
+        settlePending()
+        -- Below two survivors there is no deck to reflow INTO: st.commit and
+        -- st.restoreLast both refuse to open one ("needs at least two windows"),
+        -- and a solo window blown up behind the scrim with a one-cell mini-map
+        -- is a state no entry path can produce. Leave instead -- which restores
+        -- every original, including the pruned ones.
+        if #live < 2 then
+            ctx.log("reflow:", #live, "window(s) left -- below the deck minimum, exiting")
+            return st.exitDeck()
+        end
+        ctx.log("reflow:", #st.group, "->", #live, "windows (pruned",
+                #st.group - #live, "closed)")
+        -- Stop the pruned members' chrome + per-key timers BEFORE they leave the
+        -- group: renderBorders only walks st.group, so after the prune nothing
+        -- would own them and a stale ring would float over the re-tiled deck.
+        -- The member row itself is PARKED in st.pruned, not dropped -- exitDeck
+        -- still restores its `orig` if the window turns out to be alive.
+        for _, m in ipairs(st.group) do
+            if m.gone then
+                if st.borders and st.borders[m.key] then
+                    st.borders[m.key].stop(); st.borders[m.key] = nil
+                end
+                if st.stable and st.stable[m.key] then
+                    st.stable[m.key].stop(); st.stable[m.key] = nil
+                end
+                if st.echo and st.echo[m.key] then
+                    st.echo[m.key].stop(); st.echo[m.key] = nil
+                end
+                st.pruned = st.pruned or {}
+                st.pruned[#st.pruned + 1] = m
+            end
+        end
+        st.group = live
+
+        -- Same tiling + minimise-travel assignment as st.commit, but measured
+        -- from where the windows are NOW (m.cur) rather than their pre-deck
+        -- frames -- they are already tiled, so "keep each window near home"
+        -- means near its CURRENT cell.
+        local slots = W.tileSlots(st.screen, #live, ctx.opt("gutter"))
+        local winCenters, slotCenters = {}, {}
+        for i, m in ipairs(live) do winCenters[i] = W.center(m.cur or m.slot) end
+        for i, s in ipairs(slots)  do slotCenters[i] = W.center(s) end
+        local perm = W.assignNearest(winCenters, slotCenters)
+        for i, m in ipairs(live) do m.slot = slots[perm[i]] end
+
+        rebuildWidgetOrder(live)
+        st.widgetCols = W.gridDims(#live).w
+        -- Passing `cols` is what rebuilds the mini-map at the new cell count; no
+        -- cell is dead any more (the closed ones are gone from the group).
+        if st.widget then st.widget.setCells(st.widgetColors, {}, st.widgetCols) end
+
+        local ids = resolveIds()
+        for _, m in ipairs(live) do
+            if ids[m.key] then
+                -- same guard as st.rearrange: cancel an in-flight hide-until-stable
+                -- so it can't later re-show a ring at a pre-reflow frame
+                if st.stable and st.stable[m.key] then
+                    st.stable[m.key].stop(); st.stable[m.key] = nil
+                end
+                moveWin(ids[m.key], m, (m.key == st.heroKey) and heroFrame() or m.slot)
+            end
+        end
+        renderBorders()
     end
 
     -- Rearrange (widget button): snap every window back to its home -- its slot,
     -- or the hero frame for the hero -- after the user has dragged/resized some.
     -- Re-dispatches the moves under the echo guard and re-syncs the rings/holes;
     -- renderBorders then recomputes the dirty state (now clean).
+    --
+    -- When a member's window has CLOSED, "home" is stale -- the grid no longer
+    -- matches the windows in it -- so this REFLOWS instead of snapping (above).
+    -- That is also why isDirty lights the button on a close: snapping alone would
+    -- move nothing, and an enabled button that does nothing is a lie.
     function st.rearrange()
         if not st.active then return end
-        ctx.log("rearrange -> re-tile" .. (st.heroKey and " (hero re-centered)" or ""))
+        if anyGone() then return st.reflow() end
+        ctx.log("rearrange -> snap to home" .. (st.heroKey and " (hero re-centered)" or ""))
         settlePending()
         local ids = resolveIds()
         for _, m in ipairs(st.group) do

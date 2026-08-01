@@ -734,7 +734,9 @@ extension Native {
         return 0
     }
 
-    // deck_widget_set_cells(id, colors[]) -- recolor the mini-map after a swap.
+    // deck_widget_set_cells(id, colors[], dead[], cols?) -- recolor the mini-map
+    // after a swap, mark closed windows' cells dead, and -- only when `cols` is
+    // given -- rebuild the map at a new cell count (a reflow after a close).
     func deckWidgetSetCells(_ L: OpaquePointer?) -> Int32 {
         guard let id = LuaState.int(L, 1).map(Int32.init), let w = deckWidgets[id] else { return 0 }
         var colors: [String] = []
@@ -744,7 +746,14 @@ extension Native {
                 lua_rawgeti(L, 2, lua_Integer(i)); colors.append(LuaState.string(L, -1) ?? ""); lua_settop(L, -2)
             } }
         }
-        w.setCellColors(colors)
+        var dead: [Bool] = []
+        if lua_type(L, 3) == LUA_TTABLE {
+            let n = lua_rawlen(L, 3)
+            if n > 0 { for i in 1...n {
+                lua_rawgeti(L, 3, lua_Integer(i)); dead.append(LuaState.bool(L, -1)); lua_settop(L, -2)
+            } }
+        }
+        w.setCells(colors, dead: dead, cols: LuaState.int(L, 4))
         return 0
     }
 

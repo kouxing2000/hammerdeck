@@ -382,7 +382,9 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- (button text, i18n), pos = {x,y}, screen = {x,y,w,h}, switcher = { cols,
     -- colors, hero, onSwitch(i) }, hero, onToggleHero(bool), onRearrange(),
     -- onMove(x,y), onExit() }. Returns { reanchor(pos, screen), setHero(i),
-    -- setDirty(bool), setSwitchHint(t), setCells(colors), hide, show, stop }.
+    -- setDirty(bool), setSwitchHint(t), setCells(colors, dead, cols), hide,
+    -- show, stop }. setCells' `dead` marks cells whose window closed; `cols` is
+    -- only passed when the cell COUNT changed (see adapter.deckWidget).
     function ctx.deckWidget(opts) return track(adapter.deckWidget(opts)) end
     function ctx.fanWidget(opts) return track(adapter.fanWidget(opts)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end

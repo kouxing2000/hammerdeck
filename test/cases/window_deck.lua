@@ -787,6 +787,168 @@ return {
             registry.setEnabled("window_deck", false)
         end
 
+        -- T-WD-reflow: a deck window CLOSES. The grid was tiled for a count that no
+        -- longer exists, so its slot is a hole nothing can fill. The deck never
+        -- auto-arranges (only the two windows that change role ever move), so the
+        -- contract is: mark the dead cell + light Rearrange, and REFLOW on the
+        -- click -- re-tiling for the survivors and shrinking the mini-map to match.
+        -- The defect this guards is the whole chain: before it, a close left the
+        -- hole AND left Rearrange disabled, and enabling the button alone would
+        -- have snapped windows to the same stale slots (i.e. done nothing).
+        do
+            fake.windows = quadWindows()
+            fake.screenList = { SCREEN }
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            local w = fake.liveWidget()
+            w.onToggleHero(false)          -- grid-only: focus won't promote, deck stays flat
+            ok(w.cols == Wd.gridDims(4).w, "deck of 4 starts on a 2-column mini-map")
+            ok(w.dirty == false, "a freshly tiled deck is not dirty")
+
+            fake.windowFrameSets = {}
+            table.remove(fake.windows, 3)  -- close TR (id 3); quadWindows order is BR,TL,TR,BL
+            focusWin(2)                    -- any focus event -> reconcile notices the close
+            ok(#fake.windowFrameSets == 0,
+                "a close moves NOTHING on its own -- the deck never auto-arranges")
+            -- Mini-map cells are row-major over the slots, so the 2x2 reads
+            -- TL, TR, BL, BR -> the closed TR window is cell 2.
+            local deadCount, deadAt = 0, nil
+            for i, d in ipairs(w.dead or {}) do
+                if d then deadCount, deadAt = deadCount + 1, i end
+            end
+            ok(deadCount == 1 and deadAt == 2,
+                "the closed window's mini-map cell -- and only that one -- is marked dead")
+            ok(w.dirty == true,
+                "a closed member lights Rearrange even though no window was dragged")
+
+            fake.windowFrameSets = {}
+            w.onRearrange()                -- click Rearrange -> reflow
+            local s3 = Wd.tileSlots(SCREEN, 3, 8)
+            ok(#s3 == 3 and not near(s3[1].w, TLslot.w),
+                "3 survivors tile to a genuinely different geometry than the old 2x2")
+            local taken = {}
+            for _, id in ipairs({ 1, 2, 4 }) do           -- BR, TL, BL survive
+                local f = lastSetFor(id)
+                local si
+                for i, s in ipairs(s3) do
+                    if f and near(f.x, s.x) and near(f.y, s.y)
+                        and near(f.w, s.w) and near(f.h, s.h) then si = i end
+                end
+                ok(si ~= nil, "reflow moves window " .. id .. " onto one of the 3 new slots")
+                if si then taken[si] = true end
+            end
+            local filled = 0
+            for _ in pairs(taken) do filled = filled + 1 end
+            ok(filled == 3, "the survivors fill all three slots -- the hole is gone")
+            ok(w.cols == Wd.gridDims(3).w and #w.colors == 3,
+                "the mini-map shrinks to 3 cells at the new column count")
+            ok(#w.dead == 3, "the dead-flag array tracks the new cell count")
+            for _, d in ipairs(w.dead) do ok(d == false, "no cell is dead after a reflow") end
+            ok(w.dirty == false, "reflow clears the dirty state (the grid matches the windows)")
+
+            -- The pruned member is gone for good: a second Rearrange finds nothing
+            -- to reflow and falls through to a plain snap-home. Assert the FRAMES,
+            -- not just the flags -- flag-only assertions would pass if onRearrange
+            -- did nothing at all, which is the defect class this whole change kills.
+            fake.windowFrameSets = {}
+            w.onRearrange()
+            ok(#fake.windowFrameSets == 3,
+                "a second Rearrange snaps the 3 survivors home -- the prune is permanent")
+            ok(w.dirty == false and w.cols == Wd.gridDims(3).w,
+                "and it re-tiles nothing: still a 3-cell grid, still clean")
+            fake.pressHotkey("k", HYP)
+            registry.setEnabled("window_deck", false)
+            -- Hero mode is PERSISTED (ctx.setState "heroMode"), so the toggle-off
+            -- above would leak into every later case's deck. Put it back.
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = nil
+        end
+
+        -- T-WD-reflow-quiet: a member absent from a listing because its APP did not
+        -- answer AX is NOT a closed window. The seam drops ALL of a slow app's
+        -- windows from a listing and reports the app via droppedApps(); guessing
+        -- "absent = closed" here would mark the member dead, light Rearrange, and
+        -- let one click evict a still-open window from the deck. (window_fan shipped
+        -- exactly this bug on 2026-07-25 and it fired routinely.)
+        do
+            fake.windows = quadWindows()
+            fake.screenList = { SCREEN }
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            local w = fake.liveWidget()
+
+            fake.windowFrameSets = {}
+            table.remove(fake.windows, 3)          -- TR (com.tr) vanishes from the listing
+            fake.droppedApps = { "com.tr" }        -- ...because its app went quiet
+            focusWin(2)
+            local anyDead = false
+            for _, d in ipairs(w.dead or {}) do anyDead = anyDead or d end
+            ok(anyDead == false,
+                "a member whose app missed the AX ceiling is reserved, not marked dead")
+            ok(w.dirty == false,
+                "a quiet app does not light Rearrange -- there is no hole to close")
+
+            -- ...and the reservation is not a one-way door: the app answers again.
+            fake.droppedApps = {}
+            table.insert(fake.windows, 3,
+                { id = 3, title = "TR", appName = "AppTR", bundleID = "com.tr",
+                  x = TRslot.x, y = TRslot.y, w = TRslot.w, h = TRslot.h })
+            focusWin(2)
+            ok(w.dirty == false, "when the app answers again nothing was lost")
+            fake.pressHotkey("k", HYP)
+            registry.setEnabled("window_deck", false)
+        end
+
+        -- T-WD-reflow-restore: a reflow drops a member from the GRID but must never
+        -- discard its captured original -- otherwise restore-on-exit silently skips
+        -- a window that turns out to be alive, stranding it at a deck slot.
+        do
+            fake.windows = quadWindows()
+            fake.screenList = { SCREEN }
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            local w = fake.liveWidget()
+            w.onToggleHero(false)
+            local origTR = { x = 1000, y = 100, w = 300, h = 200 }   -- TR's pre-deck frame
+
+            table.remove(fake.windows, 3)          -- TR disappears (looks closed)
+            focusWin(2)
+            w.onRearrange()                        -- reflow: TR is pruned from the grid
+            ok(#w.colors == 3, "the reflow pruned the absent member from the grid")
+
+            -- TR was alive all along -- it comes back before the deck exits.
+            table.insert(fake.windows, 3,
+                { id = 3, title = "TR", appName = "AppTR", bundleID = "com.tr",
+                  x = 400, y = 400, w = 500, h = 500 })
+            fake.windowFrameSets = {}
+            fake.pressHotkey("k", HYP)             -- exit -> restore originals
+            local back = lastSetFor(3)
+            ok(back and near(back.x, origTR.x) and near(back.y, origTR.y)
+                and near(back.w, origTR.w) and near(back.h, origTR.h),
+                "exit restores a PRUNED member's original frame -- the prune is not destructive")
+            registry.setEnabled("window_deck", false)
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = nil
+        end
+
+        -- T-WD-reflow-min: below two survivors there is nothing to reflow into --
+        -- st.commit and st.restoreLast both refuse to OPEN a deck under two windows,
+        -- so Rearrange must leave rather than build a state no entry path can.
+        do
+            fake.windows = quadWindows()
+            fake.screenList = { SCREEN }
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            local w = fake.liveWidget()
+            w.onToggleHero(false)
+            for _ = 1, 3 do table.remove(fake.windows, 2) end   -- only BR (id 1) left
+            focusWin(1)
+            w.onRearrange()
+            ok(fake.liveWidget() == nil and fake.liveScrim() == nil,
+                "a reflow that would leave one window exits the deck instead")
+            ok(registry.liveHandleCount() == 1, "the reflow exit drops every deck handle but the toggle")
+            registry.setEnabled("window_deck", false)
+            fake.settings["hammerdeck.state.window_deck.heroMode"] = nil
+        end
+
         -- T-WD-reorder: dragging one mini-map CELL onto another (in the widget)
         -- swaps the two windows' slots and re-colors the mini-map to match.
         do

@@ -571,7 +571,13 @@ function adapter.deckWidget(opts)
         setHero = function(i) w.hero = i or 0 end,
         setDirty = function(d) w.dirty = d and true or false end,
         setSwitchHint = function(t) w.switchHint = t end,
-        setCells = function(c) w.colors = c end,
+        -- `dead` marks cells whose window closed; `cols` is only passed when the
+        -- cell COUNT changed (a reflow), so mirror the real widget: omitting it
+        -- leaves the recorded grid width alone.
+        setCells = function(c, dead, cols)
+            w.colors, w.dead = c, dead or {}
+            if cols then w.cols = cols end
+        end,
         hide = function() w.hidden = true end,
         show = function() w.hidden = false end,
         stop = function() freeOnce(w) end,
