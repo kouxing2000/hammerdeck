@@ -1052,120 +1052,40 @@ return {
             fake.pressHotkey("f", HYP)                        -- leave
         end
 
-        -- ===== KEYBOARD NAVIGATION: next / prev move a PREVIEW; confirm commits.
-        -- Stepping deliberately does NOT focus each window on the way past -- that
-        -- would be an app activation per keypress and a multi-window raise storm
-        -- (the project's Z-order rule). So the bold border moves while focus stays
-        -- put, and only confirm focuses + leaves.
-        do
-            fake.windows = freshWindows()
-            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
-            fake.focusedWid = 101
-            fake.pressHotkey("f", HYP)                        -- enter (5 windows)
-            local boldWid = function()
-                for _, wid in ipairs({ 101, 102, 103, 104, 105 }) do
-                    local b = borderFor(wid)
-                    if b and b.kind == "focus" then return wid end
-                end
-            end
-            ok(boldWid() == 101, "on entry the bold border is on the focused window")
-
-            local focusesBefore = #fake.focused
-            registry.runAction("window_fan", "next")
-            local afterNext = boldWid()
-            ok(afterNext ~= nil and afterNext ~= 101, "next moves the bold border to another window")
-            ok(#fake.focused == focusesBefore,
-                "next only PREVIEWS -- it focuses nothing (no activation storm per keypress)")
-            ok(fake.focusedWid == 101, "next leaves the real focus untouched")
-
-            registry.runAction("window_fan", "prev")
-            ok(boldWid() == 101, "prev steps back to where it started")
-
-            -- Wrapping: prev from the first member lands on the last.
-            registry.runAction("window_fan", "prev")
-            local wrapped = boldWid()
-            ok(wrapped ~= nil and wrapped ~= 101, "prev wraps around the ring")
-
-            -- Confirm: leaves the mode, restores every window, focuses the pick.
-            registry.runAction("window_fan", "confirm")
-            ok(#fake.liveOutlines() == 0, "confirm leaves the mode")
-            local restoredOk = true
-            for id, o in pairs(ORIG) do
-                local w = frameOf(id)
-                if w and not (w.x == o.x and w.y == o.y) then restoredOk = false end
-            end
-            ok(restoredOk, "confirm restores every window to its original frame")
-            -- Assert WHICH window, not merely that something was focused: "some window
-            -- got focus" passes even when confirm picks the wrong one, which is the
-            -- only thing the action is for.
-            local lastFocusedWid
-            for _, w in ipairs(fake.windows) do
-                if w.id == fake.focused[#fake.focused] then lastFocusedWid = w.wid end
-            end
-            ok(lastFocusedWid == wrapped,
-                "confirm focuses the SELECTED window (the one the cursor was on)")
-        end
-
-        -- ===== THE RING TAKES NO KEY, AND IS OFFERED FROM NO MENU.
-        -- Two independent properties, both regressions worth pinning.
+        -- ===== ONE ACTION, like Window Deck. The keyboard ring (next / prev /
+        -- confirm) is GONE, not merely unbound: nothing to bind, to list in Settings,
+        -- or to render as a menubar row.
         --
-        -- (1) The three navigation actions ship with NO defaultTrigger. They used to
-        -- claim Hyper+N / B / J out of the box -- three prime caps spent, around the
-        -- clock, on a ring the fan does not need (the widget lists every window and a
-        -- click switches). Dormant until the user binds one, which is the right
-        -- default for a capability rather than a headline.
-        --
-        -- (2) They are modeScoped, so the "run this now" surfaces skip them. Each is
-        -- a no-op unless the mode is live, and three menu rows that silently do
-        -- nothing is exactly how the fan's submenu read next to Window Deck's single
-        -- row. The menubar filter is Swift-side (StatusBar.featureMenuItem); the
-        -- palette half is asserted here, and the flag itself is on describe().
+        -- NOTE ON WHAT IS *NOT* TESTED HERE, deliberately. Deleting the ring also
+        -- retired st.cursor and collapsed selectedWid() to st.focusedWid at its three
+        -- call sites -- and NO test can pin that rewiring, because it was a provable
+        -- no-op: st.cursor had exactly one writer (st.step), so on every path that
+        -- survives, selectedWid() already returned st.focusedWid. A test written for
+        -- it would have been green before the change too, which is the definition of
+        -- a test that proves nothing. The bold-border invariant it would have claimed
+        -- to cover is already pinned, by blocks that DO discriminate: entry boldness
+        -- at the top of this file, focus-follows-raise above, and the FOCUS RACE block
+        -- (which bolds a window WITHOUT reordering, so a wiring to st.order[1] fails
+        -- there). What IS new and worth a test is the declaration itself.
         do
-            local RING = { next = true, prev = true, confirm = true }
-            local seen = {}
+            local fan
             for _, f in ipairs(registry.describe()) do
-                if f.id == "window_fan" then
-                    for _, a in ipairs(f.actions) do
-                        seen[a.id] = a
-                        if RING[a.id] then
-                            ok(a.defaultTrigger == nil and a.trigger == nil,
-                                "fan action '" .. a.id .. "' binds no key by default")
-                            ok(a.modeScoped == true,
-                                "fan action '" .. a.id .. "' is marked modeScoped")
-                        end
-                    end
-                end
+                if f.id == "window_fan" then fan = f end
             end
-            ok(seen.next and seen.prev and seen.confirm,
-                "the ring actions are still DECLARED -- bindable in Settings")
-            ok(seen.arrange ~= nil and seen.arrange.modeScoped == false
-                and seen.arrange.defaultTrigger ~= nil,
-                "the toggle keeps its default Hyper+F and is NOT mode-scoped")
+            ok(fan ~= nil and #fan.actions == 1 and fan.actions[1].id == "arrange",
+                "window_fan declares exactly one action: the toggle")
+            ok(fan.actions[1].defaultTrigger ~= nil,
+                "and the toggle keeps its default Hyper+F")
 
-            -- The palette lists the toggle and nothing else from this feature. Its
-            -- label falls back to the FEATURE name, because one visible action is one
-            -- visible action however many are hidden behind it.
+            -- The palette therefore offers one row, labelled with the FEATURE name
+            -- (the one-action fallback) rather than an action label.
             local rows = {}
             local view = require("platform.registry_view")
             for _, c in ipairs(view.commandList("some_other_feature")) do
                 if c.featureId == "window_fan" then rows[#rows + 1] = c end
             end
-            ok(#rows == 1 and rows[1].actionId == "arrange",
-                "the command palette offers only the toggle, not the mode-scoped ring")
-            ok(rows[1].label == "Window Fan",
-                "and labels it with the feature name, like any one-action feature")
-        end
-
-        -- ===== the ring is inert outside the mode. A user who DOES bind one of these
-        -- can press it anywhere; it must do nothing at all when no fan is up.
-        do
-            fake.windows = freshWindows()
-            local moved, focused = #fake.windowFrameSets, #fake.focused
-            registry.runAction("window_fan", "next")
-            registry.runAction("window_fan", "prev")
-            registry.runAction("window_fan", "confirm")
-            ok(#fake.windowFrameSets == moved and #fake.focused == focused,
-                "next / prev / confirm are no-ops while the mode is off")
+            ok(#rows == 1 and rows[1].actionId == "arrange" and rows[1].label == "Window Fan",
+                "the command palette carries one Window Fan row, named for the feature")
         end
 
         -- ===== LABEL MODE (`arrange` off): borders + list, nothing moved.

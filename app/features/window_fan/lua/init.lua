@@ -11,12 +11,25 @@
 -- switcher-only cost; leaving restores the real layout). The rearranging is
 -- OPTIONAL -- see LABEL MODE below.
 --
--- FOUR ACTIONS: the toggle, plus next / prev / confirm for keyboard use. There is
--- still deliberately no separate "restore" action -- the toggle already exits from
--- both the menubar and the hotkey, and a duplicate exit path was removed on
--- 2026-07-19. `confirm` is NOT that duplicate: it exits AND focuses the selection,
--- which the toggle cannot do (the toggle leaves focus where it was). next/prev
--- move a preview only -- see the note on st.cursor for why they must not focus.
+-- ONE ACTION: the toggle. Deliberately, and it has shrunk to get here. There is no
+-- separate "restore" (the toggle already exits from both the menubar and the
+-- hotkey; a duplicate exit path was removed 2026-07-19), and as of 2026-07-31 no
+-- keyboard selection ring either -- next / prev / confirm, plus the st.cursor
+-- preview they drove, are gone.
+--
+-- Two rounds got here, and the second overruled the first. The reported defect was
+-- presentational: four actions folded this feature into a menubar submenu where
+-- three rows sat dead (each ring action begins `if not st.active`), next to Window
+-- Deck's single row. That was first fixed by hiding them behind a `modeScoped`
+-- manifest flag. The owner then rejected the premise rather than the fix -- nobody
+-- had asked for those three shortcuts -- so the ring was deleted outright and the
+-- flag reverted with it, having no other user in the catalog.
+--
+-- What the deletion buys beyond a shorter menu: the mode is a POINTING one. Every
+-- window wears a live colored border and keeps a grabbable edge; you click the one
+-- you want, or click its row in the switcher widget. So the bold border can simply
+-- BE real focus, instead of a second keyboard-only notion of "selected" that every
+-- focus event had to reconcile against it.
 --
 -- WHY THE FAN. macOS won't let us reorder OTHER apps' windows (AXRaise is
 -- top-only; some apps steal focus on raise), so we cannot "manage layers". The
@@ -26,7 +39,7 @@
 -- another window's edge. (Proven in windows_geometry: strip-exclusivity.)
 --
 -- LABEL MODE (`arrange` = false) is the same mode with the ARRANGEMENT REMOVED:
--- borders, widget list, live tracking and the keyboard ring, with no window ever
+-- borders, widget list and live tracking, with no window ever
 -- moved. It exists because the arrangement is the expensive half and the
 -- identification is the half that demonstrably works -- and dropping it drops every
 -- constraint the arrangement imposes: no window limit (nothing has to fit a slab),
@@ -131,30 +144,17 @@ local function controllerFor(ctx)
     -- time so refan can tell "this window closed" from "this window's WHOLE APP
     -- missed the AX timeout" -- absence from a listing looks identical otherwise,
     -- and guessing wrong destroys the window's captured original (see refan).
-    -- cursor: the KEYBOARD selection (a wid), or nil when the keyboard is not
-    -- driving. It is deliberately separate from focusedWid: stepping through the
-    -- ring must not focus each window on the way past, both because that is a
-    -- burst of app activations per keypress and because raising windows one after
-    -- another is the z-order churn the project's Z-order rule forbids. So next/prev
-    -- move a PREVIEW, and only confirm commits.
+    -- focusedWid: the ONE notion of "which window is highlighted" -- what the bold
+    -- border and the lit widget row point at. There used to be a second one
+    -- (`cursor`, a keyboard selection kept deliberately apart from real focus so
+    -- stepping the ring would not activate every window on the way past); it went
+    -- with the ring on 2026-07-31, and with it the reconcile that had to run on
+    -- every focus event to keep the two from disagreeing.
     local st = { active = false, slot = {}, color = {}, side = {}, originals = {},
                  bundle = {},
                  borders = {}, order = {}, frames = {}, focusedWid = nil, screen = nil,
                  memberSig = nil, refanning = false, widget = nil, widgetOrder = {},
-                 cursor = nil, recycled = false, arranging = true }
-
-    -- What the bold border and the highlighted widget row point at: the keyboard
-    -- selection when the keyboard is driving, else whatever is really focused.
-    --
-    -- The cursor is dropped the moment its window is no longer a fan member (closed,
-    -- moved to another Space, its app went quiet). A cursor pointing outside
-    -- st.borders would leave NO border bold and NO widget row highlighted -- the
-    -- selection would simply vanish from view while still being what confirm() acts
-    -- on, so confirm would exit having focused nothing.
-    local function selectedWid()
-        if st.cursor and not st.borders[st.cursor] then st.cursor = nil end
-        return st.cursor or st.focusedWid
-    end
+                 recycled = false, arranging = true }
 
     -- The fan's SIZE: the high-water slot index, which is what place() hands to
     -- fanSlots and therefore what actually determines how thin the slabs get.
@@ -172,9 +172,10 @@ local function controllerFor(ctx)
         return n
     end
 
-    -- The fan's members in a STABLE ring order (by slot index), independent of the
-    -- widget -- keyboard navigation must work with the widget option turned off,
-    -- so this cannot live inside widgetRows.
+    -- The fan's members in a STABLE ring order (by slot index). Kept out of
+    -- widgetRows so the order is defined by the FAN's geometry rather than by
+    -- whatever the widget happens to render -- the widget is optional, the slot
+    -- order is not.
     local function orderedWids()
         local wids = {}
         for wid in pairs(st.borders) do wids[#wids + 1] = wid end
@@ -197,7 +198,7 @@ local function controllerFor(ctx)
             local f = st.frames[wid]
             if b and f then
                 b.o.setFrame(f)
-                b.o.setStyle(wid == selectedWid() and "focus" or "member")
+                b.o.setStyle(wid == st.focusedWid and "focus" or "member")
                 -- Every window in front of it that can actually cover any of it. The
                 -- INTERSECTION filter is behaviour-identical (rectMinus returns a piece
                 -- untouched when the subtrahend misses it) but it keeps rectMinus from
@@ -222,7 +223,7 @@ local function controllerFor(ctx)
                     b.o.setFilled(false)
                     b.o.clearClip()
                 else
-                    b.o.setFilled(wid ~= selectedWid())
+                    b.o.setFilled(wid ~= st.focusedWid)
                     b.o.setClip(vis)                        -- draw only where still visible
                 end
             end
@@ -372,13 +373,13 @@ local function controllerFor(ctx)
             if w.wid then meta[w.wid] = { title = w.title or "", bundleID = w.bundleID or "" } end
         end
         local rows = {}
-        st.widgetOrder = orderedWids()          -- the SAME ring the keyboard walks
+        st.widgetOrder = orderedWids()          -- slot order, so the list reads left-to-right
         for _, wid in ipairs(st.widgetOrder) do
             local m = meta[wid] or { title = "", bundleID = "" }
             rows[#rows + 1] = {
                 color = st.color[wid], side = st.side[wid] or "",
                 title = m.title, bundleID = m.bundleID,
-                focused = wid == selectedWid(),
+                focused = wid == st.focusedWid,
             }
         end
         return rows
@@ -407,7 +408,7 @@ local function controllerFor(ctx)
         -- LABEL MODE (st.arranging == false) computes no slab geometry at all: it
         -- labels the windows WHERE THEY ARE. Slots are still assigned -- they carry
         -- identity and ring order, not position -- so membership, reservations and
-        -- the keyboard ring all work unchanged; only the geometry is skipped.
+        -- the widget's ordering all work unchanged; only the geometry is skipped.
         local slots = st.arranging
             and W.fanSlots(screen, N, ctx.opt("edge") or 40, PAD) or nil
 
@@ -724,10 +725,6 @@ local function controllerFor(ctx)
         if not st.active or st.refanning then return end
         local w = ctx.window.focusedWid()
         if w ~= 0 then
-            -- Focus moved by some OTHER means (a click on a window, a widget row,
-            -- an app switch): the keyboard preview is stale and would now point
-            -- somewhere the user is not, so hand the highlight back to real focus.
-            if st.focusedWid and w ~= st.focusedWid then st.cursor = nil end
             st.focusedWid = w
         end
         refreshFromList()          -- the switch changed the stacking order
@@ -799,8 +796,8 @@ local function controllerFor(ctx)
         end
 
         -- The mode's SHAPE, latched for the session rather than read per pass: with
-        -- `arrange` off this is LABEL MODE -- the borders, the widget, the tracking
-        -- and the keyboard ring, with no window ever moved. Latched because flipping
+        -- `arrange` off this is LABEL MODE -- the borders, the widget and the
+        -- tracking, with no window ever moved. Latched because flipping
         -- it under a live mode would leave half the windows slabbed and half not, and
         -- would make "restore on leave" mean two different things mid-session.
         st.arranging = ctx.opt("arrange") ~= false
@@ -997,7 +994,6 @@ local function controllerFor(ctx)
         end
         st.active = false
         st.slot, st.color, st.side, st.originals, st.bundle = {}, {}, {}, {}, {}
-        st.cursor = nil          -- the next entry starts on real focus, not a stale pick
         ctx.log("fan: left mode -- " .. ((not st.arranging)
             and (#members .. " labels cleared; nothing was moved, nothing restored")
             or skipRestore
@@ -1106,59 +1102,6 @@ local function controllerFor(ctx)
         if st.active then st.leave() else st.enter() end
     end
 
-    -- Move the keyboard selection `delta` places around the ring (wrapping), from
-    -- wherever the highlight currently is. PREVIEW ONLY -- no raise, no focus (see
-    -- the note on st.cursor); confirm is what commits. A no-op outside the mode:
-    -- these are ordinary global hotkeys, so they fire whether or not the fan is up,
-    -- and an alert on every stray press would be noise.
-    ---@param delta integer
-    function st.step(delta)
-        if not st.active then return end
-        local ring = orderedWids()
-        if #ring == 0 then return end
-        -- Where the highlight is NOW, if it is still in the ring at all. When it is
-        -- not (the selected window closed, left the screen, or its app went quiet),
-        -- step onto the ring's FIRST member rather than treating the miss as
-        -- index 1 and stepping off it -- the latter silently skips ring[1].
-        local cur, idx = selectedWid(), nil
-        for i, wid in ipairs(ring) do
-            if wid == cur then idx = i; break end
-        end
-        if idx then
-            st.cursor = ring[((idx - 1 + delta) % #ring) + 1]
-        else
-            st.cursor = ring[1]
-        end
-        drawOcclusion()
-        updateWidget()
-        -- "position", not "slot": in label mode the index is a pure ring ordinal with
-        -- no slab behind it, and the log is read as the record of what the mode decided.
-        ctx.log("fan: cursor -> wid " .. st.cursor .. " (position "
-            .. (st.slot[st.cursor] or "?") .. " of " .. #ring .. ")")
-    end
-
-    -- Commit the selection: leave the mode (restoring every window to its real
-    -- geometry), THEN focus the picked one -- in that order, so the user lands on
-    -- their window at its true size rather than on a slab. This is the switcher's
-    -- payoff, and the one thing the toggle alone cannot do: the toggle exits
-    -- leaving focus wherever it was.
-    function st.confirm()
-        if not st.active then return end
-        local wid = selectedWid()
-        ctx.log("fan: confirm -> wid " .. tostring(wid))
-        st.leave()
-        if not wid then return end
-        for _, w in ipairs(ctx.window.list()) do
-            if w.wid == wid then
-                -- One window forward, after the layout is already restored: the
-                -- sanctioned single-window z-order move.
-                ctx.window.raise(w.id)
-                ctx.window.focus(w.id)
-                break
-            end
-        end
-    end
-
     -- Called from stop(ctx) on disable: leave a live mode so disabling never
     -- strands the user's windows in the pile (and never leaks a border/observer).
     function st.forceExit()
@@ -1176,8 +1119,8 @@ return {
     id  = "window_fan",
 
     options = {
-        -- The mode's SHAPE. Off = LABEL MODE: the borders, the widget list, the live
-        -- tracking and the keyboard ring, with no window ever moved. It exists because
+        -- The mode's SHAPE. Off = LABEL MODE: the borders, the widget list and the
+        -- live tracking, with no window ever moved. It exists because
         -- the fan's arrangement is the expensive half and the identification is the
         -- half that demonstrably works -- and turning it off drops every constraint
         -- the arrangement imposes: no window limit (nothing has to fit a slab), no
@@ -1213,51 +1156,7 @@ return {
             ---@param ctx Ctx
             run = function(ctx) with(ctx).toggle() end,
         },
-        -- KEYBOARD NAVIGATION -- MODE-SCOPED and UNBOUND BY DEFAULT.
-        --
-        -- Two deliberate absences, and they answer two different failures.
-        --
-        -- No `defaultTrigger`: nobody asked for these keys. Shipping them on
-        -- Hyper+N / B / J spent three prime caps, around the clock, on a ring most
-        -- users will never reach for -- and the mode is fully usable without them
-        -- (the switcher widget lists every window; a click switches). An action
-        -- with no default is dormant until the user binds one in Settings, which is
-        -- exactly the right default for a capability rather than a headline.
-        -- (`swap_screens` in window_snap is the same shape and says so too.)
-        --
-        -- `modeScoped`: these no-op outside a live fan, so the menubar and the
-        -- command palette -- both "run this now" surfaces -- must not offer them.
-        -- Three rows that silently do nothing is what the fan's submenu WAS, and it
-        -- read as broken next to Window Deck's single row. modeScoped hides them
-        -- there while keeping them in Settings, where binding them is the whole
-        -- point. It is a property of the ACTION, not of its binding state: bound or
-        -- not, clicking one from a menu can never work.
-        --
-        -- None is automatable -- they act on the live selection, which means
-        -- nothing unattended.
-        {
-            id = "next",
-            label = "Select next window in the fan",
-            description = "Move the fan's selection one window forward (wrapping). Only the highlight moves -- the window is not focused until you confirm. Bind a shortcut to use it; the fan works without one.",
-            modeScoped = true,
-            ---@param ctx Ctx
-            run = function(ctx) with(ctx).step(1) end,
-        },
-        {
-            id = "prev",
-            label = "Select previous window in the fan",
-            description = "Move the fan's selection one window back (wrapping). Only the highlight moves -- the window is not focused until you confirm. Bind a shortcut to use it; the fan works without one.",
-            modeScoped = true,
-            ---@param ctx Ctx
-            run = function(ctx) with(ctx).step(-1) end,
-        },
-        {
-            id = "confirm",
-            label = "Jump to the selected window",
-            description = "Leave Window Fan, restore every window to its original position, and focus the selected one. This is the keyboard ring's payoff -- the plain toggle exits without changing focus.",
-            modeScoped = true,
-            ---@param ctx Ctx
-            run = function(ctx) with(ctx).confirm() end,
-        },
+        -- One action, like Window Deck. See the header for why the keyboard ring
+        -- that used to live here is gone rather than merely unbound.
     },
 }
