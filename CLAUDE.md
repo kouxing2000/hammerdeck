@@ -309,29 +309,15 @@ do NOT strip them as "debug noise" once a fix lands (that is the global rule's
 temporary `THROWAWAY` debug prints, a different thing). Log the decision + the
 key identity (a window key, a mode), never a tight per-frame spam.
 
-Visual check (real pixels -- the one thing tests can't do): `scripts/app.sh
-start` opens a debug Lua control channel; `scripts/control.sh '<lua>'` drives
-the live app (e.g. open the palette) and `scripts/shot.sh out.png` screenshots
-it for you to read. The capturing terminal needs Screen Recording, or the
-panels are missing from the image. Don't restart the user's running instance or
-run the UI tests while they may be at the keyboard -- ask first.
-
-To screenshot the **SwiftUI Settings window** (the chord/trigger editors, option
-forms -- NOT a native panel, so the Lua eval channel can't reach it), use the
-host-UI deep link: `scripts/control.sh '@settings:<featureId>'` opens Settings
-straight to that feature's detail (e.g. `@settings:count_down`), then capture
-with **`scripts/control.sh '@shot:<path>'`** -- the app renders its OWN detail
-form to a PNG in-process (DebugShot). Strongly prefer `@shot` over
-`scripts/shot.sh` (whole-screen screencapture) for the Settings window: it needs
-no Screen Recording, does not care if the window is frontmost / occluded / off-
-screen, and captures the scroll view's FULL content height, so options below the
-fold (long forms, an expanded row editor) are included without scrolling. Bare
-`@settings` just opens the tab. (DebugControl intercepts `@settings` / `@shot`
-before the Lua eval; DEBUG-only.) `scripts/shot.sh` stays the tool for native
-panels (chooser/banner), which live outside the Settings window. Reach for this
-BEFORE blind-iterating on config-UI pixels -- driving the live window via
-osascript clicks/scrolls is a rabbit hole (focus theft, below-the-fold content);
-in-process self-capture sidesteps all of it.
+**Verifying UI pixels? Load the `hammerdeck-visual-check` skill FIRST** -- it
+carries the capture loop (`scripts/app.sh start` + `scripts/control.sh`, and
+which of `@shot` / `scripts/shot.sh` / `scripts/menu-shot.sh` reaches which
+surface). Do NOT drive the live Settings window with osascript clicks/scrolls:
+that is a rabbit hole (focus theft, below-the-fold content) the skill exists to
+keep you out of. Two rules stay HERE because they bind outside any visual check:
+`scripts/control.sh` is single-user -- never batch it into a parallel block --
+and don't restart the user's running instance or run the UI tests while they may
+be at the keyboard; ask first.
 
 Pixel fixes -- probe before iterating (the project instance of the global
 "probe the constraint" rule): a native-AppKit visual fix that misses once is
