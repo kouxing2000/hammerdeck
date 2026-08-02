@@ -39,8 +39,8 @@ logic"), so the exemption is explicit and greppable rather than an unspoken
 special case. A reporter is still pure Lua over the adapter -- it reaches the OS
 only through the seam, never `native.*`.
 
-> Current state (2026-06-24): **no Hammerspoon** -- dropped as a backend by
-> owner decision. **Co-located layout** (refactor of 2026-06-24): everything
+> Current state: **no Hammerspoon** -- dropped as a backend by owner decision.
+> **Co-located layout**: everything
 > lives under `app/` -- `app/platform/{lua,swift}/`, and each feature is
 > `app/features/<id>/` with a `feature.json` (declarative identity/presentation),
 > a `lua/` subfolder (the plugin code), and an optional `swift/` subfolder
@@ -85,10 +85,8 @@ test-suite guard fails if any of them grows a `require`, and the mirror guard
 (`test/cases/_integration/platform/feature_requires.lua`) fails if a feature
 requires anything outside this allowlist). The `ctx` surface is
 namespaced into domain sub-tables (`ctx.window.*` / `ctx.screen.*` /
-`ctx.mouse.*`) -- Phase 1 of the ctx-domain-namespaces work, landed
-2026-06-29. The remaining Phase 2 (porting Hammerspoon's pure-Lua tiling/grid
-algorithms onto `platform.windows` + curated `ctx.window.*` helpers) is still
-pending.
+`ctx.mouse.*`), and Hammerspoon's pure-Lua tiling/grid algorithms are ported
+onto `platform.windows`, which the `window_*` features ride.
 
 - **app/features/<id>/** -- one feature, three co-located parts: `feature.json`
   (DECLARATIVE identity/presentation -- name, version, description, category,
@@ -197,10 +195,9 @@ pending.
   macOS-API surface should grow.
   **Anything that blocks the main thread on ANOTHER process must be bounded.**
   A synchronous cross-process call also spins a NESTED event loop while it waits,
-  so timers keep firing inside it and re-enter Lua mid-call -- that is what froze
-  the app for 25+ seconds on 2026-07-23 (a browser read to a just-quit Chrome,
-  with a window poll nesting an unbounded AX enumeration inside the wait; it
-  looked like a dead loop but burned ~0% CPU). Two rules hold the line, and a new
+  so timers keep firing inside it and re-enter Lua mid-call -- the symptom is a
+  freeze of tens of seconds that looks like a dead loop but burns ~0% CPU. Two
+  rules hold the line, and a new
   call site must not sidestep them: every synchronous AppleScript goes through
   `Native+AppleScript.runAppleScript`, which liveness-gates the target via
   `requiring:` and imposes a `with timeout` ceiling (never `NSAppleScript` bare --
@@ -212,8 +209,7 @@ pending.
   window). Prefer the ASYNC out-of-process shape (`runJXA`) for anything bigger
   than one property read -- a subprocess cannot hang the host at all. Seam
   failures log via `seamLog` / `seamLogThrottled` so they reach the DAILY LOG, not
-  just stdout (the 2026-07-23 hang left no durable trace, which is what made it
-  expensive to diagnose) -- throttled, because these sit on poll paths.
+  just stdout -- throttled, because these sit on poll paths.
   **Timeout values here are MEASURED, not guessed**: the AX default turned out to
   be ~1.5s, so an initial 2s "ceiling" silently loosened it. Re-measure before
   changing one.
@@ -250,9 +246,8 @@ swift test           # integration tests on the REAL bridge (run after Swift/sea
 Use `scripts/test-swift.sh` rather than piping `swift test` into a filter. A
 pipeline reports the LAST command's status, so `swift test | grep` exits 0 even
 on a hard failure, and the filter discards the failing case's name along with
-everything else it did not match. That cost a real diagnosis on 2026-07-24: a
-test failed once, the pipe had kept only "1 failure", and fourteen re-runs could
-not reproduce it -- the evidence was gone before anyone looked. The wrapper
+everything else it did not match -- so a failure that never recurs stays
+unexplained, its evidence discarded before anyone looked at it. The wrapper
 writes the full output to `.build/test-logs/swift-test.log` (previous run kept
 alongside), prints the failing case lines, and exits with the real status.
 
@@ -290,9 +285,9 @@ stdout AND a rotating daily file under
 **Temporary Swift instrumentation: use `NSLog`, never `print`.** `app.sh`
 launches the app with stdout REDIRECTED to a file, and a redirected stdout is
 BLOCK-buffered -- so `print` traces sit in a 4KB buffer and never appear, however
-long you wait. That is not a missing log line, it is a log line that lies:
-on 2026-07-25 an empty trace was read as "the completion callback never fired"
-and sent a JXA investigation down the wrong path for several rounds. `NSLog`
+long you wait. That is not a missing log line, it is a log line that lies -- an
+empty trace reads as "the callback never fired" and sends the investigation
+down the wrong path. `NSLog`
 writes unbuffered (and stamps a timestamp + thread, both of which you want when
 chasing a race). The seam's own `seamLog`/`seamLogThrottled` are better still --
 they reach the daily log -- but they are `@MainActor`, so from a `@Sendable`
@@ -329,8 +324,8 @@ a menubar/panel pixel fix misses, read the layout model or run ONE throwaway
 `scripts/shot.sh` probe to learn what the mechanism physically can/can't do,
 pick it once, then implement -- don't trial-and-error.
 
-Z-order (a second hard constraint, learned via window_deck's "return blink",
-2026-07-02): other apps' windows CANNOT be reordered atomically -- AXRaise is
+Z-order (a second hard constraint, learned via window_deck's "return blink"):
+other apps' windows CANNOT be reordered atomically -- AXRaise is
 top-of-stack only (no insert-below), and some apps (VSCode, Chrome) ACTIVATE
 the window they're asked to raise, so any multi-window raise pass flashes
 whichever member applies mid-pass over the intended top window. Never raise
