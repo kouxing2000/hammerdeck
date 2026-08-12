@@ -80,7 +80,12 @@ struct SettingsPane: View {
                     GeneralSettingsDetail(store: store)
                 } else if let id = store.selectedFeatureId,
                    let feature = store.features.first(where: { $0.id == id }) {
+                    // Keyed on the id so the detail's own @State (which section is
+                    // open) belongs to the feature being shown -- without it SwiftUI
+                    // reuses one instance across sidebar selections and the disclosure
+                    // state of the last feature carries onto the next.
                     FeatureDetail(store: store, feature: feature)
+                        .id(feature.id)
                 } else {
                     Text(Strings.t("settings.select_feature", default: "Select a feature"))
                         .foregroundStyle(.secondary)
@@ -342,66 +347,113 @@ private struct GeneralSettingsDetail: View {
     }
 }
 
+/// Anchor id for the About section, so the header's "About" link can scroll to
+/// what it just opened.
+private let kAboutAnchor = "feature-detail-about"
+
+/// The pane ranks by how often a thing is EDITED, not by how much it explains:
+/// the generated options come first, the shortcut rows collapse to one line
+/// each, and the prose + capability list live behind a closed disclosure. The
+/// old order stacked three blocks of read-once material above the options,
+/// which put the payload below the fold for every feature with a long
+/// description or more than a couple of actions.
 private struct FeatureDetail: View {
     @ObservedObject var store: SettingsStore
     let feature: FeatureInfo
 
+    @State private var aboutExpanded: Bool
+
+    init(store: SettingsStore, feature: FeatureInfo) {
+        self.store = store
+        self.feature = feature
+        // A pure service with no options has nothing else to show; opening
+        // About makes the pane a page instead of a stack of closed doors. A
+        // module that never LOADED also has no options and no actions, but its
+        // emptiness means the opposite -- nothing about it was read -- so it is
+        // excluded rather than led with a section it cannot honestly fill.
+        _aboutExpanded = State(initialValue: feature.kind != "failed"
+            && feature.options.isEmpty
+            && Self.staticActions(of: feature).isEmpty)
+    }
+
+    /// The rebindable actions. DYNAMIC ones are omitted: they are created + bound
+    /// by the option editor that owns them (window_snap's Saved-placements list
+    /// binds each snap's shortcut inline), so a row here would duplicate them.
+    ///
+    /// Static so `init` can seed the disclosure state from the same definition
+    /// the body renders from -- two hand-rolled copies of "which actions count"
+    /// would drift the moment one changed.
+    private static func staticActions(of feature: FeatureInfo) -> [ActionInfo] {
+        feature.actions.filter { !$0.dynamic }
+    }
+
+    private var staticActions: [ActionInfo] { Self.staticActions(of: feature) }
+
     var body: some View {
-        Form {
-            if feature.failed {
-                Section {
-                    Label(
-                        feature.errorMessage.isEmpty ? Strings.t("settings.feature_failed_to_start", default: "This feature failed to start.") : feature.errorMessage,
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .foregroundStyle(.red)
-                }
-            }
-            Section {
-                // The pane's own heading. The feature name used to reach the
-                // user only as the WINDOW title (via .navigationTitle) -- which
-                // was the bug: it retitled the whole window and stuck there.
-                // Naming the page in-content identifies it without touching the
-                // window, and keeps DebugShot captures (which render this form
-                // alone, no sidebar) self-identifying.
-                Text(feature.name)
-                    .font(.title2.weight(.semibold))
-                Text(feature.description)
-                    .foregroundStyle(.secondary)
-                // No "Kind" row: it only ever duplicated this Trigger summary
-                // ("always-on service" for a pure service, a trigger otherwise).
-                LabeledContent(Strings.t("settings.trigger", default: "Trigger"), value: feature.triggerDesc)
-                if !feature.version.isEmpty {
-                    LabeledContent(Strings.t("settings.version", default: "Version"), value: feature.version)
-                }
-            }
-            CapabilitySection(feature: feature)
-            // One trigger editor per declared action (a plugin may have several
-            // shortcuts). Pure services have none. DYNAMIC actions are omitted: they
-            // are created + bound by the option editor that owns them (window_snap's
-            // Saved-placements list binds each snap's shortcut inline), so a system-
-            // style "Trigger -- X" section here would just duplicate them.
-            ForEach(feature.actions.filter { !$0.dynamic }) { action in
-                Section(feature.actions.count == 1
-                        ? Strings.t("settings.bind_trigger", default: "Bind trigger")
-                        : String(format: Strings.t("settings.trigger_named", default: "Trigger -- %@"), action.label)) {
-                    TriggerEditor(store: store, feature: feature, action: action)
-                        // Remount when the bound trigger changes so local edit
-                        // state re-seeds from the new current spec.
-                        .id("\(feature.id)|\(action.id)|\(action.triggerDesc)")
-                }
-            }
-            // Options grouped into sections: each option's `section` (or the
-            // default "Options") becomes a Section header, in declaration order.
-            ForEach(optionSections, id: \.name) { group in
-                Section(group.name) {
-                    ForEach(group.opts) { opt in
-                        OptionEditor(store: store, featureId: feature.id, opt: opt)
+        ScrollViewReader { proxy in
+            Form {
+                if feature.failed {
+                    Section {
+                        Label(
+                            feature.errorMessage.isEmpty ? Strings.t("settings.feature_failed_to_start", default: "This feature failed to start.") : feature.errorMessage,
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(.red)
                     }
                 }
+                Section {
+                    // The pane's own heading. The feature name used to reach the
+                    // user only as the WINDOW title (via .navigationTitle) -- which
+                    // was the bug: it retitled the whole window and stuck there.
+                    // Naming the page in-content identifies it without touching the
+                    // window, and keeps DebugShot captures (which render this form
+                    // alone, no sidebar) self-identifying.
+                    FeatureDetailHeader(store: store, feature: feature) {
+                        withAnimation { aboutExpanded = true }
+                    }
+                }
+                // Options grouped into sections: each option's `section` (or the
+                // default "Options") becomes a Section header, in declaration order.
+                ForEach(optionSections, id: \.name) { group in
+                    Section(group.name) {
+                        ForEach(group.opts) { opt in
+                            OptionEditor(store: store, featureId: feature.id, opt: opt)
+                        }
+                    }
+                }
+                Section(Strings.t("settings.shortcuts", default: "Shortcuts")) {
+                    if staticActions.isEmpty {
+                        // Nothing rebindable. Say what this feature IS driven by
+                        // (the registry's own summary -- "always-on service", or a
+                        // count when every action is dynamic) rather than showing
+                        // an empty box.
+                        Text(feature.triggerDesc)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(staticActions) { action in
+                            // A lone shortcut opens with the pane: collapsing ONE
+                            // row buys no density, it just puts the editor, its
+                            // preview and its mnemonic behind a click that has
+                            // nothing to choose between.
+                            TriggerRow(store: store, feature: feature, action: action,
+                                       startsExpanded: staticActions.count == 1)
+                        }
+                    }
+                }
+                AboutSection(feature: feature, expanded: $aboutExpanded)
+            }
+            .formStyle(.grouped)
+            // Scroll on the STATE CHANGE, not from inside the click handler: a
+            // scrollTo issued beside the expansion resolves against geometry the
+            // expanded content is not in yet, so `.bottom` aims at the collapsed
+            // row and leaves what the click asked for below the fold. This also
+            // covers expanding via the disclosure triangle itself, which sits at
+            // the bottom edge for exactly the same reason.
+            .onChange(of: aboutExpanded) { isOpen in
+                guard isOpen else { return }
+                withAnimation { proxy.scrollTo(kAboutAnchor, anchor: .bottom) }
             }
         }
-        .formStyle(.grouped)
         // NO .navigationTitle here. Inside the NSHostingController-hosted
         // NavigationSplitView, a detail's navigationTitle becomes the WINDOW's
         // title -- so opening a feature renamed the window to that feature, and
@@ -426,42 +478,249 @@ private struct FeatureDetail: View {
     }
 }
 
-// MARK: - Capabilities
+// MARK: - Detail header
 
-/// "What it can reach" -- the feature's declared capabilities, or an explicit
-/// statement that it has none.
-///
-/// The empty case is rendered, not skipped, and that is the deliberate part: 13
-/// of the catalog's features declare nothing, and "this one touches only windows
-/// and panels" is a real answer the user wants. A section that simply vanished
-/// would be indistinguishable from a feature whose reach nobody had labelled --
-/// which is exactly the ambiguity the capability work exists to remove.
-private struct CapabilitySection: View {
+/// Identity + state in one line: glyph, name, version, and the enable switch.
+/// The switch is here as well as in the sidebar row because this is the surface
+/// you configure a feature from, and a pane of live-looking controls for a
+/// DISABLED feature is the one thing the old header could not tell you.
+private struct FeatureDetailHeader: View {
+    @ObservedObject var store: SettingsStore
     let feature: FeatureInfo
+    /// Opens (and scrolls to) the About section -- owned by the parent, since
+    /// the section it reveals is the parent's.
+    let showAbout: () -> Void
 
     var body: some View {
-        Section(Strings.t("settings.capabilities", default: "What it can reach")) {
-            if feature.capabilities.isEmpty {
-                Label(Strings.t("settings.capabilities_none",
-                                default: "Nothing beyond windows, panels and its own settings."),
-                      systemImage: "checkmark.shield")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(sortedCapabilities(feature.capabilities), id: \.self) { cap in
-                    let info = capabilityInfo(cap)
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Image(systemName: info.symbol)
-                            .foregroundStyle(.tint)
-                            .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(info.label)
-                            Text(info.detail)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: feature.failed ? "exclamationmark.triangle.fill" : featureIcon(feature))
+                    .foregroundStyle(feature.failed ? Color.red : categoryColor(feature.category))
+                    .font(.title3)
+                Text(feature.name)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(1)
+                if !feature.version.isEmpty {
+                    Text(feature.version)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.14)))
+                        // First to go when the pane is narrow: the name and the
+                        // switch are both load-bearing, a version number is not.
+                        .layoutPriority(-1)
+                }
+                Spacer(minLength: 8)
+                Toggle("", isOn: Binding(
+                    get: { feature.enabled },
+                    set: { store.requestSetEnabled(feature.id, $0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .disabled(feature.kind == "failed")   // a never-registered module can't be toggled
+                .accessibilityLabel(feature.name)
+            }
+            if !feature.description.isEmpty {
+                // One line only, with the rest a click away. The full text still
+                // lives in About -- and on the gallery card, which is where a user
+                // deciding WHETHER to enable this reads it.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(feature.description)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Button(action: showAbout) {
+                        HStack(spacing: 2) {
+                            Text(Strings.t("settings.about", default: "About"))
+                            Image(systemName: "chevron.right").font(.caption2)
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .fixedSize()
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Shortcut row
+
+/// One rebindable action: a single line carrying its label and current binding,
+/// expanding in place to the full editor. The collapsed line is what makes a
+/// feature with many actions readable -- text_actions has 11, which as stacked
+/// editors was ~2,200pt of pane before the options were reached.
+private struct TriggerRow: View {
+    @ObservedObject var store: SettingsStore
+    let feature: FeatureInfo
+    let action: ActionInfo
+
+    // Per ROW, deliberately -- not one "which row is open" Optional on the
+    // parent. That accordion looked tidier and quietly threw work away:
+    // TriggerEditor holds the whole pending edit (mods, key, follows, the
+    // recorded-but-not-Applied combo) in its own @State, and a DisclosureGroup
+    // tears its content down on collapse -- so opening a second row discarded
+    // the first row's unapplied shortcut, on a click that reads as navigation.
+    // Per-row state means only an explicit collapse can drop an edit.
+    @State private var expanded: Bool
+
+    init(store: SettingsStore, feature: FeatureInfo, action: ActionInfo, startsExpanded: Bool) {
+        self.store = store
+        self.feature = feature
+        self.action = action
+        _expanded = State(initialValue: startsExpanded)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            TriggerEditor(store: store, feature: feature, action: action)
+                // Remount when the bound trigger changes so local edit
+                // state re-seeds from the new current spec.
+                .id("\(feature.id)|\(action.id)|\(action.triggerDesc)")
+        } label: {
+            HStack(spacing: 6) {
+                Text(action.label)
+                // The "why this key" hint survives collapsing as a badge -- it is
+                // the one teaching device this layout could otherwise cost, and it
+                // only ever describes the DEFAULT binding (hidden once rebound,
+                // same rule the expanded hint follows).
+                if !action.mnemonic.isEmpty && !action.triggerOverridden {
+                    Image(systemName: "lightbulb")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .help(action.mnemonic)
+                }
+                Spacer(minLength: 8)
+                let glyph = shortcutGlyph(action.trigger)
+                if glyph.isEmpty {
+                    Text(Strings.t("settings.no_shortcut", default: "None"))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ShortcutPill(glyph: glyph)
+                }
+            }
+            // Without this the glyph pill is a separate element and a
+            // screen-reader user hears the label with no binding attached.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(action.label), \(action.triggerDesc)")
+            // The lightbulb carries the mnemonic as a .help tooltip, which is
+            // mouse-only; combining the row drops it from the accessibility tree
+            // entirely, so it is restated as a hint -- under the SAME
+            // rebound-hides-it condition as the badge, since the mnemonic
+            // explains the DEFAULT key and misleads once that key is gone.
+            .accessibilityHint(action.triggerOverridden ? "" : action.mnemonic)
+        }
+    }
+}
+
+// MARK: - About & capabilities
+
+/// The read-once half of the pane: what the feature does, its version, and what
+/// it can reach -- behind one closed disclosure.
+///
+/// The capability list keeps its own contract. The empty case is rendered, not
+/// skipped, and that is the deliberate part: 13 of the catalog's features
+/// declare nothing, and "this one touches only windows and panels" is a real
+/// answer the user wants. A section that simply vanished would be
+/// indistinguishable from a feature whose reach nobody had labelled -- which is
+/// exactly the ambiguity the capability work exists to remove. Collapsed is not
+/// vanished: the row names the capabilities it is holding, so the count is
+/// legible without opening it.
+private struct AboutSection: View {
+    let feature: FeatureInfo
+    @Binding var expanded: Bool
+
+    /// A module that never loaded -- the synthesized load-failure row, the only
+    /// producer of `kind == "failed"`. Its `capabilities` were never read, which
+    /// is a different thing from a feature that HAS none.
+    private var unread: Bool { feature.kind == "failed" }
+
+    var body: some View {
+        Section {
+            DisclosureGroup(isExpanded: $expanded) {
+                if !feature.description.isEmpty {
+                    Text(feature.description)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if !feature.version.isEmpty {
+                    LabeledContent(Strings.t("settings.version", default: "Version"), value: feature.version)
+                }
+                // `kind == "failed"`, NOT `failed`: the two say different things.
+                // A module that never loaded has no declarations to report, so it
+                // gets no capability verdict at all -- the "touches nothing"
+                // reassurance would be an affirmative safety claim about the one
+                // feature nothing is known about. But `failed` is ALSO set when a
+                // fully-parsed feature merely threw in start(), and there the
+                // capabilities were read and must still be shown: reporting less
+                // reach than a feature has is the one failure this surface must
+                // not have (see capabilityInfo in FeatureChrome.swift).
+                if !unread { capabilityRows }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(Strings.t("settings.about_and_permissions", default: "About & permissions"))
+                    Spacer(minLength: 8)
+                    // Names the reach rather than counting it: "Browser, Network"
+                    // answers the question the section exists for without opening
+                    // it, where "2 capabilities" only says one is worth opening.
+                    if !unread {
+                        if feature.capabilities.isEmpty {
+                            Image(systemName: "checkmark.shield")
+                                .foregroundStyle(.secondary)
+                                .help(Strings.t("settings.capabilities_none",
+                                                default: "Nothing beyond windows, panels and its own settings."))
+                        } else {
+                            Text(sortedCapabilities(feature.capabilities)
+                                    .map { capabilityInfo($0).label }
+                                    .joined(separator: ", "))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                         }
                     }
                 }
+            }
+            .id(kAboutAnchor)
+        }
+    }
+
+    /// Every row states its own leading alignment. A grouped Form centers a row
+    /// it cannot size, and a DisclosureGroup's content is NOT laid out as form
+    /// rows -- without these frames the intrinsic-width rows stair-step to the
+    /// right, each indented by its own width.
+    @ViewBuilder
+    private var capabilityRows: some View {
+        Text(Strings.t("settings.capabilities", default: "What it can reach"))
+            .font(.callout.weight(.medium))
+            .padding(.top, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        if feature.capabilities.isEmpty {
+            Label(Strings.t("settings.capabilities_none",
+                            default: "Nothing beyond windows, panels and its own settings."),
+                  systemImage: "checkmark.shield")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ForEach(sortedCapabilities(feature.capabilities), id: \.self) { cap in
+                let info = capabilityInfo(cap)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: info.symbol)
+                        .foregroundStyle(.tint)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(info.label)
+                        Text(info.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -953,8 +1212,15 @@ private struct TriggerEditor: View {
         // to the feature's gallery loop). Plays on hover, like the gallery.
         if FeatureArchetype.hasActionPreview(feature: feature, actionId: action.id) {
             FeatureArchetype.actionScene(feature: feature, actionId: action.id, playing: previewHover)
-                .frame(height: 54)
+                // 78 is the height these scenes are composed for -- the Gallery
+                // card's preview band uses it. At 54 the chooser mock drew past
+                // the box it reported, and the neighbours, laid out against the
+                // reported 54, rendered underneath it. The clip keeps that
+                // failure from returning: whatever a future scene's intrinsic
+                // height is, the declared box is the drawn box.
+                .frame(height: 78)
                 .frame(maxWidth: .infinity)
+                .clipped()
                 .onHover { previewHover = $0 }
         }
 
@@ -1019,6 +1285,7 @@ private struct TriggerEditor: View {
             Text(Strings.t("settings.chord_caption", default: "Record the prefix, then type the follow keys in order (e.g. ⌘⇧A then B)."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         case .scheduleEvery:
             Stepper(value: $everyMin, in: 1...1440) {
                 LabeledContent(Strings.t("settings.interval", default: "Interval"), value: String(format: Strings.t("settings.interval_value", default: "%d min"), everyMin))
@@ -1035,10 +1302,16 @@ private struct TriggerEditor: View {
             }
         }
 
+        // Both warning rows pin their own leading edge. These are intrinsic-width
+        // Labels, and this editor is now disclosed inside a TriggerRow rather
+        // than sitting as a Section's direct content -- a grouped Form centers a
+        // row it cannot size, which would drift the warnings toward the middle in
+        // exactly the state the user is being warned in.
         if let conflict {
             Label(conflict, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
                 .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         // Soft, advisory warnings (system / common-app collisions). Unlike a
@@ -1048,6 +1321,7 @@ private struct TriggerEditor: View {
             Label(warning, systemImage: "info.circle")
                 .foregroundStyle(.secondary)
                 .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         HStack {
