@@ -98,6 +98,10 @@ struct SiteListEditor: View {
 
     @State private var rows: [SiteRow] = []
     @State private var expanded: Set<UUID> = []
+    /// Private rows whose URL is showing right now. Reset when the row collapses,
+    /// so a private site's address is never on screen at a glance -- only while
+    /// its editor is open AND the user asked for it.
+    @State private var revealed: Set<UUID> = []
     @State private var seeded = false
     /// What the last persist wrote (initially: what was decoded). Anything else in
     /// `rows` is a real edit -- see the guard in `.onChange(of: rows)`.
@@ -123,25 +127,16 @@ struct SiteListEditor: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .padding(.vertical, 6)
                 }
+                Divider()
+                addRow
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 2)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-
-            Button {
-                let new = SiteRow()
-                rows.append(new)
-                expanded.insert(new.id)   // a fresh row opens ready to type
-            } label: {
-                Label(Strings.t("sites.add", default: "Add site"), systemImage: "plus.circle.fill")
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
         }
         .onAppear {
-            if !seeded { rows = SiteRow.decode(json); persisted = rows; seeded = true }
-        }
+            if !seeded { rows = SiteRow.decode(json); persisted = rows; seeded = true }        }
         .onChange(of: json) { new in
             if new.isEmpty && !rows.isEmpty { rows = [] }
         }
@@ -172,6 +167,33 @@ struct SiteListEditor: View {
         reload()
     }
 
+    // MARK: Add
+
+    /// The last row of the list, inside the box. Two constraints, both easy to
+    /// undo by accident: it must not become a borderless control floating UNDER
+    /// the box -- there it reads as a caption, same grey and weight as the help
+    /// text right beneath it, rather than an action -- and the padding must stay
+    /// INSIDE the label so the whole row height is the hit target, not just the
+    /// text. The icon takes the favicon column's width so it lines up with the
+    /// sites above.
+    private var addRow: some View {
+        Button {
+            let new = SiteRow()
+            rows.append(new)
+            expanded.insert(new.id)   // a fresh row opens ready to type
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "plus.circle.fill").frame(width: 16, height: 16)
+                Text(Strings.t("sites.add", default: "Add site")).fontWeight(.medium)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.tint)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: Row
 
     @ViewBuilder
@@ -185,12 +207,14 @@ struct SiteListEditor: View {
                 withAnimation(.easeInOut(duration: 0.15)) { toggle(site.id) }
             } label: {
                 HStack(spacing: 10) {
-                    favicon(for: site.url)
+                    siteIcon(for: site)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title(site)).fontWeight(.medium)
                         // Only show the URL subtitle when a name is set, else the
-                        // title already IS the domain (no point repeating it).
-                        if !site.name.isEmpty, !site.url.isEmpty {
+                        // title already IS the domain (no point repeating it). A
+                        // private site shows no address here at all -- open the row
+                        // and reveal it.
+                        if !site.name.isEmpty, !site.url.isEmpty, !site.incognito {
                             Text(displayURL(site.url)).font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -229,7 +253,7 @@ struct SiteListEditor: View {
         VStack(alignment: .leading, spacing: 7) {
             TextField(Strings.t("sites.name", default: "Name"), text: row.name,
                       prompt: Text(Strings.t("sites.name.ph", default: "optional")))
-            TextField(Strings.t("sites.url", default: "URL"), text: row.url, prompt: Text("example.com"))
+            urlField(row)
             // Switching to a browser with no private-window switch clears the flag
             // rather than leaving it set-but-invisible (the toggle below hides
             // itself for such a browser, so the user could not see or undo it).
@@ -260,7 +284,15 @@ struct SiteListEditor: View {
             // pair, which cost a real combination for no gain.
             Toggle(Strings.t("sites.standalone", default: "Open as a standalone app window"), isOn: row.app)
                 .help(Strings.t("sites.standalone.help", default: "Chrome / Chromium only -- a chromeless app-style window. Other browsers open a tab."))
-            Toggle(Strings.t("sites.private", default: "Open in a private window"), isOn: row.incognito)
+            Toggle(Strings.t("sites.private", default: "Open in a private window"), isOn: Binding(
+                get: { row.wrappedValue.incognito },
+                set: { on in
+                    row.incognito.wrappedValue = on
+                    // Turning it on mid-edit must not blank the URL the user is
+                    // typing -- they are looking at their own screen on purpose.
+                    // Collapsing the row is what re-hides it.
+                    if on { revealed.insert(row.wrappedValue.id) }
+                }))
                 .disabled(!canGoPrivate)
                 .help(canGoPrivate
                       ? Strings.t("sites.private.help", default: "Opens a fresh private window every time -- it never focuses an existing tab, and the visit is never recorded.")
@@ -270,6 +302,8 @@ struct SiteListEditor: View {
                 Button(role: .destructive) {
                     let id = row.wrappedValue.id
                     rows.removeAll { $0.id == id }
+                    expanded.remove(id)
+                    revealed.remove(id)
                     commit()   // drop its menubar row now, not at the next reload
                 } label: {
                     Text(Strings.t("sites.remove", default: "Remove site"))
@@ -280,12 +314,53 @@ struct SiteListEditor: View {
         .padding(.top, 2)
     }
 
+    /// The URL row. A private site's address is masked and comes back on the eye
+    /// button: the point of marking a site private is that nobody glancing at the
+    /// screen learns where it goes, and a Settings list that prints it defeats that
+    /// as surely as the picker would.
+    ///
+    /// The masked state is inert TEXT, never a `SecureField`. A secure field turns
+    /// on macOS SECURE EVENT INPUT while it holds focus, and that mutes every
+    /// session event tap in the process -- including this app's own Caps->Hyper tap
+    /// (`CapsHyperTap`, `.cgSessionEventTap`). Masking a URL must not switch off a
+    /// global hotkey. It also keeps one view identity across the toggle, so
+    /// revealing mid-edit does not tear the field down and drop first responder.
+    @ViewBuilder
+    private func urlField(_ row: Binding<SiteRow>) -> some View {
+        let id = row.wrappedValue.id
+        let masked = row.wrappedValue.incognito && !revealed.contains(id)
+        let label = Strings.t("sites.url", default: "URL")
+        HStack(spacing: 6) {
+            if masked {
+                LabeledContent(label) {
+                    Text(String(repeating: "•", count: min(row.wrappedValue.url.count, 16)))
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                TextField(label, text: row.url, prompt: Text(verbatim: "example.com"))
+            }
+            if row.wrappedValue.incognito {
+                Button {
+                    if revealed.contains(id) { revealed.remove(id) } else { revealed.insert(id) }
+                } label: {
+                    Image(systemName: masked ? "eye" : "eye.slash")
+                        .frame(width: 16)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(masked ? Strings.t("sites.url.show", default: "Show the address")
+                             : Strings.t("sites.url.hide", default: "Hide the address"))
+            }
+        }
+    }
+
     /// Collapsing a row is the "done editing this site" moment, so an edit made in
     /// it commits here -- that is what puts a new site (or a new name) in the
     /// menubar. Collapsing a row nobody edited re-registers nothing.
     private func toggle(_ id: UUID) {
         if expanded.contains(id) {
             expanded.remove(id)
+            revealed.remove(id)   // a closed private row is hidden again
             if dirty { commit() }
         } else {
             expanded.insert(id)
@@ -294,8 +369,15 @@ struct SiteListEditor: View {
 
     // MARK: Summary helpers
 
+    /// An unnamed site is titled by its domain -- except a private one, where that
+    /// fallback would print the very address the row hides. Such a row reads
+    /// "Private site" until the user names it: two of them are told apart by
+    /// naming them, which is the only discreet identity a site can have.
     private func title(_ site: SiteRow) -> String {
         if !site.name.isEmpty { return site.name }
+        if site.incognito, !site.url.isEmpty {
+            return Strings.t("sites.unnamedPrivate", default: "Private site")
+        }
         if let d = Self.domain(of: site.url) { return d }
         return "New site"
     }
@@ -324,6 +406,20 @@ struct SiteListEditor: View {
     }
 
     // MARK: Favicon / names
+
+    /// A private site gets the generic incognito glyph, never its real favicon --
+    /// the icon names the destination as plainly as the URL does. Its favicon is
+    /// also never fetched (see the picker), so there is usually nothing cached to
+    /// draw; the branch is on the flag rather than on the cache because the shared
+    /// favicon dir may already hold that domain from an ordinary browsing session.
+    @ViewBuilder
+    private func siteIcon(for site: SiteRow) -> some View {
+        if site.incognito {
+            Image(systemName: "eyeglasses").foregroundStyle(.secondary).frame(width: 16, height: 16)
+        } else {
+            favicon(for: site.url)
+        }
+    }
 
     @ViewBuilder
     private func favicon(for url: String) -> some View {

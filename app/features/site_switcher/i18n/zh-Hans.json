@@ -12,5 +12,6 @@
   "alert.invalidURL": "无效的网站网址: %s",
   "alert.noPrivateWindow": "隐私窗口需要 Chrome 系浏览器 -- 请为这个网站选一个",
   "alert.noSites": "还没有网站 -- 请在设置中每行添加一个",
-  "chooser.placeholder": "跳转到网站"
+  "chooser.placeholder": "跳转到网站",
+  "chooser.privateSite": "隐私网站"
 }

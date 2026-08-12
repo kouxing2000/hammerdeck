@@ -10,8 +10,11 @@
 -- One shortcut pops a searchable chooser (the same picker as Tab Switcher /
 -- Clipboard History): type to filter, Up/Down + Enter, click, or cmd+<number>
 -- to jump straight to a row (cmd+1 = the top row). Favicons render next to each
--- row (shared cache with Tab Switcher). A single configured site skips the list
--- and jumps straight (the donor's behavior).
+-- row (shared cache with Tab Switcher), EXCEPT for a private site: it shows its
+-- name alone under an incognito glyph -- no address, no favicon (not even
+-- fetched), here and in Settings, so a row nobody should read gives nothing away
+-- to a passing glance. A single configured site skips the list and jumps
+-- straight (the donor's behavior).
 --
 -- Every configured site is ALSO its own action (the dynamicActions hook below),
 -- so it shows up as a row in the menubar's Quick Sites submenu and the command
@@ -86,8 +89,10 @@ local function parseSite(line)
         url = parts[1]
     end
     url = normalizeURL(url)
-    if name == nil or name == "" then name = siteName(url) end
-    return { id = "", url = url, name = name, app = app, browser = "", profile = "",
+    local named = name ~= nil and name ~= ""
+    if not named then name = siteName(url) end
+    return { id = "", url = url, name = name, named = named, app = app, browser = "",
+             profile = "",
              incognito = false }   -- the legacy text format has no private-window token
 end
 
@@ -103,10 +108,15 @@ local function recordsFromJSON(raw)
     for _, rec in ipairs(decoded) do
         if type(rec) == "table" and type(rec.url) == "string" and trim(rec.url) ~= "" then
             local url = normalizeURL(trim(rec.url))
-            local name = (type(rec.name) == "string" and rec.name ~= "") and rec.name or siteName(url)
+            -- `named` records whether the NAME is the user's or derived from the
+            -- domain. A private site keeps its address off screen, so a derived
+            -- name is exactly the thing not to show -- and once both collapse into
+            -- `name`, no caller can tell which it got.
+            local named = type(rec.name) == "string" and rec.name ~= ""
+            local name = named and rec.name or siteName(url)
             sites[#sites + 1] = {
                 id = type(rec.id) == "string" and rec.id or "",
-                url = url, name = name,
+                url = url, name = name, named = named,
                 browser = type(rec.browser) == "string" and rec.browser or "",
                 profile = type(rec.profile) == "string" and rec.profile or "",
                 app = rec.app == true,
@@ -238,18 +248,24 @@ local function jump(ctx, site)
     -- visit was private. App mode still applies: the two compose into a chromeless
     -- private window.
     if site.incognito then
+        -- These two branches log NO address. ctx.log lands in the 14-day daily
+        -- file, so an address printed here outlives the window that was supposed
+        -- to leave no trace -- a durable dated record, worse than the favicon
+        -- cache this feature already declines to write for a private site. The
+        -- record id identifies the row (enough to find it in Settings) and names
+        -- no destination; the routing flags are about HOW it opened, not WHERE.
+        local key = (site.id ~= nil and site.id ~= "") and site.id or "legacy"
+        local how = ("[%s]%s%s"):format(browser or "default",
+            hasProfile and (" /" .. site.profile) or "",
+            site.app and " (app)" or "")
         local opened = ctx.openSite(browser or "", site.profile or "",
                                     site.app == true, site.url, true)
         if opened then
-            ctx.log(("opened private %s [%s]%s%s"):format(site.url, browser or "default",
-                hasProfile and (" /" .. site.profile) or "",
-                site.app and " (app)" or ""))
+            ctx.log(("opened private site <%s> %s"):format(key, how))
         else
             ctx.alert(ctx.t("alert.noPrivateWindow",
                 "A private window needs a Chrome-family browser -- pick one for this site"))
-            ctx.log(("refused private %s [%s]%s%s"):format(site.url, browser or "default",
-                hasProfile and (" /" .. site.profile) or "",
-                site.app and " (app)" or ""))
+            ctx.log(("refused private site <%s> %s"):format(key, how))
         end
         return
     end
@@ -361,8 +377,14 @@ return {
             end
 
             local st = state(ctx)
+            -- A private site's favicon is never fetched: the fetch writes
+            -- <cache>/favicons/<domain>.png, a durable on-disk record naming a
+            -- site the user asked to leave no trace of -- and in a dir the tab
+            -- switcher reads too. It shows the incognito glyph instead.
             local urls = {}
-            for _, site in ipairs(sites) do urls[#urls + 1] = site.url end
+            for _, site in ipairs(sites) do
+                if not site.incognito then urls[#urls + 1] = site.url end
+            end
             st.fav.prefetch(urls)
             if not st.chooser then
                 st.chooser = ctx.chooser {
@@ -393,9 +415,17 @@ return {
             local ids, byId = assignActionIds(sites)
             for _, id in ipairs(ids) do
                 local site = byId[id]
+                -- A private row is DISCREET: no address line, no favicon. The
+                -- picker is the surface most likely to be up while someone else
+                -- can see the screen, and either one names the destination.
                 choices[#choices + 1] = {
-                    text = site.name, subText = site.url, siteId = id,
-                    image = st.fav.iconFor(site.url),
+                    -- An unnamed private site would otherwise be titled by its
+                    -- domain -- the address again, in the biggest text on the row.
+                    text = (site.incognito and not site.named)
+                        and ctx.t("chooser.privateSite", "Private site") or site.name,
+                    subText = (not site.incognito) and site.url or nil,
+                    siteId = id,
+                    image = site.incognito and "symbol:eyeglasses" or st.fav.iconFor(site.url),
                 }
             end
             st.chooser.setPlaceholder(ctx.t("chooser.placeholder", "Jump to site"))

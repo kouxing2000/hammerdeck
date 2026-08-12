@@ -254,6 +254,36 @@ return {
             and fake.openedNewTabs[#fake.openedNewTabs] == "https://example.com",
             "... and a normal row still takes the focus-or-open path, not openSite")
 
+        -- A PRIVATE ROW IS DISCREET IN THE PICKER: no address, no favicon, and its
+        -- icon is never fetched. Worth pinning because every one of these is
+        -- invisible to the person running the app -- the row looks fine, and the
+        -- only witness to a regression is whoever is standing behind them. A
+        -- refactor that restores `subText = site.url` or drops the prefetch filter
+        -- passes every other test in this file.
+        fake.settings["hammerdeck.opt.site_switcher.sites"] =
+            '[{"id":"n1","name":"Normal","url":"example.com"},'
+            .. '{"id":"p2","name":"Private","url":"duckduckgo.com",'
+            .. '"browser":"com.google.Chrome","incognito":true},'
+            .. '{"id":"p3","url":"t66y.com","browser":"com.google.Chrome","incognito":true}]'
+        fake.extractedBatches = {}
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        local rows = fake.visibleChooser().choices
+        ok(rows[1].subText == "https://example.com" and rows[2].subText == nil
+            and rows[3].subText == nil,
+            "a private row carries no address in the picker (a normal one still does)")
+        ok(rows[2].image == "symbol:eyeglasses" and rows[3].image == "symbol:eyeglasses",
+            "... and the incognito glyph instead of a favicon")
+        ok(rows[2].text == "Private" and rows[3].text == "Private site",
+            "... titled by its name, or 'Private site' when unnamed -- never the domain")
+        local prefetched = {}
+        for _, batch in ipairs(fake.extractedBatches) do
+            for _, d in ipairs(batch.domains) do prefetched[d] = true end
+        end
+        ok(prefetched["example.com"] and not prefetched["duckduckgo.com"]
+            and not prefetched["t66y.com"],
+            "... and a private domain is never sent to the favicon fetch (which would "
+            .. "leave its name in the shared on-disk cache)")
+
         -- no sites at all -> a clear hint, not silence
         fake.settings["hammerdeck.opt.site_switcher.sites"] = nil
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
