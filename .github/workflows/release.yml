@@ -46,6 +46,7 @@ jobs:
       ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
     steps:
       - uses: actions/checkout@v5
@@ -206,6 +207,8 @@ jobs:
             TIER=A
             echo "::warning::Tier A: this build is NOT notarized. Publishing as a marked prerelease."
           fi
+          # The site step reads this to decide whether to touch the update feed.
+          echo "TIER=$TIER" >> "$GITHUB_ENV"
 
           # Idempotent: `gh release create` hard-fails with "a release with the same
           # tag name already exists", so re-running a tag after fixing something
@@ -229,6 +232,26 @@ jobs:
             gh release create "$TAG" dist/Hammerdeck-*.zip \
               --title "$TAG" --generate-notes
           fi
+
+      # Deliberately AFTER the GitHub Release: that release is the durable record
+      # of what shipped, and an appcast pointing at a build no release documents
+      # is the harder failure to unpick.
+      #
+      # Skipped entirely on Tier A rather than allowed to fail. A fork without a
+      # certificate should still get its build published; what it must never do
+      # is hand every installed copy an update macOS will refuse to open. The
+      # script carries the same gate itself, so a hand-run cannot bypass it.
+      - name: Publish site and update feed
+        # FIREBASE_SERVICE_ACCOUNT is surfaced at job level because a secret
+        # cannot be read directly in an `if:` expression; an env var carrying it
+        # can. The Sparkle key is not tested here, so it stays scoped to the one
+        # step that needs it.
+        if: env.TIER == 'B' && env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          npm install -g firebase-tools
+          scripts/publish-site.sh "${{ github.ref_name }}"
 
       - name: Clean up credentials
         if: always()
