@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Required to SEND Apple Events under the hardened runtime, which
+       notarization forces on. Hammerdeck sends them constantly:
+       Native+AppleScript.runAppleScript (volume, appearance, power) and runJXA
+       (browser reads). Removing this key fails nothing at build or notarization
+       time; it produces an app that launches and then silently cannot set the
+       volume or read a browser tab. Routing through an osascript subprocess does
+       NOT sidestep it: TCC attributes the request to the responsible process,
+       which is Hammerdeck.
+
+       Keep this file free of double hyphens. XML forbids them inside comments,
+       and the parser codesign uses (AMFI) rejects the whole file rather than
+       skipping the comment. -->
+  <key>com.apple.security.automation.apple-events</key><true/>
+</dict>
+</plist>

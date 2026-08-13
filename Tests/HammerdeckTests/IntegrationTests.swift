@@ -119,6 +119,34 @@ final class IntegrationTests: XCTestCase {
     // genuinely need to let the run loop breathe with no condition to wait on,
     // `pumpAppEvents(_:)` says that plainly.
 
+    /// The problem report must carry the CONDITIONS a bug happened under, not just
+    /// prose. Three real causes -- no Accessibility grant, a stale bundle, and
+    /// synthesized keys inheriting held modifiers -- all looked like "nothing
+    /// happens", and none left a trace a reporter could send. Asserting on the
+    /// specific fields is the point: a report that silently lost the permission
+    /// line would still be a non-empty string, so a length check would pass while
+    /// the feature had stopped doing its job.
+    func testDiagnosticsReportCarriesTheFieldsATriageNeeds() {
+        let report = Diagnostics.report(host.store)
+        for field in ["bundle:", "macOS:", "arch:", "accessibility:", "features:", "log:"] {
+            XCTAssertTrue(report.contains(field), "diagnostics report is missing '\(field)':\n\(report)")
+        }
+        // Permission state must be one of the two words triage keys off, never blank.
+        XCTAssertTrue(report.contains("accessibility: granted")
+                      || report.contains("accessibility: NOT GRANTED"),
+                      "accessibility line does not state a verdict:\n\(report)")
+        // The report is written to be pasted into a public issue, so it must not
+        // carry the home directory -- which embeds the account's short name.
+        //
+        // The earlier version of this asserted the absence of
+        // `NSHomeDirectory() + "/Documents"`, a string the builder has no code path
+        // to produce. It passed by construction and was blind to the real leak
+        // (the log path) that it was supposedly guarding. Assert the property, not
+        // a string the code was never going to emit.
+        XCTAssertFalse(report.contains(NSHomeDirectory()),
+                       "diagnostics leaked the home directory (embeds the username):\n\(report)")
+    }
+
     /// The locale seam: adapter.locale() (Lua) returns the SAME resolved code as
     /// the Swift LocaleResolver -- the single authority both layers read -- and is
     /// never empty, so i18n catalog lookups never key off "".

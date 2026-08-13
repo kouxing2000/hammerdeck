@@ -4,6 +4,14 @@ import PackageDescription
 let package = Package(
     name: "Hammerdeck",
     platforms: [.macOS(.v13)],
+    dependencies: [
+        // Sparkle ships as a binaryTarget (XCFramework), so SwiftPM LINKS it but
+        // does not embed it -- SwiftPM builds no .app bundle at all. scripts/
+        // package.sh copies Sparkle.framework into Contents/Frameworks/ and signs
+        // it inner-out; without that the app links fine and dies at launch on a
+        // missing @rpath.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.5"),
+    ],
     targets: [
         // Vendored Lua 5.4 compiled as a C target. This is the embedded engine.
         .target(
@@ -47,7 +55,11 @@ let package = Package(
         // (Skipping the exclude just brings the harmless warning back for that feature.)
         .target(
             name: "HammerdeckKit",
-            dependencies: ["CLua", "HammerdeckNotify"],
+            dependencies: [
+                "CLua",
+                "HammerdeckNotify",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "app",
             exclude: [
                 "hammerdeck.lua",
@@ -97,7 +109,20 @@ let package = Package(
         // cleanly imported by test targets, so they stay logic-free).
         .executableTarget(
             name: "Hammerdeck",
-            dependencies: ["HammerdeckKit"]
+            dependencies: ["HammerdeckKit"],
+            linkerSettings: [
+                // The packaged .app carries Sparkle.framework in Contents/Frameworks/,
+                // and the binary links it as @rpath/Sparkle.framework/... . The rpaths
+                // SwiftPM bakes in by default (/usr/lib/swift, @loader_path, the Xcode
+                // toolchain) do not include that directory -- MEASURED, not assumed --
+                // so without this the app builds, signs and notarizes clean and then
+                // dies at launch on a missing @rpath. Nothing in package.sh can catch
+                // that; only running the bundle does.
+                //
+                // unsafeFlags is allowed here because Hammerdeck is a root package,
+                // never consumed as someone else's dependency.
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
         ),
         // Integration tests against the REAL bridge (no fake adapter): boot the
         // Lua platform in-process and exercise Lua<->Swift<->macOS end to end.

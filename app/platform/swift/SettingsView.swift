@@ -254,6 +254,9 @@ private struct GeneralSettingsDetail: View {
     @State private var capsHyper = CapsHyperPreference.enabled
     @State private var showInDock = DockPreference.showInDock
     @State private var appearance = AppearancePreference.mode
+    // Seeded from Sparkle, which owns the persistence -- there is no
+    // `hammerdeck.*` key for this, deliberately (two sources of truth drift).
+    @State private var autoUpdate = Updater.shared.automaticallyChecks
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
 
@@ -287,6 +290,16 @@ private struct GeneralSettingsDetail: View {
                 }
             }
             Section(Strings.t("settings.app", default: "App")) {
+                // Absent in a dev `swift run`: no packaged Info.plist means no
+                // SUFeedURL, so there is no updater to configure. Same reasoning as
+                // the menubar item -- show nothing rather than a dead control.
+                if Updater.shared.isAvailable {
+                    Toggle(Strings.t("settings.auto_update", default: "Check for updates automatically"), isOn: $autoUpdate)
+                        .onChange(of: autoUpdate) { on in Updater.shared.automaticallyChecks = on }
+                    Text(String(format: Strings.t("settings.auto_update_caption", default: "Look for a new %@ in the background and offer it when one appears. Every update is signature-verified before it installs; you are always asked before anything is replaced."), AppInfo.displayName))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Toggle(Strings.t("settings.show_in_dock", default: "Show in Dock"), isOn: $showInDock)
                     .onChange(of: showInDock) { on in DockPreference.set(on); DockPreference.apply() }
                 Text(String(format: Strings.t("settings.dock_caption", default: "Keep a %@ icon in the Dock (and a Cmd-Tab entry); click it to open Home. Off = a pure menubar app."), AppInfo.displayName))
