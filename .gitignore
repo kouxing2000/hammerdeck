@@ -6,7 +6,13 @@
 # Swift / SwiftPM
 .build/
 .swiftpm/
-Package.resolved
+# Package.resolved IS tracked, deliberately. It was ignored while this package had
+# no external dependencies at all (CLua and HammerdeckNotify are local targets), so
+# the lockfile pinned nothing and committing it was noise. Sparkle changed that:
+# `from: "2.9.5"` admits any 2.x, and without a committed lockfile CI resolves
+# fresh on every run -- so re-running the same tag months later would notarize a
+# DIFFERENT updater. This is the component that can replace the app on a user's
+# machine; its version belongs in the commit, not in whatever the network returned.
 
 # Editor
 .vscode/
@@ -46,3 +52,13 @@ Package.resolved
 # docs-private/ into docs/ -- reviewed against the code first, since docs/ has no
 # history to hide in and anything committed there is public for good.
 /docs-private
+
+# .meta -- durable app facts (feedback routing, portfolio entry) read by the
+# portfolio tooling. Same arrangement, same reason as docs-private above: it is a
+# SYMLINK into the author's private data repo, so committing it would publish that
+# repo's location.
+#
+# NO TRAILING SLASH, and that is not a style choice: a trailing slash matches only
+# directories, and a symlink is not a directory. `/.meta/` would fail to match this
+# link, git would happily commit it, and the private path would ship.
+/.meta

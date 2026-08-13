@@ -3,11 +3,17 @@
 # Package Hammerdeck into a runnable macOS .app bundle (+ a zip for release upload).
 #
 # This is the version-controlled package recipe -- run it locally OR from CI
-# (.github/workflows/release.yml calls this exact script on a v* tag). It is
-# Tier A (ad-hoc signing): a self-contained, AD-HOC-signed .app that runs
-# on THIS machine. Tier B (Developer ID signing + notarization, so it opens on a
-# stranger's Mac past Gatekeeper) needs the Apple Developer account and is layered
-# on later -- it does not change this script's shape, it adds steps after step 4.
+# (.github/workflows/release.yml calls this exact script on a v* tag).
+#
+# It picks its own tier from what is available on the machine, so a clone with no
+# Apple Developer account still produces a working local build:
+#
+#   Tier B  a Developer ID Application identity is in the keychain -> hardened
+#           runtime + Developer ID signature + notarization + stapled ticket. The
+#           zip opens on a stranger's Mac with no Gatekeeper wall.
+#   Tier A  no such identity -> ad-hoc signature. Runs on THIS machine only; a
+#           browser download is Gatekeeper-blocked and needs
+#           `xattr -dr com.apple.quarantine`. The script says so, loudly.
 #
 # Usage:
 #   scripts/package.sh [VERSION]
@@ -15,15 +21,51 @@
 #              `git describe` (the nearest tag), else 0.0.0-dev. A leading "v" is
 #              stripped, so a `v1.2.0` tag yields 1.2.0.
 #
+# Environment:
+#   HAMMERDECK_RELEASE_IDENTITY  Developer ID Application identity to sign with.
+#              Defaults to the first one found in the keychain. Distinct from
+#              HAMMERDECK_SIGN_IDENTITY, which app.sh uses for the *dev* cert.
+#   HAMMERDECK_NOTARY_PROFILE    notarytool keychain profile (default
+#              "hammerdeck-notary"); see `xcrun notarytool store-credentials`.
+#              Used only when the ASC_* variables below are unset.
+#   ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH
+#              App Store Connect API key passed explicitly, for CI, which has no
+#              login keychain to hold a stored profile. ASC_KEY_PATH defaults to
+#              ~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8. Same names
+#              the studio's Fastfile uses, so one convention covers both.
+#              The key id and issuer id are identifiers, not secrets; the .p8
+#              itself is the credential and never belongs in this repo.
+#   HAMMERDECK_UNIVERSAL=0       build arm64-only (faster; local iteration).
+#   HAMMERDECK_SKIP_NOTARIZE=1   Tier B signing without the notarization round
+#              trip -- for checking the signature without waiting on Apple.
+#
 # Output: dist/Hammerdeck.app and dist/Hammerdeck-<version>.zip
 set -euo pipefail
 
 APP_NAME="Hammerdeck"
-# PLACEHOLDER bundle id. It pins the UserDefaults domain (and later the Sparkle
-# feed), so changing it after real users exist orphans their settings -- finalize
-# it (reverse-DNS under the Apple Developer prefix) before any public release.
-BUNDLE_ID="${HAMMERDECK_BUNDLE_ID:-com.kouxing.hammerdeck}"
+# Settled 2026-08-11: `com.peach-studio` is a domain actually owned, and the name
+# stays Hammerdeck. This id is the UserDefaults domain (and the Sparkle feed once
+# that lands), so changing it after a public release orphans everyone's settings.
+# Nothing is published yet, so it is still free to move; the first public release
+# is what freezes it.
+BUNDLE_ID="${HAMMERDECK_BUNDLE_ID:-com.peach-studio.hammerdeck}"
 MIN_MACOS="13.0"   # must match Package.swift `platforms: [.macOS(.v13)]`
+
+NOTARY_PROFILE="${HAMMERDECK_NOTARY_PROFILE:-hammerdeck-notary}"
+
+# Sparkle. The feed URL is baked into EVERY build and old copies poll it forever --
+# an installed build never learns a new address -- so this hostname must keep
+# resolving for as long as any install survives. Treat it like the bundle id.
+#
+# Both of these are deliberately CONSTANTS, not env-overridable. An override on a
+# value that must never vary can only produce a silently wrong build: ship the
+# wrong public key and the app rejects every update it is ever offered, with
+# nothing in the pipeline noticing. Change them here, in a reviewed commit.
+SPARKLE_FEED_URL="https://hammerdeck.peach-studio.com/appcast.xml"
+# Public half of the EdDSA update-signing key; the private half is in the login
+# Keychain and backed up outside the repo. Public by design -- it ships in every
+# Info.plist, and its whole job is to let a user verify what we signed.
+SPARKLE_PUBLIC_KEY="iQGMnp62O+kFU3jtfZaFfNFpmDe70W6P+NPWXPG5ojE="
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -49,6 +91,22 @@ ZIP="$DIST/$APP_NAME-$VERSION.zip"
 
 echo "==> Packaging $APP_NAME $VERSION (bundle id $BUNDLE_ID)"
 
+# 0. Validate the entitlements XML, in BOTH tiers and before the slow build.
+#
+#    Use xmllint, NOT `plutil -lint`. plutil accepts a double hyphen inside an XML
+#    comment and reports OK; the parser codesign hands the file to (AMFI) rejects
+#    the whole file.
+#
+#    Only Tier B consumes the entitlements (the Tier A branch signs ad-hoc without
+#    them), so this does not protect a Tier A build -- it protects the Tier B one
+#    from discovering the problem AFTER `swift test` and a universal release build.
+#    Failing at step 0 costs seconds; failing at step 4 costs the whole run.
+ENTITLEMENTS="$ROOT/scripts/$APP_NAME.entitlements"
+if ! xmllint --noout "$ENTITLEMENTS"; then
+  echo "error: $ENTITLEMENTS is not well-formed XML (see above); codesign would reject it" >&2
+  exit 1
+fi
+
 # 1. Pre-package gate: the full test suite must pass (this is where the
 #    feature-page roster<->feature.json consistency check, and every other
 #    integration test, actually blocks a bad build from being packaged). The UI
@@ -60,10 +118,18 @@ else
   swift test
 fi
 
-# 2. Release build.
-echo "==> swift build -c release"
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/$APP_NAME"
+# 2. Release build. Universal by default: Hammerdeck's floor is macOS 13, which
+#    still runs on Intel, and an arm64-only bundle downloaded onto an Intel Mac
+#    fails to launch with nothing on screen that explains why.
+BUILD_FLAGS=(-c release)
+if [[ "${HAMMERDECK_UNIVERSAL:-1}" == "1" ]]; then
+  BUILD_FLAGS+=(--arch arm64 --arch x86_64)
+  echo "==> swift build -c release (universal: arm64 + x86_64)"
+else
+  echo "==> swift build -c release (arm64 only -- HAMMERDECK_UNIVERSAL=0)"
+fi
+swift build "${BUILD_FLAGS[@]}"
+BIN="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path)/$APP_NAME"
 [[ -x "$BIN" ]] || { echo "error: build did not produce $BIN" >&2; exit 1; }
 
 # 3. Assemble the .app tree.
@@ -112,21 +178,182 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- The string macOS puts in the Automation consent prompt. Without the key
+       there is no prompt to present, so the Apple Event is denied outright and
+       every AppleScript/JXA path (volume, appearance, power, browser reads)
+       fails silently. Pairs with the apple-events entitlement. -->
+  <key>NSAppleEventsUsageDescription</key><string>Hammerdeck controls other apps and system settings on your behalf -- adjusting volume and appearance, and reading the frontmost browser tab -- for the features you enable.</string>
+  <!-- Sparkle. Both keys are read at runtime by Updater.swift; an unbundled dev
+       run has no plist, finds no SUFeedURL, and starts no updater at all. -->
+  <key>SUFeedURL</key><string>$SPARKLE_FEED_URL</string>
+  <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
+  <key>SUEnableAutomaticChecks</key><true/>
 </dict>
 </plist>
 PLIST
 
-# 4. Ad-hoc codesign (deep): signs the bundled binary so the app runs locally.
-#    Tier B replaces "-" with the Developer ID identity + adds notarize/staple.
-echo "==> ad-hoc codesign"
-codesign --force --deep --sign - "$APP"
-codesign --verify --deep --strict "$APP"
+# 3b. Embed Sparkle.framework.
+#
+#     SwiftPM LINKS the xcframework but never embeds it -- it builds no .app at
+#     all -- so the copy has to happen here. The binary references
+#     @rpath/Sparkle.framework/..., and Package.swift adds
+#     @executable_path/../Frameworks to the executable's rpaths; without BOTH
+#     halves the app builds, signs and notarizes clean and then dies at launch.
+#
+#     Take the macos-arm64_x86_64 slice: it is universal, so one copy serves the
+#     universal build. `-print -quit` rather than `| head -1` -- head closes the
+#     pipe early, and under `set -o pipefail` find's SIGPIPE would fail the script.
+echo "==> embedding Sparkle.framework"
+SPARKLE_SRC="$(find "$ROOT/.build/artifacts" -type d -name 'Sparkle.framework' -path '*macos-arm64_x86_64*' -print -quit)"
+[[ -n "$SPARKLE_SRC" && -d "$SPARKLE_SRC" ]] || {
+  echo "error: Sparkle.framework not found under .build/artifacts -- run 'swift build' first" >&2
+  exit 1
+}
+mkdir -p "$APP/Contents/Frameworks"
+# -R preserves the version symlinks a framework needs to stay valid to codesign.
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
+cp -R "$SPARKLE_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
+
+# Drop Sparkle's XPC services. They exist to let a SANDBOXED app hand privileged
+# work to a separate process; Sparkle's own sandboxing guide says to remove them
+# when you are not sandboxed. This app is not: scripts/Hammerdeck.entitlements
+# declares no com.apple.security.app-sandbox, and the Info.plist above sets no
+# SUEnableInstallerLauncherService, so nothing can ever launch them.
+# Keeping them would mean signing and notarizing two executables that cannot run.
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices"
+# ...and the top-level alias that pointed at them, or the bundle ships a dangling
+# symlink: harmless at runtime, but it is a broken link inside a notarized artifact
+# and it makes the framework look damaged to anyone inspecting it.
+rm -f "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
+
+# 4. Codesign. Tier B when a Developer ID Application identity exists, else Tier A.
+#
+#    `--deep` is deliberately gone: Apple deprecated it, and it was never the right
+#    tool. Sparkle brings four nested Mach-Os that must each be signed BEFORE the
+#    framework, and the framework before the app -- codesign seals each container
+#    over the hashes of what it holds, so signing outside-in invalidates the outer
+#    signature the moment an inner one changes. Order here is load-bearing.
+#
+#    These helpers DO ship entitlements -- `Autoupdate` carries
+#    com.apple.application-identifier -- so they are re-signed with
+#    --preserve-metadata=entitlements, which is what Sparkle's own manual-signing
+#    recipe does. A plain --force --sign silently empties that dict, producing a
+#    notarized updater helper stripped of an identity entitlement with nothing in
+#    the pipeline noticing.
+#    (An earlier version of this comment claimed the helpers shipped none. That
+#    came from reading `codesign -d --entitlements -` output through a grep that
+#    did not match its format -- no output was mistaken for no entitlements. The
+#    invocation that actually prints them is `--entitlements :-`.)
+#    Only the app itself gets our own entitlements FILE.
+#    The XPC services are absent by the time we get here (removed above), so the
+#    list is just the two helpers a non-sandboxed app actually launches.
+SPARKLE_INNER=(
+  "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+  "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+)
+IDENTITY="${HAMMERDECK_RELEASE_IDENTITY:-}"
+if [[ -z "$IDENTITY" ]]; then
+  # Match across ALL codesigning identities, not `-v` (valid only) -- same reason
+  # app.sh does: a cert can sign fine while `-v` hides it. Read the whole listing
+  # into a variable first; piping it into an early-exiting filter under
+  # `pipefail` turns a SIGPIPE into a spurious build failure.
+  ALL_IDS="$(security find-identity -p codesigning 2>/dev/null || true)"
+  IDENTITY="$(printf '%s\n' "$ALL_IDS" \
+    | awk -F'"' '/Developer ID Application:/ { if (!found) found = $2 } END { print found }')"
+fi
+
+if [[ -n "$IDENTITY" ]]; then
+  TIER="B"
+  echo "==> Tier B codesign: $IDENTITY"
+  # --options runtime  hardened runtime; notarization refuses the bundle without it
+  # --timestamp        secure timestamp; also a notarization requirement
+  for inner in "${SPARKLE_INNER[@]}"; do
+    echo "    inner: ${inner##*/}"
+    codesign --force --options runtime --timestamp \
+             --preserve-metadata=entitlements --sign "$IDENTITY" "$APP/$inner"
+  done
+  echo "    framework: Sparkle.framework"
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+           "$APP/Contents/Frameworks/Sparkle.framework"
+  # --entitlements only on the app: apple-events, or every AppleScript/JXA path
+  # dies silently under the hardened runtime.
+  echo "    app: $APP_NAME.app"
+  codesign --force --options runtime --timestamp \
+           --entitlements "$ENTITLEMENTS" \
+           --sign "$IDENTITY" "$APP"
+  # --deep on VERIFY (unlike on sign) is correct and wanted: it walks into the
+  # framework and confirms every nested signature, which is exactly what
+  # notarization will check.
+  codesign --verify --deep --strict --verbose=2 "$APP"
+else
+  TIER="A"
+  echo "==> Tier A codesign (ad-hoc): no Developer ID Application identity found"
+  echo "    The .app will run on THIS machine only. A browser download is"
+  echo "    Gatekeeper-blocked and needs: xattr -dr com.apple.quarantine <app>"
+  echo "    Set HAMMERDECK_RELEASE_IDENTITY, or create a Developer ID cert, for Tier B."
+  # Same inside-out order: an ad-hoc bundle with an unsigned nested framework
+  # fails to launch just as hard as a Developer ID one would.
+  for inner in "${SPARKLE_INNER[@]}"; do
+    codesign --force --preserve-metadata=entitlements --sign - "$APP/$inner"
+  done
+  codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework"
+  codesign --force --sign - "$APP"
+  codesign --verify --deep --strict "$APP"
+fi
 
 # 5. Zip the bundle (ditto preserves the .app structure, symlinks, signature).
+#    Tier B zips TWICE on purpose: notarytool takes an archive, but the ticket
+#    staples onto the .app, so the archive that was submitted does not carry it.
+#    The shippable zip is the one made after stapling.
+zip_app() {
+  rm -f "$ZIP"
+  ( cd "$DIST" && ditto -c -k --keepParent "$APP_NAME.app" "$(basename "$ZIP")" )
+}
 echo "==> zipping $ZIP"
-rm -f "$ZIP"
-( cd "$DIST" && ditto -c -k --keepParent "$APP_NAME.app" "$(basename "$ZIP")" )
+zip_app
 
-echo "==> done"
+# 6. Notarize + staple (Tier B only).
+if [[ "$TIER" == "B" && "${HAMMERDECK_SKIP_NOTARIZE:-0}" != "1" ]]; then
+  # Auth: an explicit API key when the ASC_* vars are set (CI has no login
+  # keychain to hold a stored profile), else the local keychain profile.
+  if [[ -n "${ASC_KEY_ID:-}" && -n "${ASC_ISSUER_ID:-}" ]]; then
+    KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
+    if [[ ! -f "$KEY_PATH" ]]; then
+      echo "error: ASC_KEY_ID is set but no key file at $KEY_PATH" >&2
+      echo "       set ASC_KEY_PATH, or unset ASC_KEY_ID to use the keychain profile" >&2
+      exit 1
+    fi
+    NOTARY_AUTH=(--key "$KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+    echo "==> notarytool submit (API key $ASC_KEY_ID) -- this waits on Apple"
+  else
+    NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE")
+    echo "==> notarytool submit (keychain profile: $NOTARY_PROFILE) -- this waits on Apple"
+  fi
+
+  # No pipe: a pipeline reports the LAST command's status, so `| tee` here would
+  # report success on a rejected submission and ship an unnotarized build.
+  if ! xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait; then
+    echo "error: notarization failed. For the per-issue detail, run:" >&2
+    echo "  xcrun notarytool history ${NOTARY_AUTH[*]}" >&2
+    echo "  xcrun notarytool log <submission-id> ${NOTARY_AUTH[*]}" >&2
+    exit 1
+  fi
+
+  echo "==> stapling the ticket onto $APP"
+  xcrun stapler staple "$APP"
+
+  echo "==> re-zipping with the stapled ticket"
+  zip_app
+
+  # The real acceptance test: what Gatekeeper itself says about the bundle.
+  # `codesign --verify` only proves the signature is intact -- it says nothing
+  # about whether Apple notarized it, which is the entire point of Tier B.
+  echo "==> spctl assessment"
+  spctl --assess --type execute --verbose=4 "$APP"
+elif [[ "$TIER" == "B" ]]; then
+  echo "==> SKIPPING notarization (HAMMERDECK_SKIP_NOTARIZE=1) -- signed but Gatekeeper-blocked"
+fi
+
+echo "==> done (Tier $TIER)"
 echo "    app: $APP"
 echo "    zip: $ZIP"

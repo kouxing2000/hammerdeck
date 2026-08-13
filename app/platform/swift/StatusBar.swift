@@ -30,6 +30,17 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
+
+        // START SPARKLE AT LAUNCH, not lazily.
+        //
+        // `Updater.shared` is a lazy singleton and its init is what calls
+        // SPUStandardUpdaterController(startingUpdater: true) -- the call that
+        // schedules the background check loop. Every other reference to it lives
+        // in menuNeedsUpdate, the Settings view, or the menu action, i.e. code that
+        // only runs if the user opens something. Without this line a user who never
+        // opens the menubar menu never starts the updater at all: SUEnableAutomaticChecks
+        // in the Info.plist is inert and no check ever happens, with no symptom.
+        _ = Updater.shared.isAvailable
     }
 
     // Rebuilt every time the menu opens, so it reflects the current catalog.
@@ -183,6 +194,28 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         logs.target = self
         logs.toolTip = Strings.t("menu.logs.tip", default: "Daily log files (troubleshooting clues live here)")
         moreMenu.addItem(logs)
+
+        let report = NSMenuItem(title: Strings.t("menu.report", default: "Report a Problem…"),
+                                action: #selector(reportProblem), keyEquivalent: "")
+        report.target = self
+        report.toolTip = Strings.t("menu.report.tip", default: "Email us with your version, macOS, permissions and enabled features filled in -- the details that make a report reproducible")
+        moreMenu.addItem(report)
+
+        // Only a packaged build can update itself: a dev `swift run` has no
+        // SUFeedURL, so Updater has no controller and the item would do nothing.
+        // Hidden rather than disabled -- a permanently greyed row in every dev
+        // session reads as broken, not as inapplicable.
+        if Updater.shared.isAvailable {
+            let updates = NSMenuItem(title: Strings.t("menu.checkUpdates", default: "Check for Updates…"),
+                                     action: #selector(checkForUpdates), keyEquivalent: "")
+            updates.target = self
+            // No `isEnabled` here: NSMenu.autoenablesItems defaults to true and is
+            // never turned off in this tree, so AppKit recomputes enablement from
+            // target/action at display time and would discard whatever we set.
+            // Sparkle refuses a second concurrent check on its own anyway.
+            updates.toolTip = String(format: Strings.t("menu.checkUpdates.tip", default: "Look for a newer %@ now; updates are signed and verified before they install"), AppInfo.displayName)
+            moreMenu.addItem(updates)
+        }
 
         moreMenu.addItem(.separator())
 
@@ -393,6 +426,53 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         try? FileManager.default.createDirectory(at: Native.logsDir,
                                                  withIntermediateDirectories: true)
         NSWorkspace.shared.open(Native.logsDir)
+    }
+
+    /// Open a pre-filled mail with the diagnostics already in the body.
+    ///
+    /// The report also goes to the clipboard: a mailto body is length-limited and
+    /// some mail clients mangle long ones, so the user always has an intact copy
+    /// to paste even if the compose window arrives truncated or empty. Losing the
+    /// details is the exact failure this feature exists to prevent, so it does not
+    /// rely on the mailto surviving.
+    @objc private func reportProblem() {
+        let body = Diagnostics.report(store)
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let subject = "\(AppInfo.displayName) \(version ?? "dev") -- "
+        let intro = Strings.t("report.intro",
+                              default: "Describe what you did and what you expected. Technical details "
+                              + "below (also copied to your clipboard). The daily log is often the "
+                              + "missing piece -- attach it from \"Open Logs\" if you can.")
+        let full = intro + "\n\n---\n" + body
+
+        var comps = URLComponents()
+        comps.scheme = "mailto"
+        comps.path = Self.feedbackEmail
+        comps.queryItems = [
+            URLQueryItem(name: "subject", value: subject),
+            URLQueryItem(name: "body", value: full),
+        ]
+        if let url = comps.url {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Where problem reports go. Plus-addressed per app, matching the studio
+    /// convention in every sibling repo's .meta/feedback.json -- which is what
+    /// lets the existing ingestion label them and file them as issues.
+    private static let feedbackEmail = "studio.peach.go+hammerdeck@gmail.com"
+
+    @objc private func checkForUpdates() {
+        // Sparkle's own UI takes over from here (found / up-to-date / error), so
+        // there is nothing to report back. Activate first: a menubar app is often
+        // an accessory with no Dock tile, and Sparkle's window would otherwise
+        // open behind whatever the user was looking at.
+        NSApp.activate(ignoringOtherApps: true)
+        Updater.shared.checkForUpdates()
     }
 
     @objc private func toggleDock() {

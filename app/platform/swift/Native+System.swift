@@ -36,6 +36,30 @@ extension Native {
         return 1
     }
 
+    // MARK: - Host machine facts
+
+    /// The architecture slice this process is actually executing, and whether it is
+    /// being translated. A universal build can run either slice, and "which one" is
+    /// exactly the question when a bug reproduces on one machine and not another.
+    ///
+    /// Lives here rather than beside its only caller (Diagnostics) because
+    /// `uname`/`sysctlbyname` are OS calls, and those belong in the seam -- the one
+    /// inviolable rule. Not exposed to Lua: no feature has any business asking.
+    nonisolated static func machineArchitecture() -> String {
+        var sysinfo = utsname()
+        uname(&sysinfo)
+        let machine = withUnsafePointer(to: &sysinfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: Int(_SYS_NAMELEN)) { String(cString: $0) }
+        }
+        var translated: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        // Returns non-zero on an Intel Mac, where the key simply does not exist.
+        // That is "not translated", not an error.
+        let rc = sysctlbyname("sysctl.proc_translated", &translated, &size, nil, 0)
+        if rc == 0 && translated == 1 { return "\(machine) (translated under Rosetta)" }
+        return machine
+    }
+
     // MARK: - System shortcuts (read-only)
 
     // system_hotkeys(): the user's currently-enabled macOS system shortcuts,

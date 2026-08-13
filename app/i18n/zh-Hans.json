@@ -89,6 +89,8 @@
   "list.separator": "、",
   "menu.capsHyper": "大写锁定键用作 Hyper (⌘⌥⌃)",
   "menu.capsHyper.tip": "按住大写锁定键作为 ⌘⌥⌃ Hyper 修饰键，让 Hyper 快捷键变成一个键；双击大写锁定键执行其正常锁定 (重新映射大写锁定键；需要辅助功能)",
+  "menu.checkUpdates": "检查更新…",
+  "menu.checkUpdates.tip": "立即查找更新版本的 %@；每个更新在安装前都会验证签名",
   "menu.gallery": "功能库…",
   "menu.gallery.tip": "浏览 %@ 能做的一切；就地启用功能",
   "menu.logs": "打开日志",
@@ -447,6 +449,8 @@
   "settings.about": "关于",
   "settings.about_and_permissions": "关于与权限",
   "settings.app": "应用",
+  "settings.auto_update": "自动检查更新",
+  "settings.auto_update_caption": "在后台查找新版本的 %@，有更新时提示你。每个更新在安装前都会验证签名；替换任何文件前都会先征求你的同意。",
   "settings.appearance": "外观",
   "settings.appearance.dark": "深色",
   "settings.appearance.light": "浅色",
@@ -672,5 +676,8 @@
   "cap.commands": "其他功能",
   "cap.commands.detail": "可以列出并运行你已启用的其他功能的操作.",
   "cap.unknown.detail": "一项额外的能力.",
-  "input.axRequired": "%1$s 需要辅助功能权限才能输入文字。请在 系统设置 > 隐私与安全性 > 辅助功能 中开启 %2$s，然后重试。如果那里已经开启，请退出并重新打开 %2$s——macOS 通常要重启进程后新授权才生效。"
+  "input.axRequired": "%1$s 需要辅助功能权限才能输入文字。请在 系统设置 > 隐私与安全性 > 辅助功能 中开启 %2$s，然后重试。如果那里已经开启，请退出并重新打开 %2$s——macOS 通常要重启进程后新授权才生效。",
+  "menu.report": "报告问题…",
+  "menu.report.tip": "发邮件给我们，版本、系统、权限和已启用功能都会自动填好——正是让问题可复现的那些细节",
+  "report.intro": "请描述你做了什么、期望发生什么。技术细节在下方（同时已复制到剪贴板）。每日日志往往是关键的一块，方便的话请从「打开日志」里附上。"
 }
