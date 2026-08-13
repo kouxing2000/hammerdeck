@@ -46,6 +46,31 @@ return {
         ok(#fake.typedTexts == idtTyped, "insert_datetime types nothing on an invalid pattern")
         ok(#fake.notifications == idtNotes + 1, "insert_datetime notifies (not crashes) on an invalid pattern")
 
+        -- Without Accessibility the OS DISCARDS synthesized input and reports
+        -- nothing, so this used to type nothing while reporting success -- the app
+        -- looked broken rather than unpermitted, and only the seam source revealed
+        -- why. ctx.typeText now onboards instead (prompt + an alert naming the
+        -- feature), matching what windows.focusedOrAlert has always done for the
+        -- window verbs.
+        --
+        -- Asserted on the ALERT and the PROMPT, not merely on "typed nothing":
+        -- typing nothing is exactly what the bug did, so a count-only check would
+        -- pass against the defect it exists to catch.
+        do
+            fake.settings["hammerdeck.opt.insert_datetime.customFormat"] = ""
+            fake.settings["hammerdeck.opt.insert_datetime.format"] = "%Y-%m-%d"
+            local typedBefore = #fake.typedTexts
+            local alertsBefore, promptsBefore = #fake.alerts, fake.axPrompts
+            fake.axTrusted = false
+            fake.pressHotkey("d")
+            ok(#fake.typedTexts == typedBefore, "untrusted insert_datetime types nothing")
+            ok(fake.axPrompts == promptsBefore + 1, "untrusted insert_datetime fires the AX prompt")
+            ok(#fake.alerts == alertsBefore + 1
+                and fake.alerts[#fake.alerts]:find("Accessibility", 1, true),
+                "untrusted insert_datetime explains the Accessibility grant")
+            fake.axTrusted = true
+        end
+
         -- The "Preview" validator button (optionAction) mirrors the action: it alerts
         -- the formatted result for a good pattern and the reason for a bad one.
         fake.settings["hammerdeck.opt.insert_datetime.customFormat"] = "%Y/%m/%d"

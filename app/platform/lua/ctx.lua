@@ -558,8 +558,61 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- host) -- use this, never math.random, for anything security-sensitive.
     function ctx.randomInt(min, max) return adapter.randomInt(min, max) end
     function ctx.isModifierHeld(mod) return adapter.isModifierHeld(mod) end
-    function ctx.keyStroke(mods, key) adapter.keyStroke(mods, key) end
-    function ctx.typeText(text)       adapter.typeText(text) end
+    -- Input synthesis onboards the Accessibility grant the same way
+    -- windows.focusedOrAlert does for the window verbs -- prompt, then say which
+    -- feature needs what.
+    --
+    -- Without the grant `CGEvent.post` discards the event and reports nothing: the
+    -- action runs, returns success, and types nothing. That is worse than an
+    -- error, because it is indistinguishable from a broken app. The window verbs
+    -- have always handled this (an empty list is checked and explained); the
+    -- typing verbs silently did not, which is why Insert Date/Time looked broken
+    -- rather than unpermitted.
+    --
+    -- Checked HERE, not in the registry: a per-action gate there would also
+    -- short-circuit the window features, replacing their situation-specific
+    -- onboarding with a generic one. And not in the seam, which has no business
+    -- showing UI. `false` is returned so a caller can branch; existing callers
+    -- ignore it, exactly as before.
+    -- Onboard ONCE per ungranted episode, not once per keystroke.
+    --
+    -- Features issue synthesis in bursts: text_actions' dictionary lookup fires
+    -- three consecutive ctx.keyStroke calls, and each ctx.alert builds its own
+    -- centered panel, so an unthrottled gate stacks three identical alerts on the
+    -- same point on screen and prompts three times. Reset the moment trust returns,
+    -- so a user who grants the permission and comes back is told again if it is
+    -- ever revoked.
+    local axOnboarded = false
+    local function inputAllowed()
+        if ctx.axTrusted() then
+            axOnboarded = false
+            return true
+        end
+        -- Still refuse the call, just silently after the first explanation.
+        if axOnboarded then return false end
+        axOnboarded = true
+        ctx.axPrompt()
+        -- ctx.t does the formatting: the slots are numbered so a locale may
+        -- reorder them, and Lua's string.format would RAISE on "%1$s".
+        ctx.alert(ctx.t("input.axRequired",
+            "%1$s needs the Accessibility permission to type -- grant %2$s in System "
+            .. "Settings > Privacy & Security > Accessibility, then try again. If it is "
+            .. "already switched on there, quit and reopen %2$s: macOS applies a new "
+            .. "grant only on relaunch.",
+            m.name or m.id, ctx.appName))
+        return false
+    end
+
+    function ctx.keyStroke(mods, key)
+        if not inputAllowed() then return false end
+        adapter.keyStroke(mods, key)
+        return true
+    end
+    function ctx.typeText(text)
+        if not inputAllowed() then return false end
+        adapter.typeText(text)
+        return true
+    end
     function ctx.openURL(url)         return adapter.openURL(url) end
     function ctx.activateApp(name)    return adapter.activateApp(name) end
     function ctx.launchOrFocusApp(id) return adapter.launchOrFocusApp(id) end
@@ -609,7 +662,13 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.setAppearance(mode) return adapter.setAppearance(mode) end
     function ctx.adjustVolume(delta) return adapter.adjustVolume(delta) end
     function ctx.toggleMute()        return adapter.toggleMute() end
-    function ctx.mediaKey(name)      adapter.mediaKey(name) end
+    -- Gated like the other two synthesis verbs: a media key is posted with the
+    -- same CGEvent path and is discarded just as silently without the grant.
+    function ctx.mediaKey(name)
+        if not inputAllowed() then return false end
+        adapter.mediaKey(name)
+        return true
+    end
 
     -- CAPABILITY GATE ----------------------------------------------------------
     -- Withhold every tiered method the feature did not declare (see

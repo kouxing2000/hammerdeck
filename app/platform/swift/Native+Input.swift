@@ -6,9 +6,58 @@ import AppKit
 import CLua
 import Security
 
+/// Thread-safe accumulator for a child process's stderr.
+///
+/// `Process` delivers reads on one queue and termination on another, both through
+/// @Sendable closures, so the buffer cannot be a captured `var`. A small locked
+/// box is the honest shape: @unchecked because the compiler cannot see the lock.
+private final class StderrSink: @unchecked Sendable {
+    private var data = Data()
+    private let lock = NSLock()
+
+    func append(_ chunk: Data) {
+        lock.lock(); defer { lock.unlock() }
+        data.append(chunk)
+    }
+
+    func drain() -> Data {
+        lock.lock(); defer { lock.unlock() }
+        return data
+    }
+}
+
 extension Native {
     // MARK: - Input synthesis (CGEvent posting -- the system delivers these to
     // the frontmost app; macOS requires the Accessibility permission)
+
+    /// Log backstop for callers that reach synthesis WITHOUT a `ctx`.
+    ///
+    /// `CGEvent.post` is a VOID call that fails silently without Accessibility --
+    /// no return value, no error, no exception -- so an untrusted build looks
+    /// exactly like a working one.
+    ///
+    /// The user-facing onboarding (prompt + an alert naming the feature) lives in
+    /// `ctx.lua`, because only that layer knows which feature asked and can show
+    /// UI. This is deliberately NOT that gate, and for `key_stroke`/`type_text` it
+    /// is currently unreachable: `ctx` refuses those before the seam is called.
+    /// It earns its place on the third path -- `effects.lua` calls
+    /// `adapter.mediaKey` DIRECTLY for the media-key rule effect, and a rules
+    /// engine has no `ctx` to alert through, so without this a rule would fire,
+    /// report success, and do nothing with nothing written down.
+    ///
+    /// Throttled: a held-down hotkey would otherwise write a line per repeat.
+    ///
+    /// Note the grant is keyed to the CODE SIGNATURE, so a Developer-ID-signed
+    /// .app and a dev build are separate entries in System Settings, and granting
+    /// one does nothing for the other.
+    private func inputTrusted(_ what: String) -> Bool {
+        if AXIsProcessTrusted() { return true }
+        seamLogThrottled("input:untrusted",
+                         "\(what): Accessibility not granted -- synthesized input is silently "
+                         + "discarded by the system. Grant it in System Settings > Privacy & "
+                         + "Security > Accessibility for THIS build (the grant is per code signature).")
+        return false
+    }
 
     private static func carbonFlags(_ mods: [String]) -> CGEventFlags {
         var flags: CGEventFlags = []
@@ -35,6 +84,7 @@ extension Native {
         if let bad = KeyModifier.firstUnknown(in: mods) {
             return luaError(L, "key_stroke: unknown modifier '\(bad)'")
         }
+        guard inputTrusted("key_stroke") else { return 0 }
         let flags = Native.carbonFlags(mods)
         let src = CGEventSource(stateID: .combinedSessionState)
         for down in [true, false] {
@@ -51,6 +101,7 @@ extension Native {
         guard let text = LuaState.string(L, 1) else {
             return luaError(L, "type_text: text required")
         }
+        guard inputTrusted("type_text") else { return 0 }
         let src = CGEventSource(stateID: .combinedSessionState)
         // Chunked: keyboardSetUnicodeString reliably carries ~20 UTF-16 units.
         let units = Array(text.utf16)
@@ -60,6 +111,20 @@ extension Native {
             for down in [true, false] {
                 let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)
                 e?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
+                // Clear the modifiers, ALWAYS. `.combinedSessionState` makes a posted
+                // event inherit whatever is physically held right now -- and this runs
+                // from a hotkey the user is still holding. insert_datetime's default is
+                // Hyper (cmd+alt+ctrl+D), so every character went out as
+                // cmd+alt+ctrl+<char>: the receiving app reads that as a SHORTCUT, not
+                // text, and types nothing while everything reports success.
+                //
+                // keyStroke above never had this bug because it assigns `flags`
+                // explicitly; only this path left them inherited.
+                //
+                // No fake-adapter test can see this -- the defect lives in the
+                // interaction with real hardware modifier state, which the fake has no
+                // notion of. It is caught by pressing the key on a real machine.
+                e?.flags = []
                 e?.post(tap: .cghidEventTap)
             }
             i += 20
@@ -79,6 +144,7 @@ extension Native {
         guard let name = LuaState.string(L, 1), let key = codes[name] else {
             return luaError(L, "media_key: unknown key '\(LuaState.string(L, 1) ?? "?")'")
         }
+        guard inputTrusted("media_key") else { return 0 }
         for down in [true, false] {
             let state = down ? 0xA00 : 0xB00
             let ev = NSEvent.otherEvent(
@@ -214,10 +280,69 @@ extension Native {
         return 0
     }
 
+    /// Launch a helper tool and REPORT what happened to the daily log.
+    ///
+    /// Six seam calls ride on this -- sleep, lock, display sleep, screensaver,
+    /// speak, and run_shortcut. It used to be `try? p.run()` and nothing else,
+    /// which swallowed three distinct failures at once: a launch error (the `try?`),
+    /// a non-zero exit (never waited for), and whatever the tool said on stderr
+    /// (never read). `run_shortcut` is the one that bites -- it backs the "Run
+    /// Shortcut" rule effect, so renaming the shortcut made the rule fire, report
+    /// success, and do nothing. Same shape as the type_text bug.
+    ///
+    /// Stays ASYNCHRONOUS. Waiting here would block the main thread on another
+    /// process, which is the freeze this seam already has rules about; the
+    /// termination handler reports instead. It is `@Sendable`, so the log call
+    /// hops to the main actor rather than calling seamLog directly -- and it goes
+    /// to seamLog, not NSLog, because the daily log is the file a user can
+    /// actually send us.
     private func runCommand(_ path: String, _ args: [String]) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
-        try? p.run()
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        let label = ([path] + args).joined(separator: " ")
+
+        // Drain stderr on a BACKGROUND read, unconditionally -- never inside the
+        // `terminationStatus != 0` branch. A pipe holds ~64KB; a chatty but
+        // SUCCESSFUL helper that exceeds it blocks forever on write, so it never
+        // exits, the termination handler never fires, and the process hangs with
+        // nothing logged. That is the exact failure class this reporting exists to
+        // remove, so it must not be the thing that introduces one.
+        // A reference box, not a captured `var`: the reader handler and the
+        // termination handler are both @Sendable and run on different threads, so
+        // Swift 6 rejects a shared mutable capture outright. The lock is what makes
+        // the @unchecked honest.
+        let sink = StderrSink()
+        errPipe.fileHandleForReading.readabilityHandler = { fh in
+            let chunk = fh.availableData
+            guard !chunk.isEmpty else { fh.readabilityHandler = nil; return }
+            sink.append(chunk)
+        }
+
+        p.terminationHandler = { proc in
+            errPipe.fileHandleForReading.readabilityHandler = nil
+            let data = sink.drain()
+            guard proc.terminationStatus != 0 else { return }
+            let stderr = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            Task { @MainActor in
+                // Throttle on the FULL command, not just the tool path: keying on
+                // path alone would report one failing `shortcuts run <name>` and
+                // swallow every other shortcut's failure for a minute -- and
+                // run_shortcut is the case this was written for.
+                Native.shared.seamLogThrottled(
+                    "cmd:" + label,
+                    "\(label): exited \(proc.terminationStatus)"
+                        + (stderr.isEmpty ? "" : " -- \(stderr.prefix(200))"))
+            }
+        }
+        do {
+            try p.run()
+        } catch {
+            errPipe.fileHandleForReading.readabilityHandler = nil
+            seamLogThrottled("cmd:" + label, "\(label): could not launch -- \(error.localizedDescription)")
+        }
     }
 }
