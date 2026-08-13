@@ -39,7 +39,7 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 
 ### Windows
 
-- **Window Snap** -- One-key common cases: snap to a half, toggle maximize/75%, throw to the next screen (the pointer follows). Beyond Sequoia's built-in tiling -- a 75% toggle, a next-screen throw that carries the pointer, and every move undoable through Window Rewind -- and it runs from macOS 13.
+- **Window Snap** -- Move the focused window from the keyboard: throw it to the next display and the pointer rides along, snap to a half, toggle maximize/75%, or land on a rectangle you saved -- plus a one-shot swap of two displays' windows. No macOS version through 26 has a display-move shortcut; beyond Sequoia's halves and quarters this adds the 75% toggle, your own placements, and undo through Window Rewind -- from macOS 13.
 - **Window Grid** -- Precise placement: put the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle.
 - **Window Mode** -- Fine control, one key at a time: a modal keyboard layer for move/resize/corners/center/undo, live until Escape. For arranging by feel without spending a global hotkey on every arrangement.
 - **Window Deck** -- A focus workflow: tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.

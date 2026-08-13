@@ -1,6 +1,6 @@
 {
   "name": "窗口贴靠",
-  "description": "一键搞定常用排布: 贴靠到一半, 切换最大化/75%, 抛到下一个屏幕 (指针跟随). 比 Sequoia 自带的分屏多出: 75% 切换, 带着指针一起过去的跨屏抛送, 以及每一次移动都能用窗口回退撤销 -- 而且 macOS 13 起就能用.",
+  "description": "用键盘摆放聚焦窗口：抛到下一个显示器时指针一同跟去，贴靠到一半，在最大化与 75% 之间切换，或落到你保存的矩形位置；另可把两台显示器上的窗口一次性互换。截至 macOS 26，系统始终没有把窗口移到另一台显示器的快捷键；在 Sequoia 的一半与四分之一分屏之外，这里还多出 75% 切换、你自己的位置预设，以及可用窗口回退撤销——而且 macOS 13 起就能用。",
   "action.left.label": "左半屏",
   "action.left.description": "将聚焦窗口移到屏幕的左半部分.",
   "action.left.mnemonic": "Hyper+← — 箭头指向那条边",
@@ -17,19 +17,19 @@
   "action.toggle_max.description": "在最大化与 75% 居中之间切换聚焦窗口.",
   "action.toggle_max.mnemonic": "Hyper+Return — Return = 填满屏幕",
   "action.screen_next.label": "移到下一个屏幕",
-  "action.screen_next.description": "将聚焦窗口抛到下一个屏幕, 按比例缩放并带动指针.",
+  "action.screen_next.description": "将聚焦窗口抛到下一个屏幕，按比例缩放并带动指针.",
   "action.screen_next.mnemonic": "Hyper+] — ] 向前推到下一个屏幕",
   "action.screen_prev.label": "移到上一个屏幕",
-  "action.screen_prev.description": "将聚焦窗口抛到上一个屏幕, 按比例缩放并带动指针.",
+  "action.screen_prev.description": "将聚焦窗口抛到上一个屏幕，按比例缩放并带动指针.",
   "action.screen_prev.mnemonic": "Hyper+[ — [ 向后退到上一个屏幕",
   "action.swap_screens.label": "在显示器之间交换窗口",
-  "action.swap_screens.description": "把你当前所在显示器的所有窗口与另一台显示器的窗口互换 -- 两边各自搬到对方, 按比例缩放. 三台及以上显示器时会先询问与哪台交换. 最小化和全屏窗口保持不动.",
+  "action.swap_screens.description": "把你当前所在显示器的所有窗口与另一台显示器的窗口互换 -- 两边各自搬到对方，按比例缩放. 三台及以上显示器时会先询问与哪台交换. 最小化和全屏窗口保持不动.",
 
   "option.presets.label": "自定义摆放",
-  "option.presets.hint": "设计一个窗口矩形, 并把它绑定到你自己的快捷键.",
+  "option.presets.hint": "设计一个窗口矩形，并把它绑定到你自己的快捷键.",
 
   "alert.oneScreen": "只有一个屏幕",
-  "swap.pickTitle": "交换哪两台显示器?",
+  "swap.pickTitle": "交换哪两台显示器？",
   "swap.pickPrompt": "选择要交换的两台显示器. 默认选中你当前所在的那台 -- 两台都可更改.",
   "swap.pickVerb": "交换"
 }

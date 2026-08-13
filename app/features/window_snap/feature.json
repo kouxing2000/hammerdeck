@@ -1,7 +1,7 @@
 {
   "name": "Window Snap",
   "version": "1.0.0",
-  "description": "One-key common cases: snap to a half, toggle maximize/75%, throw to the next screen (the pointer follows). Beyond Sequoia's built-in tiling -- a 75% toggle, a next-screen throw that carries the pointer, and every move undoable through Window Rewind -- and it runs from macOS 13.",
+  "description": "Move the focused window from the keyboard: throw it to the next display and the pointer rides along, snap to a half, toggle maximize/75%, or land on a rectangle you saved -- plus a one-shot swap of two displays' windows. No macOS version through 26 has a display-move shortcut; beyond Sequoia's halves and quarters this adds the 75% toggle, your own placements, and undo through Window Rewind -- from macOS 13.",
   "category": "windows",
   "order": 1,
   "icon": "rectangle.lefthalf.inset.filled",
