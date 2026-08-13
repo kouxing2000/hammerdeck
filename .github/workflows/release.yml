@@ -103,6 +103,21 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
+          # Apple's Developer ID intermediate is not on the runner, and Keychain
+          # Access exports a .p12 carrying the LEAF ONLY. Without the intermediate
+          # the identity imports fine and never validates -- the gate below then
+          # reports a chain problem for a certificate that is perfectly good.
+          # Fetching it here removes the dependency on how anyone exported. Both
+          # generations, because which one signed a cert depends on when it was
+          # issued: G1 (OU=Apple Certification Authority) through Feb 2027, G2
+          # (OU=G2) after. Apple caps a leaf at its issuer's expiry, so a cert
+          # issued today under G1 dies with it and re-issues onto G2.
+          for ca in DeveloperIDCA DeveloperIDG2CA; do
+            curl -fsS -o "$RUNNER_TEMP/$ca.cer" \
+              "https://www.apple.com/certificateauthority/$ca.cer"
+            security import "$RUNNER_TEMP/$ca.cer" -k "$KEYCHAIN"
+          done
+
           security import "$CERT" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -f pkcs12
           rm -f "$CERT"
@@ -175,6 +190,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ github.ref_name }}"
+
+          # Which tier actually shipped -- asked of the ARTIFACT, not of whether a
+          # secret was set. A stapled ticket is the exact property that decides
+          # whether a stranger's download opens or hits a Gatekeeper wall, and it
+          # is the one thing that cannot be true unless every signing step worked.
+          # Tier A still publishes (a fork with no certificate must still get a
+          # build) but it is marked, because a release that LOOKS like the signed
+          # one and silently is not is worse than no release.
+          UNSIGNED_NOTE="**Unsigned build.** Signing or notarization did not run, so macOS refuses to open this without a Gatekeeper override. Not for distribution -- check this run's signing steps."
+          if xcrun stapler validate dist/Hammerdeck.app > /dev/null 2>&1; then
+            TIER=B
+            echo "tier B -- signed, notarized, stapled"
+          else
+            TIER=A
+            echo "::warning::Tier A: this build is NOT notarized. Publishing as a marked prerelease."
+          fi
+
           # Idempotent: `gh release create` hard-fails with "a release with the same
           # tag name already exists", so re-running a tag after fixing something
           # downstream threw away a completed build (and, now, a completed
@@ -182,11 +214,20 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "release $TAG exists -- replacing its assets"
             gh release upload "$TAG" dist/Hammerdeck-*.zip --clobber
+            # The marking has to be re-applied here too: a re-run that degrades to
+            # Tier A would otherwise drop an unsigned build into a release still
+            # presenting itself as the signed one.
+            if [ "$TIER" = A ]; then
+              gh release edit "$TAG" --prerelease --notes "$UNSIGNED_NOTE"
+            fi
+          elif [ "$TIER" = A ]; then
+            gh release create "$TAG" dist/Hammerdeck-*.zip \
+              --title "$TAG" --prerelease --notes "$UNSIGNED_NOTE"
           else
-            gh release create "$TAG" \
-              dist/Hammerdeck-*.zip \
-              --title "$TAG" \
-              --generate-notes
+            # --generate-notes and --notes are mutually exclusive, so the two tiers
+            # cannot share one invocation.
+            gh release create "$TAG" dist/Hammerdeck-*.zip \
+              --title "$TAG" --generate-notes
           fi
 
       - name: Clean up credentials
