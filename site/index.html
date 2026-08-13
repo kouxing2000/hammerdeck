@@ -1,0 +1,123 @@
+<!doctype html>
+<!--
+  Template. scripts/publish-site.sh renders the double-brace tokens below into
+  dist/site/index.html and deploys that, so no version number is ever stored
+  here to go stale. This comment ships to the live page: keep it to mechanics.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hammerdeck &mdash; Mac automation you configure instead of program</title>
+<meta name="description" content="Mac automation you configure instead of program. It reacts to your Mac, reaches your windows, and shows you everything it did.">
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --fg: #1a1917;
+    --muted: #6b6862;
+    --line: #e5e1da;
+    --card: #ffffff;
+    --accent: #b4491f;
+    --accent-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513;
+      --fg: #eceae6;
+      --muted: #9a958c;
+      --line: #2c2a26;
+      --card: #1e1d1a;
+      --accent: #e2703f;
+      --accent-fg: #17120f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 5rem 1.5rem 4rem; }
+  header { text-align: center; }
+  h1 { font-size: 2.6rem; letter-spacing: -0.025em; margin: 0 0 .75rem; }
+  .tagline { font-size: 1.2rem; color: var(--muted); margin: 0 auto 2.5rem; max-width: 34rem; }
+  .dl {
+    display: inline-block; background: var(--accent); color: var(--accent-fg);
+    text-decoration: none; font-weight: 600; font-size: 1.05rem;
+    padding: .85rem 1.9rem; border-radius: .6rem;
+  }
+  .dl:hover { filter: brightness(1.08); }
+  .meta { color: var(--muted); font-size: .875rem; margin-top: .85rem; }
+  .beats { margin: 4rem 0 0; display: grid; gap: 1rem; }
+  .beat { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: 1.25rem 1.4rem; }
+  .beat h2 { font-size: 1rem; margin: 0 0 .4rem; letter-spacing: .01em; }
+  .beat p { margin: 0; color: var(--muted); }
+  .reqs { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1.5rem; color: var(--muted); font-size: .9rem; }
+  .reqs dt { float: left; clear: left; width: 8.5rem; color: var(--fg); font-weight: 500; }
+  .reqs dd { margin: 0 0 .4rem 8.5rem; }
+  footer { margin-top: 3rem; text-align: center; color: var(--muted); font-size: .85rem; }
+  a { color: inherit; }
+  @media (max-width: 34rem) {
+    .wrap { padding-top: 3rem; }
+    h1 { font-size: 2rem; }
+    .reqs dt { float: none; width: auto; }
+    .reqs dd { margin-left: 0; margin-bottom: .9rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Hammerdeck</h1>
+    <p class="tagline">
+      Mac automation you configure instead of program &mdash; it reacts to your Mac,
+      reaches your windows, and shows you everything it did.
+    </p>
+    <a class="dl" href="{{ZIP}}">Download for macOS</a>
+    <p class="meta">Version {{VERSION}} &middot; {{SIZE}} &middot; {{DATE}}</p>
+  </header>
+
+  <section class="beats">
+    <div class="beat">
+      <h2>Configure, don't program</h2>
+      <p>
+        Turn a feature on, set its options, pick how it fires &mdash; a hotkey, a chord,
+        a schedule, or a system event like waking or connecting a display. One surface,
+        not one automation at a time in a separate app.
+      </p>
+    </div>
+    <div class="beat">
+      <h2>It reaches your windows</h2>
+      <p>
+        Move, snap, tile, cycle, and restore windows across displays, and drive all of it
+        from the same triggers. Connect a monitor and have your windows arrange themselves.
+      </p>
+    </div>
+    <div class="beat">
+      <h2>It shows its work</h2>
+      <p>
+        Confirmation of what fired, a note about what ran while you were away, and plain
+        local log files you can read. Nothing leaves your Mac: no cloud, no account,
+        no subscription.
+      </p>
+    </div>
+  </section>
+
+  <dl class="reqs">
+    <dt>Requires</dt><dd>macOS {{MINOS}} or later</dd>
+    <dt>Runs on</dt><dd>Apple Silicon and Intel (universal binary)</dd>
+    <dt>Signed</dt><dd>Developer ID, notarized by Apple &mdash; opens without a Gatekeeper warning</dd>
+    <dt>Updates</dt><dd>Checks for new versions automatically; you approve each install</dd>
+  </dl>
+
+  <footer>
+    <p>Built by <a href="https://peach-studio.com">Peach Studio</a> &middot;
+    <a href="mailto:studio.peach.go+hammerdeck@gmail.com">studio.peach.go+hammerdeck@gmail.com</a></p>
+  </footer>
+
+</div>
+</body>
+</html>

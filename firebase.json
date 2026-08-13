@@ -1,0 +1,22 @@
+{
+  "hosting": {
+    "site": "hammerdeck",
+    "public": "dist/site",
+    "ignore": ["**/.*"],
+    "headers": [
+      {
+        "source": "/appcast.xml",
+        "headers": [
+          { "key": "Content-Type", "value": "application/xml; charset=utf-8" },
+          { "key": "Cache-Control", "value": "public, max-age=300" }
+        ]
+      },
+      {
+        "source": "**/*.zip",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        ]
+      }
+    ]
+  }
+}
