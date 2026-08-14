@@ -1,8 +1,8 @@
 {
   "name": "窗口模式",
-  "description": "精细控制, 一个键一步: 用于移动/调整大小/角落/居中/撤销的模态键盘层, 一直有效直到按 Escape. 适合凭手感排布, 又不想为每种排布都占用一个全局快捷键.",
+  "description": "精细控制，一个键一步：用于移动/调整大小/角落/居中/撤销的模态键盘层，一直有效直到按 Escape. 适合凭手感排布，又不想为每种排布都占用一个全局快捷键.",
   "action.enter.label": "进入 / 退出窗口模式",
-  "action.enter.description": "切换模态窗口排布层, 在其中用裸按键移动, 调整大小和贴靠当前聚焦的窗口, 直到按 Escape.",
+  "action.enter.description": "切换模态窗口排布层，在其中用裸按键移动，调整大小和贴靠当前聚焦的窗口，直到按 Escape.",
   "action.enter.mnemonic": "W 代表窗口模式",
 
   "option.stepParts.label": "每屏步数 (移动/调整大小的粒度)",

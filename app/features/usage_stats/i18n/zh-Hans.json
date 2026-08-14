@@ -4,11 +4,11 @@
   "page.title": "使用情况",
 
   "option.dir.label": "存储文件夹 (允许 ~; 重启后生效)",
-  "option.trackChromeSite.label": "记录 Chrome 中访问的网站 (仅域名, 例如 github.com; 默认关闭, 无痕窗口永不记录)",
-  "option.trackSafariSite.label": "同时记录 Safari 网站 -- 风险: Safari 无法隐藏无痕浏览, 私密网站可能被记录 (默认关闭)",
+  "option.trackChromeSite.label": "记录 Chrome 中访问的网站 (仅域名，例如 github.com; 默认关闭，无痕窗口永不记录)",
+  "option.trackSafariSite.label": "同时记录 Safari 网站 -- 风险：Safari 无法隐藏无痕浏览，私密网站可能被记录 (默认关闭)",
   "option.showWidget.label": "显示桌面小组件",
   "option.screen.label": "小组件显示器",
   "option.screen.values.primary": "主显示器",
   "option.screen.values.secondary": "第二显示器",
-  "option.keepMonths.label": "保留历史 (月数, 0 = 永久)"
+  "option.keepMonths.label": "保留历史 (月数，0 = 永久)"
 }

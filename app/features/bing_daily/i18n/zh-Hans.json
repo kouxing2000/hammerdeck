@@ -1,6 +1,6 @@
 {
   "name": "每日 Bing 壁纸",
-  "description": "将 Bing 每日图片设为壁纸, 按计划自动刷新.",
+  "description": "将 Bing 每日图片设为壁纸，按计划自动刷新.",
 
   "action.refresh.label": "立即刷新壁纸",
 

@@ -1,18 +1,18 @@
 {
   "name": "文本操作",
-  "description": "在任意位置对选中文本执行操作: 打开网址, 改变大小写, 计算, 在 macOS 词典中查询, 以及 -- 配合 OpenAI 密钥 -- 通过 AI 润色/翻译/摘要. 结果就地粘贴回去.",
+  "description": "在任意位置对选中文本执行操作：打开网址，改变大小写，计算，在 macOS 词典中查询，以及 -- 配合 OpenAI 密钥 -- 通过 AI 润色/翻译/摘要. 结果就地粘贴回去.",
 
   "dialog.title": "对 [%s] 的操作",
   "alert.noDictApp": "无法打开词典应用 -- 请在设置中重新选择",
-  "alert.axRequired": "选区操作需要辅助功能权限以读取选中内容 -- 请在系统设置中授权, 然后重试",
+  "alert.axRequired": "选区操作需要辅助功能权限以读取选中内容 -- 请在系统设置中授权，然后重试",
   "alert.nothingSelected": "没有选中内容",
   "alert.noKey": "请先在设置中填写 OpenAI API 密钥",
   "alert.aiFailed": "AI 请求失败 (%s)",
   "alert.aiNoResult": "AI 没有返回结果",
   "alert.noneEnabled": "没有启用任何文本操作 -- 请在设置中开启一些",
-  "alert.notExpr": "不是表达式: %s",
-  "alert.calcFailed": "计算失败: %s",
-  "prompt.translate.title": "翻译成哪种语言?",
+  "alert.notExpr": "不是表达式：%s",
+  "alert.calcFailed": "计算失败：%s",
+  "prompt.translate.title": "翻译成哪种语言？",
   "prompt.translate.ph": "例如 French, 日本語",
   "prompt.instruct.title": "对选中文本的指令",
   "prompt.instruct.ph": "例如 让它更正式一些",
@@ -29,7 +29,7 @@
   "action.aiFreeAsk": "AI: 自由提问",
 
   "action.quick_open.label": "对选中文本执行操作",
-  "action.quick_open.description": "复制选中内容, 然后提供一个菜单: 打开网址, 改变大小写, 计算, 在词典中查询, 或 (配合密钥) 通过 AI 处理 -- 结果就地粘贴回去.",
+  "action.quick_open.description": "复制选中内容，然后提供一个菜单：打开网址，改变大小写，计算，在词典中查询，或 (配合密钥) 通过 AI 处理 -- 结果就地粘贴回去.",
   "action.quick_open.mnemonic": "O - 对选区执行操作 (act On)",
 
   "option.showLowercase.label": "显示小写",
@@ -47,7 +47,7 @@
   "option.dictApp.defaultLabel": "macOS 词典",
   "option.dictApp.actionLabel": "测试",
   "option.dictDelayMs.label": "自定义词典粘贴延迟 (毫秒)",
-  "option.dictDelayMs.hint": "在应用获得焦点后等待这么久再粘贴 -- 如果应用启动或聚焦较慢, 请调高.",
+  "option.dictDelayMs.hint": "在应用获得焦点后等待这么久再粘贴 -- 如果应用启动或聚焦较慢，请调高.",
   "option.dictDelayMs.section": "词典",
 
   "option.openaiKey.label": "OpenAI API 密钥",

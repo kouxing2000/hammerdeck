@@ -78,7 +78,7 @@ return {
         ok(i18n.tFeature("text_actions", "alert.nothingSelected", "x") == "没有选中内容",
             "runtime ctx.t key resolves (text_actions alert)")
         ok(string.format(i18n.tFeature("count_down", "notify.up.title", "Time (%d min) is up!"), 5)
-            == "时间 (5 分钟) 到了!",
+            == "时间 (5 分钟) 到了！",
             "runtime ctx.t key resolves with interpolation (count_down notify)")
 
         -- back to the source language: describe() re-reads as English immediately.
