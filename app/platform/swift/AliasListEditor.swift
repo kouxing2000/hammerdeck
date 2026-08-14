@@ -43,24 +43,11 @@ struct AliasRow: Identifiable, Equatable, Codable {
         return s
     }
 
-    /// One element that fails to decode is SKIPPED, never fatal to the array. A
-    /// whole-array `try?` would turn a single wrong-typed field into "No aliases
-    /// yet", and the next edit would then persist that emptiness over every
-    /// surviving record. The Lua reader (`aliasIndex`) tolerates a bad row the same
-    /// way, so both readers of this blob keep one contract.
+    /// One element that fails to decode is SKIPPED, never fatal to the array --
+    /// see LenientDecode.swift for why that matters for a hand-editable blob.
     static func decode(_ raw: String) -> [AliasRow] {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("["), let data = trimmed.data(using: .utf8),
-              let rows = try? JSONDecoder().decode([LenientRow].self, from: data) else { return [] }
-        return rows.compactMap(\.row)
+        [AliasRow].decodeLeniently(fromJSON: raw) ?? []
     }
-}
-
-/// Decodes an AliasRow, or nothing at all -- the per-element tolerance behind
-/// `AliasRow.decode`.
-private struct LenientRow: Decodable {
-    let row: AliasRow?
-    init(from decoder: Decoder) throws { row = try? AliasRow(from: decoder) }
 }
 
 struct AliasListEditor: View {
@@ -68,12 +55,6 @@ struct AliasListEditor: View {
     let onChange: (String) -> Void
 
     @State private var rows: [AliasRow] = []
-    @State private var seeded = false
-    /// What the last persist wrote (initially: what was decoded). Anything else in
-    /// `rows` is a real edit -- see the guard in `.onChange(of: rows)`. Without it
-    /// the `onAppear` seed writes on open, marking the option customized when the
-    /// user has touched nothing.
-    @State private var persisted: [AliasRow] = []
     /// The row whose app picker is open; `addingRow` is the picker on the Add
     /// button, which has no row yet.
     @State private var picking: UUID?
@@ -104,17 +85,8 @@ struct AliasListEditor: View {
         .padding(.vertical, 2)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-        .onAppear {
-            if !seeded { rows = AliasRow.decode(json); persisted = rows; seeded = true }
-        }
-        .onChange(of: json) { new in
-            if new.isEmpty && !rows.isEmpty { rows = [] }
-        }
-        .onChange(of: rows) { new in
-            guard new != persisted else { return }   // decoding is not an edit
-            persisted = new
-            onChange(AliasRow.encode(new))
-        }
+        .rowListPersistence(json: json, rows: $rows,
+                            decode: AliasRow.decode, encode: AliasRow.encode, write: onChange)
     }
 
     // MARK: Add
