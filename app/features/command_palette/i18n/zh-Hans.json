@@ -9,5 +9,5 @@
   "chooser.placeholder": "运行命令",
   "empty.title": "没有已启用的命令",
   "empty.subtitle": "请在设置中启用功能",
-  "alert.failed": "命令执行失败: %s"
+  "alert.failed": "命令执行失败：%s"
 }

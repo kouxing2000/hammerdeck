@@ -5,9 +5,9 @@
   "action.main.mnemonic": "D 代表日期 (Date)",
 
   "notify.title": "插入日期/时间",
-  "notify.pickPreset": "请选择一个预设, 或在设置中输入自定义格式",
+  "notify.pickPreset": "请选择一个预设，或在设置中输入自定义格式",
   "alert.needFormat": "请先输入自定义格式",
-  "alert.preview": "预览:  %s",
+  "alert.preview": "预览： %s",
   "error.invalidFormat": "格式无效 -- %s",
   "error.tableFormat": "该格式产生的是表而非文本 (请避免使用 *t)",
 

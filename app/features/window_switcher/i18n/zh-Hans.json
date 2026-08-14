@@ -1,9 +1,9 @@
 {
   "name": "窗口切换器",
-  "description": "可搜索的 Alt-Tab: 跨所有应用切换窗口, 按最近使用排序.",
+  "description": "可搜索的 Alt-Tab: 跨所有应用切换窗口，按最近使用排序.",
 
   "action.main.label": "切换到窗口",
-  "action.main.description": "轻点打开浏览 -- 输入过滤, Enter 切换. 按住, 面板出现后松开则直接跳到上一个窗口. 再按一次向前循环; ⇧Tab 向后步进.",
+  "action.main.description": "轻点打开浏览 -- 输入过滤，Enter 切换. 按住，面板出现后松开则直接跳到上一个窗口. 再按一次向前循环；⇧Tab 向后步进.",
   "action.main.mnemonic": "⌥Tab - 镜像 ⌘Tab, 但用于窗口",
 
   "chooser.title": "切换窗口",

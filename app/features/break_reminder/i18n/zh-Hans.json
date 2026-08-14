@@ -1,13 +1,13 @@
 {
   "name": "休息提醒",
-  "description": "在一段工作时间后提醒你休息眼睛; 感知空闲状态, 并记录每日工作时长统计.",
+  "description": "在一段工作时间后提醒你休息眼睛；感知空闲状态，并记录每日工作时长统计.",
 
   "notify.rest.title": "%d 分钟后休息眼睛",
   "notify.rest.body": "%s 时休息",
-  "alert.worked": "你已经工作了 %d 分钟!",
+  "alert.worked": "你已经工作了 %d 分钟！",
   "dialog.timeToRest": " 该休息了",
-  "info.workedToday": "今日已工作: %s",
-  "info.elapsedToday": "今日已过: %s",
+  "info.workedToday": "今日已工作：%s",
+  "info.elapsedToday": "今日已过：%s",
 
   "action.postpone1": "推迟 1 分钟",
   "action.postpone5": "推迟 5 分钟",
