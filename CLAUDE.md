@@ -240,8 +240,16 @@ swift run         # boots the platform in the native host (the real app)
 lua test/run.lua     # headless platform + feature tests (fake adapter, Homebrew Lua -- fast inner loop)
 scripts/test-lua.sh  # SAME suite on the vendored 5.4.7 (exact embedded engine) -- run before committing Lua / in CI
 scripts/test-swift.sh  # `swift test` to a log, then the FAILING CASE NAMES -- prefer this
-swift test           # integration tests on the REAL bridge (run after Swift/seam changes)
+swift test           # integration tests on the REAL bridge (see below -- NOT only for Swift changes)
 ```
+
+**`swift test` is not only for Swift/seam changes -- a pure-Lua feature can turn
+it red.** Two integration tests read the LIVE on-disk catalog rather than any
+Swift you edited: `testEveryGalleryFeatureHasAPreview` (a feature with no
+`FeatureArchetype` case and no `previewExempt` entry) and
+`testFeaturePageRosterMatchesDeclarations` (a `page` in feature.json with no
+registered provider, or the reverse). CI runs it bare on every push, so run it
+for any new or renamed feature too, not just seam work.
 
 Use `scripts/test-swift.sh` rather than piping `swift test` into a filter. A
 pipeline reports the LAST command's status, so `swift test | grep` exits 0 even
@@ -382,6 +390,15 @@ story and its weighting, the windows-as-anchor thesis, the build order, the
 non-goals): read it BEFORE any positioning, marketing-copy, or
 feature-priority work, and when direction changes, EDIT it -- never drift
 from it silently.
+
+**Strike a finished item in the SAME commit as the work.** Those drafts include
+per-domain action lists (`CODE.md`, `PRODUCT.md`, ...), and "I'll update the list
+after" does not happen -- a stale row misdirects the "what should I do next?"
+answer built on it, which is the one question these lists exist to answer.
+Whoever ships the work is the only
+person holding the context needed to strike it correctly -- delete the row, and
+put anything worth keeping (what shipped differently, what the item got wrong)
+in the same edit.
 
 ## Where a document goes (the repo is going PUBLIC -- this rule is load-bearing)
 

@@ -51,11 +51,12 @@ struct PlacementRow: Identifiable, Equatable, Codable {
         return s
     }
 
+    /// Per-element, so one wrong-typed field costs that preset and not every saved
+    /// snap -- see LenientDecode.swift. Dropping a preset still drops the actions
+    /// derived from it, so a shortcut bound to a mangled record goes quiet; losing
+    /// the whole list would have taken every OTHER snap's shortcut with it.
     static func decode(_ raw: String) -> [PlacementRow] {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("["), let data = trimmed.data(using: .utf8),
-              let rows = try? JSONDecoder().decode([PlacementRow].self, from: data) else { return [] }
-        return rows
+        [PlacementRow].decodeLeniently(fromJSON: raw) ?? []
     }
 }
 
@@ -108,7 +109,6 @@ struct PlacementListEditor: View {
     let bind: (String, Set<String>, String) -> String?
 
     @State private var rows: [PlacementRow] = []
-    @State private var seeded = false
 
     // Common shapes offered as one-tap chips (thirds/quarters/center the built-in
     // half-snaps don't cover). Fractions; tapping appends a normal, bindable snap.
@@ -174,18 +174,16 @@ struct PlacementListEditor: View {
                 if showDesigner { addEditor }
             }
         }
-        .onAppear { if !seeded { rows = PlacementRow.decode(json); seeded = true } }
-        // Reset clears the option -> empty the list. (No seed default, so this is
-        // the only external change worth mirroring.)
-        .onChange(of: json) { new in
-            if new.isEmpty && !rows.isEmpty { rows = [] }
-        }
-        // Persist any binding-driven edit (a name typed but not yet submitted);
-        // structural commits (add/remove) persist AND reload explicitly.
-        .onChange(of: rows) { new in
-            let encoded = PlacementRow.encode(new)
-            if encoded != json { onChange(encoded) }
-        }
+        // Persists any binding-driven edit (a name typed but not yet submitted);
+        // structural commits (add/remove) write AND reload explicitly.
+        //
+        // This used to compare the re-encoded TEXT against `json`, which held only
+        // because PlacementRow persists its id and so round-trips byte-identically.
+        // A hand-edited value differing in key order or whitespace would have read
+        // as an edit and rewritten itself on open; comparing decoded rows does not.
+        .rowListPersistence(json: json, rows: $rows,
+                            decode: PlacementRow.decode, encode: PlacementRow.encode,
+                            write: onChange)
     }
 
     private func addShape(_ s: Shape) {
@@ -356,8 +354,10 @@ struct PlacementListEditor: View {
     }
 
     // Persist the current rows AND re-register the feature so the added/removed/
-    // renamed preset's bindable action appears/updates live. Persist first (so
-    // reload reads the fresh value), then reload.
+    // renamed preset's bindable action appears/updates live. Writes explicitly
+    // rather than leaving it to the persistence hook: that hook runs after the view
+    // update, too late to order `reload()` against, and the reload re-reads the
+    // stored value.
     private func commit() {
         onChange(PlacementRow.encode(rows))
         reload()

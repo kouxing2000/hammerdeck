@@ -56,11 +56,11 @@ struct SiteRow: Identifiable, Equatable, Codable {
     static func decode(_ raw: String) -> [SiteRow] {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("[") {
-            if let data = trimmed.data(using: .utf8),
-               let rows = try? JSONDecoder().decode([SiteRow].self, from: data) {
-                return rows
-            }
-            return []
+            // Per-element, so one wrong-typed field costs that site and not the
+            // list -- see LenientDecode.swift. `nil` here means the text opened
+            // with "[" but is not a decodable array at all; there is no legacy
+            // config in that shape, so it yields no sites.
+            return [SiteRow].decodeLeniently(fromJSON: trimmed) ?? []
         }
         return decodeLegacy(trimmed)
     }
@@ -102,10 +102,6 @@ struct SiteListEditor: View {
     /// so a private site's address is never on screen at a glance -- only while
     /// its editor is open AND the user asked for it.
     @State private var revealed: Set<UUID> = []
-    @State private var seeded = false
-    /// What the last persist wrote (initially: what was decoded). Anything else in
-    /// `rows` is a real edit -- see the guard in `.onChange(of: rows)`.
-    @State private var persisted: [SiteRow] = []
     /// An edit is stored but the catalog has not re-registered yet, so a site's
     /// menu row / label may still be missing or stale.
     @State private var dirty = false
@@ -135,33 +131,24 @@ struct SiteListEditor: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
         }
-        .onAppear {
-            if !seeded { rows = SiteRow.decode(json); persisted = rows; seeded = true }        }
-        .onChange(of: json) { new in
-            if new.isEmpty && !rows.isEmpty { rows = [] }
-        }
-        .onChange(of: rows) { new in
-            // DECODING IS NOT AN EDIT. For a config written before ids, decode
-            // MINTS one per row, so `SiteRow.encode(rows)` already differs from
-            // `json` with the user having touched nothing -- and comparing against
-            // `json` here meant merely OPENING this page rewrote stored config,
-            // flipping every site's action id from its URL slug to the new UUID and
-            // silently orphaning any shortcut bound to the slug. So compare against
-            // what was last persisted (initially: what was decoded), which a mint
-            // equals and a real edit never does.
-            guard new != persisted else { return }
-            persisted = new
-            onChange(SiteRow.encode(new))
-            dirty = true
-        }
+        // Decoding is NOT an edit here in the sharpest way of the three editors:
+        // decode MINTS an id for a config written before sites became actions, so
+        // the re-encoded text differs from `json` with the user having touched
+        // nothing. Comparing text would rewrite stored config on open, flipping
+        // every site's action id and orphaning shortcuts bound to the old one --
+        // which is why the shared modifier compares decoded ROWS.
+        .rowListPersistence(json: json, rows: $rows,
+                            decode: SiteRow.decode, encode: SiteRow.encode,
+                            write: onChange, onEdit: { dirty = true })
     }
 
     /// Persist the rows AND re-register, so an added / removed / renamed site's
-    /// menu row follows immediately. Persist FIRST -- the reload re-reads the
-    /// stored value. Called only from user actions (never from `.onChange`, which
-    /// would publish a store change from inside a view update).
+    /// menu row follows immediately. Writes explicitly rather than leaving it to
+    /// the persistence hook: that hook runs after the view update, which is too
+    /// late to order `reload()` against, and the reload re-reads the stored value.
+    /// Called only from user actions (never from `.onChange`, which would publish a
+    /// store change from inside a view update).
     private func commit() {
-        persisted = rows
         onChange(SiteRow.encode(rows))
         dirty = false
         reload()

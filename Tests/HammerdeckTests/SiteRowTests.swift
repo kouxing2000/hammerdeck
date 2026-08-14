@@ -8,6 +8,20 @@ import XCTest
 // silently corrupts stored config. No bridge needed -- SiteRow is plain Swift.
 final class SiteRowTests: XCTestCase {
 
+    // One wrong-typed field used to throw the WHOLE array away: the editor then
+    // showed no sites, and the user's next edit persisted that emptiness over
+    // every site that was fine. The value is hand-editable and has no undo.
+    func testOneBadRecordDoesNotWipeTheRest() {
+        let rows = SiteRow.decode("""
+        [{"name":"Mail","url":"mail.com","app":"yes"},
+         {"name":"Docs","url":"docs.com"},
+         "not even an object",
+         {"name":"Chat","url":"chat.com"}]
+        """)
+        XCTAssertEqual(rows.map(\.name), ["Docs", "Chat"],
+                       "a wrong-typed field and a scalar element are skipped individually")
+    }
+
     // `incognito` defaults to false here on purpose: every existing assertion then
     // also pins "a site is not private unless it says so" -- the one default in this
     // struct where a wrong value would silently downgrade a privacy promise.
