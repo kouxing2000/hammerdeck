@@ -1965,14 +1965,14 @@ private struct AddRuleForm: View {
     }
 }
 
-/// The app-target chooser shared by the minimize/hide/quit + move-to-display
-/// effects (and the frontmost-app trigger value). Empty search shows the RUNNING
-/// apps as quick options (the common target); typing searches ALL installed apps
-/// (Spotlight via AppCatalog -- so a rule can target an app that isn't running
-/// yet), storing the app's BUNDLE ID as the canonical match key and its display
-/// name for the readable rule sentence. Also offers "the app from the trigger"
-/// (the sentinel) when the trigger publishes one, and a free-text fallback for an
-/// app Spotlight can't see -- that path stores a name only (engine matches by name).
+/// The app-target chooser for the minimize/hide/quit + move-to-display effects
+/// (and the frontmost-app trigger value). The searchable list itself is the
+/// shared `InstalledAppPicker`; what lives here is the rules-only chrome around
+/// it -- "the app from the trigger" (the sentinel) when the trigger publishes
+/// one, the warning/hint line, and the free-text fallback for an app the scan
+/// can't see (that path stores a NAME only, which the engine matches by name).
+/// A picked app stores its BUNDLE ID as the canonical match key plus its display
+/// name for the readable rule sentence.
 private struct AppTargetChooser: View {
     @Binding var name: String        // display name | sentinel | "" (matches the TokenPill text)
     @Binding var bundleId: String    // canonical id; "" for the sentinel or a manual name
@@ -1982,18 +1982,6 @@ private struct AppTargetChooser: View {
     let warning: String?             // shown in place of the hint when non-nil
     let hint: String
 
-    @State private var installed: [(name: String, bundleId: String)] = []
-    @State private var running: [(name: String, bundleId: String)] = []
-    @State private var query = ""
-    @State private var loaded = false   // installed list finished gathering
-
-    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
-    private var searching: Bool { !trimmed.isEmpty }
-    // Empty search -> running apps (quick); typing -> all installed, filtered.
-    private var rows: [(name: String, bundleId: String)] {
-        searching ? installed.filter { $0.name.localizedCaseInsensitiveContains(trimmed) } : running
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if triggerProvidesApp {
@@ -2002,60 +1990,15 @@ private struct AppTargetChooser: View {
                 }
                 Divider()
             }
-            TextField(Strings.t("rules.searchApps", default: "Search apps"), text: $query)
-                .textFieldStyle(.roundedBorder)
-
-            if searching && !loaded {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(Strings.t("rules.loadingApps", default: "Finding apps…"))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } else if rows.isEmpty {
-                // Searching with no match -> let the typed text stand as a literal name
-                // (a not-yet-installed app / Spotlight off). Empty with nothing running
-                // -> nudge to search.
-                if searching {
-                    Button { name = trimmed; bundleId = "" } label: {
-                        Text(String(format: Strings.t("rules.useTypedApp", default: "Use \u{201C}%@\u{201D} as a name"), trimmed))
-                            .font(.caption)
-                    }.buttonStyle(.plain)
-                } else {
-                    Text(Strings.t("rules.typeToSearchApps", default: "Type to search all installed apps."))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } else {
-                if !searching {
-                    Text(Strings.t("rules.runningAppsHeader", default: "Running -- type to search all installed"))
-                        .font(.caption2).foregroundStyle(.secondary).textCase(.uppercase)
-                }
-                ScrollView {
-                    // Lazy so a long installed-search list only resolves icons for the
-                    // rows actually on screen.
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(rows, id: \.bundleId) { app in
-                            appRow(app, selected: bundleId == app.bundleId) {
-                                name = app.name; bundleId = app.bundleId; query = ""
-                            }
-                        }
-                    }
-                }
-                // A ScrollView in a popover has NO intrinsic height -- with only a
-                // maxHeight it collapses to zero and the rows vanish (the bug that hid
-                // the running apps). Pin a definite height: fit the content, capped so
-                // a long installed-search list scrolls.
-                .frame(height: min(CGFloat(rows.count) * 28 + 4, 240))
-            }
+            InstalledAppPicker(
+                selectedBundleId: bundleId,
+                onPick: { pickedName, pickedId in name = pickedName; bundleId = pickedId },
+                onUseTypedName: { typed in name = typed; bundleId = "" })
 
             Text(warning ?? hint)
                 .font(.caption)
                 .foregroundStyle(warning != nil ? Color.orange : Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-        .task {
-            running = AppCatalog.runningApps()       // instant -- the quick options
-            installed = AppCatalog.installedApps()
-            loaded = true
         }
     }
 
@@ -2068,26 +2011,6 @@ private struct AppTargetChooser: View {
                     .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.35))
                 Text(label).foregroundStyle(.primary)
                 Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.vertical, 3)
-    }
-
-    // An app row: the app's icon, its name, and a trailing check when chosen.
-    @ViewBuilder private func appRow(_ app: (name: String, bundleId: String),
-                                     selected: Bool, _ act: @escaping () -> Void) -> some View {
-        Button(action: act) {
-            HStack(spacing: 8) {
-                if let icon = AppCatalog.icon(forBundleId: app.bundleId) {
-                    Image(nsImage: icon).resizable().frame(width: 16, height: 16)
-                } else {
-                    Image(systemName: "app").frame(width: 16, height: 16).foregroundStyle(.secondary)
-                }
-                Text(app.name).foregroundStyle(.primary)
-                Spacer(minLength: 0)
-                if selected { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
             }
             .contentShape(Rectangle())
         }

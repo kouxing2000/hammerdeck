@@ -4,6 +4,9 @@
 
   "action.main.mnemonic": "A——App（应用）",
 
+  "option.aliases.label": "别名",
+  "option.aliases.hint": "给应用起可以直接输入的简称——比如用「vsc」找到 Visual Studio Code。",
+
   "chooser.placeholder": "启动应用",
   "empty.title": "未找到应用",
   "empty.subtitle": "应用程序文件夹中没有找到任何应用",

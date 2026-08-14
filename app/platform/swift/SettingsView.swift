@@ -779,10 +779,7 @@ private struct OptionEditor: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 editor
-                // siteList / placementList manage their own rows and start empty
-                // (no meaningful default), so a blanket reset would confuse -- no reset.
-                if store.isOptionOverridden(featureId, opt)
-                    && opt.type != "siteList" && opt.type != "placementList" { resetButton }
+                if store.isOptionOverridden(featureId, opt) && !opt.isRowEditor { resetButton }
             }
             hintView
             actionButton
@@ -798,7 +795,7 @@ private struct OptionEditor: View {
                 editor
                 hintView
                 actionButton
-                if store.isOptionOverridden(featureId, opt) && opt.type != "placementList" {
+                if store.isOptionOverridden(featureId, opt) && !opt.isRowEditor {
                     Button {
                         store.resetOption(featureId, opt)
                     } label: {
@@ -975,6 +972,17 @@ private struct OptionEditor: View {
                     // picks those moments (never per keystroke).
                     reload: { store.reload() }
                 )
+            }
+        case "aliasList":
+            VStack(alignment: .leading, spacing: 4) {
+                if !opt.collapsible { Text(opt.label) }
+                // No `reload`: an alias creates no action and renames nothing, so
+                // the catalog needs no re-register -- the feature re-reads the
+                // option on every open.
+                AliasListEditor(
+                    json: store.optionValue(featureId, opt) as? String
+                        ?? (opt.defaultValue as? String ?? ""),
+                    onChange: { store.setOptionValue(featureId, opt, $0) })
             }
         case "placementList":
             VStack(alignment: .leading, spacing: 4) {
