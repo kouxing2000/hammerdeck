@@ -1121,6 +1121,14 @@ function adapter.launchOrFocusApp(bundleId)
     return true
 end
 
+fake.installedAppsList  = {}   -- the fake "disk": { { name=, bundleId=, path= }, ... }
+fake.installedAppsScans = 0    -- enumerations run (freshness assertions)
+-- Installed-app enumeration: synchronous, like the real seam's directory scan.
+function adapter.installedApps()
+    fake.installedAppsScans = fake.installedAppsScans + 1
+    return fake.installedAppsList
+end
+
 fake.browserTabs   = {}   -- url strings (the fake browser's open tabs)
 fake.focusedTabs   = {}   -- recorded focused tab urls
 fake.openedNewTabs = {}   -- recorded fallback opens
@@ -1566,6 +1574,8 @@ function fake.reset()
     fake.frontmostId   = ""
     fake.runningApps        = {}
     fake.runningAppInfoList = {}
+    fake.installedAppsList  = {}
+    fake.uninstalledApps    = {}
     fake.appearance    = "light"
     fake.power         = "ac"
     fake.axTrusted     = true
@@ -1601,6 +1611,7 @@ function fake.reset()
     fake.axSettingsOpens = 0
     fake.activatedApps = {}
     fake.launchedApps  = {}
+    fake.installedAppsScans = 0
     fake.focusedTabs   = {}
     fake.openedNewTabs = {}
     fake.tabJumps      = {}

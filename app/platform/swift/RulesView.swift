@@ -2054,7 +2054,7 @@ private struct AppTargetChooser: View {
         }
         .task {
             running = AppCatalog.runningApps()       // instant -- the quick options
-            installed = await AppCatalog.installedApps()
+            installed = AppCatalog.installedApps()
             loaded = true
         }
     }

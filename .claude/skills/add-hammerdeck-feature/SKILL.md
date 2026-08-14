@@ -128,6 +128,7 @@ capability. The map is `manifest.CAPABILITY_METHODS` in `app/platform/lua/manife
 | `power` | `systemSleep`, `lockScreen`, `displaySleep`, `startScreensaver` |
 | `browser` | `browserListTabs`, `browserFocusTab`, `browserActiveURL`, `extractFavicons`, `focusBrowserTab`, `focusSafariTab`, `openSiteApp`, `openSite` |
 | `files` | `homeDir`, `fileRead`, `fileWrite`, `fileAppend`, `fileExists`, `mkdir`, `removeSubdir` |
+| `apps` | `installedApps` |
 | `commands` | ADDITIVE -- *injects* `ctx.commands()` / `ctx.runCommand()` (the command-palette cross-feature reach). Rare. |
 
 `dataDir()` / `cacheDir()` are ungated -- that's the feature's own sandbox.

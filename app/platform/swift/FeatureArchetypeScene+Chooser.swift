@@ -17,9 +17,9 @@ struct ChooserRow {
 // enter) is shared across features, but the CONTENT is per-feature (window names
 // vs clipboard entries vs commands), passed in as a `ChooserSample`. So a new
 // chooser feature contributes ~3 lines of sample data, not a whole animation.
-// Six features ride this one scene (window_switcher, clipboard_history,
-// command_palette, tab_switcher, site_switcher, text_actions). Move the sample
-// into the Lua manifest once the shape sticks.
+// Seven features ride this one scene (app_launcher, window_switcher,
+// clipboard_history, command_palette, tab_switcher, site_switcher,
+// text_actions). Move the sample into the Lua manifest once the shape sticks.
 
 /// The per-feature content a chooser scene renders: a query placeholder and a
 /// few sample rows. This is the ONLY thing that differs between chooser features
@@ -27,6 +27,16 @@ struct ChooserRow {
 struct ChooserSample {
     let query: String
     let rows: [ChooserRow]
+
+    /// app_launcher: launch/focus any installed app -- rows from a plain
+    /// directory scan, no Spotlight indexing.
+    static let apps = ChooserSample(
+        query: "launch an app...",
+        rows: [
+            .init(glyph: "safari",   primary: "Safari",   secondary: "Applications"),
+            .init(glyph: "terminal", primary: "Terminal", secondary: "Utilities"),
+            .init(glyph: "hammer",   primary: "Xcode",    secondary: "Applications"),
+        ])
 
     /// window_switcher: same app, different windows -- what Cmd-Tab collapses.
     static let windows = ChooserSample(
@@ -189,6 +199,7 @@ struct ChooserArchetypeScene: View {
 extension ChooserSample {
     static func named(_ name: String?) -> ChooserSample? {
         switch name {
+        case "apps": return .apps
         case "windows": return .windows
         case "clipboard": return .clipboard
         case "commands": return .commands

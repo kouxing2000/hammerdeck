@@ -124,6 +124,10 @@ local CAPABILITY_METHODS = {
     -- homeDir() is the door to the user's documents.
     files = { "homeDir", "fileRead", "fileWrite", "fileAppend", "fileExists",
               "mkdir", "removeSubdir" },
+    -- Enumerates every installed application -- an inventory read outside any
+    -- feature's dataDir, and what software a user has installed is
+    -- fingerprinting-relevant, so it is declared, like the browser reads.
+    apps = { "installedApps" },
 }
 local KNOWN_CAPABILITIES = { commands = true }
 for cap in pairs(CAPABILITY_METHODS) do KNOWN_CAPABILITIES[cap] = true end
