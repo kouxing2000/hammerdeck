@@ -213,8 +213,16 @@ doesn't match the scanner's pattern and ships unchecked.
 Declare `options = { ... }`; the SwiftUI form is generated from them. Valid `type`
 values: `bool`, `int` (with `min`/`max`), `string` (with `multiline`, `collapsible`),
 `enum` (with `values` + parallel `labels`), `time`, `appList`, `siteList`,
-`placementList`, `secret`. Read live values with `ctx.opt(key)` (and `ctx.secret(key)`
-for secrets) -- never cache them.
+`placementList`, `aliasList`, `secret`. Read live values with `ctx.opt(key)` (and
+`ctx.secret(key)` for secrets) -- never cache them.
+
+- The last three are **row editors**: each renders a bespoke SwiftUI list into one
+  JSON-array option string, and each is answered by `OptionInfo.isRowEditor` (they
+  start empty, so they offer no "reset to default"). Adding one means the type in
+  `manifest.VALID_OPTION_TYPES`, a `case` in `SettingsView`'s `editor` switch, the
+  editor view, `isRowEditor`, this list, and a decoder unit test next to
+  `SiteRowTests` / `AliasRowTests` -- the decoder drives what the user SEES and
+  re-encodes on edit, so a regression there silently rewrites stored config.
 
 - **enum**: `values = {...}`, `labels = {...}` -- `manifest.lua` enforces that `labels`
   is the same length as `values`, but NOT that `default` is one of them; keep it in the

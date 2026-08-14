@@ -56,6 +56,50 @@ return {
         c.userSelect(0)   -- dismiss (Escape)
         fake.uninstalledApps["com.gone"] = nil
 
+        -- aliases: an app's short names ride the subText -- the only field besides
+        -- the title the panel filter reads, so searchable and visible are the same
+        -- thing here.
+        fake.settings["hammerdeck.opt.app_launcher.aliases"] =
+            '[{"bundleId":"com.apple.dt.Xcode","aliases":["xc","ide"]},'
+            .. '{"bundleId":"com.apple.dt.Xcode","aliases":["build"]}]'
+        fake.pressHotkey("a", { "cmd", "alt", "ctrl" })
+        local function rowFor(bundleId)
+            for _, ch in ipairs(c.choices) do
+                if ch.bundleId == bundleId then return ch end
+            end
+        end
+        ok(rowFor("com.apple.dt.Xcode")
+            and rowFor("com.apple.dt.Xcode").subText == "xc · ide · build",
+            "rows sharing a bundle id merge their aliases onto one line")
+        ok(rowFor("com.apple.Safari") and rowFor("com.apple.Safari").subText == nil,
+            "an app with no alias keeps its one-line row")
+        c.userType("ide")   -- appears in no app NAME on the fake disk
+        c.userSelect(1)
+        ok(fake.launchedApps[#fake.launchedApps] == "com.apple.dt.Xcode",
+            "typing an alias finds an app whose name does not contain it")
+
+        -- subText is a SEARCHED field, so it must carry the aliases and NOTHING
+        -- else: a label in front of them ("alias: ...") puts its own letters in the
+        -- index, and every aliased row then matches "li", "as", "ia"... Xcode is
+        -- aliased AND outranks Linear on frecency here, so it would win the row a
+        -- "li" search is reaching for.
+        fake.installedAppsList[#fake.installedAppsList + 1] =
+            { name = "Linear", bundleId = "com.linear", path = "/Applications/Linear.app" }
+        fake.pressHotkey("a", { "cmd", "alt", "ctrl" })
+        c.userType("li")
+        c.userSelect(1)
+        ok(fake.launchedApps[#fake.launchedApps] == "com.linear",
+            "an alias line adds no searchable text of its own")
+
+        -- a hand-mangled option value must not take the launcher down with it
+        fake.settings["hammerdeck.opt.app_launcher.aliases"] = "not json at all"
+        fake.pressHotkey("a", { "cmd", "alt", "ctrl" })
+        local anySub = false
+        for _, ch in ipairs(c.choices) do if ch.subText then anySub = true end end
+        ok(not anySub, "an unparseable alias option degrades to no aliases, not a crash")
+        c.userSelect(0)
+        fake.settings["hammerdeck.opt.app_launcher.aliases"] = nil
+
         -- empty disk: a single non-selectable info row, not a blank panel
         fake.installedAppsList = {}
         fake.pressHotkey("a", { "cmd", "alt", "ctrl" })

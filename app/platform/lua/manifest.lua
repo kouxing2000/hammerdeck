@@ -80,7 +80,7 @@ manifest.API_VERSION = 1
 -- declare a plaintext `default` (enforced below).
 local VALID_OPTION_TYPES = {
     bool = true, int = true, string = true, enum = true, time = true, appList = true,
-    siteList = true, placementList = true, secret = true,
+    siteList = true, placementList = true, aliasList = true, secret = true,
 }
 
 -- CAPABILITIES -- what a feature is allowed to reach, declared up front.

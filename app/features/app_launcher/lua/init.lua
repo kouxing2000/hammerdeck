@@ -8,8 +8,38 @@
 -- so every open lists what is on disk right now -- no cache to go stale.
 -- Most-launched apps sort first (the command_palette frecency pattern, keyed
 -- by bundle id).
+--
+-- Aliases (the `aliases` option) let you type a short name for an app -- "vsc"
+-- for Visual Studio Code, "finder" for 访达 on a Chinese-locale Mac. They ride
+-- the row's subText because that is the only field the panel filter searches
+-- besides the title, so being searchable and being visible are the same thing
+-- here.
 
 local json = require("platform.json")
+
+-- bundleId -> "vsc · code", read from the aliasList option (a JSON array of
+-- { bundleId, aliases } written by AliasListEditor). Rows sharing a bundle id
+-- MERGE rather than overwrite, so a duplicate row costs nothing.
+---@param ctx Ctx
+---@return table<string, string>
+local function aliasIndex(ctx)
+    local raw = ctx.opt("aliases")
+    if type(raw) ~= "string" or raw == "" then return {} end
+    local rows = json.decode(raw)
+    if type(rows) ~= "table" then return {} end
+    local out = {}
+    for _, r in ipairs(rows) do
+        if type(r) == "table" and type(r.bundleId) == "string" and r.bundleId ~= ""
+                and type(r.aliases) == "table" then
+            for _, a in ipairs(r.aliases) do
+                if type(a) == "string" and a ~= "" then
+                    out[r.bundleId] = out[r.bundleId] and (out[r.bundleId] .. " · " .. a) or a
+                end
+            end
+        end
+    end
+    return out
+end
 
 -- counts: bundleId -> launch count. Tagged as a JSON object so it never
 -- serializes as [] -- even empty, even if an older build persisted "[]".
@@ -40,7 +70,7 @@ end
 ---@param ctx Ctx
 ---@param apps { name: string, bundleId: string, path: string }[]
 local function buildChoices(ctx, apps)
-    local counts, rows = loadCounts(ctx), {}
+    local counts, aliases, rows = loadCounts(ctx), aliasIndex(ctx), {}
     for _, a in ipairs(apps) do
         rows[#rows + 1] = { name = a.name, bundleId = a.bundleId,
                             _count = counts[a.bundleId] or 0 }
@@ -55,8 +85,13 @@ local function buildChoices(ctx, apps)
     end)
     local choices = {}
     for _, a in ipairs(rows) do
+        -- The bare aliases, with NO label in front of them: subText is a SEARCHED
+        -- field, so a prefix like "alias: " would put its own letters in the index
+        -- and make every aliased row match "li", "as", "ia"...  -- the more aliases
+        -- you set, the worse the launcher would get.
         choices[#choices + 1] = {
             text     = a.name,
+            subText  = aliases[a.bundleId],
             image    = ctx.appIcon(a.bundleId),
             bundleId = a.bundleId,   -- Lua-side only; carried back on select
         }
@@ -69,6 +104,9 @@ local function openLauncher(ctx)
     local st = ctx.perEnable(function() return { chooser = nil } end)
     if not st.chooser then
         st.chooser = ctx.chooser {
+            -- The alias line lives in subText, so searching it IS searching the
+            -- aliases -- the panel filter reads no other field.
+            searchSubText = true,
             onSelect = function(choice)
                 if not choice or not choice.bundleId then return end  -- Esc / info row
                 if ctx.launchOrFocusApp(choice.bundleId) then
@@ -106,6 +144,11 @@ return {
     -- capabilities (["apps"]) live in feature.json, the declarative file.
     defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "a" },
     mnemonic = "A for App",
+    options = {
+        { key = "aliases", type = "aliasList", default = "",
+          label = "Aliases",
+          hint = "Short names you can type to find an app -- \"vsc\" for Visual Studio Code." },
+    },
     ---@param ctx Ctx
     action = function(ctx) openLauncher(ctx) end,
 }

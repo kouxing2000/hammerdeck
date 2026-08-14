@@ -57,6 +57,16 @@ struct OptionInfo: Identifiable {
     let collapsible: Bool   // render the editor inside a collapsed disclosure (keeps tall controls tidy)
     var id: String { key }
 
+    /// A row-editor type (`siteList` / `placementList` / `aliasList`): it manages
+    /// its own rows and starts empty, so there is no meaningful default for a
+    /// "reset" to return to -- resetting one just discards the list. Every reset
+    /// affordance asks this, so the standard and collapsible layouts cannot drift
+    /// apart (they had, and a collapsible row editor would have offered a reset
+    /// that silently emptied it).
+    var isRowEditor: Bool {
+        type == "siteList" || type == "placementList" || type == "aliasList"
+    }
+
     init?(_ dict: [String: Any]) {
         guard let key = dict["key"] as? String, let type = dict["type"] as? String else { return nil }
         self.key = key
