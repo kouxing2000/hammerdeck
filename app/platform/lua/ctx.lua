@@ -404,6 +404,10 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
 
     -- apps (Phase 3 will namespace these into ctx.app.*) -----------------------
     function ctx.appIcon(bundleID)  return adapter.appIcon(bundleID) end
+    -- Installed applications ({name, bundleId, path} rows) by a plain directory
+    -- scan -- never Spotlight. Synchronous; gated by the "apps" capability.
+    ---@return { name: string, bundleId: string, path: string }[]
+    function ctx.installedApps() return adapter.installedApps() end
     function ctx.frontmostApp()     return adapter.frontmostApp() end
     -- { name, bundleId } of the frontmost app -- the stable bundle id lets a
     -- feature identify the focused window without the locale-sensitive name.

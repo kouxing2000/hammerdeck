@@ -231,6 +231,12 @@ func capabilityPresentation(_ c: String) -> CapabilityInfo? {
             symbol: "folder",
             detail: Strings.t("cap.files.detail",
                               default: "Reads and writes files outside its own storage folder."))
+    case "apps":
+        return CapabilityInfo(
+            label: Strings.t("cap.apps", default: "Installed apps"),
+            symbol: "square.grid.3x3",
+            detail: Strings.t("cap.apps.detail",
+                              default: "Sees which applications are installed on this Mac."))
     case "commands":
         return CapabilityInfo(
             label: Strings.t("cap.commands", default: "Other features"),
@@ -258,7 +264,8 @@ func capabilityInfo(_ c: String) -> CapabilityInfo {
 /// Declaration order is alphabetical in feature.json; show them in a stable
 /// severity-ish order instead, so the reach that matters most reads first.
 func sortedCapabilities(_ caps: [String]) -> [String] {
-    let rank = ["input": 0, "browser": 1, "network": 2, "files": 3, "power": 4, "commands": 5]
+    let rank = ["input": 0, "browser": 1, "network": 2, "files": 3, "apps": 4,
+                "power": 5, "commands": 6]
     return caps.sorted { (rank[$0] ?? 99, $0) < (rank[$1] ?? 99, $1) }
 }
 

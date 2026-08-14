@@ -673,6 +673,8 @@
   "cap.browser.detail": "读取你打开的标签页 -- 包括标题和网址 -- 并可在其间切换.",
   "cap.files": "文件",
   "cap.files.detail": "读写自身存储目录以外的文件.",
+  "cap.apps": "已安装应用",
+  "cap.apps.detail": "可以查看这台 Mac 上安装了哪些应用。",
   "cap.commands": "其他功能",
   "cap.commands.detail": "可以列出并运行你已启用的其他功能的操作.",
   "cap.unknown.detail": "一项额外的能力.",

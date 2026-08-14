@@ -1,0 +1,11 @@
+{
+  "name": "应用启动器",
+  "description": "用一个可搜索面板启动或切换到任意已安装应用——直接扫描磁盘，不依赖聚焦（Spotlight）索引。",
+
+  "action.main.mnemonic": "A——App（应用）",
+
+  "chooser.placeholder": "启动应用",
+  "empty.title": "未找到应用",
+  "empty.subtitle": "应用程序文件夹中没有找到任何应用",
+  "alert.launchFailed": "无法启动 %s"
+}

@@ -713,6 +713,15 @@ function adapter.appIcon(bundleID)
     return native.app_icon(bundleID)
 end
 
+-- Installed .app bundles, by a plain directory scan in the seam (deliberately
+-- NOT Spotlight -- must keep working when indexing is off; the roots live on
+-- Native+System.scanInstalledApps). Synchronous: a local FileManager walk,
+-- ~120ms cold / ~1ms warm.
+---@return { name: string, bundleId: string, path: string }[]
+function adapter.installedApps()
+    return native.installed_apps()
+end
+
 -- Bare names of feature modules found in `dir` (the registry prefixes
 -- "features." and loads them). Platform-only -- not exposed through ctx.
 function adapter.discoverFeatures(dir)

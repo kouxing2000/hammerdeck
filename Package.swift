@@ -66,6 +66,7 @@ let package = Package(
                 "loader.lua",
                 "i18n",                  // localization catalogs (loaded at runtime by path)
                 "platform/lua",
+                "features/app_launcher",
                 "features/bing_daily",
                 "features/break_reminder",
                 "features/clipboard_history",

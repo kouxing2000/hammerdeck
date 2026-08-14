@@ -237,6 +237,8 @@ final class Native {
             "mouse_position": { L in MainActor.assumeIsolated { Native.shared.mousePosition(L) } },
             "set_mouse_position": { L in MainActor.assumeIsolated { Native.shared.setMousePosition(L) } },
             "app_icon":     { L in MainActor.assumeIsolated { Native.shared.appIcon(L) } },
+            // installed-app inventory (plain directory scan -- no Spotlight)
+            "installed_apps": { L in MainActor.assumeIsolated { Native.shared.installedApps(L) } },
             // platform: discover feature modules on disk
             "discover_features": { L in MainActor.assumeIsolated { Native.shared.discoverFeatures(L) } },
             // platform: the user's enabled macOS system shortcuts (read-only)

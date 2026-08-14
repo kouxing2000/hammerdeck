@@ -419,6 +419,63 @@ extension Native {
         return 1
     }
 
+    // installed_apps() -> [{name, bundleId, path}]: every installed .app
+    // bundle, by PLAIN DIRECTORY SCAN -- deliberately NOT
+    // Spotlight/NSMetadataQuery, so it keeps working when indexing is disabled
+    // or broken (the reason app_launcher exists). Synchronous on purpose: a
+    // local FileManager walk, measured ~120ms cold / ~1ms warm, not the
+    // cross-process blocking the bounded-wait rule is about. The host's
+    // AppCatalog.installedApps() wraps this same scan -- one enumerator.
+    func installedApps(_ L: OpaquePointer?) -> Int32 {
+        let apps = Self.scanInstalledApps()
+        lua_createtable(L, Int32(apps.count), 0)
+        for (i, a) in apps.enumerated() {
+            lua_createtable(L, 0, 3)
+            lua_pushstring(L, a.name);     lua_setfield(L, -2, "name")
+            lua_pushstring(L, a.bundleId); lua_setfield(L, -2, "bundleId")
+            lua_pushstring(L, a.path);     lua_setfield(L, -2, "path")
+            lua_rawseti(L, -2, lua_Integer(i + 1))
+        }
+        return 1
+    }
+
+    /// FileManager walk of the standard install roots, one subfolder level deep
+    /// (Utilities, vendor folders). Entries are visited sorted with
+    /// /Applications first, so dedupe keeps the user-visible copy of an app
+    /// that exists in two roots. Names come from Finder's display name (the
+    /// same derivation AppCatalog uses everywhere), so the launcher and the
+    /// host's app pickers agree on what an app is called. Pure helper.
+    nonisolated static func scanInstalledApps()
+            -> [(name: String, bundleId: String, path: String)] {
+        let fm = FileManager.default
+        let roots = ["/Applications", "/System/Applications",
+                     NSHomeDirectory() + "/Applications"]
+        var seen = Set<String>()
+        var out: [(name: String, bundleId: String, path: String)] = []
+        func add(_ path: String) {
+            guard let b = Bundle(path: path), let bid = b.bundleIdentifier,
+                  !seen.contains(bid) else { return }
+            let name = AppCatalog.cleanAppName(fm.displayName(atPath: path))
+            seen.insert(bid)
+            out.append((name, bid, path))
+        }
+        for root in roots {
+            guard let entries = try? fm.contentsOfDirectory(atPath: root) else { continue }
+            for e in entries.sorted() where !e.hasPrefix(".") {
+                let p = root + "/" + e
+                if e.hasSuffix(".app") {
+                    add(p)
+                } else {
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: p, isDirectory: &isDir), isDir.boolValue,
+                          let subs = try? fm.contentsOfDirectory(atPath: p) else { continue }
+                    for s in subs.sorted() where s.hasSuffix(".app") { add(p + "/" + s) }
+                }
+            }
+        }
+        return out
+    }
+
     // extract_favicons(outDir, domains, cb): pull REAL site icons from
     // Chrome's local Favicons sqlite DB (the donor's extract_favicons.py,
     // ported to Swift -- no python). The DB is copied first (Chrome holds a
