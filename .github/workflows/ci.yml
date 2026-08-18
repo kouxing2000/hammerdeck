@@ -15,7 +15,15 @@ name: CI
 
 on:
   push:
-    branches: [master]   # not tags -- release.yml's package.sh already gates v* tags
+    # EVERY branch (not tags -- release.yml's package.sh already gates v* tags):
+    # feature/agent branches need the same per-commit verify as master, and a
+    # remote (Linux) coding session cannot run the macOS half locally -- this
+    # run IS its real verify. The concurrency group below collapses rapid
+    # successive pushes per branch. Caveat, accepted: a branch that also has an
+    # open PR runs twice (push + pull_request are different concurrency
+    # groups) -- rare for a solo repo, and keeping pull_request is what gives
+    # fork PRs their CI once the repo is public.
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
