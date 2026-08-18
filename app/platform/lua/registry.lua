@@ -35,6 +35,8 @@ local features = {}   -- id -> manifest
 local bound    = {}   -- id -> { ctx, scope } (when enabled)
 local catalog  = {}   -- the module-name list, remembered so reload() can re-run it
 local discoverDir = nil   -- when set, the catalog is re-scanned from disk on reload
+local extensionsDir = nil -- resolved hammerdeck.extensionsDir (user extensions root);
+                          -- re-resolved from the setting on every loadExtensions()
 
 -- Quarantine bookkeeping: a broken plugin must never take the whole app down.
 local loadFailures  = {}   -- list of { source, id?, error } -- never registered
@@ -67,11 +69,15 @@ local META_FIELDS = {
     "capabilities",
 }
 
---- Read <appdir>/features/<id>/feature.json, or nil if absent. Read with plain
---- io (like the module loader / require), NOT via the adapter seam: feature.json
---- is a co-located build-time asset, read once at feature-load time.
-local function readFeatureMeta(id)
-    local path = require("loader").appdir .. "/features/" .. id .. "/feature.json"
+--- Read the feature's co-located feature.json, or nil if absent. `baseDir` is
+--- the feature's own folder -- defaults to the built-in catalog location
+--- (<appdir>/features/<id>); a user EXTENSION passes its folder under the
+--- extensions root instead (m.extensionDir, set by registry.load). Read with
+--- plain io (like the module loader / require), NOT via the adapter seam:
+--- feature.json is a co-located build-time asset, read once at feature-load time.
+local function readFeatureMeta(id, baseDir)
+    local path = (baseDir or (require("loader").appdir .. "/features/" .. id))
+        .. "/feature.json"
     local f = io.open(path, "r")
     if not f then return nil end
     local raw = f:read("*a")
@@ -86,7 +92,7 @@ end
 -- Overlay a feature's feature.json metadata onto its manifest table, if present.
 local function applyFeatureMeta(m)
     if type(m) ~= "table" or type(m.id) ~= "string" then return end
-    local meta = readFeatureMeta(m.id)
+    local meta = readFeatureMeta(m.id, m.extensionDir)
     if not meta then return end
     for _, k in ipairs(META_FIELDS) do
         if meta[k] ~= nil then m[k] = meta[k] end
@@ -140,6 +146,12 @@ function registry.register(m)
     manifest.validate(m)
     assert(not features[m.id], "duplicate feature id: " .. m.id)
     features[m.id] = m
+    -- An extension's i18n/ lives in the user's folder, not <appdir>/features/<id>;
+    -- map it every register (i18n.configure -- the freshWorld/reload reset --
+    -- clears the map, and re-registration is what repopulates it).
+    if m.extension and m.extensionDir then
+        i18n.setFeatureRoot(m.id, m.extensionDir)
+    end
     return m
 end
 
@@ -148,17 +160,41 @@ end
 -- aborting the boot; the rest of the catalog still loads. Returns the manifest
 -- on success, nil on failure.
 function registry.load(source)
+    local extName = source:match("^extensions%.(.+)$")
     local okReq, mod = pcall(require, source)
     if not okReq then
         loadFailures[#loadFailures + 1] = { source = source, error = tostring(mod) }
         adapter.log("feature load FAILED [" .. source .. "]: " .. tostring(mod))
         return nil
     end
+    if extName then
+        -- The folder name IS the module namespace (extensions.<folder>.*), so a
+        -- mismatched manifest id would send every sibling require, feature.json
+        -- read and i18n lookup to the wrong folder. Refuse it loudly up front.
+        if type(mod) ~= "table" or mod.id ~= extName then
+            local got = type(mod) == "table" and tostring(mod.id) or type(mod)
+            loadFailures[#loadFailures + 1] = { source = source,
+                error = "extension id must equal its folder name '" .. extName ..
+                    "' (got '" .. got .. "')" }
+            adapter.log("extension load FAILED [" .. source ..
+                "]: id '" .. got .. "' != folder '" .. extName .. "'")
+            return nil
+        end
+        -- Provenance, stamped BEFORE register: applyFeatureMeta reads the
+        -- extension's own feature.json off extensionDir, and describe() surfaces
+        -- the flag so the UI can badge user extensions.
+        mod.extension = true
+        mod.extensionDir = extensionsDir and (extensionsDir .. "/" .. extName) or nil
+    end
     local okReg, err = pcall(registry.register, mod)
     if not okReg then
         loadFailures[#loadFailures + 1] = {
             source = source,
-            id = type(mod) == "table" and mod.id or nil,
+            -- No `id` on an EXTENSION failure record: the likeliest register
+            -- failure is a duplicate id shadowing a built-in, and describe()
+            -- keys failed rows by id-or-source -- a colliding id would hand
+            -- SwiftUI two rows with one identity. The source is unique.
+            id = (not extName) and (type(mod) == "table" and mod.id or nil) or nil,
             error = tostring(err),
         }
         adapter.log("feature register FAILED [" .. source .. "]: " .. tostring(err))
@@ -196,6 +232,54 @@ function registry.setFeatureDir(dir) discoverDir = dir end
 function registry.loadFromDir(dir)
     registry.setFeatureDir(dir)
     registry.loadCatalog(registry.discover(dir))
+end
+
+-- The user-extensions folder from the hammerdeck.extensionsDir setting, or nil
+-- when unset/blank. Expands a leading "~" (a hand-edited default; the Settings
+-- folder picker writes absolute paths) and drops any trailing "/".
+local function resolveExtensionsDir()
+    local dir = adapter.getSetting("hammerdeck.extensionsDir", nil)
+    if type(dir) ~= "string" or dir == "" then return nil end
+    if dir == "~" then
+        dir = adapter.homeDir()
+    elseif dir:sub(1, 2) == "~/" then
+        dir = adapter.homeDir() .. dir:sub(2)
+    end
+    dir = dir:gsub("/+$", "")
+    if dir == "" then return nil end
+    return dir
+end
+
+-- Load USER EXTENSIONS: features the user authored in their own folder
+-- (hammerdeck.extensionsDir), laid out exactly like a built-in --
+-- <folder>/<id>/lua/init.lua plus optional feature.json and i18n/. Same
+-- manifest contract, same ctx, same capability gate; Lua only (an extension
+-- cannot contribute a swift/ page). Called at boot and from reload(), which
+-- re-resolves the setting -- so picking/clearing the folder in Settings takes
+-- effect on the next "Reload Features", no relaunch. Loads are quarantined
+-- like the built-in catalog: one broken extension is a red "failed" row, not
+-- a dead boot. Returns the number loaded.
+function registry.loadExtensions()
+    extensionsDir = resolveExtensionsDir()
+    -- Always (re)point the loader, nil included: clearing the setting then
+    -- reloading must actually detach the extensions.* namespace.
+    require("loader").setExtensionsRoot(extensionsDir)
+    if not extensionsDir then return 0 end
+    local names = adapter.discoverFeatures(extensionsDir) or {}
+    table.sort(names)
+    local n = 0
+    for _, name in ipairs(names) do
+        if name:find(".", 1, true) then
+            -- A dot would split into extra module-path segments and misresolve.
+            loadFailures[#loadFailures + 1] = { source = "extensions." .. name,
+                error = "extension folder name must not contain '.'" }
+            adapter.log("extension load FAILED [" .. name .. "]: folder name contains '.'")
+        elseif registry.load("extensions." .. name) then
+            n = n + 1
+        end
+    end
+    adapter.log("extensions: loaded " .. n .. "/" .. #names .. " from " .. extensionsDir)
+    return n
 end
 
 function registry.all()
@@ -475,12 +559,18 @@ function registry.reload()
     for _, m in ipairs(registry.all()) do registry.unregister(m.id) end
     loadFailures = {}
     for name in pairs(package.loaded) do
-        if tostring(name):match("^features%.") then package.loaded[name] = nil end
+        local n = tostring(name)
+        if n:match("^features%.") or n:match("^extensions%.") then
+            package.loaded[name] = nil
+        end
     end
     -- In discovery mode, re-scan disk so added/removed feature folders take
     -- effect on reload (true hot-plug); otherwise replay the explicit catalog.
     if discoverDir then catalog = registry.discover(discoverDir) end
     for _, modname in ipairs(catalog) do registry.load(modname) end
+    -- User extensions re-scan too -- loadExtensions re-reads the setting, so a
+    -- folder picked/cleared in Settings takes effect here, without a relaunch.
+    registry.loadExtensions()
     registry.startAll()
     adapter.log("reloaded catalog: " .. #registry.all() .. " features, "
         .. #loadFailures .. " failed")
@@ -509,10 +599,16 @@ end
 function registry.reset()
     for _, m in ipairs(registry.all()) do registry.unregister(m.id) end   -- (1) stop path
     for name in pairs(package.loaded) do                                  -- (2) the same purge reload() does
-        if tostring(name):match("^features%.") then package.loaded[name] = nil end
+        local n = tostring(name)
+        if n:match("^features%.") or n:match("^extensions%.") then
+            package.loaded[name] = nil
+        end
     end
     loadFailures, startFailures, fireFailures = {}, {}, {}                 -- (3) catalog upvalues
-    catalog, discoverDir = {}, nil
+    catalog, discoverDir, extensionsDir = {}, nil, nil
+    -- Detach the extensions.* require namespace too -- loader state is global,
+    -- and a stale root would let the next case resolve modules it never set up.
+    require("loader").setExtensionsRoot(nil)
 end
 
 function registry.setEnabled(id, on)

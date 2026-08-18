@@ -867,7 +867,13 @@ function adapter.setMousePosition(x, y)
 end
 
 fake.featureNames = {}   -- bare names the fake "filesystem" exposes to discovery
-function adapter.discoverFeatures(dir) return fake.featureNames end
+fake.featuresByDir = {}  -- dir -> bare names, for tests that discover from SEVERAL
+                         -- roots (the extensions folder vs the builtin catalog);
+                         -- declared here at load time so resetWorld's snapshot
+                         -- restores it (a field born mid-case would be DROPPED)
+function adapter.discoverFeatures(dir)
+    return fake.featuresByDir[dir] or fake.featureNames
+end
 
 fake.frontmost = nil     -- preset by the test for frontmostApp() (the name)
 fake.frontmostId = ""    -- bundle id of the frontmost app (for frontmostAppInfo)

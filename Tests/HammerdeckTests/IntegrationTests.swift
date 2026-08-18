@@ -1138,6 +1138,42 @@ final class IntegrationTests: XCTestCase {
                        "only a folder with lua/init.lua counts; bare init.lua, flat .lua, and junk don't")
     }
 
+    // End-to-end over the REAL defaults->Lua path (the one thing the headless
+    // extensions case can't prove): the Settings UI writes the
+    // hammerdeck.extensionsDir key, reload() re-reads it, and the user's folder
+    // joins -- then leaves -- the live catalog.
+    func testExtensionsLoadFromTheConfiguredFolder() throws {
+        let tmp = NSTemporaryDirectory() + "hammerdeck-ext-\(getpid())"
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: tmp + "/ext_it/lua", withIntermediateDirectories: true)
+        try #"return { api = 1, id = "ext_it", name = "Ext IT", action = function() end }"#
+            .write(toFile: tmp + "/ext_it/lua/init.lua", atomically: true, encoding: .utf8)
+        defer {
+            try? fm.removeItem(atPath: tmp)
+            // TestHost is process-shared: leave no extensions behind for later tests.
+            UserDefaults.standard.removeObject(forKey: ExtensionsPreference.key)
+            host.store.reload()
+        }
+
+        ExtensionsPreference.set(tmp)
+        host.store.reload()
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double,
+                       Double(TestHost.diskFeatureCount + 1),
+                       "the extension folder's feature joins the catalog on reload")
+        XCTAssertEqual(eval("""
+            for _, r in ipairs(require('platform.registry').describe()) do
+                if r.id == 'ext_it' then return r.extension end
+            end
+            return false
+            """) as? Bool, true, "describe() flags the user extension for the UI badge")
+
+        ExtensionsPreference.set(nil)
+        host.store.reload()
+        XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double,
+                       Double(TestHost.diskFeatureCount),
+                       "clearing the folder + reload returns to the built-in catalog")
+    }
+
     func testHotReloadPreservesEnabledState() {
         host.store.setEnabled("display_off", true)
         host.store.reload()
