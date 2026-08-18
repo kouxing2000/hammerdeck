@@ -129,7 +129,9 @@ onto `platform.windows`, which the `window_*` features ride.
   `platform.*` / `features.<id>.*` require names onto their `lua/` subfolders, so
   the co-located layout needs zero require rewrites. Exposes `appdir` (the
   registry uses it to locate `<id>/feature.json`). The `swift/` sibling is
-  invisible to `require`.
+  invisible to `require`. A third namespace, `extensions.<id>.*`, maps onto the
+  USER-EXTENSIONS folder (see the registry bullet); it is detached (defers to
+  the other searchers) until `setExtensionsRoot` points it somewhere.
 - **app/platform/lua/manifest.lua** -- validates a feature's MERGED shape
   (feature.json overlaid onto the lua manifest by the registry); resolves defaults.
 - **app/platform/lua/triggers.lua** -- declarative trigger spec -> live binding. Any
@@ -150,7 +152,17 @@ onto `platform.windows`, which the `window_*` features ride.
   adapter primitives; reach it via ctx.modal().
 - **app/platform/lua/registry.lua** -- registers features, persists enabled-state +
   option values per id, runs lifecycle (bind trigger / start), scoped teardown.
-  LIFECYCLE ONLY: it decides what IS.
+  LIFECYCLE ONLY: it decides what IS. Also loads **USER EXTENSIONS**
+  (`registry.loadExtensions`, called at boot and inside `reload()`): Lua-only
+  features the user keeps in their own folder (the `hammerdeck.extensionsDir`
+  setting, picked in Settings > General), laid out exactly like a built-in
+  (`<folder>/<id>/lua/init.lua` + optional feature.json + i18n/) and required via
+  the `extensions.<id>` namespace. Same manifest contract, same ctx, same
+  RUNTIME capability gate; quarantined like the catalog; `describe()` flags each
+  with `extension = true` (the Settings badge). The BUILD-time guard suites
+  (feature_requires / feature_capabilities / i18n_parity / gallery preview)
+  deliberately cover only the first-party catalog -- an extension is the user's
+  own code, gated at runtime but not by our CI.
 - **app/platform/lua/registry_view.lua** -- the registry's READ MODEL: localized
   names/labels, `describe()` (the whole config-UI payload), the command list, the
   Hyper legend, the trigger summary. It only DESCRIBES what registry decided;

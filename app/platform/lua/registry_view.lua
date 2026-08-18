@@ -418,6 +418,10 @@ function view.describe()
             -- and filters it OUT of the feature list. Still a normal registered,
             -- enable/disable-able feature -- only its presentation differs.
             preference = m.preference == true,
+            -- A USER EXTENSION (loaded from hammerdeck.extensionsDir, not the
+            -- built-in catalog) -- stamped by registry.load; the Settings UI
+            -- badges these so third-party-on-this-machine code is visible.
+            extension = m.extension == true,
             kind = m.start and "service" or "action",
             enabled = deps.isEnabled(m.id),
             triggerDesc = view.describeTrigger(m),

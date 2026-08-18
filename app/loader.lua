@@ -8,6 +8,10 @@
 --
 --   platform.X[.Y...]    -> <app>/platform/lua/X[/Y...].lua
 --   features.<id>[.Y...] -> <app>/features/<id>/lua/[Y...].lua   (bare id -> init.lua)
+--   extensions.<id>[.Y..] -> <extensionsRoot>/<id>/lua/[Y...].lua  (user extensions --
+--                            the root is a USER folder, set at boot/reload via
+--                            setExtensionsRoot from the hammerdeck.extensionsDir
+--                            setting; unresolvable until then)
 --
 -- The sibling `swift/` dir (and any other non-Lua surface) is invisible to
 -- require -- only `lua/` is searched. Install() must run before the first
@@ -20,6 +24,12 @@ local M = {}
 -- the registry can locate a feature's co-located feature.json (<id>/feature.json).
 local APPDIR = debug.getinfo(1, "S").source:match("^@(.*)[/\\]loader%.lua$")
 
+-- The user-extensions root (nil until the registry resolves the
+-- hammerdeck.extensionsDir setting). While nil, `extensions.*` names simply
+-- defer to the other searchers -- a stray require fails as "module not found",
+-- not as a loader error.
+local EXTROOT = nil
+
 -- Map a dotted module name to its on-disk path under the lua/ subfolder, or nil
 -- if it is not one of our two namespaces (then other searchers handle it).
 local function resolve(modname)
@@ -31,6 +41,9 @@ local function resolve(modname)
     elseif parts[1] == "features" then
         if not parts[2] then return nil end
         base, first = APPDIR .. "/features/" .. parts[2] .. "/lua", 3
+    elseif parts[1] == "extensions" then
+        if not EXTROOT or not parts[2] then return nil end
+        base, first = EXTROOT .. "/" .. parts[2] .. "/lua", 3
     else
         return nil
     end
@@ -63,6 +76,13 @@ function M.install()
     if M._installed then return end
     table.insert(package.searchers, 2, searcher)
     M._installed = true
+end
+
+-- Point the `extensions.*` namespace at a user folder (nil detaches it). The
+-- registry owns the call: boot/reload resolve the hammerdeck.extensionsDir
+-- setting and hand the dir here; registry.reset() clears it between test cases.
+function M.setExtensionsRoot(dir)
+    EXTROOT = dir
 end
 
 -- The resolved app root (absolute in the real app, "app" relative to the repo

@@ -181,6 +181,7 @@ struct SettingsPane: View {
         return Strings.t("settings.general", default: "General").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.app", default: "App").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.appearance", default: "Appearance").localizedCaseInsensitiveContains(q)
+            || Strings.t("settings.extensions", default: "Extensions").localizedCaseInsensitiveContains(q)
             || AppearancePreference.modes.contains {
                 AppearancePreference.label(for: $0).localizedCaseInsensitiveContains(q)
             }
@@ -259,6 +260,7 @@ private struct GeneralSettingsDetail: View {
     @State private var autoUpdate = Updater.shared.automaticallyChecks
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
+    @State private var extensionsDir = ExtensionsPreference.dir
 
     // Global behavior toggles (feature.json "preference": true) surfaced here
     // instead of the feature catalog. Data-driven: any preference-flagged feature
@@ -319,6 +321,26 @@ private struct GeneralSettingsDetail: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Section(Strings.t("settings.extensions", default: "Extensions")) {
+                HStack {
+                    Text(extensionsDir ?? Strings.t("settings.extensions_not_set", default: "Not set"))
+                        .foregroundStyle(extensionsDir == nil ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button(Strings.t("settings.extensions_choose", default: "Choose...")) {
+                        chooseExtensionsFolder()
+                    }
+                    if extensionsDir != nil {
+                        Button(Strings.t("settings.extensions_clear", default: "Clear")) {
+                            setExtensionsDir(nil)
+                        }
+                    }
+                }
+                Text(Strings.t("settings.extensions_caption", default: "Load your own Lua features from a folder. Each extension is a subfolder laid out like a built-in feature -- <id>/lua/init.lua, plus an optional feature.json. Applied immediately, and re-scanned on every Reload Features."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Section(Strings.t("settings.language", default: "Language")) {
                 Picker(Strings.t("settings.language", default: "Language"), selection: $language) {
                     ForEach(LocalePreference.options(), id: \.code) { opt in
@@ -356,7 +378,29 @@ private struct GeneralSettingsDetail: View {
             showInDock = DockPreference.showInDock
             appearance = AppearancePreference.mode
             language = LocalePreference.override
+            extensionsDir = ExtensionsPreference.dir
         }
+    }
+
+    /// Pick the user-extensions folder (mirrors RulesView's wallpaper picker,
+    /// but for a directory).
+    private func chooseExtensionsFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = Strings.t("settings.extensions_choose", default: "Choose...")
+        if panel.runModal() == .OK, let url = panel.url {
+            setExtensionsDir(url.path)
+        }
+    }
+
+    /// Persist the folder (nil clears) and reload the Lua platform so the change
+    /// applies right away -- registry.loadExtensions re-reads this key on reload.
+    private func setExtensionsDir(_ dir: String?) {
+        ExtensionsPreference.set(dir)
+        extensionsDir = ExtensionsPreference.dir
+        store.reload()
     }
 }
 
@@ -521,6 +565,17 @@ private struct FeatureDetailHeader: View {
                         .background(RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.14)))
                         // First to go when the pane is narrow: the name and the
                         // switch are both load-bearing, a version number is not.
+                        .layoutPriority(-1)
+                }
+                if feature.isExtension {
+                    // User-extension badge: this code came from the user's own
+                    // extensions folder, not the built-in catalog -- worth a
+                    // glance-level marker wherever the feature is configured.
+                    Text(Strings.t("settings.extension_badge", default: "Extension"))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.orange.opacity(0.14)))
                         .layoutPriority(-1)
                 }
                 Spacer(minLength: 8)
