@@ -291,6 +291,12 @@ struct FeatureInfo: Identifiable {
     let capabilities: [String]
     let recommended: Bool       // part of the curated "Essentials" starter set
     let preference: Bool        // a global behavior toggle -> shown in General > Behavior, hidden from the catalog
+    // A USER EXTENSION -- loaded from the user's own folder (the
+    // hammerdeck.extensionsDir setting), not the built-in catalog. Badged in
+    // Settings so code that isn't first-party is visible at a glance.
+    // (Named isExtension because `extension` is a Swift keyword; the Lua
+    // describe() key is "extension".)
+    let isExtension: Bool
     let version: String
     let kind: String        // action | service
     var enabled: Bool
@@ -320,6 +326,7 @@ struct FeatureInfo: Identifiable {
         self.capabilities = dict.strArray("capabilities")
         self.recommended = dict.bool("recommended")
         self.preference = dict.bool("preference")
+        self.isExtension = dict.bool("extension")
         self.version = dict.str("version")
         self.kind = dict.str("kind", "action")
         self.enabled = dict.bool("enabled")

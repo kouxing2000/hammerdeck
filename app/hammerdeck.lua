@@ -52,6 +52,11 @@ else
     })
 end
 
+-- User extensions: Lua-only features the user keeps in their own folder (the
+-- hammerdeck.extensionsDir setting, set via Settings > General). Same layout
+-- and contract as a built-in feature; loads are quarantined like the catalog's.
+registry.loadExtensions()
+
 -- First run: start BLANK -- nothing enabled. A new user lands in the Feature
 -- Tour (host-side onboarding: a large auto-playing preview per feature, "Add"
 -- to enable) instead of being handed all 19 features at once. We still flip the

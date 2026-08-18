@@ -1,0 +1,7 @@
+{
+  "name": "Ext Probe",
+  "version": "1.0.0",
+  "description": "Test fixture extension: proves the feature.json overlay reads from the extensions folder.",
+  "category": "utilities",
+  "context": "anywhere"
+}

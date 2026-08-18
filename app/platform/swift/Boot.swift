@@ -72,6 +72,28 @@ enum DockPreference {
     }
 }
 
+/// The user-extensions folder: a directory of the user's own Lua-only features
+/// (`<folder>/<id>/lua/init.lua`, same contract as a built-in), loaded alongside
+/// the catalog. The LUA side owns the loading (registry.loadExtensions reads
+/// this same key at boot and on every reload); this enum is only the Settings
+/// UI's read/write handle. Unset/empty = no extensions.
+enum ExtensionsPreference {
+    static let key = "hammerdeck.extensionsDir"
+
+    static var dir: String? {
+        guard let v = UserDefaults.standard.string(forKey: key), !v.isEmpty else { return nil }
+        return v
+    }
+
+    static func set(_ dir: String?) {
+        if let dir, !dir.isEmpty {
+            UserDefaults.standard.set(dir, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+}
+
 /// The app's own light/dark theme: "system" (follow macOS), "light" or "dark".
 /// Applied by pinning `NSApp.appearance`, which every window and panel that does
 /// NOT pin its own inherits -- Settings, the Homepage/gallery, the chooser, the

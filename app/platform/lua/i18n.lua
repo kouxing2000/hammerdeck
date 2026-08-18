@@ -38,6 +38,9 @@ local json                 -- platform.json, required lazily (cost only when use
 local locale       = "en"
 local globalCat    = {}    -- resolved-locale chrome/platform catalog
 local featureCats  = {}    -- id -> catalog table | false (false = checked, absent)
+local featureRoots = {}    -- id -> feature dir OVERRIDE (user extensions live outside
+                           -- <appdir>/features; the registry maps each one here at
+                           -- register time -- see M.setFeatureRoot)
 local appdir               -- resolved from loader, overridable for tests
 local logger               -- optional sink for bad-template warnings, INJECTED at boot
                            -- (this module never touches the seam, so it cannot log itself)
@@ -64,6 +67,11 @@ function M.configure(opts)
     appdir      = opts.appdir or require("loader").appdir
     globalCat   = {}
     featureCats = {}
+    -- Cleared with the cache: configure is the canonical reset (freshWorld,
+    -- reload). Both callers re-REGISTER features afterwards, and registration
+    -- is what repopulates this map (registry.register -> setFeatureRoot), so an
+    -- extension's catalog root is never stale and never leaks across resets.
+    featureRoots = {}
     -- The log sink SURVIVES a reconfigure (a locale switch re-reads the catalogs but
     -- must not go silent); pass it once at boot.
     if opts.log ~= nil then logger = opts.log end
@@ -76,12 +84,23 @@ end
 ---@return string
 function M.locale() return locale end
 
+--- Override where one feature's i18n/ folder lives. Built-in features resolve
+--- under <appdir>/features/<id>; a user EXTENSION lives in the user's own
+--- folder, so the registry maps its id -> <extensionsDir>/<id> here at register
+--- time (after every configure -- see the reset note in M.configure).
+---@param id string feature id
+---@param dir string the feature's own folder (holds i18n/<locale>.json)
+function M.setFeatureRoot(id, dir)
+    featureRoots[id] = dir
+end
+
 local function featureCatalog(id)
     if locale == "en" then return nil end
     if not appdir then appdir = require("loader").appdir end
     local c = featureCats[id]
     if c == nil then
-        c = readCatalog(appdir .. "/features/" .. id .. "/i18n/" .. locale .. ".json") or false
+        local root = featureRoots[id] or (appdir .. "/features/" .. id)
+        c = readCatalog(root .. "/i18n/" .. locale .. ".json") or false
         featureCats[id] = c
     end
     return c or nil
