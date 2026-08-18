@@ -29,9 +29,19 @@ fi
 
 if [ "$needs_build" -eq 1 ]; then
     echo "building Lua 5.4.7 host interpreter from Sources/CLua ..."
-    # Same flag the app's CLua target uses (Package.swift): -DLUA_USE_MACOSX.
-    cc -O2 -DLUA_USE_MACOSX -ISources/CLua/include \
-        -o "$BIN" "$RUNNER" Sources/CLua/*.c -lm
+    # On macOS, the same flag the app's CLua target uses (Package.swift):
+    # -DLUA_USE_MACOSX. On Linux (a remote coding session, a Linux runner) the
+    # equivalent is -DLUA_USE_LINUX, which additionally needs -ldl for dlopen.
+    # Same sources, same 5.4.7 -- the engine under test does not change.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        PLATFORM_FLAGS=(-DLUA_USE_MACOSX)
+        PLATFORM_LIBS=(-lm)
+    else
+        PLATFORM_FLAGS=(-DLUA_USE_LINUX)
+        PLATFORM_LIBS=(-lm -ldl)
+    fi
+    cc -O2 "${PLATFORM_FLAGS[@]}" -ISources/CLua/include \
+        -o "$BIN" "$RUNNER" Sources/CLua/*.c "${PLATFORM_LIBS[@]}"
 fi
 
 # test/run.lua prints the live _VERSION in its final line, so the engine that
