@@ -24,26 +24,22 @@ final class McpServerTests: XCTestCase {
     // isolation contexts) can reference it; an immutable String is Sendable.
     private nonisolated static let token = "hammerdeck-test-token"
 
-    // XCTest's setUp/tearDown are nonisolated on the superclass, so the
-    // overrides must be too; XCTest still calls them on the main thread,
-    // which assumeIsolated asserts.
-    nonisolated override func setUp() {
-        super.setUp()
-        MainActor.assumeIsolated {
-            _ = host
-            let server = McpServer.shared
-            server.configure(lua: host.lua, store: host.store)
-            server.start(port: 0, token: Self.token)   // 0 = ephemeral; read the bound port
-            waitFor { if case .running = McpServer.shared.status { return true }; return false }
-        }
+    // The async overrides are the shape a @MainActor XCTestCase may isolate
+    // (IntegrationTests precedent); the sync ones must stay nonisolated and
+    // then cannot touch `self`. The wait-until-ready lives in boundPort, on
+    // the sync MainActor test path where run-loop pumping is safe.
+    override func setUp() async throws {
+        _ = host
+        McpServer.shared.configure(lua: host.lua, store: host.store)
+        McpServer.shared.start(port: 0, token: Self.token)   // 0 = ephemeral; read the bound port
     }
 
-    nonisolated override func tearDown() {
-        MainActor.assumeIsolated { McpServer.shared.stop() }
-        super.tearDown()
+    override func tearDown() async throws {
+        McpServer.shared.stop()
     }
 
     private var boundPort: UInt16 {
+        waitFor { if case .running = McpServer.shared.status { return true }; return false }
         if case .running(let port) = McpServer.shared.status { return port }
         XCTFail("server not running: \(McpServer.shared.status)")
         return 0
