@@ -563,6 +563,12 @@ manifest.CAPABILITY_METHODS = CAPABILITY_METHODS
 ---@type table<string, boolean>
 manifest.KNOWN_CAPABILITIES = KNOWN_CAPABILITIES
 
+-- Every option type a feature may declare, as a set. Exposed for the same
+-- reason: the agent-guide parity gate (agent_guide.lua) enumerates the real
+-- set instead of re-listing it and drifting. Read-only by convention.
+---@type table<string, boolean>
+manifest.VALID_OPTION_TYPES = VALID_OPTION_TYPES
+
 -- Every category a feature may declare, as a set. Exposed for the SAME reason as
 -- the capabilities above -- so the gate that keeps the Swift and Python copies of
 -- this vocabulary honest (testCategoryVocabularyIsConsistent) can enumerate the

@@ -282,6 +282,14 @@ function registry.loadExtensions()
     return n
 end
 
+-- The RESOLVED live extensions folder (tilde-expanded, what the loader is
+-- actually using), or nil when the setting is unset. Read-only; the MCP
+-- get_extensions_dir tool reports this so an agent writes into the same folder
+-- the next reload will scan, rather than re-deriving the path host-side.
+function registry.extensionsDir()
+    return extensionsDir
+end
+
 function registry.all()
     local out = {}
     for _, m in pairs(features) do out[#out + 1] = m end

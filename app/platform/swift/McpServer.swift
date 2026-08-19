@@ -1,0 +1,464 @@
+// The opt-in local MCP endpoint: lets a coding agent (Claude Code et al.)
+// drive the extension-authoring loop against the RUNNING app -- list/describe
+// the catalog, reload + read load failures, test-fire an enabled action, tail
+// the daily log, and fetch the authoring guide. HOST INFRA, not a seam slice:
+// it CONSUMES the bridge via LuaState.call (data never enters Lua source) and
+// adds no OS surface for Lua, so it lives beside StatusBar, not in Native+*.
+//
+// Ships in release (unlike DebugControl, which is #if DEBUG): the gate is the
+// hammerdeck.mcp.enabled preference (off by default), a loopback-only bind,
+// a bearer token minted on first enable, and an Origin check. Protocol shape
+// is the MCP "streamable HTTP" transport in its minimal stateless form: one
+// POST per connection, single JSON object responses (no SSE, no sessions --
+// spec-legal, and what Claude Code's fetch-based client speaks).
+//
+// Concurrency: the listener + HTTP parsing run on a private queue; EVERY
+// bridge call happens on the main actor (LuaState asserts main thread) --
+// the queue hands the raw body Data across and gets a full response Data
+// back, so nothing non-Sendable crosses the boundary.
+
+import Foundation
+import Network
+
+@MainActor
+final class McpServer: ObservableObject {
+    static let shared = McpServer()
+
+    enum Status: Equatable {
+        case off
+        case starting
+        case running(UInt16)   // the BOUND port (differs from the asked-for one when 0)
+        case failed(String)
+    }
+
+    @Published private(set) var status: Status = .off
+
+    private var lua: LuaState?
+    private var store: SettingsStore?
+    private let queue = DispatchQueue(label: "hammerdeck.mcp")
+    private var listener: NWListener?
+    private let connections = McpConnectionBag()
+
+    /// Wire the bridge + read model once at boot (Boot.swift), before any start().
+    func configure(lua: LuaState, store: SettingsStore) {
+        self.lua = lua
+        self.store = store
+    }
+
+    /// Start from the stored preferences (boot / toggle-on path).
+    func startFromPreferences() {
+        start(port: McpPreference.port, token: McpPreference.mintTokenIfNeeded())
+    }
+
+    /// Start listening on 127.0.0.1:`port` (0 = ephemeral, for tests). Restarts
+    /// cleanly if already running.
+    func start(port: UInt16, token: String) {
+        stop()
+        status = .starting
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        // Loopback ONLY. This is the whole network posture: nothing off-machine
+        // can ever reach the listener, whatever the token situation.
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(
+            host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port) ?? .any)
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: params)
+        } catch {
+            status = .failed("\(error)")
+            Native.shared.seamLog("mcp: listener init failed: \(error)")
+            return
+        }
+        self.listener = listener
+
+        let bag = connections
+        let rpc = makeRpcHandler()
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            // On the mcp queue; status writes hop to main.
+            switch state {
+            case .ready:
+                let bound = listener?.port?.rawValue ?? 0
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, self.listener === listener else { return }
+                        self.status = .running(bound)
+                        Native.shared.seamLog("mcp: listening on 127.0.0.1:\(bound)")
+                    }
+                }
+            case .failed(let error):
+                // The port-in-use surface (EADDRINUSE) among others.
+                listener?.cancel()
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, self.listener === listener else { return }
+                        self.listener = nil
+                        self.status = .failed("\(error)")
+                        Native.shared.seamLog("mcp: listener failed: \(error)")
+                    }
+                }
+            default:
+                break
+            }
+        }
+        let queue = self.queue
+        listener.newConnectionHandler = { conn in
+            bag.add(conn)
+            conn.stateUpdateHandler = { st in
+                switch st {
+                case .failed, .cancelled: bag.remove(conn)
+                default: break
+                }
+            }
+            conn.start(queue: queue)
+            Self.receive(conn, McpHttpAccumulator(), token: token, rpc: rpc, bag: bag)
+        }
+        listener.start(queue: queue)
+    }
+
+    func stop() {
+        listener?.cancel()
+        listener = nil
+        connections.cancelAll()
+        if status != .off {
+            status = .off
+            Native.shared.seamLog("mcp: stopped")
+        }
+    }
+
+    // MARK: - Queue side (nonisolated: HTTP framing + gates that need no Lua)
+
+    /// Body-in, full-HTTP-response-out, across the queue/main boundary. Only
+    /// Sendable Data crosses; JSON parsing and every Lua call happen on main.
+    private typealias RpcHandler = @Sendable (_ body: Data, _ reply: @escaping @Sendable (Data) -> Void) -> Void
+
+    private func makeRpcHandler() -> RpcHandler {
+        return { [weak self] body, reply in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let response = self?.handleRpcBody(body)
+                        ?? McpHttp.response(status: 503, reason: "Service Unavailable")
+                    reply(response)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func receive(_ conn: NWConnection, _ acc: McpHttpAccumulator,
+                                            token: String, rpc: @escaping RpcHandler,
+                                            bag: McpConnectionBag) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, error in
+            if let data, !data.isEmpty {
+                switch acc.append(data) {
+                case .needMore:
+                    if error == nil && !isComplete {
+                        receive(conn, acc, token: token, rpc: rpc, bag: bag)
+                    } else {
+                        conn.cancel(); bag.remove(conn)
+                    }
+                case .error(let status, let reason):
+                    sendAndClose(conn, McpHttp.response(status: status, reason: reason), bag: bag)
+                case .request(let req):
+                    handle(req, on: conn, token: token, rpc: rpc, bag: bag)
+                }
+            } else if error != nil || isComplete {
+                conn.cancel(); bag.remove(conn)
+            } else {
+                receive(conn, acc, token: token, rpc: rpc, bag: bag)
+            }
+        }
+    }
+
+    /// Gate order matters: Origin (DNS-rebinding defense, a spec MUST) -> path
+    /// -> method -> token -> only then does the body reach the JSON layer.
+    private nonisolated static func handle(_ req: McpHttpRequest, on conn: NWConnection,
+                                           token: String, rpc: @escaping RpcHandler,
+                                           bag: McpConnectionBag) {
+        if let origin = req.headers["origin"], !isLocalOrigin(origin) {
+            return sendAndClose(conn, McpHttp.response(status: 403, reason: "Forbidden"), bag: bag)
+        }
+        guard req.path == "/mcp" || req.path.hasPrefix("/mcp?") else {
+            return sendAndClose(conn, McpHttp.response(status: 404, reason: "Not Found"), bag: bag)
+        }
+        guard req.method == "POST" else {
+            // GET is the server-push stream we don't offer; DELETE ends sessions
+            // we don't have. 405 + Allow is the spec-sanctioned "no stream" answer.
+            return sendAndClose(conn, McpHttp.response(status: 405, reason: "Method Not Allowed",
+                                                       headers: [("Allow", "POST")]), bag: bag)
+        }
+        guard req.headers["authorization"] == "Bearer \(token)" else {
+            return sendAndClose(conn, McpHttp.response(status: 401, reason: "Unauthorized",
+                                                       headers: [("WWW-Authenticate", "Bearer")]), bag: bag)
+        }
+        rpc(req.body) { response in
+            sendAndClose(conn, response, bag: bag)
+        }
+    }
+
+    private nonisolated static func isLocalOrigin(_ origin: String) -> Bool {
+        guard let host = URL(string: origin)?.host else { return false }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+
+    private nonisolated static func sendAndClose(_ conn: NWConnection, _ data: Data,
+                                                 bag: McpConnectionBag) {
+        conn.send(content: data, completion: .contentProcessed { _ in
+            conn.cancel()
+            bag.remove(conn)
+        })
+    }
+
+    // MARK: - Main side (JSON-RPC dispatch; every Lua touch lives below here)
+
+    private struct RpcError: Error {
+        let code: Int
+        let message: String
+    }
+
+    private func handleRpcBody(_ body: Data) -> Data {
+        guard let parsed = try? JSONSerialization.jsonObject(with: body) else {
+            return McpHttp.json(status: 400, reason: "Bad Request",
+                                rpcError(id: NSNull(), code: -32700, message: "Parse error"))
+        }
+        guard let request = parsed as? [String: Any] else {
+            // A JSON array is a batch; batching left the spec in 2025-06-18.
+            return McpHttp.json(rpcError(id: NSNull(), code: -32600,
+                                         message: "Batch requests are not supported"))
+        }
+        let method = request["method"] as? String ?? ""
+        guard let id = request["id"] else {
+            // A notification (initialized, cancelled, ...): acknowledge, no body.
+            return McpHttp.response(status: 202, reason: "Accepted")
+        }
+        let params = request["params"] as? [String: Any] ?? [:]
+        do {
+            let result = try dispatch(method: method, params: params)
+            return McpHttp.json(["jsonrpc": "2.0", "id": id, "result": result])
+        } catch let error as RpcError {
+            return McpHttp.json(rpcError(id: id, code: error.code, message: error.message))
+        } catch {
+            return McpHttp.json(rpcError(id: id, code: -32603, message: "\(error)"))
+        }
+    }
+
+    private func rpcError(id: Any, code: Int, message: String) -> [String: Any] {
+        ["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]]
+    }
+
+    private func dispatch(method: String, params: [String: Any]) throws -> [String: Any] {
+        switch method {
+        case "initialize":
+            // Stateless by construction: no Mcp-Session-Id is ever issued, and
+            // MCP-Protocol-Version headers on later requests are ignored.
+            let supported: Set<String> = ["2024-11-05", "2025-03-26", "2025-06-18"]
+            let asked = params["protocolVersion"] as? String ?? ""
+            let version = supported.contains(asked) ? asked : "2025-06-18"
+            let bundle = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            return [
+                "protocolVersion": version,
+                "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],
+                "serverInfo": ["name": "hammerdeck", "version": bundle ?? "dev"],
+                "instructions": "Hammerdeck extension authoring. Call get_extension_guide first -- it carries the full contract and the write/reload/verify loop.",
+            ]
+        case "ping":
+            return [:]
+        case "tools/list":
+            return ["tools": Self.toolDefinitions]
+        case "tools/call":
+            let name = params["name"] as? String ?? ""
+            let args = params["arguments"] as? [String: Any] ?? [:]
+            return try callTool(name: name, args: args)
+        case "resources/list":
+            return ["resources": [
+                ["uri": Self.guideURI, "name": "Extension authoring guide",
+                 "description": "How to author a Hammerdeck user extension (SKILL.md).",
+                 "mimeType": "text/markdown"],
+                ["uri": Self.diagnosticsURI, "name": "Diagnostics",
+                 "description": "App/permissions/feature state snapshot.",
+                 "mimeType": "text/plain"],
+            ]]
+        case "resources/read":
+            let uri = params["uri"] as? String ?? ""
+            switch uri {
+            case Self.guideURI:
+                return ["contents": [["uri": uri, "mimeType": "text/markdown",
+                                      "text": try guideText()]]]
+            case Self.diagnosticsURI:
+                guard let store else { throw RpcError(code: -32603, message: "store not configured") }
+                return ["contents": [["uri": uri, "mimeType": "text/plain",
+                                      "text": Diagnostics.report(store)]]]
+            default:
+                throw RpcError(code: -32002, message: "unknown resource: \(uri)")
+            }
+        default:
+            throw RpcError(code: -32601, message: "method not found: \(method)")
+        }
+    }
+
+    // MARK: - Tools
+
+    private static let guideURI = "hammerdeck://guide/extension-authoring"
+    private static let diagnosticsURI = "hammerdeck://diagnostics"
+    static let guidePath = defaultLuaDir() + "/docs/hammerdeck-extension-skill.md"
+
+    private static let toolDefinitions: [[String: Any]] = {
+        func tool(_ name: String, _ description: String,
+                  _ properties: [String: Any] = [:], required: [String] = []) -> [String: Any] {
+            ["name": name, "description": description,
+             "inputSchema": ["type": "object", "properties": properties, "required": required]]
+        }
+        return [
+            tool("list_features",
+                 "Every feature in the live catalog (built-in + user extensions): id, kind, enabled, extension flag, failure state, actions."),
+            tool("describe_feature",
+                 "The full config-model row for one feature: options, actions with triggers, schedule.",
+                 ["id": ["type": "string", "description": "feature id"]], required: ["id"]),
+            tool("get_extensions_dir",
+                 "The user's extensions folder (where extension source lives). Null when unset -- then ask the user to pick one in Settings > General > Extensions; never set it yourself."),
+            tool("reload",
+                 "Reload all features from disk (re-scans the extensions folder) and report every load/start failure with its error. The core write->verify step."),
+            tool("run_action",
+                 "Run one action of an ENABLED feature (test-fire). Fails with a reason if the feature is disabled -- ask the user to enable it in Settings.",
+                 ["feature_id": ["type": "string"],
+                  "action_id": ["type": "string", "description": "omit for single-action features"]],
+                 required: ["feature_id"]),
+            tool("read_log",
+                 "Tail of today's Hammerdeck log (ctx.log traces, seam errors, fire failures).",
+                 ["lines": ["type": "integer", "description": "how many trailing lines (default 100, max 2000)"]]),
+            tool("get_extension_guide",
+                 "The full extension-authoring guide (manifest contract, ctx rules, capabilities, the MCP loop). Read this before writing an extension."),
+        ]
+    }()
+
+    /// A tool failure an agent should read and react to is an isError RESULT,
+    /// not a protocol error -- protocol errors are for malformed calls.
+    private func toolResult(_ payload: Any) throws -> [String: Any] {
+        let data = try JSONSerialization.data(withJSONObject: payload,
+                                              options: [.prettyPrinted, .sortedKeys])
+        return ["content": [["type": "text", "text": String(data: data, encoding: .utf8) ?? ""]],
+                "isError": false]
+    }
+
+    private func toolFailure(_ message: String) -> [String: Any] {
+        ["content": [["type": "text", "text": message]], "isError": true]
+    }
+
+    /// One registry call, first return value, double-optional flattened
+    /// ([Any?].first is Any?? -- flatten once so `as?` casts read sanely).
+    private func registryCall(_ fn: String, _ args: [LuaArg] = [],
+                              results: Int32 = 1) throws -> [Any?] {
+        guard let lua else { throw RpcError(code: -32603, message: "bridge not configured") }
+        return try lua.call("platform.registry", fn, args, results: results)
+    }
+
+    private func registryFirst(_ fn: String, _ args: [LuaArg] = []) throws -> Any? {
+        try registryCall(fn, args).first.flatMap { $0 }
+    }
+
+    private func callTool(name: String, args: [String: Any]) throws -> [String: Any] {
+        switch name {
+        case "list_features":
+            let rows = (try registryFirst("describe") as? [Any]) ?? []
+            let trimmed: [[String: Any]] = rows.compactMap { row in
+                guard let r = row as? [String: Any] else { return nil }
+                var out: [String: Any] = [:]
+                for key in ["id", "name", "kind", "category", "context",
+                            "enabled", "extension", "failed", "error"] {
+                    if let v = r[key] { out[key] = v }
+                }
+                if let actions = r["actions"] as? [Any] {
+                    out["actions"] = actions.compactMap { a -> [String: Any]? in
+                        guard let a = a as? [String: Any] else { return nil }
+                        return ["id": a["id"] ?? "", "label": a["label"] ?? ""]
+                    }
+                }
+                return out
+            }
+            return try toolResult(trimmed)
+        case "describe_feature":
+            guard let id = args["id"] as? String else {
+                throw RpcError(code: -32602, message: "id required")
+            }
+            let rows = (try registryFirst("describe") as? [Any]) ?? []
+            guard let row = rows.first(where: { ($0 as? [String: Any])?["id"] as? String == id }) else {
+                return toolFailure("no such feature: \(id)")
+            }
+            return try toolResult(row)
+        case "get_extensions_dir":
+            let dir = try registryFirst("extensionsDir") as? String
+            return try toolResult([
+                "dir": dir ?? NSNull() as Any,
+                "setting": "hammerdeck.extensionsDir",
+                "hint": "The user picks this folder in Settings > General > Extensions; do not set it yourself.",
+            ])
+        case "reload":
+            // reload() returns { count, failures = <NUMBER of load failures> };
+            // the detailed records live behind registry.failures().
+            let summary = (try registryFirst("reload") as? [String: Any]) ?? [:]
+            let detail = (try registryFirst("failures") as? [String: Any]) ?? [:]
+            store?.refresh()   // keep the Settings/menubar UI in step with the reload
+            return try toolResult([
+                "count": summary["count"] ?? 0,
+                "loadFailures": detail["load"] ?? [Any](),
+                "startFailures": detail["start"] ?? [String: Any](),
+            ])
+        case "run_action":
+            guard let featureId = args["feature_id"] as? String else {
+                throw RpcError(code: -32602, message: "feature_id required")
+            }
+            var callArgs: [LuaArg] = [.string(featureId)]
+            if let actionId = args["action_id"] as? String { callArgs.append(.string(actionId)) }
+            let out = try registryCall("runAction", callArgs, results: 2)
+            if out.first.flatMap({ $0 }) as? Bool == true { return try toolResult(["ok": true]) }
+            let reason = out.count > 1 ? (out[1] as? String ?? "failed") : "failed"
+            return toolFailure(reason)
+        case "read_log":
+            let asked = args["lines"] as? Int ?? Int(args["lines"] as? Double ?? 100)
+            let lines = max(1, min(asked, 2000))
+            guard let text = Self.tailOfNewestLog(lines: lines) else {
+                return toolFailure("no log file yet")
+            }
+            return ["content": [["type": "text", "text": text]], "isError": false]
+        case "get_extension_guide":
+            return ["content": [["type": "text", "text": try guideText()]], "isError": false]
+        default:
+            throw RpcError(code: -32602, message: "unknown tool: \(name)")
+        }
+    }
+
+    func guideText() throws -> String {
+        guard let text = try? String(contentsOfFile: Self.guidePath, encoding: .utf8) else {
+            throw RpcError(code: -32603, message: "guide missing at \(Self.guidePath)")
+        }
+        return text
+    }
+
+    private nonisolated static func tailOfNewestLog(lines: Int) -> String? {
+        let dir = Native.logsDir
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return nil }
+        // Filename order IS date order (yyyy-MM-dd.log), so the max is today.
+        guard let newest = names.filter({ $0.hasSuffix(".log") }).sorted().last else { return nil }
+        guard let text = try? String(contentsOf: dir.appendingPathComponent(newest), encoding: .utf8) else { return nil }
+        let all = text.split(separator: "\n", omittingEmptySubsequences: false)
+        return "[\(newest)]\n" + all.suffix(lines).joined(separator: "\n")
+    }
+}
+
+/// Live connections, so stop() can cut them. Lock-protected because add/remove
+/// run on the mcp queue while stop() calls in from the main actor.
+final class McpConnectionBag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [ObjectIdentifier: NWConnection] = [:]
+
+    func add(_ c: NWConnection) {
+        lock.lock(); items[ObjectIdentifier(c)] = c; lock.unlock()
+    }
+
+    func remove(_ c: NWConnection) {
+        lock.lock(); items.removeValue(forKey: ObjectIdentifier(c)); lock.unlock()
+    }
+
+    func cancelAll() {
+        lock.lock(); let live = Array(items.values); items.removeAll(); lock.unlock()
+        for c in live { c.cancel() }
+    }
+}
