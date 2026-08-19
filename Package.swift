@@ -65,6 +65,7 @@ let package = Package(
                 "hammerdeck.lua",
                 "loader.lua",
                 "i18n",                  // localization catalogs (loaded at runtime by path)
+                "docs",                  // agent-facing guides (loaded at runtime by path)
                 "platform/lua",
                 "features/app_launcher",
                 "features/bing_daily",

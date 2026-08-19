@@ -182,6 +182,7 @@ struct SettingsPane: View {
             || Strings.t("settings.app", default: "App").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.appearance", default: "Appearance").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.extensions", default: "Extensions").localizedCaseInsensitiveContains(q)
+            || Strings.t("settings.mcp", default: "Agent Access (MCP)").localizedCaseInsensitiveContains(q)
             || AppearancePreference.modes.contains {
                 AppearancePreference.label(for: $0).localizedCaseInsensitiveContains(q)
             }
@@ -261,6 +262,9 @@ private struct GeneralSettingsDetail: View {
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
     @State private var extensionsDir = ExtensionsPreference.dir
+    @State private var mcpEnabled = McpPreference.enabled
+    @State private var mcpPortText = String(McpPreference.port)
+    @ObservedObject private var mcp = McpServer.shared
 
     // Global behavior toggles (feature.json "preference": true) surfaced here
     // instead of the feature catalog. Data-driven: any preference-flagged feature
@@ -341,6 +345,55 @@ private struct GeneralSettingsDetail: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Section(Strings.t("settings.mcp", default: "Agent Access (MCP)")) {
+                Toggle(Strings.t("settings.mcp_toggle", default: "Allow agent connections (MCP)"), isOn: $mcpEnabled)
+                    .onChange(of: mcpEnabled) { on in
+                        McpPreference.setEnabled(on)
+                        if on { McpServer.shared.startFromPreferences() } else { McpServer.shared.stop() }
+                    }
+                // Live server state: the URL an agent talks to, or why the
+                // bind failed (the port-in-use case).
+                switch mcp.status {
+                case .running(let port):
+                    Text(String(format: Strings.t("settings.mcp_running", default: "Serving at http://127.0.0.1:%d/mcp"), Int(port)))
+                        .font(.caption).foregroundStyle(.secondary)
+                case .failed(let reason):
+                    Text(String(format: Strings.t("settings.mcp_failed", default: "Failed to start: %@"), reason))
+                        .font(.caption).foregroundStyle(.red)
+                case .off, .starting:
+                    EmptyView()
+                }
+                HStack {
+                    Text(Strings.t("settings.mcp_port", default: "Port"))
+                    TextField("", text: $mcpPortText)
+                        .frame(width: 70)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit { commitMcpPort() }
+                    Spacer()
+                    Button(Strings.t("settings.mcp_copy_command", default: "Copy Connect Command")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(McpPreference.connectCommand(), forType: .string)
+                    }
+                    .disabled(!mcpEnabled)
+                }
+                Text(Strings.t("settings.mcp_caption", default: "Let a coding agent (e.g. Claude Code) connect to the running app to author extensions: list features, reload, read load failures, test-fire enabled actions, and read logs. Local connections only, guarded by a token the Copy Connect Command includes."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button(Strings.t("settings.mcp_copy_guide", default: "Copy Agent Guide")) {
+                        if let text = try? McpServer.shared.guideText() {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(text, forType: .string)
+                        }
+                    }
+                    Button(Strings.t("settings.mcp_export_guide", default: "Export Guide...")) {
+                        exportAgentGuide()
+                    }
+                }
+                Text(Strings.t("settings.mcp_guide_caption", default: "The guide teaches an agent the extension contract. Export it as a Claude Code skill (save as .claude/skills/hammerdeck-extensions/SKILL.md) or paste it into any agent's context."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Section(Strings.t("settings.language", default: "Language")) {
                 Picker(Strings.t("settings.language", default: "Language"), selection: $language) {
                     ForEach(LocalePreference.options(), id: \.code) { opt in
@@ -379,6 +432,8 @@ private struct GeneralSettingsDetail: View {
             appearance = AppearancePreference.mode
             language = LocalePreference.override
             extensionsDir = ExtensionsPreference.dir
+            mcpEnabled = McpPreference.enabled
+            mcpPortText = String(McpPreference.port)
         }
     }
 
@@ -401,6 +456,28 @@ private struct GeneralSettingsDetail: View {
         ExtensionsPreference.set(dir)
         extensionsDir = ExtensionsPreference.dir
         store.reload()
+    }
+
+    /// Commit the MCP port field: clamp to a real port, persist, restart the
+    /// server if it is on so the new port takes effect immediately.
+    private func commitMcpPort() {
+        guard let port = UInt16(mcpPortText), port > 0 else {
+            mcpPortText = String(McpPreference.port)   // reject junk, re-seed
+            return
+        }
+        McpPreference.setPort(port)
+        if mcpEnabled { McpServer.shared.startFromPreferences() }
+    }
+
+    /// Save the agent guide as a skill file (SKILL.md) wherever the user picks.
+    private func exportAgentGuide() {
+        guard let text = try? McpServer.shared.guideText() else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "SKILL.md"
+        panel.prompt = Strings.t("settings.mcp_export_prompt", default: "Export")
+        if panel.runModal() == .OK, let url = panel.url {
+            try? text.write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 }
 
