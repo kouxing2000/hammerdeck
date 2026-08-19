@@ -94,6 +94,53 @@ enum ExtensionsPreference {
     }
 }
 
+/// Agent access over MCP: an opt-in loopback endpoint (McpServer.swift) a
+/// coding agent connects to for the extension-authoring loop. Three keys:
+/// enabled (off by default), the listen port, and a bearer token minted once
+/// on first enable -- the Settings "Copy Connect Command" carries all three so
+/// the user never types any of it.
+enum McpPreference {
+    static let enabledKey = "hammerdeck.mcp.enabled"
+    static let portKey = "hammerdeck.mcp.port"
+    static let tokenKey = "hammerdeck.mcp.token"
+    static let defaultPort: UInt16 = 27121
+
+    static var enabled: Bool {
+        UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    static func setEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: enabledKey)
+    }
+
+    static var port: UInt16 {
+        let stored = UserDefaults.standard.integer(forKey: portKey)
+        guard stored > 0, stored <= 65535 else { return defaultPort }
+        return UInt16(stored)
+    }
+
+    static func setPort(_ port: UInt16) {
+        UserDefaults.standard.set(Int(port), forKey: portKey)
+    }
+
+    /// The bearer token, minted once and then stable -- regenerating it on
+    /// every enable would silently break every already-configured client.
+    static func mintTokenIfNeeded() -> String {
+        if let existing = UserDefaults.standard.string(forKey: tokenKey), !existing.isEmpty {
+            return existing
+        }
+        let token = UUID().uuidString
+        UserDefaults.standard.set(token, forKey: tokenKey)
+        return token
+    }
+
+    /// The one-liner that connects Claude Code to the running endpoint.
+    static func connectCommand() -> String {
+        "claude mcp add --transport http hammerdeck http://127.0.0.1:\(port)/mcp"
+            + " --header \"Authorization: Bearer \(mintTokenIfNeeded())\""
+    }
+}
+
 /// The app's own light/dark theme: "system" (follow macOS), "light" or "dark".
 /// Applied by pinning `NSApp.appearance`, which every window and panel that does
 /// NOT pin its own inherits -- Settings, the Homepage/gallery, the chooser, the
@@ -392,6 +439,15 @@ public func hammerdeckMain() {
     DebugControl.presentTour = { homepageWindow.presentTour() }
     #endif
     DebugControl.startIfRequested(lua)
+
+    // Agent access (MCP): the opt-in loopback endpoint for coding agents
+    // (Settings > General > Agent Access). Configured always, started only
+    // when the user has switched it on -- unlike DebugControl this ships in
+    // release, gated by the preference + bearer token, loopback-only.
+    McpServer.shared.configure(lua: lua, store: store)
+    if McpPreference.enabled {
+        McpServer.shared.startFromPreferences()
+    }
 
     // Clean teardown on quit: stop every feature (unbind hotkeys, watchers,
     // timers, panels) before the process exits, instead of relying on the OS to

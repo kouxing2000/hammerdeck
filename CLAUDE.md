@@ -238,6 +238,20 @@ onto `platform.windows`, which the `window_*` features ride.
   so `runAction` ignores keyboard-origin invocations (`NSApp.currentEvent` is a
   key/flags event) to avoid double-firing; non-key triggers (schedule/chord/
   event) have no key form and show no menu shortcut.
+- **app/platform/swift/McpServer.swift + McpHttp.swift** -- the OPT-IN local MCP
+  endpoint (Settings > General > Agent Access) a coding agent connects to for
+  the extension-authoring loop: list/describe features, reload + read load
+  failures, run an enabled action, tail the log, fetch the authoring guide.
+  HOST INFRA, not a seam slice: it CONSUMES the bridge via `LuaState.call`
+  (data never enters Lua source) and adds no OS surface for Lua -- it lives
+  beside StatusBar, never in `Native+*`. Ships in release (unlike DebugControl)
+  but gated three ways: off-by-default preference (`hammerdeck.mcp.enabled`,
+  plus `.port`/`.token`), loopback-only bind, bearer token. Stateless
+  streamable-HTTP MCP (single JSON responses, no SSE/sessions). The agent guide
+  it serves lives at `app/docs/hammerdeck-extension-skill.md` (a valid Claude
+  Code SKILL.md, also copy/exportable from Settings); `agent_guide.lua` gates it
+  against `manifest.CAPABILITY_METHODS` / `VALID_OPTION_TYPES` so the doc
+  cannot drift from the code it teaches.
 - **Sources/Hammerdeck/main.swift** -- thin launcher only (calls
   `hammerdeckMain()`); all logic lives in the Kit so tests can import it.
 - **Tests/HammerdeckTests/** -- integration tests against the REAL bridge
