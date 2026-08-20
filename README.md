@@ -94,6 +94,23 @@ layout, run any feature's action, set the wallpaper, lock the screen, launch or
 quit an app, or chain several together. And where the built-in effects end, a
 rule can run any macOS Shortcut -- the escape hatch to everything else.
 
+Past the first-party catalog, **extensions** are your own features: point
+Settings > General at a folder and every `<id>/lua/init.lua` inside it loads
+next to the built-ins, with the same manifest contract, the same scoped API,
+the same capability gate, and the same quarantine (a broken one shows as a red
+row, it never takes the app down). Reload picks up your edits without a
+relaunch.
+
+Writing one need not be a solo job. Switch on **agent access** in
+Settings > General and Hammerdeck serves a local, token-guarded
+[MCP](https://modelcontextprotocol.io) endpoint on the loopback interface, so a
+coding agent can list features, reload after an edit, read the exact load
+error, test-fire an action, and tail the log -- the whole write-and-verify loop
+against the running app. The same panel copies or exports the authoring guide
+as a ready-to-use agent skill. It is off until you turn it on, reachable only
+from this machine, and there is deliberately no tool for switching a feature
+on: enabling stays your click.
+
 ## Install
 
 <!-- TODO(release): there is no download yet, and building from source is not a real

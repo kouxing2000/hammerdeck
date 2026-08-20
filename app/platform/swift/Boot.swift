@@ -459,6 +459,9 @@ public func hammerdeckMain() {
             // Restore plain Caps Lock on a clean quit (clears the hidutil remap);
             // otherwise Caps would stay a dead F18 key until the next launch.
             CapsHyperTap.shared.disable()
+            // Close the agent door explicitly rather than leaving it to process
+            // teardown -- same reasoning as the feature stop below.
+            McpServer.shared.stop()
             _ = try? Native.shared.lua.call("platform.registry", "stopAll")
         }
     }
