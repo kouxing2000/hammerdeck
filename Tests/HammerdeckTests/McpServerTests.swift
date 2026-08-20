@@ -55,13 +55,15 @@ final class McpServerTests: XCTestCase {
     }
 
     private func request(method: String = "POST", body: String? = nil,
-                         auth: String? = "Bearer \(McpServerTests.token)") -> (status: Int, body: Data) {
+                         auth: String? = "Bearer \(McpServerTests.token)",
+                         origin: String? = nil) -> (status: Int, body: Data) {
         var req = URLRequest(url: URL(string: "http://127.0.0.1:\(boundPort)/mcp")!)
         req.httpMethod = method
         if let body { req.httpBody = Data(body.utf8) }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
         if let auth { req.setValue(auth, forHTTPHeaderField: "Authorization") }
+        if let origin { req.setValue(origin, forHTTPHeaderField: "Origin") }
         let box = ResponseBox()
         URLSession.shared.dataTask(with: req) { data, resp, _ in
             box.set(((resp as? HTTPURLResponse)?.statusCode ?? 0, data ?? Data()))
@@ -94,6 +96,17 @@ final class McpServerTests: XCTestCase {
     func testRejectsWithoutToken() {
         XCTAssertEqual(request(body: "{}", auth: nil).status, 401)
         XCTAssertEqual(request(body: "{}", auth: "Bearer wrong").status, 401)
+    }
+
+    // The DNS-rebinding defense: a page on a site the user visited must not be
+    // able to drive the endpoint from their own browser, EVEN with a token it
+    // somehow learned. Rejected before any JSON is parsed.
+    func testRejectsForeignOrigin() {
+        XCTAssertEqual(request(body: "{}", origin: "https://evil.example").status, 403)
+        // A local origin still passes the gate (it fails later, on JSON-RPC
+        // grounds, not on Origin) -- so this is not blocking everything.
+        XCTAssertNotEqual(request(body: #"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+                                  origin: "http://localhost:3000").status, 403)
     }
 
     func testRejectsNonPost() {
