@@ -43,6 +43,20 @@ enum Diagnostics {
         let on = feats.filter(\.enabled)
         out.append("features: \(on.count) enabled of \(feats.count)")
 
+        // Third-party code on the machine, and whether the agent door is open:
+        // both are conditions the log cannot reconstruct, and both change what
+        // "it doesn't work" can mean (a broken extension looks like a broken
+        // app). The extensions FOLDER is deliberately NOT printed -- it is a
+        // user-chosen path outside the app, which the no-user-content rule
+        // above excludes; whether one is set, and how many loaded, carries the
+        // diagnostic weight without the path.
+        let exts = feats.filter(\.isExtension)
+        if !exts.isEmpty || ExtensionsPreference.dir != nil {
+            out.append("extensions: \(exts.count) loaded"
+                       + (ExtensionsPreference.dir == nil ? " (no folder set)" : " (folder set)"))
+        }
+        out.append("agent access (MCP): \(mcpState())")
+
         // Broken plugins first -- if one failed to load, that is usually the whole
         // story and it must not be buried under the enabled list.
         let broken = feats.filter(\.failed)
@@ -77,5 +91,17 @@ enum Diagnostics {
         // know WHERE the log lives, not who the user is.
         out.append("log: \((Native.logsDir.path as NSString).abbreviatingWithTildeInPath)")
         return out.joined(separator: "\n")
+    }
+
+    /// The MCP endpoint's state for the report. Never the token -- this text is
+    /// written to be pasted into a public issue, and the token is the only
+    /// thing standing between a local process and the agent tools.
+    private static func mcpState() -> String {
+        switch McpServer.shared.status {
+        case .off:                return McpPreference.enabled ? "enabled, not listening" : "off"
+        case .starting:           return "starting"
+        case .running(let port):  return "listening on 127.0.0.1:\(port)"
+        case .failed(let reason): return "FAILED (\(reason.prefix(80)))"
+        }
     }
 }

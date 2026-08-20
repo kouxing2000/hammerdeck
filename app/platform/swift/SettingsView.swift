@@ -374,7 +374,9 @@ private struct GeneralSettingsDetail: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(McpPreference.connectCommand(), forType: .string)
                     }
-                    .disabled(!mcpEnabled)
+                    // Only meaningful while something is actually listening:
+                    // after a failed bind the command would name a dead port.
+                    .disabled(!mcpRunning)
                 }
                 Text(Strings.t("settings.mcp_caption", default: "Let a coding agent (e.g. Claude Code) connect to the running app to author extensions: list features, reload, read load failures, test-fire enabled actions, and read logs. Local connections only, guarded by a token the Copy Connect Command includes."))
                     .font(.caption).foregroundStyle(.secondary)
@@ -456,6 +458,12 @@ private struct GeneralSettingsDetail: View {
         ExtensionsPreference.set(dir)
         extensionsDir = ExtensionsPreference.dir
         store.reload()
+    }
+
+    /// Is the endpoint actually serving right now (vs merely switched on)?
+    private var mcpRunning: Bool {
+        if case .running = mcp.status { return true }
+        return false
     }
 
     /// Commit the MCP port field: clamp to a real port, persist, restart the
