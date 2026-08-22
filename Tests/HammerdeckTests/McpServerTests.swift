@@ -150,6 +150,33 @@ final class McpServerTests: XCTestCase {
         }
     }
 
+    /// Every tool that takes a feature reference must spell it `feature_id`.
+    /// Two tools naming the same thing differently (`id` here, `feature_id`
+    /// there) is a contract an agent gets wrong on its first call and only
+    /// learns from an error -- and the tool schema is the ONLY documentation it
+    /// reads. A lint over the whole surface rather than a per-tool assertion:
+    /// the defect is the inconsistency, so the next tool added is what it must
+    /// catch.
+    func testFeatureArgumentIsNamedConsistentlyAcrossTools() {
+        let (_, json) = rpc("tools/list")
+        let tools = ((json["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
+        XCTAssertFalse(tools.isEmpty, "tools/list returned nothing to check")
+        for t in tools {
+            let name = t["name"] as? String ?? "?"
+            let schema = t["inputSchema"] as? [String: Any] ?? [:]
+            let props = (schema["properties"] as? [String: Any]).map { Set($0.keys) } ?? []
+            XCTAssertFalse(props.contains("id"),
+                           "\(name) names a feature argument 'id'; use 'feature_id'")
+        }
+    }
+
+    func testDescribeFeatureReadsOneRowByFeatureId() {
+        let (isError, value) = toolJSON("describe_feature",
+                                        args: #"{"feature_id":"display_off"}"#)
+        XCTAssertFalse(isError)
+        XCTAssertEqual((value as? [String: Any])?["id"] as? String, "display_off")
+    }
+
     func testListFeaturesRidesTheLiveCatalog() {
         let (isError, value) = toolJSON("list_features")
         XCTAssertFalse(isError)
