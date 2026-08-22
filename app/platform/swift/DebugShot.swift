@@ -73,23 +73,38 @@ enum DebugShot {
         }
     }
 
+    /// Sampling pitch in pixels for the blank detector. Prime, so the lattice
+    /// cannot lock onto a regular layout rhythm (uniform row heights, card
+    /// spacing) and keep landing on the same paint.
+    private static let blankSamplePitch = 23
+
     /// Blank-render detector (the classic layer-backed cacheDisplay failure):
-    /// sample a dense grid and report blank only if EVERY point is the same
-    /// color. Real content (text, controls, dividers) always varies, so this
-    /// flags a truly empty bitmap without false-positiving on a uniform
-    /// background patch the way a handful of points would.
-    private static func looksBlank(_ rep: NSBitmapImageRep) -> Bool {
+    /// sample the bitmap and report blank only if EVERY point is the same color.
+    /// Real content (text, controls, dividers) always varies, so this flags a
+    /// truly empty bitmap without false-positiving on a uniform background patch.
+    ///
+    /// Sampled at a fixed PITCH, not a fixed grid COUNT. A fixed count spreads
+    /// its rows further apart the taller the image gets, so a tall sparse form
+    /// -- the General settings pane, ~2800px of cards separated by wide gutters
+    /// -- can put every sample in background and report blank on a perfectly
+    /// good capture. That reading is worse than no reading: `blank=true` is
+    /// documented as the "capture failed" signal, so it sends the reader after a
+    /// broken screenshot pipeline instead of the content sitting in the PNG.
+    static func looksBlank(_ rep: NSBitmapImageRep) -> Bool {
         guard rep.pixelsWide > 8, rep.pixelsHigh > 8 else { return true }
         var first: NSColor?
-        for gx in 1..<12 {
-            for gy in 1..<12 {
-                let x = rep.pixelsWide * gx / 13, y = rep.pixelsHigh * gy / 13
+        var y = blankSamplePitch / 2
+        while y < rep.pixelsHigh {
+            var x = blankSamplePitch / 2
+            while x < rep.pixelsWide {
+                defer { x += blankSamplePitch }
                 guard let c = rep.colorAt(x: x, y: y) else { continue }
                 guard let f = first else { first = c; continue }
                 if abs(c.redComponent - f.redComponent) > 0.02
                     || abs(c.greenComponent - f.greenComponent) > 0.02
                     || abs(c.blueComponent - f.blueComponent) > 0.02 { return false }
             }
+            y += blankSamplePitch
         }
         return true
     }
