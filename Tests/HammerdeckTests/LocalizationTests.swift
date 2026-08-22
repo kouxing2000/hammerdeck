@@ -387,6 +387,63 @@ final class LocalizationTests: XCTestCase {
             .path
     }
 
+    // Chinese prose that ships to a reader takes FULL-WIDTH punctuation
+    // (，。：；？！). Half-width marks pressed against Chinese characters are the
+    // visual signature of machine translation, and they render wrong: an ASCII
+    // comma carries no advance of its own, so 词,词 sets tight where 词，词 sets
+    // with the spacing the script expects.
+    //
+    // Why this is a gate rather than a style note. A hand pass fixed the feature
+    // catalogs once; two commits later a new Settings section shipped half-width
+    // again, because nothing checked and the surrounding file was already mixed.
+    // Convention that is not machine-checked decays back to whatever the last
+    // author happened to type -- which is exactly what the audit found.
+    //
+    // Scope, deliberately narrow. Only a mark ADJACENT to a Chinese character is
+    // flagged, so paths (feature.json), versions (1.0.0), domains (github.com),
+    // times (09:00), format strings (%Y/%m/%d %H:%M) and embedded English
+    // samples ("Monday, June 23, 2026") are all untouched. That does mean a
+    // sentence ending on a Latin token slips through -- accepted: a gate that
+    // cries wolf gets deleted, and this one has zero false positives against the
+    // real corpus.
+    func testChineseCatalogsUseFullWidthPunctuation() throws {
+        let root = repoRoot()
+        // Half-width mark with a CJK ideograph on either side of it.
+        let offender = try NSRegularExpression(
+            pattern: #"[\x{4e00}-\x{9fff}][,.:;?!]|[,.:;?!][\x{4e00}-\x{9fff}]"#)
+
+        var catalogs = [root + "/app/i18n/zh-Hans.json"]
+        let featureDir = root + "/app/features"
+        for id in (try? FileManager.default.contentsOfDirectory(atPath: featureDir)) ?? [] {
+            let p = featureDir + "/" + id + "/i18n/zh-Hans.json"
+            if FileManager.default.fileExists(atPath: p) { catalogs.append(p) }
+        }
+        XCTAssertGreaterThan(catalogs.count, 1, "found no feature catalogs to check")
+
+        var offenders: [String] = []
+        var checked = 0
+        for path in catalogs {
+            guard let data = FileManager.default.contents(atPath: path),
+                  let catalog = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else { return XCTFail("missing or invalid \(path)") }
+            let label = path.replacingOccurrences(of: root + "/", with: "")
+            for (key, value) in catalog {
+                guard let text = value as? String else { continue }
+                checked += 1
+                let range = NSRange(text.startIndex..., in: text)
+                guard let hit = offender.firstMatch(in: text, range: range),
+                      let r = Range(hit.range, in: text) else { continue }
+                offenders.append("\(label) [\(key)]: ...\(text[r])... in \"\(text.prefix(60))\"")
+            }
+        }
+        XCTAssertGreaterThan(checked, 0, "no strings were examined -- the gate did not run")
+        XCTAssertTrue(offenders.isEmpty,
+                      "\(offenders.count) Chinese string(s) use half-width punctuation next to "
+                      + "Chinese text; use ，。：；？！ (、 between list items, … for an "
+                      + "ellipsis):\n"
+                      + offenders.sorted().prefix(20).joined(separator: "\n"))
+    }
+
     // The shipped zh-Hans catalog is valid JSON carrying the expected shared keys.
     func testShippedCatalogParses() {
         let path = resourceRoot() + "/app/i18n/zh-Hans.json"

@@ -1,6 +1,6 @@
 {
   "name": "倒计时",
-  "description": "询问分钟数，然后在屏幕底部运行一条细进度条；时间到时通知你.",
+  "description": "询问分钟数，然后在屏幕底部运行一条细进度条；时间到时通知你。",
 
   "notify.up.title": "时间 (%d 分钟) 到了！",
   "notify.up.body": "现在是 %s",
@@ -10,10 +10,10 @@
   "alert.nan": "不是数字的分钟数：%s",
 
   "action.start.label": "开始 / 取消倒计时",
-  "action.start.description": "询问分钟数并开始倒计时，或取消正在运行的倒计时.",
-  "action.start.mnemonic": "C 代表倒计时 (Hyper+C, 然后 C)",
+  "action.start.description": "询问分钟数并开始倒计时，或取消正在运行的倒计时。",
+  "action.start.mnemonic": "C 代表倒计时 (Hyper+C，然后 C)",
   "action.pause.label": "暂停 / 继续",
-  "action.pause.description": "暂停正在运行的倒计时，或在已暂停时继续它.",
+  "action.pause.description": "暂停正在运行的倒计时，或在已暂停时继续它。",
   "action.pause.mnemonic": "P 代表暂停 (相同的 Hyper+C 前缀)",
 
   "option.defaultMinutes.label": "建议分钟数"

@@ -1,6 +1,6 @@
 {
   "name": "睡眠计划",
-  "description": "在设定时间强制系统睡眠，带分级警告，一次性小睡，以及周末时移.",
+  "description": "在设定时间强制系统睡眠，带分级警告，一次性小睡，以及周末时移。",
   "banner.countdown": "系统将在 %s 后睡眠  --  请保存你的工作！",
   "dialog.warnTitle": "睡眠计划警告",
   "info.sleepAt": "%1$s 睡眠 (还剩 %2$d 分钟)",
