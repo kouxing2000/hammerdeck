@@ -18,6 +18,7 @@ local manifest  = require("platform.manifest")
 local triggers  = require("platform.triggers")
 local ctxlib    = require("platform.ctx")
 local json      = require("platform.json")
+local capscan   = require("platform.capscan")
 local i18n      = require("platform.i18n")
 local window_ops = require("platform.window_ops")
 -- The READ MODEL (localized metadata, describe(), the command list, the Hyper
@@ -288,6 +289,82 @@ end
 -- the next reload will scan, rather than re-deriving the path host-side.
 function registry.extensionsDir()
     return extensionsDir
+end
+
+-- Does this extension's feature.json declare what its code actually reaches?
+--
+-- The build guards deliberately cover only the first-party catalog, so an
+-- extension author gets neither half of that check. The runtime capability gate
+-- still fires -- but only when the gated call is REACHED, so an under-declared
+-- capability on a rare branch (a retry, an error handler) ships broken and
+-- surfaces at a user; and an over-declared one is invisible forever, which is
+-- how a capability list rots from a claim into decoration. This answers both
+-- before the code runs, which is what closes the agent's write -> verify loop:
+-- reload proves it LOADS, this proves it declared itself honestly.
+--
+-- Walks the REQUIRE GRAPH from init.lua rather than listing the folder: the
+-- module graph is what actually executes, it needs no directory-listing surface
+-- on the seam, and it reaches the platform modules a feature pulls in -- whose
+-- gated calls run through the feature's own ctx and count as its reach
+-- (platform.favicons -> network/browser/files).
+---@param id string
+---@return table report { id, ok, underDeclared, overDeclared, scanned, error? }
+function registry.validateExtension(id)
+    local m = features[id]
+    if not m then return { id = id, ok = false, error = "no such feature: " .. tostring(id) } end
+    if not m.extensionDir then
+        return { id = id, ok = false, error = "'" .. id .. "' is a built-in, not an extension" }
+    end
+
+    local capOf = capscan.capabilityOf()
+    local appdir = require("loader").appdir
+    local calls, scanned, seen = {}, {}, {}
+
+    -- Breadth-first over the graph; `seen` keeps a cycle (a <-> b) from spinning
+    -- and stops a diamond being scanned twice.
+    local queue = { { path = m.extensionDir .. "/lua/init.lua", name = "extensions." .. id } }
+    while #queue > 0 do
+        local item = table.remove(queue, 1)
+        if not seen[item.name] then
+            seen[item.name] = true
+            local src = adapter.fileRead(item.path)
+            if src then
+                scanned[#scanned + 1] = item.name
+                local c, reqs = capscan.scanSource(src, capOf)
+                for name in pairs(c) do calls[name] = true end
+                for mod in pairs(reqs) do
+                    local owner, leaf = mod:match("^extensions%.([%w_]+)%.([%w_]+)$")
+                    local platformMod = mod:match("^platform%.([%w_]+)$")
+                    if owner == id then
+                        -- This extension's own siblings only. A require naming
+                        -- ANOTHER extension is not a supported shape -- the
+                        -- loader resolves it against a different root -- so
+                        -- following it would attribute someone else's reach.
+                        queue[#queue + 1] = { path = m.extensionDir .. "/lua/" .. leaf .. ".lua",
+                                              name = mod }
+                    elseif platformMod then
+                        queue[#queue + 1] = { path = appdir .. "/platform/lua/" .. platformMod
+                                                     .. ".lua",
+                                              name = mod }
+                    end
+                end
+            end
+        end
+    end
+
+    local under, over = capscan.compare(calls, m.capabilities, capOf)
+    local used = {}
+    for name in pairs(calls) do used[#used + 1] = name end
+    table.sort(used)
+    table.sort(scanned)
+    return {
+        id = id,
+        ok = #under == 0 and #over == 0,
+        underDeclared = json.asArray(under),
+        overDeclared = json.asArray(over),
+        gatedCallsUsed = json.asArray(used),
+        scanned = json.asArray(scanned),
+    }
 end
 
 function registry.all()

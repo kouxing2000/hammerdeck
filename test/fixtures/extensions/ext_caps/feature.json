@@ -1,0 +1,8 @@
+{
+  "name": "Ext Caps",
+  "version": "1.0.0",
+  "description": "Test fixture: an extension whose declared capabilities disagree with its code, for registry.validateExtension.",
+  "category": "utilities",
+  "context": "anywhere",
+  "capabilities": ["power"]
+}
