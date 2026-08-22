@@ -311,7 +311,8 @@ final class McpServer: ObservableObject {
                  "Every feature in the live catalog (built-in + user extensions): id, kind, enabled, extension flag, failure state, actions."),
             tool("describe_feature",
                  "The full config-model row for one feature: options, actions with triggers, schedule.",
-                 ["id": ["type": "string", "description": "feature id"]], required: ["id"]),
+                 ["feature_id": ["type": "string", "description": "feature id"]],
+                 required: ["feature_id"]),
             tool("get_extensions_dir",
                  "The user's extensions folder (where extension source lives). Null when unset -- then ask the user to pick one in Settings > General > Extensions; never set it yourself."),
             tool("reload",
@@ -375,8 +376,8 @@ final class McpServer: ObservableObject {
             }
             return try toolResult(trimmed)
         case "describe_feature":
-            guard let id = args["id"] as? String else {
-                throw RpcError(code: -32602, message: "id required")
+            guard let id = args["feature_id"] as? String else {
+                throw RpcError(code: -32602, message: "feature_id required")
             }
             let rows = (try registryFirst("describe") as? [Any]) ?? []
             guard let row = rows.first(where: { ($0 as? [String: Any])?["id"] as? String == id }) else {
