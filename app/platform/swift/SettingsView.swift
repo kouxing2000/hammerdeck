@@ -77,7 +77,7 @@ struct SettingsPane: View {
 
             Group {
                 if store.selectedFeatureId == Self.generalId {
-                    GeneralSettingsDetail(store: store)
+                    GeneralSettingsDetail(store: store, searchQuery: query)
                 } else if let id = store.selectedFeatureId,
                    let feature = store.features.first(where: { $0.id == id }) {
                     // Keyed on the id so the detail's own @State (which section is
@@ -247,12 +247,62 @@ private struct FeatureRow: View {
     }
 }
 
+private let kExtensionsAnchor = "general-extensions"
+private let kMcpAnchor = "general-agent-access"
+
+/// Whether each collapsed developer section should show itself, absent a manual
+/// toggle by the user.
+///
+/// A pure function rather than a method on the view, because the search half is
+/// the part that can silently regress and the view is not reachable from a test.
+/// The failure it guards is specific: Settings search matches these two sections
+/// by name, but that match only decides whether the General ROW appears in the
+/// sidebar (SettingsView.showGeneralRow) -- it never filters or scrolls this
+/// pane. So a query that matched a collapsed section must open it, or searching
+/// "MCP" lands the user on a pane showing no trace of what they searched for,
+/// which is worse than never having collapsed it.
+///
+/// The result is DERIVED, never latched: clearing the search field closes again
+/// what the search opened. A latch that only ever set true was tried and is the
+/// reason this is written down -- `Agent Access (MCP)` contains "a", so typing
+/// the first letter of "appearance" pinned the whole MCP block open for the rest
+/// of the visit.
+enum DeveloperSectionDisclosure {
+    /// A single character is not a search: every title here contains a common
+    /// letter, so a one-character query matches something almost always and the
+    /// pane would flash open on the way to any real query.
+    static let minimumQueryLength = 2
+
+    /// - Parameter query: the RAW search field text; trimming is this function's
+    ///   job, so its callers cannot disagree about it.
+    static func shouldOpen(query: String,
+                           extensionsDirSet: Bool,
+                           mcpEnabled: Bool) -> (extensions: Bool, mcp: Bool) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        func matched(_ title: String) -> Bool {
+            q.count >= minimumQueryLength && title.localizedCaseInsensitiveContains(q)
+        }
+        return (extensions: extensionsDirSet
+                    || matched(Strings.t("settings.extensions", default: "Extensions")),
+                mcp: mcpEnabled
+                    || matched(Strings.t("settings.mcp", default: "Agent Access (MCP)")))
+    }
+}
+
 /// Host-level app preferences (not Lua features): the Caps->Hyper toggle and
 /// the Dock visibility toggle. Both mirror the menubar items and read/write the
 /// same `Hammerdeck` defaults keys, so a change here or there stays in sync on
 /// the next render. @State seeds from the live prefs on appear.
 private struct GeneralSettingsDetail: View {
     @ObservedObject var store: SettingsStore
+    /// The live sidebar search text. The two developer sections below are
+    /// collapsed by default, and search does NOT filter this pane -- it only
+    /// decides whether the General row appears in the sidebar (see
+    /// showGeneralRow). So a query that matched one of them by name must open
+    /// it, or searching "MCP" lands the user on a pane where the match is
+    /// invisible -- strictly worse than not collapsing at all.
+    /// Raw, not trimmed: DeveloperSectionDisclosure owns that.
+    let searchQuery: String
     @State private var capsHyper = CapsHyperPreference.enabled
     @State private var showInDock = DockPreference.showInDock
     @State private var appearance = AppearancePreference.mode
@@ -265,6 +315,12 @@ private struct GeneralSettingsDetail: View {
     @State private var mcpEnabled = McpPreference.enabled
     @State private var mcpPortText = String(McpPreference.port)
     @ObservedObject private var mcp = McpServer.shared
+    // nil = follow DeveloperSectionDisclosure; non-nil = the user worked the
+    // disclosure triangle and their answer wins. Never persisted: "is this in
+    // use" is inferred from the setting itself, so there is no advanced-mode
+    // preference to find before you can find the thing it hides.
+    @State private var extOverride: Bool?
+    @State private var mcpOverride: Bool?
 
     // Global behavior toggles (feature.json "preference": true) surfaced here
     // instead of the feature catalog. Data-driven: any preference-flagged feature
@@ -274,6 +330,7 @@ private struct GeneralSettingsDetail: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         Form {
             Section(Strings.t("settings.keyboard", default: "Keyboard")) {
                 Toggle(Strings.t("settings.caps_hyper_toggle", default: "Caps Lock acts as Hyper (⌘⌥⌃)"), isOn: $capsHyper)
@@ -325,77 +382,6 @@ private struct GeneralSettingsDetail: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Section(Strings.t("settings.extensions", default: "Extensions")) {
-                HStack {
-                    Text(extensionsDir ?? Strings.t("settings.extensions_not_set", default: "Not set"))
-                        .foregroundStyle(extensionsDir == nil ? .secondary : .primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Button(Strings.t("settings.extensions_choose", default: "Choose...")) {
-                        chooseExtensionsFolder()
-                    }
-                    if extensionsDir != nil {
-                        Button(Strings.t("settings.extensions_clear", default: "Clear")) {
-                            setExtensionsDir(nil)
-                        }
-                    }
-                }
-                Text(Strings.t("settings.extensions_caption", default: "Load your own Lua features from a folder. Each extension is a subfolder laid out like a built-in feature -- <id>/lua/init.lua, plus an optional feature.json. Applied immediately, and re-scanned on every Reload Features."))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Section(Strings.t("settings.mcp", default: "Agent Access (MCP)")) {
-                Toggle(Strings.t("settings.mcp_toggle", default: "Allow agent connections (MCP)"), isOn: $mcpEnabled)
-                    .onChange(of: mcpEnabled) { on in
-                        McpPreference.setEnabled(on)
-                        if on { McpServer.shared.startFromPreferences() } else { McpServer.shared.stop() }
-                    }
-                // Live server state: the URL an agent talks to, or why the
-                // bind failed (the port-in-use case).
-                switch mcp.status {
-                case .running(let port):
-                    Text(String(format: Strings.t("settings.mcp_running", default: "Serving at http://127.0.0.1:%d/mcp"), Int(port)))
-                        .font(.caption).foregroundStyle(.secondary)
-                case .failed(let reason):
-                    Text(String(format: Strings.t("settings.mcp_failed", default: "Failed to start: %@"), reason))
-                        .font(.caption).foregroundStyle(.red)
-                case .off, .starting:
-                    EmptyView()
-                }
-                HStack {
-                    Text(Strings.t("settings.mcp_port", default: "Port"))
-                    TextField("", text: $mcpPortText)
-                        .frame(width: 70)
-                        .multilineTextAlignment(.trailing)
-                        .onSubmit { commitMcpPort() }
-                    Spacer()
-                    Button(Strings.t("settings.mcp_copy_command", default: "Copy Connect Command")) {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(McpPreference.connectCommand(), forType: .string)
-                    }
-                    // Only meaningful while something is actually listening:
-                    // after a failed bind the command would name a dead port.
-                    .disabled(!mcpRunning)
-                }
-                Text(Strings.t("settings.mcp_caption", default: "Let a coding agent (e.g. Claude Code) connect to the running app to author extensions: list features, reload, read load failures, test-fire enabled actions, and read logs. Local connections only, guarded by a token the Copy Connect Command includes."))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Button(Strings.t("settings.mcp_copy_guide", default: "Copy Agent Guide")) {
-                        if let text = try? McpServer.shared.guideText() {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(text, forType: .string)
-                        }
-                    }
-                    Button(Strings.t("settings.mcp_export_guide", default: "Export Guide...")) {
-                        exportAgentGuide()
-                    }
-                }
-                Text(Strings.t("settings.mcp_guide_caption", default: "The guide teaches an agent the extension contract. Export it as a Claude Code skill (save as .claude/skills/hammerdeck-extensions/SKILL.md) or paste it into any agent's context."))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             Section(Strings.t("settings.language", default: "Language")) {
                 Picker(Strings.t("settings.language", default: "Language"), selection: $language) {
                     ForEach(LocalePreference.options(), id: \.code) { opt in
@@ -412,6 +398,121 @@ private struct GeneralSettingsDetail: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // The two developer sections sit LAST, and collapsed. Hammerdeck's
+            // promise is config-and-select ("lowers the bar from write Lua"),
+            // and both of these are for people who write code -- so Language, a
+            // mainstream setting, reads before them rather than after. Neither
+            // is discovered by scrolling Settings anyway: an extension author
+            // arrives from the README or the agent guide.
+            //
+            // Every row inside a DisclosureGroup states its own leading
+            // alignment: a grouped Form centers a row it cannot size, and
+            // DisclosureGroup content is not laid out as form rows. Same
+            // workaround as capabilityRows below, and as AboutSection.
+            Section {
+                DisclosureGroup(isExpanded: extBinding) {
+                    HStack {
+                        Text(extensionsDir ?? Strings.t("settings.extensions_not_set", default: "Not set"))
+                            .foregroundStyle(extensionsDir == nil ? .secondary : .primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button(Strings.t("settings.extensions_choose", default: "Choose...")) {
+                            chooseExtensionsFolder()
+                        }
+                        if extensionsDir != nil {
+                            Button(Strings.t("settings.extensions_clear", default: "Clear")) {
+                                setExtensionsDir(nil)
+                            }
+                        }
+                    }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(Strings.t("settings.extensions_caption", default: "Load your own Lua features from a folder. Each extension is a subfolder laid out like a built-in feature -- <id>/lua/init.lua, plus an optional feature.json. Applied immediately, and re-scanned on every Reload Features."))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Text(Strings.t("settings.extensions", default: "Extensions"))
+                }
+            }
+            .id(kExtensionsAnchor)
+            Section {
+                DisclosureGroup(isExpanded: mcpBinding) {
+                    Toggle(Strings.t("settings.mcp_toggle", default: "Allow agent connections (MCP)"), isOn: $mcpEnabled)
+                        .onChange(of: mcpEnabled) { on in
+                            McpPreference.setEnabled(on)
+                            if on { McpServer.shared.startFromPreferences() } else { McpServer.shared.stop() }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // Live server state: the URL an agent talks to, or why the
+                    // bind failed (the port-in-use case).
+                    switch mcp.status {
+                    case .running(let port):
+                        Text(String(format: Strings.t("settings.mcp_running", default: "Serving at http://127.0.0.1:%d/mcp"), Int(port)))
+                            .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    case .failed(let reason):
+                        Text(String(format: Strings.t("settings.mcp_failed", default: "Failed to start: %@"), reason))
+                            .font(.caption).foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    case .off, .starting:
+                        EmptyView()
+                    }
+                    HStack {
+                        Text(Strings.t("settings.mcp_port", default: "Port"))
+                        TextField("", text: $mcpPortText)
+                            .frame(width: 70)
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit { commitMcpPort() }
+                        Spacer()
+                        Button(Strings.t("settings.mcp_copy_command", default: "Copy Connect Command")) {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(McpPreference.connectCommand(), forType: .string)
+                        }
+                        // Only meaningful while something is actually listening:
+                        // after a failed bind the command would name a dead port.
+                        .disabled(!mcpRunning)
+                    }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(Strings.t("settings.mcp_caption", default: "Let a coding agent (e.g. Claude Code) connect to the running app to author extensions: list features, reload, read load failures, test-fire enabled actions, and read logs. Local connections only, guarded by a token the Copy Connect Command includes."))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack {
+                        Button(Strings.t("settings.mcp_copy_guide", default: "Copy Agent Guide")) {
+                            if let text = try? McpServer.shared.guideText() {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(text, forType: .string)
+                            }
+                        }
+                        Button(Strings.t("settings.mcp_export_guide", default: "Export Guide...")) {
+                            exportAgentGuide()
+                        }
+                    }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(Strings.t("settings.mcp_guide_caption", default: "The guide teaches an agent the extension contract. Export it as a Claude Code skill (save as .claude/skills/hammerdeck-extensions/SKILL.md) or paste it into any agent's context."))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Text(Strings.t("settings.mcp", default: "Agent Access (MCP)"))
+                }
+            }
+            .id(kMcpAnchor)
+        }
+        // Scroll on the STATE CHANGE, not from inside the toggle: a scrollTo
+        // issued beside the expansion resolves against geometry the expanded
+        // content is not in yet (same trap as the feature-detail About section).
+        // Without this the search fix is invisible in exactly the case it was
+        // written for -- these two sections are LAST in the pane, so a match
+        // opens below the fold.
+        .onChange(of: extIsOpen) { isOpen in
+            guard isOpen else { return }
+            withAnimation { proxy.scrollTo(kExtensionsAnchor, anchor: .bottom) }
+        }
+        .onChange(of: mcpIsOpen) { isOpen in
+            guard isOpen else { return }
+            withAnimation { proxy.scrollTo(kMcpAnchor, anchor: .bottom) }
         }
         .formStyle(.grouped)
         // (no .navigationTitle -- see the FeatureDetail note: it retitles the window)
@@ -437,6 +538,24 @@ private struct GeneralSettingsDetail: View {
             mcpEnabled = McpPreference.enabled
             mcpPortText = String(McpPreference.port)
         }
+        }
+    }
+
+    /// What the two disclosure triangles read and write. The user's own toggle
+    /// wins while it is set; everything else follows the derived answer, so
+    /// clearing the search field closes again what the search opened.
+    private var derived: (extensions: Bool, mcp: Bool) {
+        DeveloperSectionDisclosure.shouldOpen(query: searchQuery,
+                                              extensionsDirSet: extensionsDir != nil,
+                                              mcpEnabled: mcpEnabled)
+    }
+    private var extIsOpen: Bool { extOverride ?? derived.extensions }
+    private var mcpIsOpen: Bool { mcpOverride ?? derived.mcp }
+    private var extBinding: Binding<Bool> {
+        Binding(get: { extIsOpen }, set: { extOverride = $0 })
+    }
+    private var mcpBinding: Binding<Bool> {
+        Binding(get: { mcpIsOpen }, set: { mcpOverride = $0 })
     }
 
     /// Pick the user-extensions folder (mirrors RulesView's wallpaper picker,
