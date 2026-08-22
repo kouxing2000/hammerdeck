@@ -154,11 +154,18 @@ Settings > General > Agent Access, then runs the copied
 2. Write/edit the extension files on disk yourself.
 3. `reload` — re-scans the folder. Read the returned load/start failures;
    fix and reload until clean.
-4. Ask the user to enable the feature in Settings (there is deliberately no
+4. `validate_extension` — check the `capabilities` in your feature.json against
+   what your code actually calls. It reports both directions: `underDeclared`
+   (a gated method you call but never declared — the runtime gate will raise on
+   whichever branch reaches it, which may not be one you test) and
+   `overDeclared` (a capability you claim and never use — the list is only worth
+   reading if it is true). Fix both before handing the extension over; `reload`
+   proves it LOADS, this proves it declared itself honestly.
+5. Ask the user to enable the feature in Settings (there is deliberately no
    enable tool — enabling is the user's choice).
-5. `run_action` — test-fire an enabled feature's action.
-6. `read_log` — check your `ctx.log` traces and any fire errors.
-7. `list_features` / `describe_feature` — verify how the catalog sees it
+6. `run_action` — test-fire an enabled feature's action.
+7. `read_log` — check your `ctx.log` traces and any fire errors.
+8. `list_features` / `describe_feature` — verify how the catalog sees it
    (options, triggers, the `extension` flag).
 
 A broken extension never crashes the app — it shows as a failed row with the

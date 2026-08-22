@@ -322,6 +322,13 @@ final class McpServer: ObservableObject {
                  ["feature_id": ["type": "string"],
                   "action_id": ["type": "string", "description": "omit for single-action features"]],
                  required: ["feature_id"]),
+            tool("validate_extension",
+                 "Check ONE user extension's feature.json capabilities against what its code "
+                 + "actually calls, without running it. Reports under-declared (a latent crash on "
+                 + "whichever branch reaches the gated call) and over-declared (a claim nothing "
+                 + "backs). Run this after reload and before handing the extension over.",
+                 ["feature_id": ["type": "string", "description": "extension id"]],
+                 required: ["feature_id"]),
             tool("read_log",
                  "Tail of today's Hammerdeck log (ctx.log traces, seam errors, fire failures).",
                  ["lines": ["type": "integer", "description": "how many trailing lines (default 100, max 2000)"]]),
@@ -412,6 +419,19 @@ final class McpServer: ObservableObject {
             if out.first.flatMap({ $0 }) as? Bool == true { return try toolResult(["ok": true]) }
             let reason = out.count > 1 ? (out[1] as? String ?? "failed") : "failed"
             return toolFailure(reason)
+        case "validate_extension":
+            guard let id = args["feature_id"] as? String else {
+                throw RpcError(code: -32602, message: "feature_id required")
+            }
+            guard let report = try registryFirst("validateExtension", [.string(id)])
+                    as? [String: Any] else {
+                return toolFailure("validate_extension: no report for \(id)")
+            }
+            // A refusal (unknown id, or a built-in) is the caller's mistake and
+            // reads as a tool error; a clean scan that FOUND problems is a
+            // successful answer, so it comes back as an ordinary result.
+            if let why = report["error"] as? String { return toolFailure(why) }
+            return try toolResult(report)
         case "read_log":
             let asked = args["lines"] as? Int ?? Int(args["lines"] as? Double ?? 100)
             let lines = max(1, min(asked, 2000))

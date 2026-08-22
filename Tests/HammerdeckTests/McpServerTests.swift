@@ -144,7 +144,8 @@ final class McpServerTests: XCTestCase {
         let tools = ((json["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
         let names = Set(tools.compactMap { $0["name"] as? String })
         XCTAssertEqual(names, ["list_features", "describe_feature", "get_extensions_dir",
-                               "reload", "run_action", "read_log", "get_extension_guide"])
+                               "reload", "run_action", "validate_extension", "read_log",
+                               "get_extension_guide"])
         for t in tools {
             XCTAssertNotNil(t["inputSchema"], "\(t["name"] ?? "?") is missing inputSchema")
         }
@@ -175,6 +176,19 @@ final class McpServerTests: XCTestCase {
                                         args: #"{"feature_id":"display_off"}"#)
         XCTAssertFalse(isError)
         XCTAssertEqual((value as? [String: Any])?["id"] as? String, "display_off")
+    }
+
+    // validate_extension is for the USER's own code. Pointed at a built-in it
+    // must refuse by name rather than quietly scanning app/features and
+    // reporting on something the caller cannot edit.
+    func testValidateExtensionRefusesABuiltIn() {
+        let (status, json) = rpc("tools/call",
+            params: #"{"name":"validate_extension","arguments":{"feature_id":"display_off"}}"#)
+        XCTAssertEqual(status, 200)
+        let result = json["result"] as? [String: Any]
+        XCTAssertEqual(result?["isError"] as? Bool, true, "a built-in is not a valid target")
+        let text = (result?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        XCTAssertTrue(text.contains("built-in"), "the refusal must name the cause: \(text)")
     }
 
     func testListFeaturesRidesTheLiveCatalog() {

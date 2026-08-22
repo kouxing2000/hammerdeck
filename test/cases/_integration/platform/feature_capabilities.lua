@@ -34,15 +34,16 @@ return {
     run = function(t)
         local ok = t.ok
         local appdir   = require("loader").appdir
-        local manifest = require("platform.manifest")
         local json     = require("platform.json")
+        local manifest = require("platform.manifest")   -- KNOWN_CAPABILITIES, below
+        -- The RULE (map inversion, per-file scan, both-directions compare) lives
+        -- in platform.capscan, shared with registry.validateExtension so the
+        -- build guard and the running app cannot answer this question
+        -- differently. What stays here is the ENUMERATION: `find` over a folder,
+        -- which reaches files no require does.
+        local capscan  = require("platform.capscan")
 
-        -- ctx method -> the capability gating it (inverted from the one map that
-        -- ctx.make itself gates on, so the guard cannot drift from the gate).
-        local capOf = {}
-        for cap, methods in pairs(manifest.CAPABILITY_METHODS) do
-            for _, name in ipairs(methods) do capOf[name] = cap end
-        end
+        local capOf = capscan.capabilityOf()
         ok(next(capOf) ~= nil, "capability guard: the capability map is non-empty (no false green)")
 
         local function shell(cmd)
@@ -68,15 +69,11 @@ return {
         local function scan(dir)
             local calls, requires = {}, {}
             for _, path in ipairs(shell("find '" .. dir .. "' -name '*.lua'")) do
-                local src = readFile(path) or ""
-                for line in src:gmatch("[^\n]*") do
-                    if not line:match("^%s*%-%-") then
-                        for name in line:gmatch("ctx%.(%w+)") do
-                            if capOf[name] then calls[name] = true end
-                        end
-                        local mod = line:match("require%s*%(?%s*[\"']platform%.(%w+)[\"']")
-                        if mod then requires[mod] = true end
-                    end
+                local c, r = capscan.scanSource(readFile(path) or "", capOf)
+                for name in pairs(c) do calls[name] = true end
+                for mod in pairs(r) do
+                    local leaf = mod:match("^platform%.([%w_]+)$")
+                    if leaf then requires[leaf] = true end
                 end
             end
             return calls, requires
@@ -110,25 +107,14 @@ return {
                 for name in pairs(platformCalls[mod] or {}) do calls[name] = true end
             end
 
-            local needed = {}
-            for name in pairs(calls) do needed[capOf[name]] = true end
-
-            local declared = {}
             local raw = readFile(appdir .. "/features/" .. id .. "/feature.json")
             local meta = raw and json.decode(raw) or nil
-            for _, cap in ipairs((meta or {}).capabilities or {}) do declared[cap] = true end
-
-            for cap in pairs(needed) do
-                if not declared[cap] then
-                    missing[#missing + 1] = id .. " needs '" .. cap .. "'"
-                end
+            local under, over = capscan.compare(calls, (meta or {}).capabilities, capOf)
+            for _, cap in ipairs(under) do
+                missing[#missing + 1] = id .. " needs '" .. cap .. "'"
             end
-            for cap in pairs(declared) do
-                -- `commands` is ADDITIVE (ctx.commands/runCommand are injected,
-                -- not gated), so it is outside this map and never "extra".
-                if cap ~= "commands" and not needed[cap] then
-                    extra[#extra + 1] = id .. " declares unused '" .. cap .. "'"
-                end
+            for _, cap in ipairs(over) do
+                extra[#extra + 1] = id .. " declares unused '" .. cap .. "'"
             end
         end
 

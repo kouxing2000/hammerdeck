@@ -70,9 +70,13 @@ single-step window-undo engine behind `ctx.window.undoLast` (only `window_ops`
 requires it). **SUBSYSTEM** = the automation rules engine
 (`rules` + `signals` + `effects` -- domain logic that, like core, requires the
 adapter's high-level surface but never touches `native.*` directly -- only
-`adapter.lua` does that), plus `i18n` (locale-injected, internal) and `text`
+`adapter.lua` does that), plus `i18n` (locale-injected, internal), `text`
 (a tiny pure string helper for rules/effects; zero-require but NOT on the
-feature allowlist).
+feature allowlist) and `capscan` (the capability-DECLARATION rule: text in,
+verdict out, touching no adapter or filesystem -- shared by the build guard
+`feature_capabilities.lua` and the runtime `registry.validateExtension` so the
+two cannot answer the same question differently; the callers differ only in how
+they enumerate source).
 `favicons` sits in this tier structurally but is a **pure factory subsystem** a
 feature MAY `require` (it needs only the `urls` leaf util, used as
 `favicons.new(ctx)`) -- a sibling to the leaf utils, NOT a zero-`require` leaf
@@ -162,7 +166,13 @@ onto `platform.windows`, which the `window_*` features ride.
   with `extension = true` (the Settings badge). The BUILD-time guard suites
   (feature_requires / feature_capabilities / i18n_parity / gallery preview)
   deliberately cover only the first-party catalog -- an extension is the user's
-  own code, gated at runtime but not by our CI.
+  own code, gated at runtime but not by our CI. `registry.validateExtension(id)`
+  is what an extension author gets instead: it walks the REQUIRE GRAPH from the
+  extension's `init.lua` (siblings, plus the platform modules it pulls in, whose
+  gated calls run through the feature's own ctx) and compares the reach against
+  the declared `capabilities` in BOTH directions. Exposed as the
+  `validate_extension` MCP tool -- `reload` proves an extension loads, this
+  proves it declared itself honestly.
 - **app/platform/lua/registry_view.lua** -- the registry's READ MODEL: localized
   names/labels, `describe()` (the whole config-UI payload), the command list, the
   Hyper legend, the trigger summary. It only DESCRIBES what registry decided;
@@ -241,7 +251,8 @@ onto `platform.windows`, which the `window_*` features ride.
 - **app/platform/swift/McpServer.swift + McpHttp.swift** -- the OPT-IN local MCP
   endpoint (Settings > General > Agent Access) a coding agent connects to for
   the extension-authoring loop: list/describe features, reload + read load
-  failures, run an enabled action, tail the log, fetch the authoring guide.
+  failures, validate one extension's capability declarations, run an enabled
+  action, tail the log, fetch the authoring guide.
   HOST INFRA, not a seam slice: it CONSUMES the bridge via `LuaState.call`
   (data never enters Lua source) and adds no OS surface for Lua -- it lives
   beside StatusBar, never in `Native+*`. Ships in release (unlike DebugControl)
