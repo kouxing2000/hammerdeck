@@ -1,25 +1,25 @@
 {
   "name": "指针",
-  "description": "按需的指针助手 -- 闪现十字线以找到鼠标，或将其居中到聚焦窗口或某个屏幕上.",
+  "description": "按需的指针助手 -- 闪现十字线以找到鼠标，或将其居中到聚焦窗口或某个屏幕上。",
 
   "action.main.label": "定位指针",
-  "action.main.description": "在鼠标指针周围闪现十字线，让你在屏幕上找到它.",
-  "action.main.mnemonic": "M 代表鼠标 (Hyper+M, 然后 M)",
+  "action.main.description": "在鼠标指针周围闪现十字线，让你在屏幕上找到它。",
+  "action.main.mnemonic": "M 代表鼠标 (Hyper+M，然后 M)",
 
   "action.center.label": "将指针居中到聚焦窗口",
-  "action.center.description": "将鼠标指针移动到聚焦窗口的中心，然后闪现定位器.",
+  "action.center.description": "将鼠标指针移动到聚焦窗口的中心，然后闪现定位器。",
   "action.center.mnemonic": "C 代表居中 (相同的 Hyper+M 前缀)",
 
   "action.center_active_screen.label": "将指针居中到当前屏幕",
-  "action.center_active_screen.description": "将鼠标指针移动到你正在使用的屏幕的中心 -- 聚焦窗口所在的屏幕，无聚焦时则为指针所在的屏幕 -- 然后闪现定位器.",
+  "action.center_active_screen.description": "将鼠标指针移动到你正在使用的屏幕的中心 -- 聚焦窗口所在的屏幕，无聚焦时则为指针所在的屏幕 -- 然后闪现定位器。",
   "action.center_active_screen.mnemonic": "A 代表当前屏幕 (相同的 Hyper+M 前缀)",
 
   "action.center_screen.label": "将指针居中到主屏幕",
-  "action.center_screen.description": "将鼠标指针移动到主屏幕的中心，然后闪现定位器.",
+  "action.center_screen.description": "将鼠标指针移动到主屏幕的中心，然后闪现定位器。",
   "action.center_screen.mnemonic": "S 代表屏幕 (相同的 Hyper+M 前缀)",
 
   "action.center_next_screen.label": "将指针居中到下一个屏幕",
-  "action.center_next_screen.description": "将鼠标指针移动到下一个显示器的中心 (循环回到第一个), 然后闪现定位器.",
+  "action.center_next_screen.description": "将鼠标指针移动到下一个显示器的中心 (循环回到第一个)，然后闪现定位器。",
   "action.center_next_screen.mnemonic": "N 代表下一个屏幕 (相同的 Hyper+M 前缀)",
 
   "option.seconds.label": "定位：显示时长 (秒)"

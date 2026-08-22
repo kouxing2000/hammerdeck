@@ -1,19 +1,19 @@
 {
   "name": "粘贴为纯文本",
-  "description": "无格式粘贴：去除复制文本的字体/颜色/链接后粘贴 (或以键盘输入的方式录入).",
+  "description": "无格式粘贴：去除复制文本的字体/颜色/链接后粘贴 (或以键盘输入的方式录入)。",
 
   "option.mode.label": "转换",
   "option.mode.values.plainText": "纯文本",
   "option.mode.values.newlinesToCommas": "换行转逗号",
 
   "action.main.label": "粘贴为纯文本",
-  "action.main.description": "去除剪贴板文本的格式，然后用合成的 cmd+v 粘贴.",
+  "action.main.description": "去除剪贴板文本的格式，然后用合成的 cmd+v 粘贴。",
   "action.main.mnemonic": "⇧⌘V — 系统的粘贴并匹配样式快捷键",
   "action.type.label": "以键盘输入方式录入剪贴板",
-  "action.type.description": "将去格式后的剪贴板文本以键盘输入方式录入，而非粘贴 -- 适用于禁止粘贴的输入框.",
+  "action.type.description": "将去格式后的剪贴板文本以键盘输入方式录入，而非粘贴 -- 适用于禁止粘贴的输入框。",
   "action.type.mnemonic": "Y = 键入 (keYstrokes)",
 
   "alert.empty": "剪贴板为空",
   "alert.cleaned": "剪贴板已清理 -- 用 cmd+v 粘贴 (授予辅助功能权限可自动粘贴)",
-  "alert.axRequired": "键盘录入需要辅助功能权限 -- 请在系统设置中授权 %s, 然后重试"
+  "alert.axRequired": "键盘录入需要辅助功能权限 -- 请在系统设置中授权 %s，然后重试"
 }

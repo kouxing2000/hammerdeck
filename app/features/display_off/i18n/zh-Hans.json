@@ -1,8 +1,8 @@
 {
   "name": "空闲时关闭显示器",
-  "description": "在一段无操作后关闭显示器，关闭前会显示倒计时警告.",
+  "description": "在一段无操作后关闭显示器，关闭前会显示倒计时警告。",
 
-  "banner.countdown": "无活动 -- 显示器将在 %d 秒后关闭. 移动鼠标可取消.",
+  "banner.countdown": "无活动 -- 显示器将在 %d 秒后关闭。移动鼠标可取消。",
 
   "option.idleThresholdMin.label": "显示器关闭前的空闲时间 (分钟)",
   "option.warnSeconds.label": "关闭显示器前的倒计时警告 (秒)"

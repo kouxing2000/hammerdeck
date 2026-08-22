@@ -1,6 +1,6 @@
 {
   "name": "命令面板",
-  "description": "用一个快捷键模糊搜索并运行任意已启用功能的任意操作.",
+  "description": "用一个快捷键模糊搜索并运行任意已启用功能的任意操作。",
 
   "action.main.mnemonic": "Space — 万能启动器",
 
