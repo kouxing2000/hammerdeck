@@ -64,7 +64,13 @@ enum Diagnostics {
             out.append("")
             out.append("BROKEN:")
             for f in broken {
-                out.append("  \(f.id): \(f.errorMessage.prefix(160))")
+                // Redact BEFORE truncating. A load failure's message is raw Lua
+                // error text carrying absolute paths -- for an extension, the
+                // user's own folder and their account short name, in the one
+                // string this report copies verbatim. Truncating first could
+                // cut a prefix in half and leave the tail unmatched, so the
+                // order here is load-bearing, not stylistic.
+                out.append("  \(f.id): \(redactPaths(f.errorMessage).prefix(160))")
             }
         }
 
@@ -91,6 +97,26 @@ enum Diagnostics {
         // know WHERE the log lives, not who the user is.
         out.append("log: \((Native.logsDir.path as NSString).abbreviatingWithTildeInPath)")
         return out.joined(separator: "\n")
+    }
+
+    /// Strip machine-identifying prefixes out of text this report copies
+    /// verbatim. The header's no-user-content rule is easy to hold for fields we
+    /// compose ourselves and easy to lose through a passed-through error string,
+    /// which is where paths actually arrive.
+    ///
+    /// The extensions folder goes first: it is named in the rule as excluded,
+    /// and it usually sits UNDER the home directory, so tilde-abbreviating first
+    /// would leave the user's own folder names in place.
+    static func redactPaths(_ text: String) -> String {
+        var out = text
+        if let dir = ExtensionsPreference.dir, !dir.isEmpty {
+            out = out.replacingOccurrences(of: dir, with: "<extensions>")
+        }
+        let home = NSHomeDirectory()
+        if !home.isEmpty {
+            out = out.replacingOccurrences(of: home, with: "~")
+        }
+        return out
     }
 
     /// The MCP endpoint's state for the report. Never the token -- this text is
