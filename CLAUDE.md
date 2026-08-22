@@ -250,9 +250,15 @@ onto `platform.windows`, which the `window_*` features ride.
   event) have no key form and show no menu shortcut.
 - **app/platform/swift/McpServer.swift + McpHttp.swift** -- the OPT-IN local MCP
   endpoint (Settings > General > Agent Access) a coding agent connects to for
-  the extension-authoring loop: list/describe features, reload + read load
-  failures, validate one extension's capability declarations, run an enabled
-  action, tail the log, fetch the authoring guide.
+  the extension-authoring loop: list/describe features, list the ctx surface one
+  feature actually receives (`list_api`, over `registry.apiSurface`), reload +
+  read load failures, validate one extension's capability declarations, enable a
+  feature so it can be test-fired, run an enabled action, tail the log, fetch the
+  authoring guide. Every tool must be NAMED in that guide -- a Swift test gates
+  it, since the guide is the only documentation an agent reads before calling.
+  It grows the agent's REFLECTION, never its reach: there is deliberately no
+  eval tool, because arbitrary Lua arriving at runtime is invisible to `capscan`
+  and would make `validate_extension`'s verdict meaningless.
   HOST INFRA, not a seam slice: it CONSUMES the bridge via `LuaState.call`
   (data never enters Lua source) and adds no OS surface for Lua -- it lives
   beside StatusBar, never in `Native+*`. Ships in release (unlike DebugControl)

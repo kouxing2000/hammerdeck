@@ -554,19 +554,89 @@ local function resolveAction(m, actionId)
     error("feature '" .. m.id .. "' has no action '" .. tostring(actionId) .. "'")
 end
 
+-- Capability gate: only a feature that declared `commands` gets the
+-- cross-feature reach (the palette). runCommand IS runAction -- the palette
+-- inherits its "enabled? exists? pcall-wrapped" guards for free.
+--
+-- Extracted so registry.apiSurface can build a ctx the SAME way bindFeature
+-- does. A second copy of this branch there would be a surface that reports
+-- what a feature gets only until someone edits one of the two.
+local function commandsExtra(m)
+    if not manifest.hasCapability(m, "commands") then return nil end
+    return {
+        commands   = function() return buildCommandList(m.id) end,
+        runCommand = function(id, actionId) return registry.runAction(id, actionId) end,
+    }
+end
+
+-- Every ctx member this feature actually receives, and every one withheld for
+-- want of a capability. The authoring loop's other blind spot: an agent learns
+-- that `ctx.foo` is wrong only at RUNTIME, on whichever branch reaches it -- and
+-- a withheld method is a raising STUB rather than a missing key, so `ctx.httpGet
+-- ~= nil` answers "yes" for a feature that may not call it.
+--
+-- Enumerated from a ctx built exactly the way bindFeature builds one (same
+-- commandsExtra), so the answer cannot drift from the surface the feature is
+-- handed. The scratch ctx binds nothing -- ctx.make's only construction-time
+-- seam call is one adapter.appName() read -- so its scope stays empty and the
+-- whole thing is garbage on the next collection.
+--
+-- Identical for a built-in and a user extension by construction -- bindFeature
+-- branches on declared capabilities, never on m.extension -- which is the point
+-- worth being able to SHOW an extension author rather than assert.
+---@param id string
+---@return table report { id, extension, granted[], available[], withheld{name->cap} }
+---        or { id, error } when there is no such feature
+function registry.apiSurface(id)
+    local m = features[id]
+    if not m then return { id = id, error = "no such feature: " .. id } end
+
+    local withheld = {}
+    for cap, methods in pairs(manifest.CAPABILITY_METHODS) do
+        if not manifest.hasCapability(m, cap) then
+            for _, name in ipairs(methods) do withheld[name] = cap end
+        end
+    end
+
+    local ctx = ctxlib.make(m, nil, commandsExtra(m), nil)
+    local available = {}
+    for k, v in pairs(ctx) do
+        if k:sub(1, 1) ~= "_" and not withheld[k] then
+            if type(v) == "table" then
+                -- The domain sub-tables (ctx.window / ctx.screen / ctx.mouse) hold
+                -- a large share of the surface; naming only the parent would hide
+                -- it, and "ctx.window exists" is not what the caller needs to know.
+                for key in pairs(v) do
+                    local name = tostring(key)
+                    if name:sub(1, 1) ~= "_" then
+                        available[#available + 1] = k .. "." .. name
+                    end
+                end
+            else
+                available[#available + 1] = k
+            end
+        end
+    end
+    table.sort(available)
+
+    local granted = {}
+    for _, cap in ipairs(m.capabilities or {}) do granted[#granted + 1] = cap end
+    table.sort(granted)
+
+    return {
+        id = id,
+        extension = m.extension == true,
+        granted = json.asArray(granted),
+        available = json.asArray(available),
+        -- asObject so an ungated-everything feature encodes as {} and not [].
+        withheld = json.asObject(withheld),
+    }
+end
+
 local function bindFeature(m)
     if bound[m.id] then return end               -- already live
     startFailures[m.id] = nil                     -- a retry clears the prior failure
-    -- Capability gate: only a feature that declared `commands` gets the
-    -- cross-feature reach (the palette). runCommand IS runAction -- the palette
-    -- inherits its "enabled? exists? pcall-wrapped" guards for free.
-    local extra = nil
-    if manifest.hasCapability(m, "commands") then
-        extra = {
-            commands   = function() return buildCommandList(m.id) end,
-            runCommand = function(id, actionId) return registry.runAction(id, actionId) end,
-        }
-    end
+    local extra = commandsExtra(m)
     local ctx, scope = ctxlib.make(m, function(actionId)
         local okR, a = pcall(resolveAction, m, actionId)
         if not okR then return nil end

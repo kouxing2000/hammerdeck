@@ -329,6 +329,20 @@ final class McpServer: ObservableObject {
                  + "backs). Run this after reload and before handing the extension over.",
                  ["feature_id": ["type": "string", "description": "extension id"]],
                  required: ["feature_id"]),
+            tool("list_api",
+                 "Every ctx member this feature actually receives, and every one WITHHELD for "
+                 + "want of a capability (with the capability that unlocks each). A withheld "
+                 + "method is a raising stub rather than a missing key, so probing ctx at "
+                 + "runtime cannot tell you this. Read it before writing code against ctx.",
+                 ["feature_id": ["type": "string", "description": "feature id"]],
+                 required: ["feature_id"]),
+            tool("set_enabled",
+                 "Enable or disable one feature. run_action refuses a disabled feature, so "
+                 + "enable the extension you just wrote before test-firing it. Enabling a "
+                 + "SERVICE runs its start(ctx).",
+                 ["feature_id": ["type": "string"],
+                  "enabled": ["type": "boolean", "description": "true to enable"]],
+                 required: ["feature_id", "enabled"]),
             tool("read_log",
                  "Tail of today's Hammerdeck log (ctx.log traces, seam errors, fire failures).",
                  ["lines": ["type": "integer", "description": "how many trailing lines (default 100, max 2000)"]]),
@@ -432,6 +446,66 @@ final class McpServer: ObservableObject {
             // successful answer, so it comes back as an ordinary result.
             if let why = report["error"] as? String { return toolFailure(why) }
             return try toolResult(report)
+        case "list_api":
+            guard let id = args["feature_id"] as? String else {
+                throw RpcError(code: -32602, message: "feature_id required")
+            }
+            guard let report = try registryFirst("apiSurface", [.string(id)])
+                    as? [String: Any] else {
+                return toolFailure("list_api: no surface for \(id)")
+            }
+            if let why = report["error"] as? String { return toolFailure(why) }
+            return try toolResult(report)
+        case "set_enabled":
+            guard let id = args["feature_id"] as? String else {
+                throw RpcError(code: -32602, message: "feature_id required")
+            }
+            guard let on = args["enabled"] as? Bool else {
+                throw RpcError(code: -32602, message: "enabled (boolean) required")
+            }
+            // registry.setEnabled ASSERTS on an unknown id; that would cross the
+            // bridge as a Lua error instead of a reason the agent can act on.
+            let rows = (try registryFirst("describe") as? [Any]) ?? []
+            guard let row = rows.first(where: { ($0 as? [String: Any])?["id"] as? String == id })
+                    as? [String: Any] else {
+                return toolFailure("no such feature: \(id)")
+            }
+            // describe() also emits a synthetic row per module that failed to
+            // LOAD (registry_view: kind = "failed"), and those ids are absent
+            // from the registry's feature table -- so the existence check above
+            // passes and registry.setEnabled's assert would cross the bridge as
+            // a protocol error. This is the id an agent is MOST likely to send:
+            // it just wrote an extension, reload reported the failure, and the
+            // next move is to try enabling it. `kind` is the discriminator, not
+            // `failed` -- a feature that loaded and threw in start(ctx) is also
+            // marked failed, and enabling THAT is a legitimate retry.
+            if row["kind"] as? String == "failed" {
+                let why = row["error"] as? String ?? "it failed to load"
+                return toolFailure("\(id) cannot be enabled -- \(why). Fix it and reload.")
+            }
+            // The Settings toggle refuses this same case (SettingsStore.
+            // requestSetEnabled) because a feature that needs Accessibility and
+            // does not have it sits "on" while doing nothing. Refuse here too --
+            // but WITHOUT requestSetEnabled's grant flow: that opens System
+            // Settings, and a socket call must not move the user's windows.
+            if on,
+               (row["requires"] as? [String])?.contains("accessibility") == true,
+               store?.accessibilityTrusted() == false {
+                return toolFailure("\(id) requires the Accessibility grant, which this app does "
+                    + "not have -- ask the user to grant it. Enabling it now would leave the "
+                    + "feature on and inert.")
+            }
+            _ = try registryCall("setEnabled", [.string(id), .bool(on)], results: 0)
+            store?.refresh()   // the Settings toggle and menubar must not lag this
+            // Enabling a SERVICE runs start(ctx), and a throw there is quarantined
+            // into startFailures -- without this the tool reports a clean enable
+            // for a feature that is not actually running. Only on the enable path:
+            // a stale entry must not make a disable look like a failure.
+            if on, let why = ((try registryFirst("failures") as? [String: Any])?["start"]
+                                as? [String: Any])?[id] as? String {
+                return toolFailure("enabled \(id), but it failed to start: \(why)")
+            }
+            return try toolResult(["id": id, "enabled": on])
         case "read_log":
             let asked = args["lines"] as? Int ?? Int(args["lines"] as? Double ?? 100)
             let lines = max(1, min(asked, 2000))

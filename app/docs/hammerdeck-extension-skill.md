@@ -147,25 +147,36 @@ feature using it needs `network` + `browser` + `files` too.
 When connected to Hammerdeck's MCP server (the user enables it in
 Settings > General > Agent Access, then runs the copied
 `claude mcp add --transport http hammerdeck http://127.0.0.1:<port>/mcp
---header "Authorization: Bearer <token>"`), iterate like this:
+--header "Authorization: Bearer <token>"`), iterate like this.
+(`get_extension_guide` returns this document, so a session that has it loaded
+has already done step 0.)
 
 1. `get_extensions_dir` — where to write. If unset, ask the user to pick a
    folder in Settings > General > Extensions.
-2. Write/edit the extension files on disk yourself.
-3. `reload` — re-scans the folder. Read the returned load/start failures;
+2. `list_api` — what `ctx` actually offers this feature. `available` is every
+   member it receives; `withheld` names each capability-gated method it does NOT,
+   with the capability that unlocks it. Read this BEFORE writing code against
+   `ctx`: a withheld method is a raising stub rather than a missing key, so
+   nothing you can test at runtime tells you the difference, and an invented
+   member is only discovered on whichever branch reaches it. An extension
+   receives exactly the surface a built-in with the same declarations does.
+3. Write/edit the extension files on disk yourself.
+4. `reload` — re-scans the folder. Read the returned load/start failures;
    fix and reload until clean.
-4. `validate_extension` — check the `capabilities` in your feature.json against
+5. `validate_extension` — check the `capabilities` in your feature.json against
    what your code actually calls. It reports both directions: `underDeclared`
    (a gated method you call but never declared — the runtime gate will raise on
    whichever branch reaches it, which may not be one you test) and
    `overDeclared` (a capability you claim and never use — the list is only worth
    reading if it is true). Fix both before handing the extension over; `reload`
    proves it LOADS, this proves it declared itself honestly.
-5. Ask the user to enable the feature in Settings (there is deliberately no
-   enable tool — enabling is the user's choice).
-6. `run_action` — test-fire an enabled feature's action.
-7. `read_log` — check your `ctx.log` traces and any fire errors.
-8. `list_features` / `describe_feature` — verify how the catalog sees it
+6. `set_enabled` — enable it, so it can be test-fired. Enabling a SERVICE runs
+   its `start(ctx)`, and a feature needing the Accessibility grant is refused
+   rather than left on and inert — the tool says so and you ask the user to grant
+   it. Disable again when you are done if the user had it off.
+7. `run_action` — test-fire an enabled feature's action.
+8. `read_log` — check your `ctx.log` traces and any fire errors.
+9. `list_features` / `describe_feature` — verify how the catalog sees it
    (options, triggers, the `extension` flag).
 
 A broken extension never crashes the app — it shows as a failed row with the

@@ -144,10 +144,31 @@ final class McpServerTests: XCTestCase {
         let tools = ((json["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
         let names = Set(tools.compactMap { $0["name"] as? String })
         XCTAssertEqual(names, ["list_features", "describe_feature", "get_extensions_dir",
-                               "reload", "run_action", "validate_extension", "read_log",
-                               "get_extension_guide"])
+                               "reload", "run_action", "validate_extension", "list_api",
+                               "set_enabled", "read_log", "get_extension_guide"])
         for t in tools {
             XCTAssertNotNil(t["inputSchema"], "\(t["name"] ?? "?") is missing inputSchema")
+        }
+    }
+
+    /// The guide is the ONLY documentation an agent reads before it starts
+    /// calling, and `get_extension_guide` serves it from disk -- so a tool the
+    /// guide never mentions is a tool nothing will call, and a tool the guide
+    /// describes but the server dropped is an instruction that fails. Neither
+    /// shows up in any other check: the guide's own parity gate
+    /// (agent_guide.lua) covers the capability and option vocabularies, and
+    /// cannot see the Swift tool table at all.
+    func testEveryToolIsNamedInTheAuthoringGuide() throws {
+        let guideText = try String(contentsOfFile: McpServer.guidePath, encoding: .utf8)
+        XCTAssertTrue(guideText.contains("authoring loop over MCP"),
+                      "the guide was not read -- an empty haystack matches nothing")
+        let (_, json) = rpc("tools/list")
+        let tools = ((json["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
+        XCTAssertFalse(tools.isEmpty)
+        for t in tools {
+            let name = t["name"] as? String ?? "?"
+            XCTAssertTrue(guideText.contains("`\(name)`"),
+                          "the guide never mentions the \(name) tool")
         }
     }
 
@@ -189,6 +210,111 @@ final class McpServerTests: XCTestCase {
         XCTAssertEqual(result?["isError"] as? Bool, true, "a built-in is not a valid target")
         let text = (result?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
         XCTAssertTrue(text.contains("built-in"), "the refusal must name the cause: \(text)")
+    }
+
+    // list_api's whole value is the SPLIT: a withheld method is a raising stub,
+    // so the ctx table has the key either way and an agent probing at runtime
+    // learns nothing. Asserted against a feature whose declaration is known
+    // (display_off declares power and nothing else), plus the invariant that the
+    // two sides never overlap -- which is what would break if the report were
+    // ever assembled from anything other than the built ctx.
+    func testListApiSplitsAvailableFromWithheld() {
+        let (isError, value) = toolJSON("list_api", args: #"{"feature_id":"display_off"}"#)
+        XCTAssertFalse(isError)
+        let report = value as? [String: Any] ?? [:]
+        let available = Set(report["available"] as? [String] ?? [])
+        let withheld = report["withheld"] as? [String: String] ?? [:]
+        XCTAssertFalse(available.isEmpty, "no surface was reported -- the tool did not run")
+
+        XCTAssertTrue(available.contains("lockScreen"), "a DECLARED tier's method is available")
+        XCTAssertEqual(withheld["httpGet"], "network",
+                       "an undeclared tier is withheld, named with the capability")
+        XCTAssertTrue(available.isDisjoint(with: Set(withheld.keys)),
+                      "available and withheld must never name the same method")
+        XCTAssertEqual(report["granted"] as? [String] ?? [], ["power"])
+        XCTAssertTrue(available.contains("window.setFrame"),
+                      "the ctx.window.* sub-surface is expanded, not hidden behind its parent")
+    }
+
+    func testListApiRefusesAnUnknownFeature() {
+        let (status, json) = rpc("tools/call",
+            params: #"{"name":"list_api","arguments":{"feature_id":"no_such_thing"}}"#)
+        XCTAssertEqual(status, 200)
+        let result = json["result"] as? [String: Any]
+        XCTAssertEqual(result?["isError"] as? Bool, true)
+    }
+
+    // set_enabled exists to unblock exactly this sequence: run_action refuses a
+    // disabled feature, so an agent that just wrote an extension could not
+    // test-fire it without a human clicking Settings. The test drives the whole
+    // sequence rather than asserting the flag, because the flag was never the
+    // point.
+    func testSetEnabledUnblocksRunAction() {
+        // count_down deliberately: it declares no `requires`, so this test does
+        // not depend on whether THIS machine has granted Accessibility. Most of
+        // the catalog does require it, and the tool refuses those without the
+        // grant -- picking one of them would make the test pass here and fail on
+        // CI, where nothing is granted.
+        let id = "count_down"
+        func enabled() -> Bool {
+            host.store.features.first { $0.id == id }?.enabled == true
+        }
+        let wasEnabled = enabled()
+        defer { host.store.setEnabled(id, wasEnabled) }
+
+        host.store.setEnabled(id, false)
+        let (blocked, _) = toolJSON("run_action", args: #"{"feature_id":"\#(id)"}"#)
+        XCTAssertTrue(blocked, "run_action must refuse a disabled feature -- the premise")
+
+        let (isError, value) = toolJSON("set_enabled",
+                                        args: #"{"feature_id":"\#(id)","enabled":true}"#)
+        XCTAssertFalse(isError)
+        XCTAssertEqual((value as? [String: Any])?["enabled"] as? Bool, true)
+        XCTAssertTrue(enabled(), "the tool must move the SAME state Settings reads")
+    }
+
+    // set_enabled's Accessibility refusal reads `requires` straight off the
+    // describe row. The refusal BRANCH cannot be asserted here -- it depends on
+    // whether this machine has granted Accessibility -- so what must be pinned
+    // is the read: if that key ever stopped decoding as [String], the guard
+    // would silently never fire and the tool would go back to enabling features
+    // into an inert state.
+    func testDescribeRowCarriesRequiresAsStrings() {
+        let (isError, value) = toolJSON("describe_feature",
+                                        args: #"{"feature_id":"window_switcher"}"#)
+        XCTAssertFalse(isError)
+        let requires = (value as? [String: Any])?["requires"] as? [String]
+        XCTAssertNotNil(requires, "requires must decode as [String] -- set_enabled's guard reads it")
+        XCTAssertEqual(requires, ["accessibility"],
+                       "window_switcher is the guard's worked example; if this changed, "
+                       + "re-point the test rather than deleting it")
+    }
+
+    func testSetEnabledRefusesAnUnknownFeature() {
+        let (status, json) = rpc("tools/call",
+            params: #"{"name":"set_enabled","arguments":{"feature_id":"no_such_thing","enabled":true}}"#)
+        XCTAssertEqual(status, 200)
+        let result = json["result"] as? [String: Any]
+        XCTAssertEqual(result?["isError"] as? Bool, true, "an unknown id is the caller's mistake")
+        let text = (result?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        XCTAssertTrue(text.contains("no such feature"), "the refusal must name the cause: \(text)")
+    }
+
+    // set_enabled discriminates a load FAILURE (a synthetic describe row with no
+    // entry in the registry's feature table) from a healthy one by `kind`. The
+    // refusal branch itself needs a broken extension on disk and is not exercised
+    // here; what is pinned is that the discriminator cannot MISFIRE -- if any
+    // real feature ever reported kind "failed", the tool would start refusing to
+    // enable working features.
+    func testNoHealthyFeatureReportsTheFailedKind() {
+        let (isError, value) = toolJSON("list_features")
+        XCTAssertFalse(isError)
+        let rows = value as? [[String: Any]] ?? []
+        XCTAssertFalse(rows.isEmpty, "an empty catalog would pass this vacuously")
+        for row in rows where row["failed"] as? Bool != true {
+            XCTAssertNotEqual(row["kind"] as? String, "failed",
+                              "\(row["id"] ?? "?") is healthy but claims kind=failed")
+        }
     }
 
     func testListFeaturesRidesTheLiveCatalog() {
