@@ -243,6 +243,15 @@ func capabilityPresentation(_ c: String) -> CapabilityInfo? {
             symbol: "command",
             detail: Strings.t("cap.commands.detail",
                               default: "Can list and run the actions of your other enabled features."))
+    case "exec":
+        // Deliberately the bluntest wording in this list. A child process can do
+        // anything the person running the app can, so a label implying one narrow
+        // permission would be the misleading one.
+        return CapabilityInfo(
+            label: Strings.t("cap.exec", default: "Run programs"),
+            symbol: "terminal",
+            detail: Strings.t("cap.exec.detail",
+                              default: "Runs other programs on this Mac. A program it starts can do anything you can, so this is the widest thing on this list."))
     default:
         return nil
     }

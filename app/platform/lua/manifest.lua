@@ -128,6 +128,12 @@ local CAPABILITY_METHODS = {
     -- feature's dataDir, and what software a user has installed is
     -- fingerprinting-relevant, so it is declared, like the browser reads.
     apps = { "installedApps" },
+    -- Runs another program. In practice this is every other tier at once, since
+    -- a child process can do anything the user can -- the label says so plainly
+    -- rather than pretending it is one narrow permission. Meant for USER
+    -- EXTENSIONS: a first-party catalog feature that needs OS surface grows it in
+    -- the seam instead, and the build guard fails a catalog feature declaring it.
+    exec = { "run" },
 }
 local KNOWN_CAPABILITIES = { commands = true }
 for cap in pairs(CAPABILITY_METHODS) do KNOWN_CAPABILITIES[cap] = true end
@@ -556,6 +562,17 @@ end
 -- declarations against real usage. Read-only by convention.
 ---@type table<string, string[]>
 manifest.CAPABILITY_METHODS = CAPABILITY_METHODS
+
+-- The platform modules a feature or extension may `require`, by bare name: the
+-- zero-`require` leaf utils, plus the pure factory subsystem `favicons`. Read it
+-- here rather than re-listing it -- the build guard (feature_requires.lua) and
+-- registry.validateExtension's require walk both key off this, and an allowlist
+-- kept in two places is one that eventually disagrees with itself.
+---@type table<string, boolean>
+manifest.FEATURE_REQUIRABLE = {
+    json = true, urls = true, hotkeys = true, windows = true,
+    cyclingChooser = true, favicons = true,
+}
 
 -- Every capability name a feature may declare (the gated tiers plus the
 -- additive `commands`), as a set. Exposed so a test can enumerate the full set

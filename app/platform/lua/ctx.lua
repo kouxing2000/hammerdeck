@@ -556,6 +556,24 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.setWallpaper(path, mode)      return adapter.setWallpaper(path, mode) end
     function ctx.cacheDir()                    return adapter.cacheDir() end
 
+    -- Run another program; cb(status, stdout, stderr). Gated by `exec`.
+    --
+    -- Same async one-shot contract as the requests above. `path` is ABSOLUTE and
+    -- `args` an argv array -- no shell, so nothing expands `~`, `*`, `|` or a
+    -- `$VAR`, and a command built from user text cannot turn a quoting mistake
+    -- into an injection. Output is capped per stream (the seam logs a
+    -- truncation); a command producing more should write to a file.
+    --
+    -- `status` is the exit code, nil if the program could not be launched, or
+    -- NEGATIVE if it was killed by signal -status -- a timeout or a teardown,
+    -- not a code the command chose.
+    ---@param path string    absolute executable path, e.g. "/usr/bin/git"
+    ---@param args string[]|nil
+    ---@param cb fun(status: integer|nil, stdout: string, stderr: string)
+    function ctx.run(path, args, cb)
+        return trackOneShot(function(f) return adapter.run(path, args, f) end, cb)
+    end
+
     -- input / system state / system actions ------------------------------------
     function ctx.now()               return adapter.now() end
     -- Cryptographically secure uniform integer in [min,max] (CSPRNG via the
@@ -697,10 +715,17 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
             assert(ctx[name] ~= nil,
                 "capability map names ctx." .. name .. " (" .. cap .. "), which does not exist")
             if not granted then
+                -- Name the file that actually exists. An EXTENSION lives in the
+                -- user's own folder, and `exec` is for extensions, so pointing at
+                -- app/features/<id>/ would send its author to a path this
+                -- install does not have.
+                local where = m.extensionDir
+                    and (m.extensionDir .. "/feature.json")
+                    or ("app/features/" .. m.id .. "/feature.json")
                 ctx[name] = function()
                     error(("feature '%s' called ctx.%s without the '%s' capability -- add "
-                        .. '"capabilities": ["%s"] to app/features/%s/feature.json')
-                        :format(m.id, name, cap, cap, m.id), 2)
+                        .. '"capabilities": ["%s"] to %s')
+                        :format(m.id, name, cap, cap, where), 2)
                 end
             end
         end

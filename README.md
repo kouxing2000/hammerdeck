@@ -115,11 +115,20 @@ working through it can enable a feature in order to test-fire it. What that
 feature may reach is not hidden: every one declares its capabilities in
 `feature.json`, the app withholds anything undeclared at run time, and
 `validate_extension` checks the declaration against what the code actually
-calls, in both directions. That is auditability rather than a sandbox -- an
-extension you install is code you chose to run, and the point is that its reach
-is written down and machine-checked instead of buried. There is no tool for
-running arbitrary Lua: eval'd code belongs to no feature, so there is no
-declaration to check it against and nothing to withhold.
+calls, in both directions. One of the capabilities an extension can declare is
+`exec` -- running another program -- and a program can do whatever you can, so
+that declaration is the widest one on the list and says so in as many words.
+
+This is auditability rather than a sandbox, which is a real distinction and not
+a hedge: an extension you install is code you chose to run, and the point is
+that its reach is written down and machine-checked instead of buried. There is
+no tool for running arbitrary Lua -- eval'd code belongs to no feature, so there
+is no declaration to check it against and nothing to withhold. `os.execute` and
+`io.popen` are withdrawn from the embedded interpreter, so the ordinary way to
+start a program is the declared, logged one. None of that adds up to
+containment: a determined extension can still build code at runtime, and the
+honest claim is that an accurate declaration is easy and an inaccurate one is
+conspicuous.
 
 ## Install
 

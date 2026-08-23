@@ -324,9 +324,13 @@ final class McpServer: ObservableObject {
                  required: ["feature_id"]),
             tool("validate_extension",
                  "Check ONE user extension's feature.json capabilities against what its code "
-                 + "actually calls, without running it. Reports under-declared (a latent crash on "
-                 + "whichever branch reaches the gated call) and over-declared (a claim nothing "
-                 + "backs). Run this after reload and before handing the extension over.",
+                 + "actually calls, without running it. Reports underDeclared (a latent crash on "
+                 + "whichever branch reaches the gated call), overDeclared (a claim nothing "
+                 + "backs), rawReach (standard-library calls that reach the OS around ctx, with "
+                 + "the tier each needs) and withdrawn (a call to a name this interpreter no "
+                 + "longer has, with its replacement -- no declaration fixes one of these; "
+                 + "rewrite the call). Run this after reload and before handing the extension "
+                 + "over.",
                  ["feature_id": ["type": "string", "description": "extension id"]],
                  required: ["feature_id"]),
             tool("list_api",

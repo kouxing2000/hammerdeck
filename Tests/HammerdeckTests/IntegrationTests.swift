@@ -12,6 +12,18 @@ private final class TestIntBox: @unchecked Sendable {
     func get() -> Int? { lock.lock(); defer { lock.unlock() }; return value }
 }
 
+/// The same, for runProcessCore's three completion values.
+private final class TestProcessBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: (status: Int32?, out: String, err: String) = (nil, "", "")
+    func set(_ s: Int32?, _ o: String, _ e: String) {
+        lock.lock(); v = (s, o, e); lock.unlock()
+    }
+    func get() -> (status: Int32?, out: String, err: String) {
+        lock.lock(); defer { lock.unlock() }; return v
+    }
+}
+
 // Integration tests against the REAL stack -- no fake adapter. The Lua
 // platform boots in-process on the actual Native bridge, so these cover the
 // layer the headless Lua suite (test/run.lua) cannot: the Lua<->Swift value
@@ -1988,6 +2000,260 @@ final class IntegrationTests: XCTestCase {
         wait(for: [done], timeout: 20)
         XCTAssertEqual(box.get(), 200_000,
                        "the full payload returns -- the concurrent pipe drain avoided the deadlock")
+    }
+
+    // MARK: - Subprocesses (the shared runner and the `exec` capability)
+
+    /// The shared runner must report all three of exit status, stdout and stderr,
+    /// keeping the two streams apart. A caller that cannot see stderr cannot tell
+    /// a failed command from a silent one, and one that gets them interleaved
+    /// cannot parse either. `/bin/sh -c` here writes to both in one child.
+    func testRunProcessCoreReportsStatusAndBothStreams() {
+        let done = expectation(description: "runProcessCore completes")
+        let box = TestProcessBox()
+        Native.shared.runProcessCore(
+            executable: "/bin/sh",
+            args: ["-c", "printf out; printf err 1>&2; exit 3"],
+            timeout: 10, label: "test"
+        ) { status, out, err in
+            box.set(status, String(decoding: out, as: UTF8.self),
+                    String(decoding: err, as: UTF8.self))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 20)
+        let r = box.get()
+        XCTAssertEqual(r.status, 3, "the child's real exit code reaches the caller")
+        XCTAssertEqual(r.out, "out")
+        XCTAssertEqual(r.err, "err", "stderr is captured, not discarded")
+    }
+
+    /// A child that exits while a GRANDCHILD still holds its stderr must complete
+    /// on the child's exit, not the orphan's.
+    ///
+    /// A pipe reports EOF only when the last WRITE end closes, and a backgrounded
+    /// grandchild inherits one. `sh` here exits in milliseconds; the orphaned
+    /// `sleep` holds stderr for 5 seconds. A blocking read in the post-exit
+    /// fallback waits on the orphan -- the DispatchGroup never empties, the
+    /// completion never fires, the pinned Lua callback is lost, and the watchdog
+    /// later signals a pid that has been dead the whole time. Draining to EAGAIN
+    /// gives up nothing: the child's exit is proof no more of ITS bytes can come.
+    ///
+    /// `runJXACore` never met this because osascript is a fixed template that
+    /// does not fork. `ctx.run` takes arbitrary commands, where `foo &` is
+    /// ordinary -- so the 3s budget against a 5s orphan is the whole assertion.
+    func testRunProcessCoreCompletesWhileAnOrphanHoldsStderr() {
+        let done = expectation(description: "completes on the child's exit")
+        let box = TestProcessBox()
+        Native.shared.runProcessCore(
+            executable: "/bin/sh",
+            args: ["-c", "sleep 5 >/dev/null & echo hi"],
+            timeout: 30, label: "test"
+        ) { status, out, err in
+            box.set(status, String(decoding: out, as: UTF8.self),
+                    String(decoding: err, as: UTF8.self))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 3)
+        XCTAssertEqual(box.get().status, 0)
+        XCTAssertEqual(box.get().out, "hi\n", "and the child's own output still arrives whole")
+    }
+
+    /// The terminator must actually stop the child, not just drop the callback.
+    ///
+    /// `armOneShot` exists so "disabled" means disabled -- the wallpaper bug it
+    /// was built for was a callback landing after teardown. `exec` raises the
+    /// stakes: the CHILD is what changes the machine, so an abandoned `rsync` or
+    /// `git push` runs to completion after the user turns the feature off. A 30s
+    /// sleep finishing inside 5 proves it was signalled.
+    func testRunProcessCoreTerminatorStopsTheChild() {
+        let done = expectation(description: "terminated child completes")
+        let box = TestProcessBox()
+        let terminate = Native.shared.runProcessCore(
+            executable: "/bin/sleep", args: ["30"], timeout: 120, label: "test"
+        ) { status, out, err in
+            box.set(status, String(decoding: out, as: UTF8.self),
+                    String(decoding: err, as: UTF8.self))
+            done.fulfill()
+        }
+        XCTAssertNotNil(terminate, "a launched child yields a terminator")
+        terminate?()
+        wait(for: [done], timeout: 5)
+        // NEGATIVE, not 15. `exit 15` is a command failing on its own terms;
+        // signal 15 is us cutting it short, and a caller that cannot tell them
+        // apart cannot decide whether to retry.
+        XCTAssertEqual(box.get().status, -SIGTERM,
+                       "a killed child reports -signal, distinct from that exit code")
+    }
+
+    /// The sign is the whole point, so prove the other half: a command that
+    /// really does `exit 15` must report a positive 15.
+    func testRunProcessCoreReportsAChosenExitCodePositively() {
+        let done = expectation(description: "completes")
+        let box = TestProcessBox()
+        Native.shared.runProcessCore(executable: "/bin/sh", args: ["-c", "exit 15"],
+                                     timeout: 10, label: "test") { status, out, err in
+            box.set(status, String(decoding: out, as: UTF8.self),
+                    String(decoding: err, as: UTF8.self))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+        XCTAssertEqual(box.get().status, 15, "an exit code the command chose stays positive")
+    }
+
+    /// Output is 8-bit clean. `find -print0`, `git -z` and friends emit NUL
+    /// separators, and `lua_pushstring` stops at the first one -- a silently short
+    /// result indistinguishable from a short command.
+    func testCtxRunOutputSurvivesNulBytes() throws {
+        let done = expectation(description: "ctx.run callback fires")
+        try TestHost.shared.lua.run("""
+            _G.__nulProbe = nil
+            local registry = require("platform.registry")
+            registry.register({ api = 1, id = "nul_probe", name = "NUL probe",
+                capabilities = { "exec" },
+                action = function(ctx)
+                    ctx.run("/usr/bin/printf", { "a\\\\0b" }, function(code, out)
+                        _G.__nulProbe = #out
+                    end)
+                end })
+            registry.setEnabled("nul_probe", true)
+            registry.runAction("nul_probe")
+            """)
+        defer {
+            try? TestHost.shared.lua.run("""
+                local registry = require("platform.registry")
+                registry.setEnabled("nul_probe", false)
+                registry.unregister("nul_probe")
+                _G.__nulProbe = nil
+                """)
+        }
+        let poll = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if (try? TestHost.shared.lua.eval("return _G.__nulProbe")) as? Double != nil {
+                    done.fulfill()
+                }
+            }
+        }
+        wait(for: [done], timeout: 20)
+        poll.invalidate()
+        let n = try TestHost.shared.lua.eval("return _G.__nulProbe") as? Double
+        XCTAssertEqual(n, 3, "three bytes -- 'a', NUL, 'b' -- not one")
+    }
+
+    /// A wrong-shaped `args` must raise rather than run the program bare.
+    /// `ctx.run("/usr/bin/git", "status", cb)` is the mistake someone reaching for
+    /// a shell makes, and silently running `git` with no arguments is a worse
+    /// answer than an error.
+    func testRunProcessRejectsANonArrayArgs() throws {
+        let err = try TestHost.shared.lua.eval("""
+            local ok, e = pcall(function()
+                return require("platform.adapter").run("/usr/bin/git", "status", function() end)
+            end)
+            return (not ok) and tostring(e) or "NO ERROR RAISED"
+            """) as? String ?? ""
+        XCTAssertTrue(err.contains("ARRAY"), "refused by name -- got: \(err)")
+    }
+
+    /// A launch that cannot happen must still complete exactly once, with a nil
+    /// status. Silence here would strand the pinned Lua callback forever -- the
+    /// same class of bug the pipe retention fixed, reached by a different path
+    /// (the throw before `notify` is registered).
+    func testRunProcessCoreCompletesOnAFailedLaunch() {
+        let done = expectation(description: "runProcessCore completes on a bad path")
+        let box = TestProcessBox()
+        Native.shared.runProcessCore(executable: "/nonexistent/hammerdeck-test",
+                                     args: [], timeout: 5, label: "test") { status, out, err in
+            box.set(status, String(decoding: out, as: UTF8.self),
+                    String(decoding: err, as: UTF8.self))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+        XCTAssertNil(box.get().status, "a launch failure reports nil rather than a fake exit code")
+    }
+
+    /// End to end through the seam: `exec` is declared, so ctx.run exists, runs a
+    /// real program, and hands back its three values. Covers the Lua->Swift->child
+    /// crossing the fake adapter cannot (argv marshalling, the one-shot ref).
+    func testCtxRunReachesARealProcess() throws {
+        let done = expectation(description: "ctx.run callback fires")
+        try TestHost.shared.lua.run("""
+            _G.__execProbe = nil
+            local registry = require("platform.registry")
+            registry.register({ api = 1, id = "exec_probe", name = "Exec probe",
+                capabilities = { "exec" },
+                action = function(ctx)
+                    ctx.run("/bin/echo", { "hammerdeck" }, function(code, out, err)
+                        _G.__execProbe = tostring(code) .. "|" .. out .. "|" .. err
+                    end)
+                end })
+            registry.setEnabled("exec_probe", true)
+            registry.runAction("exec_probe")
+            """)
+        // UNREGISTER, not just disable, and on EVERY exit path. TestHost's registry
+        // is shared across the whole class, so a synthetic feature left in it is a
+        // real catalog row to every later test -- testEveryGalleryFeatureHasAPreview
+        // fails on it, pointing at a feature.json that does not exist.
+        defer {
+            try? TestHost.shared.lua.run("""
+                local registry = require("platform.registry")
+                registry.setEnabled("exec_probe", false)
+                registry.unregister("exec_probe")
+                _G.__execProbe = nil
+                """)
+        }
+        // The child is out of process, so the callback lands on a later main-queue
+        // turn -- poll the run loop rather than assert straight after runAction.
+        let poll = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if (try? TestHost.shared.lua.eval("return _G.__execProbe")) as? String != nil {
+                    done.fulfill()
+                }
+            }
+        }
+        wait(for: [done], timeout: 20)
+        poll.invalidate()
+        let got = try TestHost.shared.lua.eval("return _G.__execProbe") as? String
+        XCTAssertEqual(got, "0|hammerdeck\n|", "exit 0, stdout from the child, empty stderr")
+    }
+
+    /// A relative path is refused at the seam. `$PATH` deciding which binary runs
+    /// would make the logged launch line ("run: git status") a different claim from
+    /// what actually executed -- the audit trail has to name the real file.
+    func testRunProcessRequiresAnAbsolutePath() throws {
+        let err = try TestHost.shared.lua.eval("""
+            local ok, e = pcall(function()
+                return require("platform.adapter").run("echo", { "hi" }, function() end)
+            end)
+            return (not ok) and tostring(e) or "NO ERROR RAISED"
+            """) as? String ?? ""
+        XCTAssertTrue(err.contains("ABSOLUTE"),
+                      "a relative executable is refused by name -- got: \(err)")
+    }
+
+    /// os.execute and io.popen must not exist in the embedded state.
+    ///
+    /// `luaL_openlibs` hands every feature the whole standard library, so these
+    /// were a way to run a program with no declaration, no log line, no timeout,
+    /// and synchronously on the main thread. The stub is what makes ctx.run the
+    /// only route -- and it RAISES with the replacement named, because
+    /// "attempt to call a nil value (field 'execute')" tells an author nothing.
+    func testTheSubprocessStdlibFunctionsAreWithheld() throws {
+        // package.loadlib belongs here even though it spawns nothing itself: it
+        // links an arbitrary dylib and runs its constructors on load, which is
+        // subprocess-grade reach wearing a different name. os.exit is here for
+        // blast radius rather than reach -- it takes the host down from inside a
+        // callback, and its guidance is therefore NOT ctx.run.
+        let cases = [("os.execute", "ctx.run"), ("io.popen", "ctx.run"),
+                     ("package.loadlib", "ctx.run"), ("os.exit", "cannot quit the app")]
+        for (fn, guidance) in cases {
+            let err = try TestHost.shared.lua.eval("""
+                local ok, e = pcall(function() return \(fn)("echo hi") end)
+                return (not ok) and tostring(e) or "NO ERROR RAISED"
+                """) as? String ?? ""
+            XCTAssertTrue(err.contains(fn),
+                          "\(fn) must raise and name itself -- got: \(err)")
+            XCTAssertTrue(err.contains(guidance),
+                          "\(fn)'s error must say what to do instead -- got: \(err)")
+        }
     }
 
     /// FIDELITY ANCHOR (opt-in, real Chrome): the fast Lua suite models tab focus

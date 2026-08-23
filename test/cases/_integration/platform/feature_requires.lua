@@ -28,14 +28,14 @@ return {
         local ok = t.ok
         local appdir = require("loader").appdir
 
-        local ALLOWED = {
-            ["platform.json"] = true,
-            ["platform.urls"] = true,
-            ["platform.hotkeys"] = true,
-            ["platform.windows"] = true,
-            ["platform.cyclingChooser"] = true,
-            ["platform.favicons"] = true,
-        }
+        -- Derived from manifest.FEATURE_REQUIRABLE, which registry's own require
+        -- walk also reads: a second copy here would eventually disagree with the
+        -- one the running app enforces.
+        local ALLOWED = {}
+        for mod in pairs(require("platform.manifest").FEATURE_REQUIRABLE) do
+            ALLOWED["platform." .. mod] = true
+        end
+        ok(next(ALLOWED) ~= nil, "require guard: the allowlist is non-empty (no false green)")
 
         ---@param path string
         ---@return string[]

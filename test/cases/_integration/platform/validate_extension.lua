@@ -119,6 +119,91 @@ return { api = 1, id = "ext_caps",
         end
 
         -- ---------------------------------------------------------------
+        -- Raw stdlib reach. `io.open` addresses any path exactly as
+        -- ctx.fileRead does, so the declaration has to account for it --
+        -- otherwise going around ctx is the way to look clean.
+        -- ---------------------------------------------------------------
+        do
+        fake.files[INIT] = [[
+return { api = 1, id = "ext_caps",
+    action = function(ctx) local f = io.open("/etc/hosts", "r") end }
+]]
+        local r = registry.validateExtension("ext_caps")
+        local caps = {}
+        for _, c in ipairs(r.underDeclared) do caps[c] = true end
+        ok(caps.files == true, "io.open is attributed to the 'files' tier it goes around")
+        ok(r.rawReach["io.open"] == "files",
+            "and the report names the CALL, so the author knows which line to fix")
+        end
+
+        -- ---------------------------------------------------------------
+        -- A WITHDRAWN name fails on its own. The interpreter replaced
+        -- os.execute with a raising stub, so no feature.json makes this run
+        -- -- and reporting `ok` for code that cannot execute would be the
+        -- worst answer this tool could give.
+        -- ---------------------------------------------------------------
+        do
+        fake.files[INIT] = [[
+return { api = 1, id = "ext_caps",
+    action = function(ctx) os.execute("ls") end }
+]]
+        local r = registry.validateExtension("ext_caps")
+        ok(r.ok == false, "a call to a withdrawn name does not pass")
+        ok(#r.withdrawn == 1 and r.withdrawn[1] == "os.execute -> ctx.run",
+            "and is reported with its replacement, not as a capability to declare")
+        ok(r.rawReach["os.execute"] == nil,
+            "it is NOT offered as declarable reach -- declaring cannot fix it")
+        end
+
+        -- ---------------------------------------------------------------
+        -- The require walk follows only what a feature is ALLOWED to require
+        -- (manifest.FEATURE_REQUIRABLE), the same set the build guard folds
+        -- in. Following any platform.* would attribute the seam's own io.open
+        -- -- or capscan's table of stdlib NAMES -- to the author.
+        -- ---------------------------------------------------------------
+        do
+        fake.files[INIT] = [[
+local capscan = require("platform.capscan")
+return { api = 1, id = "ext_caps", action = function(ctx) ctx.lockScreen() end }
+]]
+        local fh = io.open("app/platform/lua/capscan.lua", "r")
+        ok(fh ~= nil, "the capscan source is readable (so the skip is the allowlist, not a miss)")
+        if fh then
+            fake.files["app/platform/lua/capscan.lua"] = fh:read("*a")
+            fh:close()
+        end
+        local r = registry.validateExtension("ext_caps")
+        local sawCapscan = false
+        for _, name in ipairs(r.scanned) do
+            if name == "platform.capscan" then sawCapscan = true end
+        end
+        ok(not sawCapscan, "a platform module outside the feature allowlist is not walked")
+        -- NOT walked, and therefore REPORTED. Skipping in silence would make the
+        -- widest bypass in the system -- require the adapter, get every native
+        -- call with no declaration behind it -- the quietest line in the report.
+        ok(#r.disallowedRequires == 1 and r.disallowedRequires[1] == "platform.capscan",
+            "and is named under disallowedRequires instead of vanishing")
+        ok(r.ok == false, "which fails the verdict: its reach is unaccounted for, not absent")
+        end
+
+        -- ---------------------------------------------------------------
+        -- The seam table reached directly. `native` is a Lua global, so this
+        -- needs no require at all and has no declaration to check -- the one
+        -- shape that would make every other verdict here worthless.
+        -- ---------------------------------------------------------------
+        do
+        fake.files[INIT] = [[
+return { api = 1, id = "ext_caps",
+    action = function(ctx) native.run_process("/bin/sh", { "-c", "x" }, function() end) end }
+]]
+        local r = registry.validateExtension("ext_caps")
+        ok(r.ok == false, "a direct native.* call does not pass")
+        ok(#r.withdrawn == 1
+            and r.withdrawn[1] == "native.run_process -> the matching ctx method",
+            "and is named, pointing at ctx -- got: " .. table.concat(r.withdrawn, "; "))
+        end
+
+        -- ---------------------------------------------------------------
         -- Refusals. Both are the CALLER's mistake, and each must say which.
         -- ---------------------------------------------------------------
         do

@@ -5,55 +5,6 @@
 import AppKit
 import CLua
 
-// Thread-safe accumulator for runJXA's out-of-process reads. Swift 6 forbids
-// mutating a captured `var` across a @Sendable boundary (the readabilityHandler /
-// terminationHandler run off-thread), so the shared bytes + exit status live here
-// behind a lock. `@unchecked Sendable` because the lock, not the compiler, proves
-// the safety.
-private final class JXABox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-    private var status: Int32 = -1
-    private var stdoutSettled = false
-    func append(_ d: Data) { lock.lock(); data.append(d); lock.unlock() }
-    func setStatus(_ s: Int32) { lock.lock(); status = s; lock.unlock() }
-    func result() -> (Data, Int32) { lock.lock(); defer { lock.unlock() }; return (data, status) }
-
-    /// Claim the stdout obligation. Returns true for exactly ONE caller, ever --
-    /// whoever gets it owns the matching `group.leave()`. Two racers exist by
-    /// design: the readabilityHandler's EOF callback, and the post-exit fallback
-    /// that covers the case where that callback never comes.
-    func claimStdoutSettled() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if stdoutSettled { return false }
-        stdoutSettled = true
-        return true
-    }
-}
-
-/// Keeps the child's pipes ALIVE until the read is finished.
-///
-/// THE ROOT CAUSE of the dropped-callback bug (2026-07-25), and it is ownership,
-/// not a Foundation defect. Nothing in `runJXACore` held a strong reference to
-/// the `Pipe`: `Process` self-retains only while the child runs, so at
-/// termination it deallocates, releasing standardOutput -> Pipe -> FileHandle ->
-/// `close(readFD)`. That closes the read end while the dispatch readability
-/// source is still racing to deliver its final empty-data (EOF) callback -- so
-/// on a child whose last write and exit land within a millisecond, EOF is simply
-/// never delivered, the stdout obligation never completes, and the pinned Lua
-/// callback is dropped forever.
-///
-/// Measured on this machine, same harness, `osascript` child, 150 runs each:
-/// without a retain 69 hangs; holding the pipes to completion, 0. The failure is
-/// not rare or exotic -- it was roughly one call in three.
-///
-/// `@unchecked Sendable` because `Pipe` is not Sendable and this only ever hands
-/// it back on the completion path; the box is immutable after init.
-private final class JXAPipes: @unchecked Sendable {
-    let out: Pipe, err: Pipe
-    init(out: Pipe, err: Pipe) { self.out = out; self.err = err }
-}
-
 extension Native {
     // MARK: - Apps / URLs
 
@@ -412,154 +363,50 @@ extension Native {
 
     private static let jxaTimeoutSeconds: TimeInterval = 30  // survive most first-run TCC prompts
 
-    // Run a fixed JXA template asynchronously via osascript; cb(stdout|nil).
-    // Out-of-process like the donor's hs.task -- a slow browser cannot hang the host.
-    // The script TEXT is never caller-supplied.
+    // Run a fixed JXA template asynchronously via osascript; cb(stdout|nil), with
+    // nil for a non-zero exit or a launch that failed. Out-of-process like the
+    // donor's hs.task -- a slow browser cannot hang the host. The script TEXT is
+    // never caller-supplied.
     //
-    // Both pipes are DRAINED CONCURRENTLY (readabilityHandler). Reading stdout only
-    // AFTER termination deadlocks once osascript's output exceeds the ~64KB pipe
-    // buffer (hundreds of tabs): it blocks in write(), never exits, and the callback
-    // never fires -- which would wedge tab_switcher's st.refreshing forever. Completion
-    // joins TWO obligations -- stdout EOF AND process exit -- so nothing ever blocks
-    // waiting; a watchdog SIGTERMs a still-RUNNING hung process (unanswered
-    // Automation prompt, beachball) so the reads hit EOF and cb(nil) still fires.
-    // Exactly one completion per call (the throw path returns before notify is
-    // registered).
-    //
-    // The pipes must be RETAINED until completion (see JXAPipes) -- without that
-    // the read end is closed at child exit and the EOF callback is lost, which
-    // dropped roughly one callback in three.
-    private func runJXACore(_ script: String, _ completion: @escaping @Sendable (String?) -> Void) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        p.arguments = ["-l", "JavaScript", "-e", script]
-        let out = Pipe(), err = Pipe()
-        p.standardOutput = out
-        p.standardError = err
-        // Strong reference held past this function's return -- the whole fix.
-        let pipes = JXAPipes(out: out, err: err)
-
-        let box = JXABox()
-        let group = DispatchGroup()
-
-        group.enter()   // obligation 1: stdout drained to EOF
-        out.fileHandleForReading.readabilityHandler = { h in
-            let d = h.availableData
-            if d.isEmpty {
-                h.readabilityHandler = nil
-                if box.claimStdoutSettled() { group.leave() }
-            } else {
-                box.append(d)
-            }
-        }
-        // stderr: drain + discard (an unread stderr can wedge the child too).
-        err.fileHandleForReading.readabilityHandler = { h in
-            if h.availableData.isEmpty { h.readabilityHandler = nil }
-        }
-        group.enter()   // obligation 2: process exit (Process arrives as the param, never captured)
-        p.terminationHandler = { proc in
-            box.setStatus(proc.terminationStatus)
-            group.leave()
-
-            // BELT-AND-BRACES, not the fix. The fix is holding `pipes` alive
-            // (see JXAPipes) -- with the read end kept open, EOF is delivered
-            // every time (0 losses in 150 runs, against 69 without it).
-            //
-            // This remains because a lost EOF costs a permanently dropped Lua
-            // callback, and the child's exit is proof no more data can arrive:
-            // after a grace period for the real EOF, claim the obligation so the
-            // group can never stay outstanding. Whichever path claims first
-            // wins; the other becomes a no-op.
-            //
-            // The grace matters -- claiming immediately would routinely beat the
-            // legitimate EOF and make TWO readers on one live fd the common case.
-            // It reads through the RETAINED handle (never a bare fd): an earlier
-            // version captured `fileDescriptor` as an Int32 and read from it
-            // 0.25s later, which measured as closed in 100% of firings -- a
-            // use-after-close that could have read, and advanced the offset of,
-            // whatever unrelated file had since been handed that fd number.
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
-                guard box.claimStdoutSettled() else { return }   // real EOF got there first
-                let fh = pipes.out.fileHandleForReading
-                // Sole reader from here: the handler is retired BEFORE draining,
-                // so the two cannot split the byte stream between them.
-                fh.readabilityHandler = nil
-                if let rest = try? fh.readToEnd(), !rest.isEmpty { box.append(rest) }
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        Native.shared.seamLogThrottled(
-                            "jxa-lost-eof",
-                            "jxa: stdout EOF never arrived after child exit; completed the read from "
-                            + "the termination fallback. Expected to be silent -- if this appears, the "
-                            + "pipe-retention fix in runJXACore is not holding.")
-                    }
-                }
-                group.leave()
-            }
-        }
-
-        do { try p.run() } catch {
-            out.fileHandleForReading.readabilityHandler = nil
-            err.fileHandleForReading.readabilityHandler = nil
-            p.terminationHandler = nil
-            group.leave(); group.leave()   // balance the two enters (an entered group traps on dealloc)
-            completion(nil)
-            return                         // notify never registered -> exactly-once holds
-        }
-
-        // Watchdog: SIGTERM a STILL-RUNNING hung osascript (unanswered Automation
-        // prompt, beachball) so the reads hit EOF and completion still fires. It
-        // covers only that case -- a child that never exits. It cannot rescue a
-        // child that already exited, because then there is nothing left to close
-        // the pipe; that case is the pipe retention plus the termination fallback
-        // above. Addresses the child by PID (Int32 is Sendable; Process is not)
-        // and runs on .main, matching the notify below -- both inherit this
-        // @MainActor method's isolation, so nothing crosses actor boundaries (a
-        // background hop would trap Swift 6's isolation assertion). Main is free
-        // during the out-of-process run, so the backstop is reliable.
-        //
-        // notify cancels it in every completed run, and completion is now
-        // guaranteed (the fallback closes the last hole), so it fires only at a
-        // child that is genuinely still alive. That guarantee is load-bearing:
-        // firing at a long-dead pid would not be "harmless ESRCH" as an earlier
-        // comment here claimed -- pids are recycled, and the signal would land on
-        // whatever unrelated process inherited the number.
-        let pid = p.processIdentifier
-        let watchdog = DispatchWorkItem { kill(pid, SIGTERM) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Native.jxaTimeoutSeconds, execute: watchdog)
-
-        group.notify(queue: .main) {
-            // THE RETAIN. Holding `pipes` across the whole run is what keeps the
-            // read end open until the reader is finished -- without it, Process
-            // deallocates at child exit, closes the fd, and the EOF callback is
-            // lost. `withExtendedLifetime` (not a bare mention) so no optimizer is
-            // free to release it early.
-            withExtendedLifetime(pipes) {}
-            // Both obligations are settled here -- via the real EOF, or via the
-            // termination fallback that claimed it.
-            watchdog.cancel()
-            let (data, status) = box.result()
-            let text = status == 0
-                ? String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                : nil
-            completion(text)
+    // The subprocess mechanics -- concurrent pipe drains, the exactly-once
+    // completion, the pipe retention that fixed the dropped-callback bug, the
+    // SIGTERM watchdog -- all live in runProcessCore (Native+Process.swift),
+    // shared with the `exec` capability's run_process. Reading stdout only AFTER
+    // termination deadlocks once osascript's output exceeds the ~64KB pipe buffer
+    // (hundreds of tabs), which is why that core drains as it goes. The tab list
+    // must arrive whole, so this caller takes the default UNCAPPED stdout.
+    @discardableResult
+    private func runJXACore(_ script: String,
+                            _ completion: @escaping @Sendable (String?) -> Void)
+    -> (@Sendable () -> Void)? {
+        runProcessCore(executable: "/usr/bin/osascript",
+                       args: ["-l", "JavaScript", "-e", script],
+                       timeout: Native.jxaTimeoutSeconds,
+                       label: "jxa",
+                       // stderr is read only to keep a chatty child from wedging on a
+                       // full pipe, and then discarded -- so cap what is retained.
+                       stderrCap: 64 * 1024) { status, out, _ in
+            guard status == 0 else { completion(nil); return }
+            completion(String(data: out, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 
     // Lua-facing wrapper: run the template, then fire the pinned Lua callback (once).
     // Returns the cancelable-one-shot resource id so the caller can hand it to Lua --
     // a feature disabled while osascript is still running must not receive the tabs.
-    // No cancel closure: runJXACore owns the subprocess (and its own SIGTERM
-    // watchdog), so teardown drops the callback and lets the child wind down.
+    // Teardown SIGTERMs the osascript rather than only dropping the callback: a
+    // tab read abandoned by a disabled feature has no reason to keep a process
+    // alive for the rest of its 30s ceiling.
     private func runJXA(_ script: String, _ ref: Int32) -> Int32 {
         let id = allocOneShot()
-        runJXACore(script) { text in
+        let terminate = runJXACore(script) { text in
             Native.fireOneShot(id, ref) { L in
                 if let text { lua_pushstring(L, text) } else { lua_pushnil(L) }
                 return 1
             }
         }
-        armOneShot(id, ref)
+        armOneShot(id, ref) { terminate?() }
         return id
     }
 

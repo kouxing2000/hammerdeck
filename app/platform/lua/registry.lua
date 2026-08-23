@@ -318,7 +318,7 @@ function registry.validateExtension(id)
 
     local capOf = capscan.capabilityOf()
     local appdir = require("loader").appdir
-    local calls, scanned, seen = {}, {}, {}
+    local calls, scanned, seen, rawReach, disallowed = {}, {}, {}, {}, {}
 
     -- Breadth-first over the graph; `seen` keeps a cycle (a <-> b) from spinning
     -- and stops a diamond being scanned twice.
@@ -330,8 +330,9 @@ function registry.validateExtension(id)
             local src = adapter.fileRead(item.path)
             if src then
                 scanned[#scanned + 1] = item.name
-                local c, reqs = capscan.scanSource(src, capOf)
+                local c, reqs, raw = capscan.scanSource(src, capOf)
                 for name in pairs(c) do calls[name] = true end
+                for name, reach in pairs(raw) do rawReach[name] = reach end
                 for mod in pairs(reqs) do
                     local owner, leaf = mod:match("^extensions%.([%w_]+)%.([%w_]+)$")
                     local platformMod = mod:match("^platform%.([%w_]+)$")
@@ -342,27 +343,58 @@ function registry.validateExtension(id)
                         -- following it would attribute someone else's reach.
                         queue[#queue + 1] = { path = m.extensionDir .. "/lua/" .. leaf .. ".lua",
                                               name = mod }
-                    elseif platformMod then
+                    elseif platformMod and manifest.FEATURE_REQUIRABLE[platformMod] then
+                        -- Only the modules a feature is ALLOWED to require. The
+                        -- build guard folds in the same set, and CLAUDE.md's
+                        -- promise is that the two callers cannot answer this
+                        -- question differently -- following an arbitrary
+                        -- `platform.<mod>` here would attribute the seam's own
+                        -- io.open, or capscan's RAW_REACH table, to the author.
                         queue[#queue + 1] = { path = appdir .. "/platform/lua/" .. platformMod
                                                      .. ".lua",
                                               name = mod }
+                    elseif platformMod then
+                        -- REPORTED, not silently skipped. `platform.adapter` is
+                        -- the seam: requiring it hands the extension every native
+                        -- call with no declaration to check, so a walk that just
+                        -- declined to follow it would make the widest possible
+                        -- bypass the quietest thing in the report.
+                        disallowed[mod] = true
                     end
                 end
             end
         end
     end
 
-    local under, over = capscan.compare(calls, m.capabilities, capOf)
+    local under, over, withdrawn = capscan.compare(calls, m.capabilities, capOf, rawReach)
     local used = {}
     for name in pairs(calls) do used[#used + 1] = name end
     table.sort(used)
     table.sort(scanned)
+    -- Reported separately from gatedCallsUsed because the FIX differs. `io.open`
+    -- works and needs declaring; `os.execute` is a raising stub, so no
+    -- declaration helps and only the rewrite does -- which is why `withdrawn`
+    -- fails the verdict on its own. Calling this extension honest while it
+    -- cannot run would be the worst answer the tool could give.
+    local declarable = {}
+    for name, reach in pairs(rawReach) do
+        if reach.cap then declarable[name] = reach.cap end
+    end
+    local blocked = {}
+    for mod in pairs(disallowed) do blocked[#blocked + 1] = mod end
+    table.sort(blocked)
     return {
         id = id,
-        ok = #under == 0 and #over == 0,
+        ok = #under == 0 and #over == 0 and #withdrawn == 0 and #blocked == 0,
         underDeclared = json.asArray(under),
         overDeclared = json.asArray(over),
+        withdrawn = json.asArray(withdrawn),
+        -- Platform modules a feature may not require (manifest.FEATURE_REQUIRABLE).
+        -- Not walked, so their reach is absent from the rest of this report --
+        -- which is exactly why they have to be named here.
+        disallowedRequires = json.asArray(blocked),
         gatedCallsUsed = json.asArray(used),
+        rawReach = json.asObject(declarable),
         scanned = json.asArray(scanned),
     }
 end

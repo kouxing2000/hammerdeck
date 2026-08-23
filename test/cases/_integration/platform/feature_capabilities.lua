@@ -67,25 +67,31 @@ return {
         ---platform.* modules it requires. Comment lines are skipped so the prose
         ---in a header ("calls ctx.httpGet") never fabricates a requirement.
         local function scan(dir)
-            local calls, requires = {}, {}
+            local calls, requires, raw = {}, {}, {}
             for _, path in ipairs(shell("find '" .. dir .. "' -name '*.lua'")) do
-                local c, r = capscan.scanSource(readFile(path) or "", capOf)
+                local c, r, w = capscan.scanSource(readFile(path) or "", capOf)
                 for name in pairs(c) do calls[name] = true end
+                for name, cap in pairs(w) do raw[name] = cap end
                 for mod in pairs(r) do
                     local leaf = mod:match("^platform%.([%w_]+)$")
                     if leaf then requires[leaf] = true end
                 end
             end
-            return calls, requires
+            return calls, requires, raw
         end
 
-        -- Gated calls each platform module makes through a ctx handed to it.
-        local platformCalls = {}
+        -- Gated calls each platform module makes through a ctx handed to it, and
+        -- the stdlib reach it makes around ctx. Every module is scanned; the fold
+        -- below is keyed on what a feature actually requires, and feature_requires
+        -- is what keeps that to the allowlist -- so the seam's own io.open
+        -- (adapter, i18n) reaches a feature only if that guard is already red.
+        local platformCalls, platformRaw = {}, {}
         for _, path in ipairs(shell("find '" .. appdir .. "/platform/lua' -name '*.lua'")) do
             local mod = path:match("([^/]+)%.lua$")
             if mod and mod ~= "ctx" then   -- ctx.lua DEFINES them; it is not a caller
-                local calls = scan(path)
+                local calls, _, raw = scan(path)
                 if next(calls) then platformCalls[mod] = calls end
+                if next(raw) then platformRaw[mod] = raw end
             end
         end
         ok(platformCalls.favicons ~= nil,
@@ -99,24 +105,65 @@ return {
         end
         ok(#features > 0, "capability guard: found feature folders to scan (no false green)")
 
+        -- `exec` is for USER EXTENSIONS. A catalog feature that needs to run
+        -- something grows the surface in the seam (Native+*.swift), where the call
+        -- is one reviewed, named thing rather than a general-purpose exit from the
+        -- whole capability model -- see the one inviolable rule in CLAUDE.md.
+        local catalogExec, gone = {}, {}
+
         for _, id in ipairs(features) do
-            local calls, requires = scan(appdir .. "/features/" .. id .. "/lua")
+            local calls, requires, rawReach = scan(appdir .. "/features/" .. id .. "/lua")
             -- Fold in what the platform modules this feature requires reach
             -- through its ctx (favicons -> network/browser/files).
             for mod in pairs(requires) do
                 for name in pairs(platformCalls[mod] or {}) do calls[name] = true end
+                -- Raw reach folds only from the ALLOWLISTED modules, the same set
+                -- registry.validateExtension walks. `platform.adapter` is the
+                -- seam, and CLAUDE.md sanctions exactly one feature module for
+                -- requiring it (usage_stats' host-callable reporter) -- without
+                -- this gate every one of the adapter's own native.* calls lands
+                -- on that feature. Gated calls above are safe to fold either way:
+                -- they go through the ctx the feature was handed.
+                if manifest.FEATURE_REQUIRABLE[mod] then
+                    for name, reach in pairs(platformRaw[mod] or {}) do rawReach[name] = reach end
+                end
             end
 
-            local raw = readFile(appdir .. "/features/" .. id .. "/feature.json")
-            local meta = raw and json.decode(raw) or nil
-            local under, over = capscan.compare(calls, (meta or {}).capabilities, capOf)
+            local src = readFile(appdir .. "/features/" .. id .. "/feature.json")
+            local meta = src and json.decode(src) or nil
+            local under, over, withdrawn =
+                capscan.compare(calls, (meta or {}).capabilities, capOf, rawReach)
             for _, cap in ipairs(under) do
                 missing[#missing + 1] = id .. " needs '" .. cap .. "'"
             end
             for _, cap in ipairs(over) do
                 extra[#extra + 1] = id .. " declares unused '" .. cap .. "'"
             end
+            for _, w in ipairs(withdrawn) do
+                gone[#gone + 1] = id .. ": " .. w
+            end
+            for _, cap in ipairs((meta or {}).capabilities or {}) do
+                if cap == "exec" then catalogExec[#catalogExec + 1] = id .. " (declares it)" end
+            end
+            -- The CALL, not a raw-stdlib tier: every RAW_REACH entry is either
+            -- `files` or withdrawn, so keying on reach.cap == "exec" would be a
+            -- branch that can never fire. A catalog feature that calls ctx.run
+            -- undeclared would otherwise be caught only by the generic #missing
+            -- check below, which would tell the author to add the very
+            -- declaration this assertion forbids.
+            if calls.run then
+                catalogExec[#catalogExec + 1] = id .. " (calls ctx.run)"
+            end
         end
+
+        ok(#catalogExec == 0,
+            "no first-party feature declares or reaches 'exec' -- catalog features grow OS "
+            .. "surface in the seam, not through a general command runner"
+            .. (#catalogExec > 0 and (" -- " .. table.concat(catalogExec, "; ")) or ""))
+        ok(#gone == 0,
+            "no feature calls a stdlib name the embedded interpreter withdrew (it would raise "
+            .. "at runtime whatever feature.json says)"
+            .. (#gone > 0 and (" -- " .. table.concat(gone, "; ")) or ""))
 
         ok(#missing == 0,
             "every feature declares the capabilities it actually uses"

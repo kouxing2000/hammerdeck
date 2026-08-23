@@ -76,7 +76,8 @@ feature allowlist) and `capscan` (the capability-DECLARATION rule: text in,
 verdict out, touching no adapter or filesystem -- shared by the build guard
 `feature_capabilities.lua` and the runtime `registry.validateExtension` so the
 two cannot answer the same question differently; the callers differ only in how
-they enumerate source).
+they enumerate source. It scans `ctx%.` calls AND `capscan.RAW_REACH`, the
+stdlib calls that reach the OS around ctx).
 `favicons` sits in this tier structurally but is a **pure factory subsystem** a
 feature MAY `require` (it needs only the `urls` leaf util, used as
 `favicons.new(ctx)`) -- a sibling to the leaf utils, NOT a zero-`require` leaf
@@ -87,7 +88,10 @@ itself (so it stays OFF the leaf-guard list). **LEAF UTILS** =
 `require` -- `favicons` above is the one require-ful module also allowed; a
 test-suite guard fails if any of them grows a `require`, and the mirror guard
 (`test/cases/_integration/platform/feature_requires.lua`) fails if a feature
-requires anything outside this allowlist). The `ctx` surface is
+requires anything outside this allowlist -- which lives in ONE place,
+`manifest.FEATURE_REQUIRABLE`, because `registry.validateExtension`'s require
+walk keys off the same set and a second copy would eventually disagree with the
+one the running app enforces). The `ctx` surface is
 namespaced into domain sub-tables (`ctx.window.*` / `ctx.screen.*` /
 `ctx.mouse.*`), and Hammerspoon's pure-Lua tiling/grid algorithms are ported
 onto `platform.windows`, which the `window_*` features ride.
@@ -206,6 +210,20 @@ onto `platform.windows`, which the `window_*` features ride.
   feature_capabilities.lua` checks declarations against real usage in BOTH
   directions: under-declaring is a latent crash, and over-declaring is what rots
   the labels into decoration, so a capability nothing uses fails the build too.
+  **`exec` (`ctx.run`) is for USER EXTENSIONS only** -- the same guard fails a
+  first-party feature that declares or reaches it. A child process can do
+  anything the user can, so `exec` is effectively every tier at once; a catalog
+  feature that needs OS surface grows it in the seam, where the call is one
+  reviewed named thing. Two consequences of the tier existing at all: the
+  embedded state replaces `os.execute` / `io.popen` with raising stubs naming
+  `ctx.run` (`LuaState.installSubprocessStubs`); and `capscan.RAW_REACH` covers
+  the stdlib calls that reach the OS around ctx, in **two kinds** whose verdicts
+  differ -- `cap` (works, so declare it: `io.open` -> `files`) and `use`
+  (WITHDRAWN, so declaring is useless and only the rewrite helps), the second
+  failing `validateExtension` on its own. That split is the point: counting a
+  declaration for a raising stub would report an extension as honest AND
+  unrunnable. `load()` and `package.loadlib` still defeat any static scan, and
+  nothing here claims otherwise.
 - **app/platform/lua/adapter.lua** -- the seam (Lua side); every binding it returns
   is a handle with `.stop()`.
 - **app/platform/swift/LuaState.swift** -- the bridge mechanics: owns the
@@ -228,8 +246,13 @@ onto `platform.windows`, which the `window_*` features ride.
   the caller.** Skipping timer ticks during a blocking call was tried and
   reverted: it silently loses work, because a repeating timer is not always a
   resumable poll (count_down counts ticks; sleep_schedule fires inside a narrow
-  window). Prefer the ASYNC out-of-process shape (`runJXA`) for anything bigger
-  than one property read -- a subprocess cannot hang the host at all. Seam
+  window). Prefer the ASYNC out-of-process shape for anything bigger than one
+  property read -- a subprocess cannot hang the host at all. **Every subprocess
+  goes through `Native+Process.runProcessCore`** (`runJXA` and the `exec`
+  capability's `run_process` both ride it): it owns the concurrent per-stream
+  drains, the exactly-once completion, the pipe RETENTION that a lost EOF
+  otherwise turns into a permanently dropped Lua callback, and the SIGTERM
+  watchdog. A hand-rolled `Process()` re-earns each of those bugs. Seam
   failures log via `seamLog` / `seamLogThrottled` so they reach the DAILY LOG, not
   just stdout -- throttled, because these sit on poll paths.
   **Timeout values here are MEASURED, not guessed**: the AX default turned out to

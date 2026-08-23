@@ -113,11 +113,59 @@ the feature, the method, and the capability to add:
 - `browser` — read or drive the browser (tabs, URLs, favicons)
 - `files`   — filesystem beyond the app's own dataDir (incl. `ctx.homeDir`)
 - `apps`    — enumerate installed applications
+- `exec`    — run another program (`ctx.run`) — see below
 - `commands` — ADDITIVE: injects `ctx.commands()` / `ctx.runCommand()`
   (cross-feature reach; almost never needed by an extension)
 
 The reach is transitive: `platform.favicons` downloads icons through ctx, so a
 feature using it needs `network` + `browser` + `files` too.
+
+### `exec` — running a program
+
+```lua
+ctx.run("/usr/bin/git", { "status", "--porcelain" }, function(code, out, err)
+    ctx.log("git exited", code, #out, "bytes")
+end)
+```
+
+`path` must be ABSOLUTE and `args` is an argv array — passing a string raises.
+There is no shell, so nothing expands `~`, `*`, `|` or `$VAR`: build the
+arguments, do not build a command line. Async, like every other one-shot; the
+child is bounded by a timeout, output is captured up to a per-stream ceiling
+(both in `Native+Process.swift`), and disabling the feature TERMINATES the child,
+not just its callback.
+
+Both the timeout and that termination reach the process you started and nothing
+it spawned — a command that backgrounds work (`something &`) leaves the
+background part running. If your command must be stoppable, do not background
+inside it.
+
+`code` is the exit status, nil if the program could not be launched at all, or
+NEGATIVE if the child was killed by signal `-code` — the timeout or a teardown
+cut it short, as opposed to the command choosing to exit with that number.
+
+Every launch writes the executable and its full argument list to the daily log —
+that record is the reason this tier goes through the seam at all. **Do not pass
+a secret as an argument**; it persists there for the log's retention window.
+
+`os.execute`, `io.popen`, `package.loadlib` and `os.exit` do NOT exist in this
+Lua state — they are raising stubs, and no capability declaration brings them
+back. The first three are subprocess-grade reach that would bypass the gate;
+`os.exit` is there because a feature quitting the host skips every teardown and
+reads to the user as a crash. `validate_extension` reports a call to any of them
+under `withdrawn` and fails the extension outright. It sees the bracket form too,
+so `os["execute"]` is not a way around the check.
+
+Two routes stay open and are CHECKED rather than blocked, so know what you are
+doing if you take them: the `native` table is a Lua global, and
+`require "platform.adapter"` reaches the whole seam. Neither has a declaration
+behind it, so `validate_extension` fails an extension that uses either —
+`native.*` under `withdrawn`, the require under `disallowedRequires`. Use `ctx`.
+
+Declaring `exec` is effectively declaring everything: a program you start can do
+whatever the person running Hammerdeck can. Reach for a narrower capability when
+one fits. First-party catalog features may not declare it at all (a build guard
+enforces that) — they grow OS surface in the Swift seam instead.
 
 ## Rules that bite
 
@@ -168,7 +216,13 @@ has already done step 0.)
    (a gated method you call but never declared — the runtime gate will raise on
    whichever branch reaches it, which may not be one you test) and
    `overDeclared` (a capability you claim and never use — the list is only worth
-   reading if it is true). Fix both before handing the extension over; `reload`
+   reading if it is true). Two more fields cover the standard library, which
+   reaches the OS around `ctx` entirely: `rawReach` lists calls like `io.open`
+   with the tier each needs — those count toward your declaration, though the ctx
+   method is better, being the one the runtime can actually withhold — and
+   `withdrawn` lists calls to a name this interpreter no longer has, with its
+   replacement. A `withdrawn` entry fails on its own and no declaration fixes it;
+   rewrite the call. Fix all of it before handing the extension over; `reload`
    proves it LOADS, this proves it declared itself honestly.
 6. `set_enabled` — enable it, so it can be test-fired. Enabling a SERVICE runs
    its `start(ctx)`, and a feature needing the Accessibility grant is refused

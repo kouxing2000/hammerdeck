@@ -1368,6 +1368,17 @@ function adapter.downloadFile(url, path, cb)
     return oneShot(function() cb(ok) end)
 end
 
+fake.runs        = {}   -- recorded { path=, args= }
+fake.runResults  = {}   -- path -> { status=, stdout=, stderr= }; missing -> (0, "", "")
+
+function adapter.run(path, args, cb)
+    fake.runs[#fake.runs + 1] = { path = path, args = args or {} }
+    local r = fake.runResults[path]
+    return oneShot(function()
+        if r then cb(r.status, r.stdout or "", r.stderr or "") else cb(0, "", "") end
+    end)
+end
+
 function adapter.setWallpaper(path, mode)
     fake.wallpapers[#fake.wallpapers + 1] = path
     fake.wallpaperModes[#fake.wallpaperModes + 1] = mode

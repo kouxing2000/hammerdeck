@@ -206,6 +206,8 @@ final class Native {
             "set_wallpaper_color": { L in MainActor.assumeIsolated { Native.shared.setWallpaperColor(L) } },
             "cache_dir":     { L in MainActor.assumeIsolated { Native.shared.cacheDir(L) } },
             "ask_choice_dismiss": { L in MainActor.assumeIsolated { Native.shared.askChoiceDismiss(L) } },
+            // subprocess (the `exec` capability -- see Native+Process.swift)
+            "run_process":   { L in MainActor.assumeIsolated { Native.shared.runProcess(L) } },
         ]
         let fns3: [String: LuaState.Function] = [
             // windows / apps (AXUIElement -- needs the Accessibility permission)

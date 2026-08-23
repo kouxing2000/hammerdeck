@@ -99,7 +99,19 @@ return {
             -- is skipped so prose never trips the guard.
             do
                 local appdir = require("loader").appdir
-                for _, leaf in ipairs({ "windows", "hotkeys", "json", "urls", "cyclingChooser" }) do
+                -- Derived from manifest.FEATURE_REQUIRABLE, minus the one entry
+                -- that is a require-ful factory subsystem rather than a leaf.
+                -- Widening the allowlist has to widen THIS guard in the same
+                -- edit: what makes a module safe for a feature to require is
+                -- exactly that it pulls nothing else in behind it, and a second
+                -- hand-kept list here would let a new entry arrive unguarded.
+                local leaves = {}
+                for mod in pairs(require("platform.manifest").FEATURE_REQUIRABLE) do
+                    if mod ~= "favicons" then leaves[#leaves + 1] = mod end
+                end
+                table.sort(leaves)
+                ok(#leaves > 0, "leaf-guard: the leaf list is non-empty (no false green)")
+                for _, leaf in ipairs(leaves) do
                     local path = appdir .. "/platform/lua/" .. leaf .. ".lua"
                     local fh = assert(io.open(path, "r"), "leaf-guard: cannot open " .. path)
                     local offender

@@ -701,6 +701,8 @@
   "cap.apps.detail": "可以查看这台 Mac 上安装了哪些应用。",
   "cap.commands": "其他功能",
   "cap.commands.detail": "可以列出并运行你已启用的其他功能的操作。",
+  "cap.exec": "运行程序",
+  "cap.exec.detail": "在这台 Mac 上运行其他程序。它启动的程序能做你能做的一切，因此这是本列表中范围最广的一项。",
   "cap.unknown.detail": "一项额外的能力。",
   "input.axRequired": "%1$s 需要辅助功能权限才能输入文字。请在 系统设置 > 隐私与安全性 > 辅助功能 中开启 %2$s，然后重试。如果那里已经开启，请退出并重新打开 %2$s——macOS 通常要重启进程后新授权才生效。",
   "menu.report": "报告问题…",

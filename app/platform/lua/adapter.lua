@@ -902,6 +902,34 @@ function adapter.downloadFile(url, path, cb)
     return handleFor(native.download_file(url, path, cb))
 end
 
+-- Run another program out of process; cb(status, stdout, stderr). `status` is
+-- the child's exit code, nil if it could not be launched at all, or NEGATIVE if
+-- it was killed by signal -status (the seam's timeout, or teardown) -- which is
+-- how "cut short" is told apart from a command that chose to exit 15.
+--
+-- `path` must be ABSOLUTE and `args` is an argv ARRAY -- there is no shell in
+-- the loop, so nothing expands `~`, `*`, `|` or `$VAR`, and a quoting bug cannot
+-- become an injection bug. Async, so a hung child cannot freeze the app; the
+-- seam times it out and logs every launch. Same cancelable-handle contract as
+-- httpGet: stop() drops the callback, which is what makes a feature disabled
+-- mid-run stay disabled.
+---@param path string    absolute executable path, e.g. "/usr/bin/git"
+---@param args string[]|nil
+---@param cb fun(status: integer|nil, stdout: string, stderr: string)
+---@return { stop: fun() }
+function adapter.run(path, args, cb)
+    -- Arguments cross as C strings, so a NUL would silently truncate one --
+    -- `git commit -m <msg>` quietly committing a shortened message is worse than
+    -- a refusal. (Output comes back binary-safe; only this direction is text.)
+    for i, a in ipairs(args or {}) do
+        if type(a) == "string" and a:find("\0", 1, true) then
+            error("adapter.run: argument " .. i .. " contains a NUL byte, "
+                .. "which cannot cross the seam", 2)
+        end
+    end
+    return handleFor(native.run_process(path, args or {}, cb))
+end
+
 -- mode: "primary" sets only the main display; nil/"all" sets every screen.
 function adapter.setWallpaper(path, mode)
     return native.set_wallpaper(path, mode)

@@ -38,6 +38,76 @@ final class LuaState {
     init() {
         L = luaL_newstate()
         luaL_openlibs(L)   // base, string, table, math, os, io, ...
+        installSubprocessStubs()
+    }
+
+    /// Replace the standard-library functions that spawn a subprocess, load
+    /// native code, or kill the host with stubs that raise and name the
+    /// supported route.
+    ///
+    /// `luaL_openlibs` hands every feature and extension the WHOLE standard
+    /// library, so `os.execute` / `io.popen` were a way to shell out that the
+    /// capability gate never saw: no declaration in feature.json, no line in the
+    /// daily log, invisible to capscan -- and synchronous on the main thread with
+    /// no timeout, which is the freeze class Native+AppleScript.runAppleScript
+    /// exists to prevent. `ctx.run` (the `exec` capability) is the declared,
+    /// async, logged replacement.
+    ///
+    /// This does NOT make ctx.run the only route to a child process, and no
+    /// comment here should say it does. `native` is a plain Lua global
+    /// (`registerTable` -> `lua_setglobal`), so `native.run_process` reaches the
+    /// seam with no declaration at all, and `require "platform.adapter"` reaches
+    /// all of it; capscan reports both, and `validateExtension` fails on them,
+    /// but that is a STATIC verdict an author can be shown, not a gate the
+    /// runtime enforces. `package.loadlib` below is advisory in the same way:
+    /// `require`'s C searcher loads a cpath dylib through an internal path that
+    /// never calls the Lua-visible function.
+    ///
+    /// A raising STUB, never a nil -- the same idiom the capability gate uses for
+    /// a withheld ctx method. `attempt to call a nil value (field 'execute')`
+    /// tells an author nothing; this names the replacement and the file to edit.
+    ///
+    /// `package.loadlib` goes with them: it links an arbitrary dylib and runs its
+    /// constructors on load, which is a subprocess-grade capability wearing a
+    /// different name.
+    ///
+    /// `os.exit` is here for a different reason -- not reach, but blast radius.
+    /// It takes the whole host down from inside a feature callback, skipping
+    /// every teardown, and there is no ctx equivalent because quitting the app is
+    /// not a thing a feature gets to decide. A stray one in an extension would
+    /// read to the user as Hammerdeck crashing.
+    ///
+    /// Nothing in the app uses any of the four. Only these four: the platform
+    /// itself needs `io.open` / `os.remove` / `os.rename` / `loadfile`
+    /// (adapter.lua, i18n.lua, loader.lua), so they stay and capscan reports them
+    /// as `files`-tier reach instead. This is not a sandbox and does not pretend
+    /// to be one -- `load()` alone defeats any static scan.
+    private func installSubprocessStubs() {
+        let advice = "declare the \"exec\" capability in feature.json and call "
+                   + "ctx.run(absolutePath, args, cb)"
+        let src = """
+        local function blocked(name, why)
+            return function()
+                error(name .. ' is not available in Hammerdeck -- ' .. why, 2)
+            end
+        end
+        os.execute = blocked('os.execute',
+            [[\(advice)]] .. ' -- it is async and timed out, where os.execute blocks the whole app')
+        io.popen = blocked('io.popen',
+            [[\(advice)]] .. ' -- its callback receives stdout and stderr')
+        package.loadlib = blocked('package.loadlib',
+            [[\(advice)]] .. ' -- ship the code as a helper binary and run it, rather than '
+            .. 'linking a library into the host')
+        os.exit = blocked('os.exit',
+            'a feature cannot quit the app: it would skip every teardown and read to the '
+            .. 'user as a crash. Stop your own work instead -- return from the action, or '
+            .. 'stop() the handles you hold')
+        """
+        if luaL_loadstring(L, src) != LUA_OK || lua_pcallk(L, 0, 0, 0, 0, nil) != LUA_OK {
+            // Unreachable short of a broken build: the chunk is a constant. Crash
+            // rather than boot a state where the two functions are still live.
+            preconditionFailure("subprocess stubs not installed: \(popError())")
+        }
     }
 
     deinit {
