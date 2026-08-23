@@ -499,7 +499,7 @@
   "settings.language": "语言",
   "settings.language_caption": "选择应用语言，或跟随 macOS 系统语言。重新启动 %@ 以完全应用更改。",
   "settings.mcp": "智能体访问 (MCP)",
-  "settings.mcp_caption": "允许编程智能体 (如 Claude Code) 连接到运行中的应用来编写扩展：列出功能、重新加载、读取加载失败信息、触发已启用的动作，以及读取日志。仅限本机连接，由“复制连接命令”中包含的令牌保护。",
+  "settings.mcp_caption": "让编程智能体（如 Claude Code）连接到运行中的应用来编写扩展：查看功能目录、改完后重新加载、读取加载失败信息，并试跑某个动作。仅限本机连接，由“复制连接命令”中包含的令牌保护。",
   "settings.mcp_copy_command": "复制连接命令",
   "settings.mcp_copy_guide": "复制智能体指南",
   "settings.mcp_export_guide": "导出指南…",

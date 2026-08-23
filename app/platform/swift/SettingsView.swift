@@ -181,8 +181,10 @@ struct SettingsPane: View {
         return Strings.t("settings.general", default: "General").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.app", default: "App").localizedCaseInsensitiveContains(q)
             || Strings.t("settings.appearance", default: "Appearance").localizedCaseInsensitiveContains(q)
-            || Strings.t("settings.extensions", default: "Extensions").localizedCaseInsensitiveContains(q)
-            || Strings.t("settings.mcp", default: "Agent Access (MCP)").localizedCaseInsensitiveContains(q)
+            // Never spell these two out here: the pane opens a collapsed section
+            // on the same predicate, and a second copy could drift into hiding
+            // the row that section lives on.
+            || DeveloperSectionDisclosure.matchesASection(query: q)
             || AppearancePreference.modes.contains {
                 AppearancePreference.label(for: $0).localizedCaseInsensitiveContains(q)
             }
@@ -273,19 +275,36 @@ enum DeveloperSectionDisclosure {
     /// pane would flash open on the way to any real query.
     static let minimumQueryLength = 2
 
+    /// The collapsible sections, in pane order. Adding a third means adding it
+    /// here and nowhere else -- which is the whole reason this list exists
+    /// rather than two title comparisons written out at each call site.
+    static var titles: [String] {
+        [Strings.t("settings.extensions", default: "Extensions"),
+         Strings.t("settings.mcp", default: "Agent Access (MCP)")]
+    }
+
+    /// Does the query name a collapsible section? `showGeneralRow` reads THIS to
+    /// decide whether the General row survives the sidebar filter, and the pane
+    /// reads it to decide whether to open one. Sharing the predicate is what
+    /// makes the bad state unreachable: a query could otherwise open a section
+    /// on a row the sidebar had already filtered away, so the auto-open would
+    /// fire on a pane nobody could reach.
+    static func matchesASection(query: String) -> Bool {
+        titles.contains { matched($0, query) }
+    }
+
+    private static func matched(_ title: String, _ query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return q.count >= minimumQueryLength && title.localizedCaseInsensitiveContains(q)
+    }
+
     /// - Parameter query: the RAW search field text; trimming is this function's
     ///   job, so its callers cannot disagree about it.
     static func shouldOpen(query: String,
                            extensionsDirSet: Bool,
                            mcpEnabled: Bool) -> (extensions: Bool, mcp: Bool) {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        func matched(_ title: String) -> Bool {
-            q.count >= minimumQueryLength && title.localizedCaseInsensitiveContains(q)
-        }
-        return (extensions: extensionsDirSet
-                    || matched(Strings.t("settings.extensions", default: "Extensions")),
-                mcp: mcpEnabled
-                    || matched(Strings.t("settings.mcp", default: "Agent Access (MCP)")))
+        (extensions: extensionsDirSet || matched(titles[0], query),
+         mcp: mcpEnabled || matched(titles[1], query))
     }
 }
 
@@ -464,6 +483,13 @@ private struct GeneralSettingsDetail: View {
                             .frame(width: 70)
                             .multilineTextAlignment(.trailing)
                             .onSubmit { commitMcpPort() }
+                            // A typed port only reaches McpPreference on submit, so
+                            // walking away from the field used to discard it: leaving
+                            // the Settings tab destroys GeneralSettingsDetail (the
+                            // Homepage switches on nav.destination), and mcpPortText
+                            // re-seeds from the stored port on the way back. The edit
+                            // vanished with no sign it had been dropped.
+                            .onDisappear { commitMcpPort() }
                         Spacer()
                         Button(Strings.t("settings.mcp_copy_command", default: "Copy Connect Command")) {
                             NSPasteboard.general.clearContents()
@@ -474,7 +500,7 @@ private struct GeneralSettingsDetail: View {
                         .disabled(!mcpRunning)
                     }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(Strings.t("settings.mcp_caption", default: "Let a coding agent (e.g. Claude Code) connect to the running app to author extensions: list features, reload, read load failures, test-fire enabled actions, and read logs. Local connections only, guarded by a token the Copy Connect Command includes."))
+                    Text(Strings.t("settings.mcp_caption", default: "Let a coding agent (e.g. Claude Code) connect to the running app to author extensions -- inspect the catalog, reload after an edit, read load failures, and test-fire an action. Local connections only, guarded by a token the Copy Connect Command includes."))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -592,6 +618,19 @@ private struct GeneralSettingsDetail: View {
             mcpPortText = String(McpPreference.port)   // reject junk, re-seed
             return
         }
+        // Below 1024 needs root, so the bind is guaranteed to fail -- and this now
+        // runs on the field going AWAY, where "27" is far more likely to be a
+        // half-typed 27121 than a deliberate choice.
+        guard port >= 1024 else {
+            mcpPortText = String(McpPreference.port)
+            return
+        }
+        // Unchanged is a no-op, not a restart -- this runs on every teardown, and
+        // bouncing a healthy server for an unedited field is pure churn. Unless
+        // it is NOT running: re-submitting the same port is the only retry after
+        // a failed bind (the status row offers no button), so that path must
+        // still reach startFromPreferences.
+        guard port != McpPreference.port || !mcpRunning else { return }
         McpPreference.setPort(port)
         if mcpEnabled { McpServer.shared.startFromPreferences() }
     }

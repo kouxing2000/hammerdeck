@@ -90,6 +90,38 @@ final class DeveloperSectionDisclosureTests: XCTestCase {
         XCTAssertFalse(r.mcp)
     }
 
+    // Pins one half of the invariant that makes collapsing safe: everything
+    // shouldOpen would OPEN, matchesASection also reports -- so the sidebar
+    // predicate can never be narrower than the pane's, and the auto-open cannot
+    // fire on a row the filter has already hidden.
+    //
+    // The other half is structural, not tested: showGeneralRow is private to a
+    // View and unreachable from here, so nothing stops someone spelling the two
+    // titles out inline again instead of calling matchesASection. The comment at
+    // that call site is the only guard on it.
+    func testShouldOpenNeverExceedsTheSidebarPredicate() {
+        for title in DeveloperSectionDisclosure.titles {
+            // `a...b` traps when b < a, and a localized title CAN be short --
+            // zh-Hans "Extensions" is two characters exactly, one away from it.
+            guard title.count >= DeveloperSectionDisclosure.minimumQueryLength else { continue }
+            for n in DeveloperSectionDisclosure.minimumQueryLength...title.count {
+                let q = String(title.prefix(n))
+                let r = open(q)
+                if r.extensions || r.mcp {
+                    XCTAssertTrue(DeveloperSectionDisclosure.matchesASection(query: q),
+                                  "'\(q)' opens a section but does not keep the General row")
+                }
+            }
+        }
+    }
+
+    func testTitlesCoversEverySectionTheRuleAnswersFor() {
+        // shouldOpen indexes titles positionally; a third section added to the
+        // list without a matching branch would silently never open.
+        XCTAssertEqual(DeveloperSectionDisclosure.titles.count, 2,
+                       "add the new section to shouldOpen's return before growing titles")
+    }
+
     func testWhitespaceOnlyQueryIsNotTreatedAsAMatch() {
         // The contract: a search field holding only spaces is not a search.
         let r = open("   ")

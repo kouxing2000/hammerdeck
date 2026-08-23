@@ -490,7 +490,11 @@ final class McpServer: ObservableObject {
             // Settings, and a socket call must not move the user's windows.
             if on,
                (row["requires"] as? [String])?.contains("accessibility") == true,
-               store?.accessibilityTrusted() == false {
+               // Fail CLOSED when there is no store to ask: refusing an enable we
+               // cannot verify beats reporting success for a feature that will
+               // sit on and do nothing. `store? ... == false` did the opposite,
+               // since nil == false is false.
+               !(store?.accessibilityTrusted() ?? false) {
                 return toolFailure("\(id) requires the Accessibility grant, which this app does "
                     + "not have -- ask the user to grant it. Enabling it now would leave the "
                     + "feature on and inert.")

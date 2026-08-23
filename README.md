@@ -104,12 +104,22 @@ relaunch.
 Writing one need not be a solo job. Switch on **agent access** in
 Settings > General and Hammerdeck serves a local, token-guarded
 [MCP](https://modelcontextprotocol.io) endpoint on the loopback interface, so a
-coding agent can list features, reload after an edit, read the exact load
-error, test-fire an action, and tail the log -- the whole write-and-verify loop
-against the running app. The same panel copies or exports the authoring guide
-as a ready-to-use agent skill. It is off until you turn it on, reachable only
-from this machine, and there is deliberately no tool for switching a feature
-on: enabling stays your click.
+coding agent can inspect the catalog, see exactly which API a feature is handed,
+reload after an edit, read the exact load error, and test-fire what it wrote --
+the whole write-and-verify loop against the running app. The same panel copies
+or exports the authoring guide as a ready-to-use agent skill, and that guide is
+where the tools are listed.
+
+It is off until you turn it on and reachable only from this machine. An agent
+working through it can enable a feature in order to test-fire it. What that
+feature may reach is not hidden: every one declares its capabilities in
+`feature.json`, the app withholds anything undeclared at run time, and
+`validate_extension` checks the declaration against what the code actually
+calls, in both directions. That is auditability rather than a sandbox -- an
+extension you install is code you chose to run, and the point is that its reach
+is written down and machine-checked instead of buried. There is no tool for
+running arbitrary Lua: eval'd code belongs to no feature, so there is no
+declaration to check it against and nothing to withhold.
 
 ## Install
 
