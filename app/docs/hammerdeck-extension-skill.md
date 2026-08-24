@@ -123,10 +123,14 @@ feature using it needs `network` + `browser` + `files` too.
 ### `exec` — running a program
 
 ```lua
-ctx.run("/usr/bin/git", { "status", "--porcelain" }, function(code, out, err)
+ctx.run("/usr/bin/git", { "-C", "/Users/you/repo", "status", "--porcelain" },
+        function(code, out, err)
     ctx.log("git exited", code, #out, "bytes")
 end)
 ```
+
+The `-C` is not decoration: the child runs from `/` (below), so a `git` without it
+answers `fatal: not a git repository` no matter where you launched Hammerdeck.
 
 `path` must be ABSOLUTE and `args` is an argv array — passing a string raises.
 There is no shell, so nothing expands `~`, `*`, `|` or `$VAR`: build the
@@ -134,6 +138,19 @@ arguments, do not build a command line. Async, like every other one-shot; the
 child is bounded by a timeout, output is captured up to a per-stream ceiling
 (both in `Native+Process.swift`), and disabling the feature TERMINATES the child,
 not just its callback.
+
+The child starts with stdin on `/dev/null` and its working directory at `/` —
+both fixed, so your extension behaves the same however the host was launched.
+There is no way to feed it input: pass what it needs as arguments, or write a
+file under `ctx.dataDir()` and give it that path. Every path your command touches
+must be absolute, including the directory it works in — that is what the `-C`
+above is for, and a tool without such a flag needs a `cd` you cannot give it.
+
+Its ENVIRONMENT is inherited from Hammerdeck, and that one is NOT fixed. A
+bundled app gets the launchd environment, whose `PATH` has no `/opt/homebrew/bin`
+— so a script that works in your terminal can fail in the app the moment it
+shells out to a tool it did not name absolutely. Your own `path` argument must
+be absolute anyway; make the paths inside your command absolute too.
 
 Both the timeout and that termination reach the process you started and nothing
 it spawned — a command that backgrounds work (`something &`) leaves the

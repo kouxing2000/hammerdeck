@@ -180,6 +180,17 @@ extension Native {
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err
+        // Unset, both of these are INHERITED, and the inherited values differ by how
+        // the host was launched -- so an extension could behave one way under
+        // `scripts/app.sh` and another from Finder. Pin them to the launchd values a
+        // bundled app already gets, and dev matches prod.
+        //   stdin: a command that reads it would otherwise consume the developer's own
+        //          terminal keystrokes and block until the watchdog. /dev/null gives it
+        //          an immediate EOF; pass input as an argument or a file instead.
+        //   cwd:   `/`, so a relative path in `args` is never quietly resolved against
+        //          whatever directory happened to launch the host. Use ctx.dataDir().
+        p.standardInput = FileHandle.nullDevice
+        p.currentDirectoryURL = URL(fileURLWithPath: "/")
         // Strong reference held past this function's return -- the whole fix.
         let pipes = ProcessPipes(out: out, err: err)
 

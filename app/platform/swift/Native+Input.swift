@@ -302,6 +302,13 @@ extension Native {
         p.arguments = args
         let errPipe = Pipe()
         p.standardError = errPipe
+        // Same pinning runProcessCore does, and for the same reason: unset, both are
+        // INHERITED, so `shortcuts run <name>` could read whatever fd 0 the host was
+        // launched with. Kept here rather than gained by riding the core, because
+        // `say -- <text>` legitimately runs as long as the speech and the core's
+        // watchdog would cut it off mid-sentence.
+        p.standardInput = FileHandle.nullDevice
+        p.currentDirectoryURL = URL(fileURLWithPath: "/")
         let label = ([path] + args).joined(separator: " ")
 
         // Drain stderr on a BACKGROUND read, unconditionally -- never inside the

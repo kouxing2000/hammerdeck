@@ -247,14 +247,25 @@ onto `platform.windows`, which the `window_*` features ride.
   reverted: it silently loses work, because a repeating timer is not always a
   resumable poll (count_down counts ticks; sleep_schedule fires inside a narrow
   window). Prefer the ASYNC out-of-process shape for anything bigger than one
-  property read -- a subprocess cannot hang the host at all. **Every subprocess
-  goes through `Native+Process.runProcessCore`** (`runJXA` and the `exec`
-  capability's `run_process` both ride it): it owns the concurrent per-stream
-  drains, the exactly-once completion, the pipe RETENTION that a lost EOF
-  otherwise turns into a permanently dropped Lua callback, and the SIGTERM
-  watchdog. A hand-rolled `Process()` re-earns each of those bugs. Seam
-  failures log via `seamLog` / `seamLogThrottled` so they reach the DAILY LOG, not
-  just stdout -- throttled, because these sit on poll paths.
+  property read -- a subprocess cannot hang the host at all. **A subprocess whose
+  output or exit status we CONSUME goes through `Native+Process.runProcessCore`**
+  (`runJXA` and the `exec` capability's `run_process` both ride it): it owns the
+  concurrent per-stream drains, the exactly-once completion, the pipe RETENTION
+  that a lost EOF otherwise turns into a permanently dropped Lua callback, the
+  SIGTERM watchdog, and the PINNED stdin (`/dev/null`) and cwd (`/`) -- both are
+  inherited otherwise, so an unpinned child reads the developer's terminal under
+  `scripts/app.sh` and resolves a relative path against a different directory
+  than it will from Finder. A hand-rolled `Process()` re-earns each of those bugs.
+  The one exempt shape is launch-and-forget of something that must OUTLIVE the
+  host: nothing to drain, and a watchdog would be actively wrong. A couple of
+  older sites are NEITHER -- they predate the extraction and still hand-roll it,
+  one with a `waitUntilExit()` on the main thread. Do not read them as precedent:
+  `testEverySeamSubprocessSiteIsClassified` holds the roster and fails a new spawn
+  until it is on the core or written down, checking the per-file COUNT (so a second
+  spawn cannot inherit an existing entry's reason) and, for anything staying off the
+  core, that it still pins stdin/cwd. Seam failures log via `seamLog` /
+  `seamLogThrottled` so they reach the DAILY LOG, not just stdout -- throttled,
+  because these sit on poll paths.
   **Timeout values here are MEASURED, not guessed**: the AX default turned out to
   be ~1.5s, so an initial 2s "ceiling" silently loosened it. Re-measure before
   changing one.

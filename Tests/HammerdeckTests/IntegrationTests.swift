@@ -2100,6 +2100,177 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(box.get().status, 15, "an exit code the command chose stays positive")
     }
 
+    /// The child's stdin is /dev/null, not the host's.
+    ///
+    /// Unset, `Process` INHERITS fd 0, and what that is depends on how Hammerdeck
+    /// was launched -- `/dev/null` from Finder, but the developer's terminal under
+    /// `scripts/app.sh`. There, `ctx.run("/bin/cat", {})` swallows their keystrokes
+    /// and blocks until the watchdog, and the extension that did it looks fine in
+    /// prod.
+    ///
+    /// Sensitivity: whatever launched `swift test` owns fd 0 here, so a child that
+    /// merely COMPLETES proves nothing -- it may just have inherited an empty one.
+    /// Hand fd 0 a pipe holding real bytes for the duration; unpinned, the child
+    /// reads them straight back.
+    func testRunProcessCoreGivesTheChildAnEmptyStdin() {
+        // `guard`, not XCTAssert: an assertion RECORDS and continues, so a failed
+        // dup would leave the defer restoring from -1 and fd 0 stuck as a drained
+        // pipe for every later test in this process -- one broken test silently
+        // breaking the ones after it.
+        let saved = dup(0)
+        guard saved != -1 else { return XCTFail("cannot save fd 0") }
+        defer {
+            if dup2(saved, 0) == -1 { XCTFail("could not restore fd 0") }
+            close(saved)
+        }
+
+        var fds: [Int32] = [0, 0]
+        guard pipe(&fds) == 0 else { return XCTFail("cannot make a pipe") }
+        let payload = Array("LEAK".utf8)
+        payload.withUnsafeBufferPointer { _ = write(fds[1], $0.baseAddress, $0.count) }
+        close(fds[1])
+        guard dup2(fds[0], 0) == 0 else { return XCTFail("cannot install fd 0") }
+        close(fds[0])
+
+        let done = expectation(description: "completes")
+        let box = TestProcessBox()
+        Native.shared.runProcessCore(executable: "/bin/cat", args: [],
+                                     timeout: 10, label: "test") { status, out, err in
+            box.set(status, String(decoding: out, as: UTF8.self),
+                    String(decoding: err, as: UTF8.self))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(box.get().status, 0)
+        XCTAssertEqual(box.get().out, "", "the child got EOF, not the host's own stdin")
+    }
+
+    /// And its working directory is pinned, for the same reason: inherited, it is
+    /// the repo under `swift test` / `scripts/app.sh` and `/` for a bundled launch,
+    /// so a relative path in `args` resolves differently in dev and in prod.
+    ///
+    /// `/bin/pwd`, not `$PWD` -- the child inherits our stale `PWD` env var, and the
+    /// binary validates it against the real cwd before answering (a shell builtin
+    /// would just echo it back).
+    func testRunProcessCoreRunsTheChildFromAFixedDirectory() {
+        let done = expectation(description: "completes")
+        let box = TestProcessBox()
+        Native.shared.runProcessCore(executable: "/bin/pwd", args: [],
+                                     timeout: 10, label: "test") { status, out, err in
+            box.set(status, String(decoding: out, as: UTF8.self),
+                    String(decoding: err, as: UTF8.self))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(box.get().out, "/\n",
+                       "cwd is fixed, not inherited from whatever launched the host")
+    }
+
+    /// Every hand-rolled subprocess spawn is CLASSIFIED -- how many, in which file,
+    /// whether it pins, and why it is not on the core.
+    ///
+    /// CLAUDE.md says a subprocess whose output or exit status we consume rides
+    /// `runProcessCore`. Prose cannot enforce that: the version of that rule which
+    /// named a grep as its own audit was falsified BY that grep on the day it was
+    /// written, because two older sites do not ride the core. A roster fixes the
+    /// class instead of the instances. Same structural-guard shape as the
+    /// NSAppleScript and URLSession checks above, which hold their chokepoints the
+    /// same way.
+    ///
+    /// Three things are checked, because a weaker roster certifies its own prose.
+    /// The COUNT, not just the filename -- keying on the file alone lets a second
+    /// spawn hide inside an already-declared one, and the launch-and-forget files
+    /// are exactly where that is plausible. The PIN, for any site that stays off the
+    /// core -- otherwise the reason string below claims `runCommand` pins stdin/cwd
+    /// while nothing checks that it still does. And the REASON, printed back when an
+    /// entry goes stale, so whoever deletes it reads the debt note first.
+    ///
+    /// Being on this list is not absolution: two entries say DEBT and mean it.
+    func testEverySeamSubprocessSiteIsClassified() throws {
+        // Path -> (how many spawns, does it pin stdin+cwd itself, why it is off the core).
+        typealias Site = (count: Int, pins: Bool, reason: String)
+        let declared: [String: Site] = [
+            "app/platform/swift/Native+Process.swift":
+                (1, true, "the core every other consumer should ride"),
+            "app/platform/swift/AppRelaunch.swift":
+                (1, false, "launch-and-forget: it waits out our own exit, so it must "
+                 + "OUTLIVE the host and a watchdog would be actively wrong. Deliberately "
+                 + "unpinned too -- it runs a fixed absolute-path script that reads no input"),
+            "app/platform/swift/Native+Browser.swift":
+                (1, false, "launch-and-forget: hands a window to a browser, nothing to "
+                 + "drain. Deliberately unpinned -- a GUI browser uses neither"),
+            "app/platform/swift/Native+Input.swift":
+                (1, true, "consumes exit + stderr, and pins stdin/cwd itself. DEBT: it "
+                 + "belongs on the core, but `say -- <text>` must run as long as the "
+                 + "speech and the core has no unbounded mode -- ANY finite ceiling cuts "
+                 + "it off mid-sentence, so the port needs that answered first"),
+            "app/platform/swift/CapsHyperTap.swift":
+                (1, false, "DEBT: waitUntilExit() on the main thread with no ceiling -- "
+                 + "the freeze class the seam rules forbid. hidutil reads no input"),
+        ]
+
+        // `Process(` / `Process.init(` rather than one literal spelling: a guard that
+        // only sees `= Process()` is a style check on a spelling, not a class guard,
+        // and `Process.init()` walks straight past it. `ProcessInfo(`, `ProcessStream(`
+        // and `runProcessCore(` do not match -- none has `(` right after `Process`.
+        let spawn = try NSRegularExpression(pattern: #"\bProcess\s*(?:\.init)?\s*\("#)
+
+        // Both source trees, not just `app/` -- `Sources/Hammerdeck` is a thin launcher
+        // today, and "thin today" is not a property a guard should assume.
+        var found: [String: Int] = [:]
+        var scanned = 0, unreadable: [String] = []
+        for tree in ["app", "Sources"] {
+            let root = TestHost.repoRoot + "/" + tree
+            let walker = FileManager.default.enumerator(atPath: root)
+            while let rel = walker?.nextObject() as? String {
+                guard rel.hasSuffix(".swift") else { continue }
+                scanned += 1
+                // Counted as read or counted as broken -- never skipped silently, which
+                // would subtract a file from the scan and still look like a clean sweep.
+                guard let text = try? String(contentsOfFile: root + "/" + rel, encoding: .utf8)
+                else { unreadable.append(tree + "/" + rel); continue }
+                let ns = text as NSString
+                let n = spawn.numberOfMatches(in: text, range: NSRange(location: 0, length: ns.length))
+                if n > 0 { found[tree + "/" + rel] = n }
+            }
+        }
+
+        // A zero-file scan, or one that quietly dropped sources, would pass vacuously.
+        XCTAssertGreaterThan(scanned, 0, "scanned no Swift sources")
+        XCTAssertEqual(unreadable, [], "could not read these sources -- the scan is partial")
+        XCTAssertEqual(found["app/platform/swift/Native+Process.swift"], 1,
+                       "did not find the core's own spawn -- the scan is broken, so an "
+                       + "empty offender list would mean nothing")
+
+        var problems: [String] = []
+        for (path, n) in found.sorted(by: { $0.key < $1.key }) {
+            guard let site = declared[path] else {
+                problems.append("\(path): \(n) spawn(s), NOT classified -- ride "
+                                + "Native+Process.runProcessCore, or add it to `declared`")
+                continue
+            }
+            if n != site.count {
+                problems.append("\(path): \(n) spawn(s), declared \(site.count) -- a new one "
+                                + "cannot inherit an existing entry's reason (\(site.reason))")
+            }
+            guard site.pins else { continue }
+            let text = try String(contentsOfFile: TestHost.repoRoot + "/" + path, encoding: .utf8)
+            if !text.contains("standardInput = FileHandle.nullDevice")
+                || !text.contains("currentDirectoryURL") {
+                problems.append("\(path): declared as pinning stdin/cwd, but the source no "
+                                + "longer does. Unpinned, the child inherits whatever fd 0 "
+                                + "and cwd the host was launched with")
+            }
+        }
+        for path in Set(declared.keys).subtracting(found.keys).sorted() {
+            problems.append("\(path): classified as a direct spawner but no longer spawns -- "
+                            + "drop the entry, and this note with it if the debt was paid: "
+                            + (declared[path]?.reason ?? ""))
+        }
+        XCTAssertEqual(problems, [], "subprocess roster is out of date:\n  "
+                       + problems.joined(separator: "\n  "))
+    }
+
     /// Output is 8-bit clean. `find -print0`, `git -z` and friends emit NUL
     /// separators, and `lua_pushstring` stops at the first one -- a silently short
     /// result indistinguishable from a short command.
