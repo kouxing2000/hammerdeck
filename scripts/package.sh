@@ -44,10 +44,9 @@ set -euo pipefail
 
 APP_NAME="Hammerdeck"
 # Settled 2026-08-11: `com.peach-studio` is a domain actually owned, and the name
-# stays Hammerdeck. This id is the UserDefaults domain (and the Sparkle feed once
-# that lands), so changing it after a public release orphans everyone's settings.
-# Nothing is published yet, so it is still free to move; the first public release
-# is what freezes it.
+# stays Hammerdeck. This id is FROZEN -- it is the UserDefaults domain, and a
+# public download has shipped under it, so changing it orphans the settings of
+# every installed copy. Treat it like the Sparkle feed URL below: not movable.
 BUNDLE_ID="${HAMMERDECK_BUNDLE_ID:-com.peach-studio.hammerdeck}"
 MIN_MACOS="13.0"   # must match Package.swift `platforms: [.macOS(.v13)]`
 
@@ -63,7 +62,7 @@ NOTARY_PROFILE="${HAMMERDECK_NOTARY_PROFILE:-hammerdeck-notary}"
 # nothing in the pipeline noticing. Change them here, in a reviewed commit.
 SPARKLE_FEED_URL="https://hammerdeck.peach-studio.com/appcast.xml"
 # Public half of the EdDSA update-signing key; the private half is in the login
-# Keychain and backed up outside the repo. Public by design -- it ships in every
+# Keychain and backed up outside this repo. Public by design -- it ships in every
 # Info.plist, and its whole job is to let a user verify what we signed.
 SPARKLE_PUBLIC_KEY="iQGMnp62O+kFU3jtfZaFfNFpmDe70W6P+NPWXPG5ojE="
 
@@ -213,6 +212,39 @@ mkdir -p "$APP/Contents/Frameworks"
 # -R preserves the version symlinks a framework needs to stay valid to codesign.
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
 cp -R "$SPARKLE_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
+
+# The license notices travel with the BINARY, not merely with the repo. Most
+# people who ever hold this app will have downloaded a zip and will never see the
+# source, and all three obligations are addressed to them: GPLv3 s6 requires the
+# License be conveyed with the object code, and both MIT notices require the
+# permission text "in all copies". Into Resources rather than inside Sparkle's
+# framework, because the framework is signed as a nested bundle below and adding
+# files to it afterwards would break that seal.
+echo "==> bundling license notices"
+LICENSES="$APP/Contents/Resources/Licenses"
+mkdir -p "$LICENSES"
+
+# Hammerdeck's own terms.
+cp "$ROOT/LICENSE" "$LICENSES/Hammerdeck-LICENSE-GPLv3.txt"
+
+# Lua ships its notice only as the comment block closing lua.h, so extract it
+# rather than keeping a hand-copied duplicate that a version bump would leave
+# stale. Fails loudly if a future Lua moves it.
+LUA_HEADER="$ROOT/Sources/CLua/include/lua.h"
+awk '/^\* Copyright \(C\) .* Lua\.org/,/^\*+\/$/' "$LUA_HEADER" \
+  | sed -e 's|^\* \{0,1\}||' -e 's|^\*\{3,\}/$||' > "$LICENSES/Lua-LICENSE.txt"
+grep -q "Permission is hereby granted" "$LICENSES/Lua-LICENSE.txt" || {
+  echo "error: could not extract Lua's MIT notice from $LUA_HEADER -- we ship Lua compiled in, so the notice must ship too" >&2
+  exit 1
+}
+
+# Sparkle's, from the artifact the framework itself came out of.
+SPARKLE_LICENSE="$(dirname "$(dirname "$(dirname "$SPARKLE_SRC")")")/LICENSE"
+[[ -f "$SPARKLE_LICENSE" ]] || {
+  echo "error: Sparkle LICENSE not found at $SPARKLE_LICENSE -- we ship the framework, so the notice must ship too" >&2
+  exit 1
+}
+cp "$SPARKLE_LICENSE" "$LICENSES/Sparkle-LICENSE.txt"
 
 # Drop Sparkle's XPC services. They exist to let a SANDBOXED app hand privileged
 # work to a separate process; Sparkle's own sandboxing guide says to remove them
