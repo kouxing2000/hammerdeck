@@ -1,11 +1,5 @@
 # Hammerdeck
 
-<!-- TODO(name): "Hammerdeck" is a working name. A rename must land BEFORE the first
-     public release: the bundle id pins the UserDefaults domain, so changing it once
-     real users exist orphans every one of their settings. Blocked on trademark +
-     domain clearance. Rename touches: this file, LICENSE holder line, Package.swift,
-     the `Hammerdeck` defaults domain, scripts/package.sh, and the app icon. -->
-
 **Mac automation you configure instead of program.** Hammerdeck embeds a Lua
 engine -- think a focused, miniature Hammerspoon -- but you never write Lua.
 Toggle a feature on, pick its options, and bind it to a **hotkey, a chord**
@@ -19,17 +13,6 @@ fired, automated runs can notify you of what happened while you were away, one
 hotkey rewinds the last window rearrangement, and every decision lands in a
 local, plain-text log. Open source and local-first -- no account, no cloud, no
 subscription.
-
-<!-- TODO(screenshot): no image = no adoption for a Mac utility. Priority order
-     (the story is automation, so show automation first):
-       1. The money shot, as a GIF: a rule firing -- plug in a display, windows fly
-          to a saved layout. Proves "configure instead of program" in three seconds.
-       2. The Settings trigger editor: binding an action to a schedule in one click.
-       3. Window Deck in hero mode -- the visual signature.
-     Capture with `scripts/app.sh start` + `scripts/shot.sh`; the Settings window has
-     an in-process capture (`scripts/control.sh '@shot:<path>'`) that needs no Screen
-     Recording grant and catches content below the fold. If there's time for only one
-     asset, the rule-firing GIF beats everything else combined. -->
 
 ## Features
 
@@ -132,19 +115,16 @@ conspicuous.
 
 ## Install
 
-<!-- TODO(release): there is no download yet, and building from source is not a real
-     answer for the audience this repo is aimed at. Ship a notarized .app:
-       1. Apple Developer Program ($99/yr) -- the long pole, start it first.
-       2. Developer ID signing in scripts/package.sh (today it signs ad-hoc, which
-          Gatekeeper rejects on any Mac but the one that built it -- a stranger sees
-          "cannot be opened because the developer cannot be verified", or worse,
-          "damaged and can't be opened").
-       3. `notarytool submit --wait` + `stapler staple` in .github/workflows/release.yml.
-     Until all three land, this section stays honest and says "build it yourself".
-     Then replace it with: download the zip, drag to /Applications, done. -->
+**[Download Hammerdeck](https://hammerdeck.peach-studio.com/)** -- universal
+(Apple Silicon and Intel), macOS 13 or later. It is signed with a Developer ID
+and notarized by Apple, so there is no "unidentified developer" wall -- macOS
+still asks once whether to open an app downloaded from the internet. Unzip, drag
+`Hammerdeck.app` into `/Applications`, and open it.
 
-No packaged download yet -- it isn't notarized, so macOS would refuse to open it
-on any Mac but the one that built it. For now, build from source:
+It keeps itself up to date: Hammerdeck checks for new versions and asks you
+before installing any of them.
+
+Or build it from source:
 
 ```bash
 git clone https://github.com/kouxing2000/hammerdeck.git
@@ -210,14 +190,6 @@ feature's own typed options, so a new plugin gets its UI for free.
 
 [`CLAUDE.md`](CLAUDE.md) is the full design reference: the layer map, the plugin
 contract, and the build/test commands.
-
-<!-- TODO(docs): docs/ is deliberately EMPTY. The drafts behind the private alias were
-     audited on 2026-07-11 and most assert things the code no longer does, so nothing
-     was published rather than publish something false. Promote them one at a time,
-     each verified against the code first -- ARCHITECTURE.md, PLUGIN_SYSTEM.md, and
-     HAMMERSPOON_EMBEDDING.md (the "why not just use Hammerspoon?" analysis -- the
-     strongest of the set and the first question every visitor will have). Link them
-     back from here and from CONTRIBUTING.md as each lands. -->
 
 ## Layout
 
