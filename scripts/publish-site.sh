@@ -13,8 +13,9 @@
 # nothing in the tracked tree carries a version number that can go stale.
 #
 # Credentials, both optional locally:
-#   SPARKLE_PRIVATE_KEY        the EdDSA key, as text. Falls back to
-#                              ~/.config/hammerdeck/sparkle_ed25519_private_key.txt
+#   SPARKLE_PRIVATE_KEY        the EdDSA key, as text. If unset, it is read from
+#                              the file named by SPARKLE_KEY_FILE (the maintainer's
+#                              local key store; there is no key in this repo).
 #   FIREBASE_SERVICE_ACCOUNT   service-account JSON. Falls back to whatever
 #                              `firebase login` left on this machine.
 set -euo pipefail
@@ -28,6 +29,10 @@ DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
 STAGE="$DIST/site"
 SIGN_UPDATE="$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+# Where the EdDSA private key sits when it is not passed in the environment. Only
+# the maintainer holds it -- a fork signs its own feed with its own key, which is
+# why this is a knob and not a constant.
+SPARKLE_KEY_FILE="${SPARKLE_KEY_FILE:-$HOME/.config/hammerdeck/sparkle_ed25519_private_key.txt}"
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
@@ -83,11 +88,11 @@ fi
 KEY_SOURCE=""
 if [[ -n "${SPARKLE_PRIVATE_KEY:-}" ]]; then
   KEY_SOURCE="env"
-elif [[ -f "$HOME/.config/hammerdeck/sparkle_ed25519_private_key.txt" ]]; then
-  SPARKLE_PRIVATE_KEY="$(cat "$HOME/.config/hammerdeck/sparkle_ed25519_private_key.txt")"
-  KEY_SOURCE="vault"
+elif [[ -f "$SPARKLE_KEY_FILE" ]]; then
+  SPARKLE_PRIVATE_KEY="$(cat "$SPARKLE_KEY_FILE")"
+  KEY_SOURCE="key file"
 else
-  echo "error: no Sparkle signing key. Set SPARKLE_PRIVATE_KEY, or unlock the vault." >&2
+  echo "error: no Sparkle signing key. Set SPARKLE_PRIVATE_KEY, or point SPARKLE_KEY_FILE at the key." >&2
   exit 1
 fi
 echo "    signing key: $KEY_SOURCE"
@@ -187,7 +192,11 @@ if [[ "$STAGE_ONLY" -eq 1 ]]; then
 fi
 
 CREDS=""
-cleanup() { [[ -n "$CREDS" ]] && rm -f "$CREDS"; }
+# `if`, never `[[ -n "$CREDS" ]] && rm ...`: under `set -e` a false test as a
+# function's LAST statement trips errexit inside the function, which here exits
+# the script 1 on a completely successful run. Traps are not special -- this bites
+# any function or sourced script ending in a `&&` list whose test can be false.
+cleanup() { if [[ -n "$CREDS" ]]; then rm -f "$CREDS"; fi; }
 trap cleanup EXIT
 
 if [[ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]]; then

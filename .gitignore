@@ -35,6 +35,10 @@
 /dist/
 /image
 
+# firebase CLI deploy cache, written by scripts/publish-site.sh. Local build
+# state, not repo content.
+/.firebase/
+
 # Private working notes -- scratch thinking that lives next to the code but NEVER
 # ships. (Business / strategy / pricing docs do not belong in this repo at all --
 # see "Where a document goes" in CLAUDE.md.)
