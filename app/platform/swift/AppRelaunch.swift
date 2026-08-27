@@ -10,8 +10,15 @@ import AppKit
 // but the preference is already saved, so the next manual start picks it up.
 @MainActor
 enum AppRelaunch {
-    static func restart() {
-        let bundlePath = Bundle.main.bundlePath
+    /// `at` names the bundle to reopen, which is NOT always our own: the
+    /// install-location guard has just MOVED us, so the copy worth starting is the
+    /// one at the new path and the one running is about to stop existing.
+    ///
+    /// `thenExit` picks how this process dies. `NSApp.terminate` is right once the
+    /// run loop is up; the install guard runs BEFORE it starts, where terminate has
+    /// nothing to service it and the process would sit there with no UI.
+    static func restart(at bundlePath: String = Bundle.main.bundlePath,
+                        thenExit: Bool = false) {
         let pid = ProcessInfo.processInfo.processIdentifier
         // Pass pid/path as positional args ($0/$1), NOT interpolated into the
         // script body -- so a bundle path containing quotes/spaces can't break it.
@@ -20,6 +27,7 @@ enum AppRelaunch {
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = ["-c", script, String(pid), bundlePath]
         try? task.run()
+        if thenExit { exit(0) }
         NSApp.terminate(nil)
     }
 }

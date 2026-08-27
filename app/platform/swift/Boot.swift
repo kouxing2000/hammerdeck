@@ -317,6 +317,21 @@ public func hammerdeckMain() {
     AppearancePreference.apply()
     app.applicationIconImage = makeDockIcon()   // replace the generic "exec" tile
 
+    // Before anything starts: a quarantined copy launched from Downloads is
+    // TRANSLOCATED by macOS and can never install an update. Offer to move it
+    // while nothing is running yet -- if it does move, this process is replaced
+    // and must not boot features it would grab hotkeys for and then abandon.
+    // finishLaunching BEFORE the guard: it runs a modal loop, and a window put on
+    // screen by an NSApplication that has not finished launching never draws --
+    // the process sits there with an invisible modal session and no way out.
+    // `run()` below calls this again and it is a no-op the second time.
+    app.finishLaunching()
+
+    // Never returns true in practice -- a move relaunches and exits inside the
+    // call. The branch exists so a future change that stops exiting cannot
+    // silently fall through into booting a process that is on its way out.
+    if InstallLocation.promptIfNeeded() { return }
+
     let lua = LuaState()
     Native.shared.attach(lua)
     Native.shared.installBindings()
