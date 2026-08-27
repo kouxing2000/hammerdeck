@@ -24,9 +24,10 @@ name: Release
 # and issuer id are identifiers rather than secrets, but they are kept as secrets
 # too so this file names nothing account-specific.
 #
-# Note: the repo is PRIVATE, so release assets require auth to download. Fine
-# while it's just you; public distribution needs a public releases-only repo or a
-# static host (keeps source closed) -- a deliberate Gate-A decision, not now.
+# Note: the download people are pointed at is the one on hammerdeck.peach-studio.com,
+# published by the site step below -- not the GitHub Release asset. The Release is
+# the durable record of what shipped; the site is the distribution channel, and it
+# is what Sparkle's appcast points every installed copy at.
 
 on:
   push:
