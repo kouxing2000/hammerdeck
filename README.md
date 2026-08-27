@@ -15,10 +15,11 @@ local, plain-text log. Open source and local-first -- no account, no cloud, no
 subscription.
 
 <p align="center">
-  <img src=".github/assets/gallery.png" alt="Hammerdeck's Feature Gallery: a grid of feature cards, each with an animated preview, its category, its bound shortcut and an on/off switch" width="900">
+  <img src=".github/assets/gallery.gif" alt="Hammerdeck's Feature Gallery: a grid of feature cards. As the pointer moves across Window Deck, Window Fan, Window Grid and Window Rewind, each card plays a preview of what that feature does to your windows" width="900">
 </p>
 
-<p align="center"><em>Every feature is a card you switch on. Nothing runs that you did not enable.</em></p>
+<p align="center"><em>Every feature is a card. Hover it to see what it does, flip the switch to
+turn it on, and the badge shows the shortcut it is bound to.</em></p>
 
 ## Features
 
