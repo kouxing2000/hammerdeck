@@ -19,23 +19,60 @@ shapes what's easy to contribute:
   talk it through -- it saves you from building something that doesn't fit the
   direction.
 
+## Want a feature that isn't in the catalog? Write it as an extension
+
+You do not need a merged PR to get a feature. Point Settings > General at a
+folder and Hammerdeck loads **user extensions** from it -- Lua laid out exactly
+like a built-in (`<folder>/<id>/lua/init.lua`, plus an optional `feature.json`
+and `i18n/`), with the same manifest contract, the same `ctx`, and the same
+runtime capability gate. Extensions also get `exec` (`ctx.run`), which
+first-party features are forbidden from declaring.
+
+Settings > General > Agent Access can expose a local MCP endpoint so a coding
+agent can do the loop for you: read the API surface your feature actually
+receives, reload, check the load errors, validate that your declared
+capabilities match what the code reaches, then enable it and fire an action. The
+authoring guide it serves is a valid `SKILL.md` and is copyable from Settings.
+
+That path is the honest answer to the curation policy below: the catalog stays
+small and first-party, and your machine does whatever you want.
+
 ## The one rule that keeps the design clean
 
-Only the Swift bridge (`app/platform/swift/LuaState.swift` + `Native.swift`) and
-the Lua seam (`app/platform/lua/adapter.lua`) may touch native / macOS APIs.
-Every feature and platform module reaches the OS *through that seam* (the scoped
-`ctx`), never directly. [`CLAUDE.md`](CLAUDE.md) carries the full layer map and
+Only the Swift bridge (`app/platform/swift/LuaState.swift`, `Native.swift` and
+its `Native+<domain>.swift` extensions) and the Lua seam
+(`app/platform/lua/adapter.lua`) may touch native / macOS APIs. Every feature and
+platform module reaches the OS *through that seam* (the scoped `ctx`), never
+directly. New OS surface grows in whichever `Native+*` slice fits, or a new one
+-- never in a feature. [`CLAUDE.md`](CLAUDE.md) carries the full layer map and
 the plugin contract -- read it before your first PR.
 
 ## Dev setup
 
 ```bash
-swift build            # compile CLua + the host
-swift run              # run the app (menubar hammer icon)
-lua test/run.lua       # fast headless Lua/feature tests (Homebrew Lua)
-scripts/test-lua.sh    # same suite on the vendored 5.4.7 -- run before committing Lua
-swift test             # integration tests against the real Swift<->Lua bridge
+swift build              # compile CLua + the host
+swift run                # run the app (menubar hammer icon)
+lua test/run.lua         # fast headless Lua/feature tests (Homebrew Lua)
+scripts/test-lua.sh      # same suite on the vendored 5.4.7 -- run before committing Lua
+scripts/test-swift.sh    # integration tests on the real Swift<->Lua bridge
+scripts/check-lua-types.sh   # LuaLS over the workspace at Error level (CI runs it)
 ```
+
+Two things that surprise people:
+
+- **`swift test` is not only for Swift changes.** Two integration tests read the
+  live on-disk catalog, so a pure-Lua feature can turn it red -- a new feature
+  with no gallery preview, or a `page` in `feature.json` with no registered
+  provider. Run it for any new or renamed feature.
+- **Use `scripts/test-swift.sh`, not `swift test | grep`.** A pipeline reports
+  the last command's status, so the filter swallows both the failure and the
+  name of the case that failed. The wrapper writes the full log, prints the
+  failing cases, and exits with the real status.
+
+`swift test` is quiet by default: tests that show panels, synthesize keystrokes,
+or touch the Keychain are skipped so they don't type into whatever app you have
+focused. Run those only when you're away from the keyboard, with
+`HAMMERDECK_UI_TESTS=1 swift test`.
 
 Keep all Lua **5.4-compatible** (the embedded engine is vendored Lua 5.4.7, even
 though your local `lua` may be newer). Run the relevant tests before you open a PR.

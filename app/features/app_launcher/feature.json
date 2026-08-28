@@ -1,7 +1,7 @@
 {
   "name": "App Launcher",
   "version": "1.0.0",
-  "description": "Launch or focus any installed app from a searchable panel — found by a plain disk scan, never Spotlight indexing.",
+  "description": "Launch or focus any installed app from a searchable panel -- found by a plain disk scan, never Spotlight indexing.",
   "category": "switching",
   "order": 6,
   "selfEvident": true,

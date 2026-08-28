@@ -55,7 +55,7 @@ Every feature ships **off by default** -- switch one on in Settings and bind it 
 - **Tab Switcher** -- Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
 - **Quick Sites** -- Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether it opens as a standalone app window, a fresh private window, or both. cmd+<number> jumps straight to a row in the picker, and every site is also a menubar row you can give its own shortcut. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
 - **Clipboard History** -- Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded. <sub>Reaches: types keystrokes, reads/writes files.</sub>
-- **App Launcher** -- Launch or focus any installed app from a searchable panel — found by a plain disk scan, never Spotlight indexing. <sub>Reaches: apps.</sub>
+- **App Launcher** -- Launch or focus any installed app from a searchable panel -- found by a plain disk scan, never Spotlight indexing. <sub>Reaches: apps.</sub>
 
 ### Text
 
@@ -136,8 +136,12 @@ conspicuous.
 **[Download Hammerdeck](https://hammerdeck.peach-studio.com/)** -- universal
 (Apple Silicon and Intel), macOS 13 or later. It is signed with a Developer ID
 and notarized by Apple, so there is no "unidentified developer" wall -- macOS
-still asks once whether to open an app downloaded from the internet. Unzip, drag
-`Hammerdeck.app` into `/Applications`, and open it.
+still asks once whether to open an app downloaded from the internet. Unzip and
+open it; if it is not in `/Applications` yet, it offers to move itself there on
+first launch (drag its icon across, or press the button). That move is not
+housekeeping: macOS runs a downloaded app from a randomised read-only path until
+it has been moved, and an app running from there can never install its own
+updates.
 
 It keeps itself up to date: Hammerdeck checks for new versions and asks you
 before installing any of them.
@@ -187,12 +191,16 @@ No permission is requested up front, and a feature you never enable never asks.
 ## Build & test
 
 ```bash
-swift build          # CLua (vendored Lua 5.4.7) + the host
-swift run            # run the app
-lua test/run.lua     # headless Lua/feature tests (fast inner loop)
-scripts/test-lua.sh  # the same suite on the vendored 5.4.7 -- run before committing Lua
-swift test           # integration tests against the real Swift<->Lua bridge
+swift build              # CLua (vendored Lua 5.4.7) + the host
+swift run                # run the app
+lua test/run.lua         # headless Lua/feature tests (fast inner loop)
+scripts/test-lua.sh      # the same suite on the vendored 5.4.7 -- run before committing Lua
+scripts/test-swift.sh    # integration tests against the real Swift<->Lua bridge
+scripts/check-lua-types.sh   # LuaLS over the workspace at Error level
 ```
+
+`swift test` is not only for Swift changes: two integration tests read the live
+on-disk catalog, so adding or renaming a feature can turn it red.
 
 `defaults delete Hammerdeck` resets everything to first-run.
 Boot without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 swift run`.
@@ -205,14 +213,15 @@ Current status and open work live in the
 A native Swift host and an embedded Lua engine, meeting at **one seam**.
 
 The rule that protects every future option: **only the Swift bridge
-(`app/platform/swift/LuaState.swift` + `Native.swift`) and
-`app/platform/lua/adapter.lua` may touch native/OS APIs.** Everything else reaches
+(`app/platform/swift/LuaState.swift`, `Native.swift` and its
+`Native+<domain>.swift` extensions) and `app/platform/lua/adapter.lua` may touch
+native/OS APIs.** Everything else reaches
 the OS through that seam, so the host stays swappable and a feature never sees the
 backend it runs on.
 
 A feature is a folder under `app/features/<id>/`: a `feature.json` (identity), a
 `lua/` plugin, and optionally a `swift/` for native UI it contributes. It receives
-a **scoped `ctx`** — every handle it creates is tracked and torn down when it's
+a **scoped `ctx`** -- every handle it creates is tracked and torn down when it's
 disabled. Features are autodiscovered; the Settings form is generated from the
 feature's own typed options, so a new plugin gets its UI for free.
 
