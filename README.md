@@ -1,12 +1,23 @@
 # Hammerdeck
 
-**Mac automation you configure instead of program.** Hammerdeck embeds a Lua
-engine -- think a focused, miniature Hammerspoon -- but you never write Lua.
-Toggle a feature on, pick its options, and bind it to a **hotkey, a chord**
-(`cmd+shift+a`, then `b`), **a schedule, or a system event**. A **rules engine**
-reacts to the Mac itself: the frontmost app changes, a display connects, the
-appearance flips, the power source switches -- and windows arrange into a saved
-layout, the wallpaper changes, any feature's action runs.
+**Big screens, many screens, no dragging.**
+
+macOS tiles in halves and quarters. That is the right answer on a laptop and the
+wrong one on a 49-inch ultrawide -- and across two or three displays there is no
+keyboard shortcut at all, at any macOS version, to send a window to the other
+display or to swap what sits on each.
+
+Hammerdeck puts all of it on keys: **arbitrary grids** (name two corners),
+**throws and swaps between displays**, a **deck** that keeps every window
+reachable, a **modal layer** for arranging by feel, and **one-key undo** for any
+of it. Then it does the same thing without you -- every action also binds to a
+**chord** (`cmd+shift+a`, then `b`), **a schedule, or a system event**, and a
+**rules engine** reacts to the Mac itself, so connecting a display rearranges
+your windows instead of you doing it again.
+
+It is a native Swift app with a Lua engine inside -- think a focused, miniature
+Hammerspoon -- except you never write Lua. Every feature is a switch, some
+options, and a trigger picker.
 
 And it is automation you can **see**: every shortcut press flashes which action
 fired, automated runs can notify you of what happened while you were away, one
