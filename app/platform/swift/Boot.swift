@@ -310,6 +310,11 @@ func bootLua(_ lua: LuaState, luaDir: String) throws {
 /// The whole app. The executable target's main.swift just calls this.
 @MainActor
 public func hammerdeckMain() {
+    // First, before anything reads the environment or launches anything: a
+    // terminal-started Hammerdeck otherwise passes the whole shell environment
+    // on to every app the App Launcher opens and every `ctx.run` subprocess.
+    LaunchEnvironment.normalize()
+
     // The app object must exist before any panel is created by feature start().
     let app = NSApplication.shared
     DockPreference.apply()   // .regular (Dock icon) or .accessory (menubar-only)
