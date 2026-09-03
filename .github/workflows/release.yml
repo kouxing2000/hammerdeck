@@ -50,7 +50,7 @@ jobs:
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
 
       # Package.swift is swift-tools-version 6.0, so the toolchain must be Swift 6+.
       # Select the newest Xcode on the image and then ASSERT the Swift version,

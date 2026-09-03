@@ -371,16 +371,44 @@ final class LuaState {
         return t
     }
 
+    /// Deepest table nesting `any` will walk before giving up on a branch.
+    ///
+    /// MEASURED, not guessed (the same rule the seam's timeouts follow): with all
+    /// 26 catalog features registered, `registry.describe()` -- the largest thing
+    /// that crosses this bridge -- is 6 levels deep, and a deliberately nested
+    /// chain-of-chains effect spec, about the deepest shape a user can build in
+    /// the rules UI, is 7. 24 leaves roughly 3x headroom over both while staying
+    /// far below anything that threatens the Swift stack. Re-measure before
+    /// lowering it.
+    private static let maxTableDepth = 24
+
     /// Recursively read any Lua value. Tables become [Any] (array-like) or
     /// [String: Any]; the `__jsontype` tag wins when present, so a table tagged
     /// "object" reads as a dict even when empty. An untagged empty table reads
     /// as an empty array (the historical default `json.lua` shares).
-    static func any(_ L: OpaquePointer?, _ index: Int32) -> Any? {
+    static func any(_ L: OpaquePointer?, _ index: Int32, depth: Int = 0) -> Any? {
         switch lua_type(L, index) {
         case LUA_TBOOLEAN: return bool(L, index)
         case LUA_TNUMBER:  return double(L, index)
         case LUA_TSTRING:  return string(L, index)
         case LUA_TTABLE:
+            // A CYCLE is what this bound really buys. `local t = {}; t.me = t`
+            // handed to any table-reading binding -- hud_show, http headers,
+            // run_process args -- used to recurse until the SWIFT stack
+            // overflowed and killed the host outright: no log line, no Lua
+            // traceback, nothing to read afterwards. A depth bound catches a
+            // cycle and honest over-nesting with one check; pointer tracking
+            // would cost a set allocation on every table read to catch strictly
+            // less. Nothing the app builds is near this deep, so a payload that
+            // trips it is a caller bug -- and losing that branch beats losing
+            // the app.
+            guard depth < maxTableDepth else { return nil }
+            // Each level parks a key AND a value while it recurses, so the 20
+            // slots LUA_MINSTACK promises a C function are gone about ten levels
+            // down. In a release build the overflow assert is compiled out, so
+            // the push lands past the stack top and corrupts it silently instead
+            // of raising. Ask for the room rather than assuming it.
+            guard lua_checkstack(L, 4) != 0 else { return nil }
             let abs = lua_absindex(L, index)
             let tag = jsonType(L, abs)
             let n = lua_rawlen(L, abs)
@@ -394,7 +422,7 @@ final class LuaState {
                 if n > 0 {
                     for i in 1...n {
                         lua_rawgeti(L, abs, lua_Integer(i))
-                        arr.append(any(L, -1) ?? NSNull())
+                        arr.append(any(L, -1, depth: depth + 1) ?? NSNull())
                         lua_settop(L, -2)
                     }
                 }
@@ -412,7 +440,7 @@ final class LuaState {
             var dict: [String: Any] = [:]
             lua_pushnil(L)
             while lua_next(L, abs) != 0 {
-                if let key = string(L, -2), let value = any(L, -1) {
+                if let key = string(L, -2), let value = any(L, -1, depth: depth + 1) {
                     dict[key] = value
                 }
                 lua_settop(L, -2)   // pop value, keep key for next()

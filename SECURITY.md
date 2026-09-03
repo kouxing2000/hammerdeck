@@ -22,11 +22,13 @@ reason). Being blunt about the surface is more useful than a short list:
 
 | Surface | Why it's needed | When it's asked for |
 |---|---|---|
-| **Accessibility** | reading and moving other apps' windows (AXUIElement) | on first use of a window feature |
-| **Input Monitoring** | Caps->Hyper remapping and two-step chords | on first use of those triggers |
+| **Accessibility** | reading and moving other apps' windows (AXUIElement); synthesizing keystrokes (paste-as-plain-text, insert date/time, paste from clipboard history); and the Caps->Hyper remap, which is an event tap that REWRITES keys | on first use of a feature that needs it |
 | **Automation (per browser)** | listing Chrome/Safari tabs for the tab and site switchers | lazily, the first time a switcher runs |
 | **Login Keychain** | storing a feature's API key (today: OpenAI) | only if you enter one |
 | **Subprocesses** | the `exec` capability, available to user extensions only | never for a built-in feature |
+
+Two-step chords are deliberately absent from that list: the prefix and each
+follow key are ordinary Carbon hotkeys, so a chord needs no permission at all.
 
 Everything runs as your user. A bug here is a bug with your whole account's
 reach, which is why reports touching the seam are especially appreciated.

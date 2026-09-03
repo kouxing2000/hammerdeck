@@ -36,7 +36,7 @@ jobs:
   test:
     runs-on: macos-15   # Apple Silicon, same image release.yml builds on
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
 
       # The content pre-commit hook is LOCAL (core.hooksPath) -- bypassable with
       # --no-verify, or simply never installed on a clone. This is its server-side

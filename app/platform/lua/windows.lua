@@ -82,6 +82,13 @@ function M.moveToScreen(f, s, t, opts)
         nf.y = t.y + t.h - nf.h
         if not keepSize and nf.y < t.y then nf.y, nf.h = t.y, t.h end
     end
+    -- ...and the NEAR edges, which the far-edge clamps above cannot reach. A
+    -- window hanging off the left of its source screen maps to a negative
+    -- offset on the target and used to land BACK on the source display; one
+    -- hanging above landed under the menu bar. Both read as "the shortcut threw
+    -- my window somewhere strange", and neither is caught by the far edges.
+    if nf.x < t.x then nf.x = t.x end
+    if nf.y < t.y then nf.y = t.y end
     return nf
 end
 

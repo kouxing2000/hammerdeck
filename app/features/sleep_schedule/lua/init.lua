@@ -29,9 +29,17 @@ local function formatCountdown(secs)
     return string.format("%d:%02d", math.floor(secs / 60), secs % 60)
 end
 
+-- A night SPANS midnight, so the weekday that decides the shift has to be the
+-- night's own day rather than whatever the clock reads at this instant. Anchor
+-- 12h back and every moment from noon today through 11:59 tomorrow names the
+-- same night; the anchor only moves at noon, when no countdown is ever armed.
+local NIGHT_ANCHOR_SECS = 12 * 3600
+
+---Is the night that `t` falls within a Friday or Saturday night?
+---@param t integer a time from ctx.now()
 local function isWeekendNight(t)
-    local wday = os.date("*t", t).wday  -- 1=Sun .. 7=Sat
-    return wday == 6 or wday == 7       -- Friday or Saturday night
+    local wday = os.date("*t", t - NIGHT_ANCHOR_SECS).wday  -- 1=Sun .. 7=Sat
+    return wday == 6 or wday == 7                           -- Friday or Saturday night
 end
 
 return {
@@ -76,6 +84,13 @@ return {
             warnDialog = nil,
         }
 
+        -- Reading the weekday from the bare clock made the shift EVAPORATE at
+        -- midnight: with the defaults (sleepAt 00:30, shift 60) Saturday 23:50
+        -- promised sleep at 01:30, and at 00:10 the target silently became
+        -- 00:30 -- the machine slept an hour before the dialog said it would,
+        -- with unsaved work still open. The day-rollover guard cannot catch it
+        -- either: it watches for a small backward step, and this is a 5400 ->
+        -- 1800 jump. isWeekendNight now anchors to the night's own day.
         local function weekendShift()
             return isWeekendNight(ctx.now()) and ctx.opt("weekendShiftMin") * 60 or 0
         end
@@ -191,7 +206,14 @@ return {
             s.lastSecsLeft = secsLeft
 
             local w1 = ctx.opt("warn1Min") * 60
-            local w2 = ctx.opt("warn2Min") * 60
+            -- The two warnings are range-checked independently, so warn2 > warn1
+            -- is a legal setting -- and phase 1 needs `secsLeft <= w1 and
+            -- secsLeft > w2`, which that inversion collapses to an empty window.
+            -- The dismissable dialog then never opens and the one-time SNOOZE
+            -- becomes unreachable, silently. Clamp rather than validate: the
+            -- pair is edited one field at a time, so a transient inversion while
+            -- the user is still typing must not break the schedule.
+            local w2 = math.min(ctx.opt("warn2Min") * 60, w1 - 60)
 
             -- Phase 1: dismissable warning with snooze.
             if secsLeft <= w1 and secsLeft > w2 and not s.warningShown then

@@ -29,10 +29,12 @@ DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
 STAGE="$DIST/site"
 SIGN_UPDATE="$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update"
-# Where the EdDSA private key sits when it is not passed in the environment. Only
-# the maintainer holds it -- a fork signs its own feed with its own key, which is
-# why this is a knob and not a constant.
-SPARKLE_KEY_FILE="${SPARKLE_KEY_FILE:-$HOME/.config/hammerdeck/sparkle_ed25519_private_key.txt}"
+# Where the EdDSA private key sits when it is not passed in the environment.
+# DELIBERATELY has no default: a path here names someone's key store to every
+# reader of a public repo, and this file is public. Only the maintainer holds the
+# key for this feed -- a fork signs its own feed with its own key -- so both the
+# env var and the file path are supplied by whoever runs this.
+SPARKLE_KEY_FILE="${SPARKLE_KEY_FILE:-}"
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then

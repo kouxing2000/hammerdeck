@@ -344,16 +344,24 @@ local function start(ctx)
             ctx.log("skipping short session (" .. dur .. "s)")
             return
         end
+        -- The session belongs to the day it STARTED. Keying it to st.appDate
+        -- AFTER rollover() filed a 23:00 -> 01:00 session under the WAKE-UP day:
+        -- those minutes landed on a day the user was asleep for, and the day
+        -- that earned them recorded no session at all, so activeMinutes and
+        -- longestSessionMin were wrong on two days at once. rollover() already
+        -- flushes the APP accumulator under the outgoing st.appDate for exactly
+        -- this reason -- only the session row was keyed to the wrong day.
+        local sessionDay = dateStr(now - dur)
         rollover()
-        local d = st.appDate
-        ctx.mkdir(monthDir(d))
-        if not ctx.fileExists(sessionsPath(d)) then
-            ctx.fileAppend(sessionsPath(d), "wake_time,sleep_time,duration_min")
+        ctx.mkdir(monthDir(sessionDay))
+        if not ctx.fileExists(sessionsPath(sessionDay)) then
+            ctx.fileAppend(sessionsPath(sessionDay), "wake_time,sleep_time,duration_min")
         end
-        ctx.fileAppend(sessionsPath(d),
+        ctx.fileAppend(sessionsPath(sessionDay),
             os.date("%H:%M:%S", now - dur) .. "," .. os.date("%H:%M:%S", now)
             .. "," .. math.floor(dur / 60 + 0.5))
-        writeApps(d)
+        -- Still st.appDate: the accumulator holds only post-rollover time.
+        writeApps(st.appDate)
         ctx.log("session recorded (" .. math.floor(dur / 60 + 0.5) .. " min)")
     end
     shared.recordSession = recordSession

@@ -159,6 +159,18 @@ return {
         end
 
         ctx.everySeconds(POLL_INTERVAL, check)
+        -- An armed countdown measures against the WALL CLOCK, so a sleep/wake
+        -- gap that straddles it leaves `remaining` hugely negative and the very
+        -- first tick after waking blanks the screen the user just woke against
+        -- a countdown that expired hours ago. sleep_schedule hooks the same two
+        -- events for the same reason; nothing about a fresh wake should inherit
+        -- the idle state that preceded it.
+        local function onWake()
+            if s.warnedAt or s.dimmed then ctx.log("wake -- dropping the armed countdown") end
+            rearm()
+        end
+        ctx.onSystemEvent("wake", onWake)
+        ctx.onSystemEvent("screenUnlock", onWake)
         ctx.log("started")
     end,
 }

@@ -13,6 +13,14 @@
 -- instead of the spoon's finish-early-with-"time is up" notification -- saying
 -- time is up when the user aborted was a lie.
 
+---A minute count as a person would write it: "5", not "5.0"; "2.5" stays "2.5".
+---@param m number
+---@return string
+local function showMinutes(m)
+    if m % 1 == 0 then return string.format("%d", m) end
+    return (string.format("%.2f", m):gsub("0+$", ""):gsub("%.$", ""))
+end
+
 return {
     api         = 1,
     id          = "count_down",
@@ -45,7 +53,14 @@ return {
                     local minutes = s.minutes
                     local ctx = s.ctx
                     cancel(s)
-                    ctx.notify(ctx.t("notify.up.title", "Time (%d min) is up!", minutes),
+                    -- %s, not %d: the prompt accepts "2.5" (a legitimate
+                    -- 150-second timer), and Lua 5.4's %d RAISES on a
+                    -- non-integer. i18n.safeFormat caught the raise and fell
+                    -- back to the same English template, which failed the same
+                    -- way -- so the notification read literally
+                    -- "Time (%d min) is up!". Format the number here, where the
+                    -- integer case can keep its clean "5" instead of "5.0".
+                    ctx.notify(ctx.t("notify.up.title", "Time (%s min) is up!", showMinutes(minutes)),
                         ctx.t("notify.up.body", "Now is %s", os.date("%X", ctx.now())))
                 else
                     s.bar.setProgress(s.elapsed / s.total)

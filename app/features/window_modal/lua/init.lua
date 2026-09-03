@@ -43,11 +43,28 @@ local function arrangerFor(ctx)
     end
 
     -- Stash the pre-op frame (cap like the donor); a new op clears redo.
+    -- The wid rides along because the stack is per-MODE but the frames are
+    -- per-WINDOW: without it, snapping A, clicking B and pressing [ popped A's
+    -- pre-snap frame and applied it to B -- B flung across the screen, A left
+    -- snapped, and no way to tell what had happened.
     local function stash(f)
         local u = st.undoStack
-        u[#u + 1] = { x = f.x, y = f.y, w = f.w, h = f.h }
+        u[#u + 1] = { x = f.x, y = f.y, w = f.w, h = f.h, wid = ctx.window.focusedWid() }
         if #u > HISTORY_MAX then table.remove(u, 1) end
         st.redoStack = {}
+    end
+
+    ---Does `entry` belong to the window that is focused right now?
+    ---Unresolvable ids (0/nil -- some apps never expose one) are treated as a
+    ---match: refusing there would break undo for those windows entirely, and
+    ---the pre-existing behavior is the better failure when identity is unknown.
+    local function sameWindow(entry, what)
+        local now = ctx.window.focusedWid()
+        if not entry.wid or entry.wid == 0 or not now or now == 0 then return true end
+        if entry.wid == now then return true end
+        ctx.log(what .. " skipped -- stack belongs to window " .. entry.wid
+            .. ", focus is on " .. now)
+        return false
     end
 
     -- Run `op(f, stepw, steph)` -> new frame, on the focused window, with the
@@ -71,20 +88,24 @@ local function arrangerFor(ctx)
     local function undo()
         local f = focused()
         if not f then return end
-        local prev = table.remove(st.undoStack)
-        if not prev then return end
+        local prev = st.undoStack[#st.undoStack]
+        if not prev or not sameWindow(prev, "undo") then return end
+        table.remove(st.undoStack)
         local r = st.redoStack
-        r[#r + 1] = { x = f.x, y = f.y, w = f.w, h = f.h }
+        r[#r + 1] = { x = f.x, y = f.y, w = f.w, h = f.h, wid = ctx.window.focusedWid() }
+        ctx.log("undo")
         setFrame(prev)
     end
 
     local function redo()
         local f = focused()
         if not f then return end
-        local nxt = table.remove(st.redoStack)
-        if not nxt then return end
+        local nxt = st.redoStack[#st.redoStack]
+        if not nxt or not sameWindow(nxt, "redo") then return end
+        table.remove(st.redoStack)
         local u = st.undoStack
-        u[#u + 1] = { x = f.x, y = f.y, w = f.w, h = f.h }
+        u[#u + 1] = { x = f.x, y = f.y, w = f.w, h = f.h, wid = ctx.window.focusedWid() }
+        ctx.log("redo")
         setFrame(nxt)
     end
 

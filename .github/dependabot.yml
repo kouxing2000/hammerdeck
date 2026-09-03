@@ -1,0 +1,29 @@
+# Dependency update PRs. Two ecosystems, because this repo has exactly two kinds
+# of outside code and both matter for different reasons:
+#
+#   swift  -- Sparkle, the ONLY external package. It is the component that can
+#             replace the app on a user's machine, so a security release of it
+#             is not a routine bump; the 2.9.x line has already shipped three.
+#             Package.resolved is tracked (see .gitignore), so a bump lands as a
+#             reviewable lockfile change and CI builds it before anyone merges.
+#
+#   github-actions -- the workflows run on a macOS runner WITH the Developer ID
+#             cert and the notarization key in scope (release.yml). An action
+#             pinned to a moving tag is a supply-chain edge into that job.
+#
+# Vendored Lua (Sources/CLua) is deliberately NOT here: Dependabot cannot see a
+# tarball copied into the tree. Its version lives in Sources/CLua/VENDOR.md and
+# re-vendoring is a manual, reviewed step.
+version: 2
+updates:
+  - package-ecosystem: swift
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

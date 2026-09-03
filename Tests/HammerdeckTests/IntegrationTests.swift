@@ -1833,6 +1833,54 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    /// A CYCLIC Lua table must not take the host down.
+    ///
+    /// `LuaState.any` walks nested tables recursively, and it did so with no
+    /// depth bound and no cycle detection: `local t = {}; t.me = t` handed to any
+    /// table-reading binding recursed until the SWIFT stack overflowed, which is
+    /// not a catchable error -- the app died outright, with no log line and no
+    /// Lua traceback to explain it. A feature or a user extension could do it by
+    /// accident with one self-reference.
+    ///
+    /// The test IS the crash check: if the bound regresses, this test does not
+    /// fail, it takes the whole test process down with it -- which is exactly
+    /// how the bug presented in the app. Returning nil for the over-deep branch
+    /// is the deliberate degradation; losing that branch beats losing the host.
+    func testCyclicTableDoesNotOverflowTheHost() {
+        let cyclic = eval("local t = { name = 'loop' }; t.me = t; return t")
+        XCTAssertNotNil(cyclic, "a cyclic table must still read back as a value")
+        XCTAssertEqual((cyclic as? [String: Any])?["name"] as? String, "loop",
+                       "the finite fields of a cyclic table survive; only the cycle is cut")
+
+        // Self-referencing ARRAY: the other recursion arm, which reads through
+        // lua_rawgeti rather than lua_next and needed the same bound.
+        let cyclicArray = eval("local a = { 1, 2 }; a[3] = a; return a")
+        XCTAssertEqual((cyclicArray as? [Any])?.count, 3,
+                       "the array arm terminates too, keeping its finite entries")
+
+        // Mutual recursion between two tables -- neither is self-referencing, so
+        // a naive "is this me?" check would miss it and only a depth bound holds.
+        let mutual = eval("local a, b = {}, {}; a.b = b; b.a = a; a.tag = 'a'; return a")
+        XCTAssertEqual((mutual as? [String: Any])?["tag"] as? String, "a",
+                       "a mutually recursive pair terminates")
+
+        // Honest deep nesting, well past the bound, must also come back rather
+        // than corrupt the Lua stack: each level parks a key and a value, so
+        // without lua_checkstack this runs past the slots LUA_MINSTACK reserves.
+        let deep = eval("""
+            local root = {}
+            local cur = root
+            for i = 1, 200 do cur.child = {}; cur = cur.child end
+            cur.leaf = true
+            return root
+            """)
+        XCTAssertNotNil(deep, "a 200-deep table reads back instead of overflowing")
+
+        // And the host is still alive and answering afterwards.
+        XCTAssertEqual(eval("return 1 + 1") as? Double, 2,
+                       "the Lua state is still usable after every cyclic read")
+    }
+
     /// The browser-scripting seam is CURATED: a non-whitelisted app name must
     /// be refused at the bridge (a Lua error), never reach a script. No real
     /// browser is scripted in tests (that would launch apps / TCC prompts).

@@ -137,6 +137,10 @@ def load_features():
                 "description": clean(d.get("description", ""), "description", fdir.name),
                 "category": clean(d.get("category", "general"), "category", fdir.name),
                 "capabilities": capability_note(d.get("capabilities", []), fdir.name),
+                # Ships enabled on a fresh install. The lead line below states
+                # the real default rather than asserting a blanket "all off",
+                # which was false the moment the first defaultEnabled landed.
+                "default_enabled": d.get("defaultEnabled") is True,
                 # Slot within the category section; None sorts last, alphabetically.
                 "order": order,
             }
@@ -156,10 +160,28 @@ def render(features):
     # with the feature count") applies to this generated block too; a number
     # here also goes stale as the catalog moves.
     lines = [BEGIN, ""]
-    lines.append(
-        "Every feature ships **off by default** -- switch one on in Settings "
-        "and bind it to any trigger."
-    )
+    # Derived, never asserted: registry.lua honors `defaultEnabled` in
+    # feature.json, so a hard-coded "everything is off" goes false silently the
+    # first time a feature ships enabled. CI runs --check, so the sentence and
+    # the catalog cannot drift apart.
+    on_by_default = sorted(f["name"] for f in features if f["default_enabled"])
+    if not on_by_default:
+        lines.append(
+            "Every feature ships **off by default** -- switch one on in Settings "
+            "and bind it to any trigger."
+        )
+    else:
+        if len(on_by_default) == 1:
+            named, verb = f"**{on_by_default[0]}**", "is"
+        else:
+            named = ", ".join(f"**{n}**" for n in on_by_default[:-1])
+            named = f"{named} and **{on_by_default[-1]}**"
+            verb = "are"
+        lines.append(
+            f"Every feature ships **off by default** except {named}, which {verb} on "
+            "from a fresh install -- switch any other on in Settings and bind it to "
+            "any trigger."
+        )
     lines.append("")
     for cat, heading in ordered:
         items = by_cat.get(cat)

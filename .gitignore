@@ -14,6 +14,11 @@
 # DIFFERENT updater. This is the component that can replace the app on a user's
 # machine; its version belongs in the commit, not in whatever the network returned.
 
+# Python bytecode -- scripts/gen-readme-features.py is run directly and by CI,
+# and any import of it (a syntax check, a REPL) leaves a __pycache__ behind.
+__pycache__/
+*.pyc
+
 # Editor
 .vscode/
 .idea/

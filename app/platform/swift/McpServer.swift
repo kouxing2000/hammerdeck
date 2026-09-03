@@ -185,13 +185,28 @@ final class McpServer: ObservableObject {
             return sendAndClose(conn, McpHttp.response(status: 405, reason: "Method Not Allowed",
                                                        headers: [("Allow", "POST")]), bag: bag)
         }
-        guard req.headers["authorization"] == "Bearer \(token)" else {
+        guard let authorization = req.headers["authorization"],
+              constantTimeEqual(authorization, "Bearer \(token)") else {
             return sendAndClose(conn, McpHttp.response(status: 401, reason: "Unauthorized",
                                                        headers: [("WWW-Authenticate", "Bearer")]), bag: bag)
         }
         rpc(req.body) { response in
             sendAndClose(conn, response, bag: bag)
         }
+    }
+
+    /// Compare two ASCII strings without an early exit on the first differing
+    /// byte. On a loopback listener guarding a 122-bit UUID the timing channel is
+    /// theoretical, but a token compare is the one place a reviewer looks for
+    /// this, and the honest form costs four lines. Length still differs early --
+    /// that is the standard bound, and it leaks nothing about the token's bytes.
+    private nonisolated static func constantTimeEqual(_ a: String, _ b: String) -> Bool {
+        let lhs = Array(a.utf8)
+        let rhs = Array(b.utf8)
+        guard lhs.count == rhs.count else { return false }
+        var difference: UInt8 = 0
+        for i in 0..<lhs.count { difference |= lhs[i] ^ rhs[i] }
+        return difference == 0
     }
 
     private nonisolated static func isLocalOrigin(_ origin: String) -> Bool {

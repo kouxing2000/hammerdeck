@@ -18,6 +18,23 @@
 
 local POLL_SECONDS    = 0.8     -- donor frequency
 local MAX_ENTRY_CHARS = 5000    -- donor max_entry_size (truncate, keep)
+
+---Cut `s` to at most `maxBytes` WITHOUT splitting a UTF-8 character.
+---
+---Both truncations here are byte operations on what the option label calls
+---"chars", which is only the same thing in ASCII: 3000 Chinese characters are
+---9000 bytes, so a plain sub() left an invalid tail in the persisted JSON and a
+---broken glyph in the chooser row. Falls back to the byte cut when the input is
+---not valid UTF-8 to begin with -- a pasteboard can hand us anything.
+---@param s string
+---@param maxBytes integer
+---@return string
+local function clipUTF8(s, maxBytes)
+    if #s <= maxBytes then return s end
+    local ok, start = pcall(utf8.offset, s, 0, maxBytes + 1)
+    if ok and type(start) == "number" and start >= 1 then return s:sub(1, start - 1) end
+    return s:sub(1, maxBytes)
+end
 local PASTE_SETTLE    = 0.15    -- let the chooser close before cmd+v
 
 local json = require("platform.json")
@@ -52,12 +69,18 @@ local function start(ctx)
                 if type(e) == "string" then st.history[#st.history + 1] = e end
             end
         end
+        -- The cap lived only in record(), so lowering historySize and restarting
+        -- left every older entry visible -- and on disk -- until the next copy.
+        -- The stored file is the untrusted side here: it was written by an
+        -- earlier run, under whatever cap was set then.
+        local cap = ctx.opt("historySize")
+        while #st.history > cap do table.remove(st.history) end
     end
 
     -- Record `text`: dedup moves an existing entry to the front; cap size.
     local function record(text)
         if not text or text == "" then return end
-        if #text > MAX_ENTRY_CHARS then text = text:sub(1, MAX_ENTRY_CHARS) end
+        if #text > MAX_ENTRY_CHARS then text = clipUTF8(text, MAX_ENTRY_CHARS) end
         for i, e in ipairs(st.history) do
             if e == text then table.remove(st.history, i); break end
         end
@@ -78,7 +101,7 @@ local function start(ctx)
     -- One-line preview for the chooser row.
     local function preview(text)
         local line = text:match("^[^\n]*") or text
-        if #line > 70 then line = line:sub(1, 70) .. "…" end
+        if #line > 70 then line = clipUTF8(line, 70) .. "…" end
         if line ~= text then
             return line, (#text >= 1000 and math.floor(#text / 1000) .. "k chars"
                           or #text .. " chars")

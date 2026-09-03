@@ -739,6 +739,12 @@ EFFECT_KINDS = {
         label = "Media key",
     },
     chain = {
+        -- The English SOURCE for rules.effectKind.chain. Without it, catalog()
+        -- passed nil as i18n's default and the dropdown rendered the raw dotted
+        -- key -- in the ENGLISH build only, since zh-Hans carries a translation.
+        -- i18n_parity cannot see that class: it checks translations against
+        -- English sources, and here the English source was the missing half.
+        label = "Do several things",
         validate = function(node)
             assert(type(node.effects) == "table" and #node.effects > 0,
                 "chain effect needs at least one step")
@@ -835,6 +841,10 @@ end
 ---@return boolean ok
 ---@return string|nil reasonOrNote  failure reason, or a partial-success note
 function effects.dispatch(node, context)
+    -- Before the lookup, not after: the guard on the next line already reads
+    -- `node and node.kind`, but the index above it had thrown for a nil node --
+    -- a "never throws" contract defended by code placed one line too late.
+    if type(node) ~= "table" then return false, "effect must be a table" end
     local spec = EFFECT_KINDS[node.kind]
     if not spec then return false, "unknown effect kind: " .. tostring(node and node.kind) end
     -- THE containment point. Every kind's `run` may call the adapter directly and
@@ -879,9 +889,15 @@ function effects.catalog(automatedOnly)
     -- context-free atoms, and validate is the backstop, so it's safe to list here.)
     local out = {}
     for _, kind in ipairs(CATALOG_ORDER) do
+        -- A kind listed for the dropdown with no English label would hand i18n a
+        -- nil default and render its own dotted key at the user. Fail here, where
+        -- the catalog is built, rather than shipping the key as a label.
+        local spec = EFFECT_KINDS[kind]
+        assert(type(spec) == "table" and type(spec.label) == "string" and spec.label ~= "",
+            "effect kind '" .. kind .. "' is in CATALOG_ORDER but declares no label")
         -- The dropdown label, localized here at the single point the catalog is built.
         out[#out + 1] = { kind = kind,
-                          label = i18n.t("rules.effectKind." .. kind, EFFECT_KINDS[kind].label) }
+                          label = i18n.t("rules.effectKind." .. kind, spec.label) }
     end
     for _, a in ipairs(registry.enabledActions()) do
         if (not automatedOnly) or a.automatable then

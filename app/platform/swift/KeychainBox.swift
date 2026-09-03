@@ -49,7 +49,12 @@ enum KeychainBox {
         SecItemDelete(baseQuery(account) as CFDictionary)
         var attrs = baseQuery(account)
         attrs[kSecValueData as String] = Data(value.utf8)
-        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        // ...ThisDeviceOnly: the item is readable by a background launch after the
+        // first unlock (ctx.secret is read from timers and rules, not only from the
+        // UI), but it is excluded from encrypted backups and device migration, so
+        // an API key the user typed here never travels off the machine it was
+        // typed on.
+        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(attrs as CFDictionary, nil) == errSecSuccess
     }
 

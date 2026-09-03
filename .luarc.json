@@ -11,6 +11,8 @@
     "native"
   ],
   "diagnostics.severity": {
+    "undefined-global": "Error",
+    "lowercase-global": "Error",
     "param-type-mismatch": "Error",
     "assign-type-mismatch": "Error",
     "return-type-mismatch": "Error",
