@@ -698,7 +698,7 @@ extension Native {
         return wins.first
     }
 
-    // screen_frames() -> array of { x,y,w,h, name, index, builtin } visible frames
+    // screen_frames() -> array of { x,y,w,h, name, index, builtin, full } visible frames
     // (top-left-origin), the order NSScreen.screens gives (primary first). The
     // name (localizedName, e.g. "Built-in Retina Display", "DELL U2720Q") is the
     // stable-ish key the window-layout engine targets a display by; `builtin`
@@ -709,6 +709,14 @@ extension Native {
         lua_createtable(L, Int32(screens.count), 0)
         for (i, s) in screens.enumerated() {
             pushRect(L, axRect(s.visibleFrame))   // leaves a {x,y,w,h} table on top
+            // ...plus the FULL frame, because the row answers two different
+            // questions. Placement wants the visible frame (never put a window
+            // under the menu bar). MEMBERSHIP -- "which display is this window
+            // ON" -- wants the full one, or the menu-bar and Dock strips read as
+            // belonging to no display at all, and `listWindows` disagrees on the
+            // same window in the same breath: its `namedScreens` map builds each
+            // window's `screenName` from axRect($0.frame), not the visible one.
+            pushRect(L, axRect(s.frame));             lua_setfield(L, -2, "full")
             lua_pushstring(L, s.localizedName);       lua_setfield(L, -2, "name")
             lua_pushinteger(L, lua_Integer(i + 1));   lua_setfield(L, -2, "index")
             let num = (s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]

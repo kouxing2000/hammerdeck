@@ -74,10 +74,15 @@ local window_ops = require("platform.window_ops")
 ---@field screenName string?
 
 ---One row of `ctx.screen.frames()`, primary first; `screenIndex` indexes this.
+---The row itself is the VISIBLE frame (menu bar and Dock subtracted) -- what
+---PLACEMENT wants. `full` is the same display before that subtraction, which is
+---what MEMBERSHIP wants: a window parked over the Dock is on that display, and
+---`listWindows` labels it so. Use `windows.contains` rather than picking one.
 ---@class ScreenFrame : Frame
 ---@field name string         the display's localizedName -- how layouts target it
 ---@field index integer
 ---@field builtin boolean     true for the laptop's own panel
+---@field full Frame          the un-subtracted frame; membership tests use it
 
 ---One selectable row of `ctx.askChoice`. `id` is what `onChoose` receives; when
 ---omitted it is the row's 1-based index. NEVER the label -- see adapter.askChoice
@@ -508,7 +513,7 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.screen.pickDisplay(opts) return track(adapter.pickDisplays(opts)) end
 
     ctx.mouse = {}
-    ---@return number x, number y top-left-origin global points
+    ---@return { x: number, y: number } top-left-origin global points
     function ctx.mouse.position()        return adapter.mousePosition() end
     ---@param x number
     ---@param y number

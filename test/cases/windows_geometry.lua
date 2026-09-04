@@ -128,6 +128,27 @@ return {
                 "onScreen: straddler with centre 1100 -> not s1")
             ok(W.onScreen({ x = 900, y = 100, w = 400, h = 300 }, s2),
                 "onScreen: ...and yes on s2 (crisp seam, no double-count)")
+
+            -- W-1c: the sanctioned predicate must answer membership the SAME way
+            -- screenOfFrame does. A row's own rect is the VISIBLE frame, which
+            -- excludes the menu-bar and Dock strips -- and a window parked over
+            -- the Dock is plainly on that display (listWindows labels it so, from
+            -- the full frame). Two membership predicates that disagree put one
+            -- window on a display and off it in the same breath.
+            local rows = {
+                { x = 0, y = 37, w = 2560, h = 1318, name = "DELL", index = 1,
+                  full = { x = 0, y = 0, w = 2560, h = 1440 } },
+            }
+            local dockside = { x = 600, y = 1290, w = 420, h = 160 }  -- centre y 1370
+            ok(W.onScreen(dockside, rows[1]),
+                "onScreen: a window over the Dock is ON that display (full frame, not visible)")
+            local via = W.screenOfFrame(rows, dockside)
+            ok(via ~= nil and via.name == "DELL",
+                "onScreen: ...and screenOfFrame agrees -- one question, one answer")
+            -- A row with no `full` still falls back to its own rect, so every
+            -- older caller and fixture keeps the behavior it was written against.
+            ok(not W.onScreen(dockside, { x = 0, y = 37, w = 2560, h = 1318 }),
+                "onScreen: a row without `full` falls back to the visible rect")
         end
 
         -- fanSlots (Window Fan's border-anchored slab fan). The CORE invariant is

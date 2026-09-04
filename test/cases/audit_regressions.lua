@@ -424,20 +424,210 @@ return {
                 .. #caps .. " placements)")
             ok(caps[1] and caps[1].app == "Notes" and caps[1].screen == "DELL",
                 "W-1b: the on-screen window is still captured, on its own display")
-            ok(caps[1] and caps[1].pos.x >= 0 and caps[1].pos.x <= 1,
-                "W-1b: the surviving placement's ratios are in range")
             -- focusedScreen keeps the aim default it documents: a pointer in the
             -- gap between displays still has to resolve to something.
             fake.windows = {}
-            fake.mouse = { x = -5000, y = -5000 }
+            local gapPointer = { x = -5000, y = -5000 }
             local fs = W.focusedScreen({
                 screen = { frames = function() return fake.screenList end },
                 window = { frame = function() return nil end },
-                mouse  = { position = function() return fake.mouse end },
+                mouse  = { position = function() return gapPointer end },
             })
             ok(fs ~= nil and fs.name == "DELL",
                 "W-1b: focusedScreen still falls back to the first screen (the aim default)")
-            fake.screenList = nil
+        end
+
+        -- W-1c ------------------------------------------------------------------
+        -- Found reviewing W-1b: membership was tested against the VISIBLE frame,
+        -- but a screen row's visible frame excludes the menu-bar and Dock strips.
+        -- A window parked over the Dock is plainly ON that display -- listWindows
+        -- even labels it with that display's name, from the FULL frame -- yet
+        -- screenOfFrame answered nil, so "Capture current layout" dropped it and
+        -- moveAppToDisplay cornered it. Rows now carry `full`, and membership
+        -- uses it.
+        do
+            local effects = require("platform.effects")
+            fake.screenList = {
+                -- 37pt menu bar at the top, ~85pt Dock at the bottom.
+                { x = 0, y = 37, w = 2560, h = 1318, name = "DELL", index = 1,
+                  full = { x = 0, y = 0, w = 2560, h = 1440 } },
+                { x = 2560, y = 37, w = 1440, h = 863, name = "LG", index = 2,
+                  full = { x = 2560, y = 0, w = 1440, h = 900 } },
+            }
+            -- midpoint (810, 1370): below the visible frame's 1355 bottom edge,
+            -- inside the full frame's 1440.
+            fake.windows = {
+                { id = 91, appName = "Dockside", x = 600, y = 1290, w = 420, h = 160 },
+            }
+            local caps = effects.captureLayout()
+            ok(#caps == 1 and caps[1].screen == "DELL",
+                "W-1c: a window over the Dock is ON that display, not dropped ("
+                .. #caps .. " placements)")
+
+            -- ...and it still moves relative to its own screen, rather than being
+            -- anchored at the destination's corner as an off-display window is.
+            -- The menu-bar direction, which the Dock case above cannot reach: an
+            -- origin ABOVE the visible frame's top makes (w.y - s.y) negative, so
+            -- the stored ratio leaves [0,1] and `rectFromRatios` then SCALES that
+            -- overhang onto whatever display the layout is restored on. Membership
+            -- moved to the full frame; the ratio basis did not, so this window is
+            -- newly capturable and newly out of range.
+            fake.windows = {
+                { id = 93, appName = "Palette", x = 100, y = 0, w = 300, h = 60 },
+            }
+            local top = effects.captureLayout()
+            ok(#top == 1 and top[1].screen == "DELL",
+                "W-1c: a window in the menu-bar strip is on that display too")
+            ok(top[1] and top[1].pos.y >= 0 and top[1].pos.y <= 1
+                and top[1].pos.x >= 0 and top[1].pos.x <= 1,
+                "W-1c: its stored origin stays inside [0,1] (got "
+                .. tostring(top[1] and top[1].pos.x) .. ","
+                .. tostring(top[1] and top[1].pos.y) .. ")")
+
+            fake.windows = {
+                { id = 91, appName = "Dockside", x = 600, y = 1290, w = 420, h = 160 },
+            }
+            fake.windowFrameSets = {}
+            ok(effects.dispatch({ kind = "moveAppToDisplay", app = "Dockside",
+                display = "LG" }) == true, "W-1c: the Dock-side window moves")
+            -- x only: the window sits at the bottom of a 1440-tall screen moving
+            -- onto a 900-tall one, so y is legitimately clamped by the
+            -- keep-it-on-the-destination step and says nothing either way.
+            -- x = dest.x + (600 - 0) = 3160, and the origin-anchor branch would
+            -- give 2560 -- so this one number tells the two branches apart.
+            local s = fake.windowFrameSets[#fake.windowFrameSets]
+            ok(s and s.x == 3160,
+                "W-1c: its offset within its own screen is preserved (got "
+                .. tostring(s and s.x) .. ", expected 3160)")
+
+            -- The genuinely off-display case: no offset exists, so it anchors at
+            -- the destination origin -- a branch that was DEAD before W-1b made
+            -- screenOfFrame nil-able, and is now live, so it needs saying out loud.
+            fake.windows = {
+                { id = 92, appName = "Nowhere", x = -9000, y = -9000, w = 300, h = 200 },
+            }
+            fake.windowFrameSets = {}
+            local logsBefore = #fake.logs
+            ok(effects.dispatch({ kind = "moveAppToDisplay", app = "Nowhere",
+                display = "LG" }) == true, "W-1c: an off-display window still moves")
+            local s2 = fake.windowFrameSets[#fake.windowFrameSets]
+            ok(s2 and s2.x == 2560 and s2.y == 37,
+                "W-1c: with no current screen it anchors at the destination origin (got "
+                .. tostring(s2 and s2.x) .. "," .. tostring(s2 and s2.y) .. ")")
+            local sawAnchorLog = false
+            for i = logsBefore + 1, #fake.logs do
+                if fake.logs[i]:find("on no display", 1, true) then sawAnchorLog = true end
+            end
+            ok(sawAnchorLog,
+                "W-1c: the anchor fallback logs, so a corner landing is not a mystery")
+
+            fake.windows = {}
+            fake.windowFrameSets = {}
+            fake.screenList = {
+                { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1,
+                  builtin = true },
+            }
+        end
+
+        -- P-3 ------------------------------------------------------------------
+        -- A duplicate rule id parks the second copy (correctly -- a rule is never
+        -- silently dropped), but the parked row kept the same `id`, so describe()
+        -- handed SwiftUI two rows with one identity. Selecting the greyed
+        -- duplicate and deleting it deleted the LIVE rule instead.
+        do
+            local rules = require("platform.rules")
+            fake.settings["hammerdeck.rules"] = nil
+            rules.load({
+                { id = "dup", name = "first",
+                  on = { type = "event", event = "wake" },
+                  effect = { kind = "notify", title = "HD" } },
+                { id = "dup", name = "second",
+                  on = { type = "event", event = "sleep" },
+                  effect = { kind = "notify", title = "HD2" } },
+            })
+            local rows = rules.describe()
+            ok(#rows == 2, "P-3: both copies are listed, neither dropped (" .. #rows .. ")")
+            ok(rows[1].id ~= rows[2].id,
+                "P-3: the two rows carry DIFFERENT ids (" .. tostring(rows[1].id)
+                .. " / " .. tostring(rows[2].id) .. ")")
+            -- The collision is reported through `reason`, which RulesView already
+            -- decodes (RuleInfo.unavailableReason) and renders as the row subtitle.
+            -- A field of its own would have to be plumbed through Swift to say the
+            -- same thing, and until it was, the row would say nothing at all.
+            ok(rows[2].unavailable == true
+                and type(rows[2].reason) == "string"
+                and rows[2].reason:find("already uses the id", 1, true) ~= nil,
+                "P-3: the parked row says WHY, through the field the UI already shows (got "
+                .. tostring(rows[2].reason) .. ")")
+
+            -- The row's own JSON, not the live rule's -- the editor loads this.
+            local sj = rules.specJSON(rows[2].id)
+            ok(sj and sj:find('"second"', 1, true) ~= nil,
+                "P-3: specJSON on the parked row returns the PARKED spec")
+
+            -- The assertion the defect fails: delete the greyed row, and the live
+            -- rule that shares its id must survive.
+            ok(rules.remove(rows[2].id) == true, "P-3: the parked duplicate can be deleted")
+            local after = rules.describe()
+            ok(#after == 1 and after[1].name == "first",
+                "P-3: deleting the duplicate left the LIVE rule alone (kept "
+                .. (after[1] and after[1].name or "nothing") .. ")")
+
+            -- Editing the duplicate must CHANGE the id -- writing the address into
+            -- the user's rule, or silently merging onto the live one, are both worse
+            -- than refusing with the reason.
+            rules.load({
+                { id = "dup", name = "first",
+                  on = { type = "event", event = "wake" },
+                  effect = { kind = "notify", title = "HD" } },
+                { id = "dup", name = "second",
+                  on = { type = "event", event = "sleep" },
+                  effect = { kind = "notify", title = "HD2" } },
+            })
+            local addr = rules.describe()[2].id
+            ok(select(1, rules.update(addr, { id = "dup", name = "second",
+                on = { type = "event", event = "sleep" },
+                effect = { kind = "notify", title = "HD2" } })) == false,
+                "P-3: re-saving the duplicate under the SAME id is refused, not merged")
+            ok(rules.update(addr, { id = "dup2", name = "second",
+                on = { type = "event", event = "sleep" },
+                effect = { kind = "notify", title = "HD2" } }) == true,
+                "P-3: giving the copy a fresh id un-parks it")
+            local fixed = rules.describe()
+            ok(#fixed == 2 and fixed[1].id == "dup" and fixed[2].id == "dup2",
+                "P-3: both rules are now live under distinct ids")
+
+            -- The address must name an ENTRY, not a slot. `remove`/`update` both
+            -- table.remove(parked, ..), which renumbers everything after the hole,
+            -- and RulesView.editing is a value snapshot that is never re-derived --
+            -- so it hands back an address minted BEFORE the shift. Addressed by
+            -- position, that resolves to a different parked rule and deletes a rule
+            -- the user never touched: the very wrong-row defect P-3 is about.
+            rules.load({
+                { id = "dup", name = "first",
+                  on = { type = "event", event = "wake" },
+                  effect = { kind = "notify", title = "HD" } },
+                { id = "dup", name = "A",
+                  on = { type = "event", event = "sleep" },
+                  effect = { kind = "notify", title = "HD" } },
+                { id = "dup", name = "B",
+                  on = { type = "event", event = "sleep" },
+                  effect = { kind = "notify", title = "HD" } },
+            })
+            local before = rules.describe()
+            ok(#before == 3, "P-3: three rows, one live and two parked (" .. #before .. ")")
+            local addrA, addrB = before[2].id, before[3].id
+            ok(rules.remove(addrA) == true, "P-3: the first parked copy is removed")
+            -- addrB was minted before that removal; B is now at index 1 of `parked`.
+            local sjB = rules.specJSON(addrB)
+            ok(sjB and sjB:find('"B"', 1, true) ~= nil,
+                "P-3: an address minted before a removal still names ITS OWN rule (got "
+                .. tostring(sjB) .. ")")
+            ok(rules.remove(addrB) == true and #rules.describe() == 1,
+                "P-3: ...and removing it takes B, leaving only the live rule")
+
+            rules.load({})
+            fake.settings["hammerdeck.rules"] = nil
         end
 
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,

@@ -778,6 +778,14 @@ function adapter.screenFrames()
     for i, s in ipairs(fake.screenList) do
         local row = {}
         for k, v in pairs(s) do row[k] = v end
+        -- `full` (the screen's frame before the menu bar / Dock are subtracted)
+        -- is a nested table, so it needs its own copy or every frames() call
+        -- would hand back the SAME inner table and defeat the freshness above.
+        if type(s.full) == "table" then
+            local f = {}
+            for k, v in pairs(s.full) do f[k] = v end
+            row.full = f
+        end
         out[i] = row
     end
     return out

@@ -680,10 +680,13 @@ function adapter.setAppearance(mode)
     return native.set_appearance(mode) == true
 end
 
--- Visible frame of every screen (primary first): { x,y,w,h, name, index, builtin }
--- rows; screenIndex indexes this. `name` is the display's localizedName -- the
--- layout engine targets a display by it; `builtin` is true for the laptop's own
--- panel (capture skips it to keep only external displays).
+-- Visible frame of every screen (primary first):
+-- { x,y,w,h, name, index, builtin, full } rows; screenIndex indexes this. `name`
+-- is the display's localizedName -- the layout engine targets a display by it;
+-- `builtin` is true for the laptop's own panel (capture skips it to keep only
+-- external displays). `full` is the same display WITHOUT the menu bar and Dock
+-- subtracted: the row answers two questions, and membership ("is this window on
+-- that display") needs the strips included -- see windows.contains.
 function adapter.screenFrames()
     return native.screen_frames()
 end

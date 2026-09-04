@@ -44,6 +44,16 @@ local i18n     = require("platform.i18n")
 
 local effects = {}
 
+--- Fold a screen-relative ratio back into [0,1]. See captureLayout for why the
+--- basis can produce one outside it.
+---@param v number
+---@return number
+local function ratio01(v)
+    if v < 0 then return 0 end
+    if v > 1 then return 1 end
+    return v
+end
+
 -- Sentinels for an effect param drawn from the firing TRIGGER's context (see
 -- rules.lua triggerContext) instead of a literal. The value is "@trigger:<field>"
 -- where <field> is a key the trigger provides: `display` (Connected display) or
@@ -307,7 +317,8 @@ end
 
 -- Move an app's window(s) to another display, KEEPING their size -- the distinct
 -- value over `layout`, which always resizes to a snap position. Preserves each
--- window's offset within its current screen, re-applied to the destination, then
+-- window's offset within its current screen (a window on NO display has no such
+-- offset and anchors at the destination origin instead), re-applied there, then
 -- clamps so the window stays fully on it. The destination is a display NAME (or
 -- "@trigger:display"); an absent display fails (nothing to move onto). app may be
 -- a literal name or "@trigger:app". Returns (true) / (false, reason).
@@ -339,6 +350,15 @@ local function applyMoveToDisplay(node, context)
         end
         if hit then
             local cur = windows.screenOfFrame(screens, w)
+            -- No current screen means the window sits on NO display -- a stale
+            -- frame an app restored after its monitor was unplugged. There is
+            -- then no offset to preserve, so the destination's own origin is the
+            -- only anchor left. Logged, because landing in the corner instead of
+            -- the old relative spot otherwise reads as a misfire.
+            if not cur then
+                adapter.log("moveAppToDisplay: '" .. tostring(w.appName)
+                    .. "' is on no display -- anchoring at the destination origin")
+            end
             local nx = cur and (dest.x + (w.x - cur.x)) or dest.x
             local ny = cur and (dest.y + (w.y - cur.y)) or dest.y
             -- keep the window fully on the destination (it may be smaller).
@@ -942,16 +962,37 @@ function effects.captureLayout(onlyDisplay)
             -- `s and` below is what skips it. Tagging it with display 1 instead
             -- would store ratios far outside [0,1], which no later step clamps.
             local s = windows.screenOfFrame(screens, w)
+            if not s then
+                adapter.log("captureLayout: skipping '" .. tostring(w.appName)
+                    .. "' -- its centre is on no display")
+            end
             local keep = s and s.name and s.w > 0 and s.h > 0
                 and (scoped and (s.name == onlyDisplay) or (not scoped and not s.builtin))
             if keep then
+                -- Membership is FULL-frame -- a window in the menu-bar or Dock strip
+                -- IS on that display -- while these ratios are measured against the
+                -- VISIBLE frame, so such a window's ORIGIN lands outside [0,1].
+                -- Nothing downstream range-checks it: `ratiosFor` passes a table
+                -- straight through and `rectFromRatios` scales it, so the overhang
+                -- GROWS when the layout is restored onto a display of a different
+                -- size. Clamp to the contract this row promises. Nothing real is
+                -- lost: `moveToScreen` clamps to the visible frame on restore
+                -- anyway, so the clamped value is what would happen regardless --
+                -- the unclamped one merely survived on identical geometry.
+                -- Only the origin; w/h may legitimately exceed 1 for a window
+                -- taller or wider than the visible frame, and clamping those would
+                -- RESIZE the user's window on restore.
+                local px, py = (w.x - s.x) / s.w, (w.y - s.y) / s.h
+                local cx, cy = ratio01(px), ratio01(py)
+                if cx ~= px or cy ~= py then
+                    adapter.log("captureLayout: '" .. tostring(w.appName)
+                        .. "' overlaps the menu bar/Dock on " .. tostring(s.name)
+                        .. " -- origin clamped into the visible frame")
+                end
                 out[#out + 1] = {
                     app    = w.appName,
                     screen = s.name,
-                    pos    = {
-                        x = (w.x - s.x) / s.w, y = (w.y - s.y) / s.h,
-                        w = w.w / s.w,         h = w.h / s.h,
-                    },
+                    pos    = { x = cx, y = cy, w = w.w / s.w, h = w.h / s.h },
                 }
             end
         end

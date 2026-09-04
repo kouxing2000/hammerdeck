@@ -64,9 +64,62 @@ local function isEnabled(spec) return spec.enabled ~= false end
 -- keep the raw spec here, re-persist it untouched, and surface it as "unavailable"
 -- in the list. It re-activates automatically once its target returns (the next
 -- load re-validates it), or the user can fix it (edit the JSON) or delete it.
-local parked = {}   -- list of { spec = <raw table>, reason = <string> }
+local parked = {}   -- list of { spec = <raw table>, reason = <string>, address = <string|nil> }
+
+-- A parked rule whose id is ALREADY TAKEN -- by a live rule or by an earlier
+-- parked one -- is listed under an address of its own instead of its own id.
+--
+-- Without it `describe()` emits two rows carrying one id, and `RulesView` keys
+-- `List(selection:)` and `ForEach` on exactly that: select, Test and delete then
+-- resolve to whichever row SwiftUI picks, and `rules.remove` checks `specs`
+-- first, so deleting the greyed duplicate deleted the LIVE rule. The user's
+-- stored JSON is neither rewritten nor dropped -- parking exists so a rule is
+-- never silently lost -- so the row needs an address the engine can map back.
+-- `registry.lua:190-199` guards the identical hazard for load-failure rows.
+--
+-- \1 is the separator because a JSON string id could legitimately contain any
+-- printable character. It makes a collision vanishingly unlikely, NOT impossible
+-- -- \1 is legal inside a JSON string, so a user could type one. What makes a
+-- collision harmless is the resolution: an address is matched by EXACT equality
+-- against a token this module stamped, never parsed back into an index, and both
+-- `remove` and `update` answer `specs` before they consult it. So the worst a
+-- forged address can do is make a taken-id check say "taken".
+--
+-- The counter is MONOTONIC and the address is stamped onto the entry, so it names
+-- an entry rather than a slot. `remove` and `update` both `table.remove(parked, ..)`,
+-- which renumbers every later entry -- and `RulesView.editing` is a value snapshot
+-- that is never re-derived from the refreshed list, so it can hand back an address
+-- minted before that shift. A positional address would then resolve to a DIFFERENT
+-- parked rule: the same wrong-row defect this whole scheme exists to close.
+-- Never reset it, `rules.load` included -- a stale address must MISS and report
+-- "no such rule", not land on whatever occupies that number next.
+local PARK_TAG = "\1park"
+local parkSeq = 0
+
+---@param specId any
+---@return string|nil address, nil for an id-less spec (never listed, so never addressed)
+local function nextParkAddress(specId)
+    if type(specId) ~= "string" or #specId == 0 then return nil end
+    parkSeq = parkSeq + 1
+    return specId .. PARK_TAG .. parkSeq
+end
+
+--- The parked entry an ADDRESS names, or nil when `id` is not an address.
+--- Separate from parkedIndex so callers can ask "is this specifically the parked
+--- row?" -- which is what lets remove/specJSON check it before `specs`.
+---@param id any
+---@return integer|nil
+local function parkedIndexByAddress(id)
+    if type(id) ~= "string" then return nil end
+    for i, p in ipairs(parked) do
+        if p.address == id then return i end
+    end
+    return nil
+end
 
 local function parkedIndex(id)
+    local byAddr = parkedIndexByAddress(id)
+    if byAddr then return byAddr end
     for i, p in ipairs(parked) do
         if type(p.spec) == "table" and p.spec.id == id then return i end
     end
@@ -76,6 +129,13 @@ end
 -- A short, user-facing reason a rule is parked (shown greyed in the list).
 local function parkReason(spec)
     if type(spec) ~= "table" then return "rule is malformed" end
+    -- An id already claimed by the copy that loaded first outranks every cause
+    -- below: the rule cannot run under that id whatever else is wrong with it, and
+    -- it is the one park reason the user can act on directly. `specs` already holds
+    -- the winner by the time this runs (loadOne's assert is what parked this copy).
+    if type(spec.id) == "string" and specs[spec.id] then
+        return "another rule already uses the id '" .. spec.id .. "'"
+    end
     -- Check the VERIFIABLE cause first -- a state trigger on a signal that no longer
     -- exists -- BEFORE the command-effect heuristic, or a gone-signal rule that
     -- also has a command effect would be misattributed to the feature.
@@ -152,7 +212,10 @@ function rules.load(list)
             -- table (a real rule) is worth keeping; raw corruption is let go.
             adapter.log("rule load PARKED [" .. tostring(who) .. "]: " .. tostring(err))
             if type(spec) == "table" then
-                parked[#parked + 1] = { spec = spec, reason = parkReason(spec) }
+                parked[#parked + 1] = {
+                    spec = spec, reason = parkReason(spec),
+                    address = nextParkAddress(spec.id),
+                }
             end
         end
     end
@@ -388,6 +451,10 @@ end
 function rules.remove(id)
     lastFire[id] = nil      -- drop its fire history too
     fireFailures[id] = nil  -- ...and its failure streak
+    -- No address branch is needed here: an address is not a key in `specs`, so it
+    -- falls through to the parked lookup below, which resolves it. That is the
+    -- whole repair -- before, the greyed row was addressed by the id it SHARED,
+    -- this `specs` hit answered first, and the live rule was deleted instead.
     if specs[id] then
         specs[id] = nil
         save(); restart()
@@ -424,6 +491,27 @@ function rules.update(id, spec)
     local pi = parkedIndex(id)
     if not specs[id] and not pi then return false, "no such rule: " .. tostring(id) end
     if type(spec) ~= "table" then return false, "rule must be a table" end
+    -- Editing a duplicate-id row: the id is the very thing that is broken, so the
+    -- edit has to change it. Forcing `spec.id = id` here would either write the
+    -- \1 address into the user's stored rule, or silently overwrite the LIVE rule
+    -- that owns the id -- a merge they never asked for and could not see.
+    -- `specs` first: a LIVE rule's id always means that rule, even in the
+    -- vanishing case where the user chose an id byte-identical to a stamped
+    -- address. Otherwise this branch would refuse their ordinary edit, or un-park
+    -- an unrelated rule under it.
+    local addr = (not specs[id]) and parkedIndexByAddress(id) or nil
+    if addr then
+        local dupId = parked[addr].spec.id
+        if type(spec.id) ~= "string" or spec.id == "" or spec.id == dupId then
+            return false, "duplicate rule id '" .. tostring(dupId)
+                .. "': give this copy a different id"
+        end
+        if specs[spec.id] or (parkedIndex(spec.id) and parkedIndex(spec.id) ~= addr) then
+            return false, "duplicate rule id: " .. spec.id
+        end
+        id = spec.id
+        pi = addr
+    end
     spec.id = id
     local okV, err = pcall(rules.validate, spec)
     if not okV then return false, tostring(err) end
@@ -545,12 +633,21 @@ function rules.describe()
     -- rule preserved-but-not-firing (with the reason) instead of a silent gap. Only
     -- id'd specs are listed (an id is needed to select/edit/delete the row); an
     -- id-less corrupt spec is still preserved on disk by save(), just not shown.
+    -- Track the ids already listed: a parked copy of an id that is ALREADY on the
+    -- page gets its address instead, or the list carries two rows with one identity.
+    -- Non-colliding parked rows keep their own id, so nothing else has to learn
+    -- about addresses. The row says WHY through `reason`, which parkReason already
+    -- sets to the duplicate message and RulesView already renders as the subtitle.
+    local listed = {}
+    for _, row in ipairs(out) do listed[row.id] = true end
     for _, p in ipairs(parked) do
         local spec = p.spec
         if type(spec.id) == "string" and #spec.id > 0 then
             local okSent, sent = pcall(rules.sentence, spec)
+            local rowId = (listed[spec.id] and p.address) or spec.id
+            listed[rowId] = true
             out[#out + 1] = {
-                id          = spec.id,
+                id          = rowId,
                 name        = (type(spec.name) == "string") and spec.name or "",
                 enabled     = false,
                 sentence    = okSent and sent or "",

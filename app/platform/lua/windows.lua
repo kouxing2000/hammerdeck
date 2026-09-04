@@ -587,18 +587,21 @@ end
 --- produce window frames vs screen frames: their screen tables are different
 --- objects, so a `rawequal` identity compare is silently always-false in the
 --- real host (it only "works" against a fake that returns one stable table).
+---
+--- Delegates to `contains`, so it answers the membership question the same way
+--- `screenOfFrame` does. It must: this is the rect-shaped twin of that call, and
+--- two membership predicates that disagree about the menu-bar and Dock strips
+--- put one window on a display and off it in the same breath.
 ---@param w {x:number,y:number,w:number,h:number} a window rect
----@param s {x:number,y:number,w:number,h:number} a screen visible frame
+---@param s {x:number,y:number,w:number,h:number,full?:table} a screen row
 ---@return boolean
 function M.onScreen(w, s)
-    local mx, my = w.x + w.w / 2, w.y + w.h / 2
-    return mx >= s.x and mx < s.x + s.w
-       and my >= s.y and my < s.y + s.h
+    return M.contains(s, w.x + w.w / 2, w.y + w.h / 2)
 end
 
---- The screen a frame sits on: the one whose visible frame contains the frame's
---- midpoint, or nil when the midpoint is on NO display. Pure -- no reliance on
---- listWindows' screenName.
+--- The screen a frame sits on: the one containing the frame's midpoint (see
+--- `contains` for which rect that tests), or nil when the midpoint is on NO
+--- display. Pure -- no reliance on listWindows' screenName.
 ---
 --- The frame-space twin of `screenIndexContaining`, and it answers the same
 --- MEMBERSHIP question, so it must be able to answer "none". A window can sit
@@ -613,11 +616,24 @@ end
 function M.screenOfFrame(screens, f)
     local mx, my = f.x + f.w / 2, f.y + f.h / 2
     for _, s in ipairs(screens or {}) do
-        if mx >= s.x and mx < s.x + s.w and my >= s.y and my < s.y + s.h then
-            return s
-        end
+        if M.contains(s, mx, my) then return s end
     end
     return nil
+end
+
+--- Is the point (x,y) on this screen row? Tested against the row's FULL frame
+--- when it carries one, so the menu-bar and Dock strips count as on-display --
+--- a window parked over the Dock is plainly on that display, and `listWindows`
+--- already labels it with that display's name. The visible frame is the right
+--- answer for PLACEMENT and the wrong one for membership; a row without `full`
+--- (an older caller, a test fixture) falls back to the visible rect.
+---@param s table a screen row { x,y,w,h, full? }
+---@param x number
+---@param y number
+---@return boolean
+function M.contains(s, x, y)
+    local r = s.full or s
+    return x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h
 end
 
 --- The screen to act on: the FOCUSED window's, else the one under the mouse
@@ -656,16 +672,14 @@ end
 ---@return integer|nil
 function M.screenIndexContaining(frames, x, y)
     for i, s in ipairs(frames or {}) do
-        if x >= s.x and x < s.x + s.w and y >= s.y and y < s.y + s.h then
-            return i
-        end
+        if M.contains(s, x, y) then return i end
     end
     return nil
 end
 
---- 1-based index of the screen (in `frames`) whose visible frame contains the
---- point (x,y), else 1. The index space matches adapter.screenFrames /
---- f.screenIndex, so the result feeds straight into `adjacentScreen`.
+--- 1-based index of the screen (in `frames`) containing the point (x,y), else 1.
+--- The index space matches adapter.screenFrames / f.screenIndex, so the result
+--- feeds straight into `adjacentScreen`.
 ---
 --- The `or 1` is a deliberate AIM default, not a membership answer: a pointer
 --- read between displays still has to pick a screen to act on. Anything asking

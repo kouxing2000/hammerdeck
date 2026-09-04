@@ -1845,7 +1845,10 @@ private struct AddRuleForm: View {
         // fire if we were already in JSON mode). The form's "Use the form" link is
         // still available if the user WANTS to convert it -- but it's now an
         // explicit choice, not a silent rewrite-on-Save. Editing + saving the JSON
-        // keeps the id and name, and fixing a parked rule un-parks it.
+        // keeps the id and name, and fixing a parked rule un-parks it -- with one
+        // exception: a rule parked because its id is ALREADY TAKEN is refused
+        // unless the save CHANGES that id (rules.update). The id is the defect
+        // there, so keeping it could only merge onto the live rule that owns it.
         if !representable || rule.unavailable {
             advanced = true
             jsonText = currentSpecJSON()
