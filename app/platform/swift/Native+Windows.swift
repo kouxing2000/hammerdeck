@@ -911,16 +911,32 @@ final class FocusObserver {
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         AXObserverAddNotification(obs, appEl,
                                   kAXFocusedWindowChangedNotification as CFString, refcon)
+        // .commonModes, not .defaultMode: menu tracking and modal panels run the
+        // main loop in their OWN mode, and a source registered only in the default
+        // mode is not served there. Focus changes arriving while a menu is open
+        // are then never delivered at all -- not queued -- so Window Deck misses
+        // the promotion outright and resumes on stale state. Every other run-loop
+        // source in the seam (Native+Triggers, CapsHyperTap) is already common.
+        //
+        // The trade, stated because it IS a trade: this also widens Lua
+        // re-entrancy into those loops -- a focus handler can now run AX moves
+        // while the user holds a menu open. Every seam timer already fires in
+        // .common, so the delta is one more source rather than a new hazard, and
+        // a handler that misses the event entirely is the worse failure. If a
+        // future handler must not run mid-menu, gate it on the mode; do not send
+        // this source back to .defaultMode, which fixes nothing and re-deafens
+        // the observer.
         CFRunLoopAddSource(CFRunLoopGetMain(),
-                           AXObserverGetRunLoopSource(obs), .defaultMode)
+                           AXObserverGetRunLoopSource(obs), .commonModes)
         axObserver = obs
         observedPid = pid
     }
 
     private func teardownAX() {
         if let obs = axObserver {
+            // Must name the SAME mode the add used, or the source is never removed.
             CFRunLoopRemoveSource(CFRunLoopGetMain(),
-                                  AXObserverGetRunLoopSource(obs), .defaultMode)
+                                  AXObserverGetRunLoopSource(obs), .commonModes)
             // No explicit destroy: dropping the last reference tears the observer
             // (and its remaining notification registrations) down.
         }
@@ -983,8 +999,10 @@ final class FrameObserverSet {
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         AXObserverAddNotification(obs, appEl, kAXWindowMovedNotification as CFString, refcon)
         AXObserverAddNotification(obs, appEl, kAXWindowResizedNotification as CFString, refcon)
+        // .commonModes for the same reason as the focus observer above: a window
+        // dragged while a menu or modal panel is up must still report its move.
         CFRunLoopAddSource(CFRunLoopGetMain(),
-                           AXObserverGetRunLoopSource(obs), .defaultMode)
+                           AXObserverGetRunLoopSource(obs), .commonModes)
         observers.append(obs)
     }
 
@@ -1028,8 +1046,9 @@ final class FrameObserverSet {
 
     func stop() {
         for obs in observers {
+            // Must name the SAME mode the add used, or the source is never removed.
             CFRunLoopRemoveSource(CFRunLoopGetMain(),
-                                  AXObserverGetRunLoopSource(obs), .defaultMode)
+                                  AXObserverGetRunLoopSource(obs), .commonModes)
         }
         observers.removeAll()
         Native.shared.lua.releaseRef(ref)

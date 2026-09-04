@@ -39,11 +39,15 @@ local signals = {}
 -- (a monitor connected) and "leaves DELL" means it left (disconnected).
 ---@param def { read: fun():any, observe: fun(emit:fun(v:any)):table, match: fun(v:any,t:any):boolean|nil }
 local function pushSignal(def)
-    local subs = {}       -- token -> cb
+    local subs = {}       -- token -> { cb, label }
     local nextTok = 0
     local watcher = nil   -- the single adapter handle, alive only while subscribed
 
     local sig = {}
+    -- Stamped with the REGISTRY key after the table below is built (the key does
+    -- not exist yet at this point). Only diagnostics read it, and they run long
+    -- after registration, so the late fill is safe.
+    sig.name = "?"
 
     function sig.read() return def.read() end
 
@@ -63,7 +67,14 @@ local function pushSignal(def)
     sig.bundleIdMatch = def.bundleIdMatch or false
 
     --- Subscribe to changes. Returns a handle with .stop().
-    function sig.subscribe(cb)
+    ---
+    --- `label` names the subscriber in diagnostics (rules.bindOne passes
+    --- "rule:<id>"). Without it a swallowed error below reports only where it was
+    --- RAISED -- a line in rules.lua shared by every rule on every signal -- which
+    --- is the one question the log is being read to answer.
+    ---@param cb fun(v:any)
+    ---@param label string|nil
+    function sig.subscribe(cb, label)
         nextTok = nextTok + 1
         local tok = nextTok
         -- Install the shared watcher BEFORE registering the callback, so if
@@ -74,10 +85,23 @@ local function pushSignal(def)
         -- current value via read() instead, the way bindOne does).
         if not watcher then
             watcher = def.observe(function(v)
-                for _, c in pairs(subs) do c(v) end
+                -- Contain EACH subscriber separately. One shared watcher feeds
+                -- every rule on this signal, and only effects.dispatch runs under
+                -- its own pcall -- adapter.alert and effects.describe on the fire
+                -- path do not. An uncontained throw would abort the loop, so the
+                -- rules after it never see the change AND never advance their
+                -- `matched` edge state, leaving them to re-fire on every later
+                -- emit instead of once per transition.
+                for _, s in pairs(subs) do
+                    local okCb, err = pcall(s.cb, v)
+                    if not okCb then
+                        adapter.log(string.format("signals: %s subscriber %s error -- %s",
+                            sig.name, s.label, tostring(err)))
+                    end
+                end
             end)
         end
-        subs[tok] = cb
+        subs[tok] = { cb = cb, label = label or "anonymous" }
         return { stop = function()
             if subs[tok] == nil then return end
             subs[tok] = nil
@@ -230,6 +254,11 @@ local REGISTRY = {
     -- Info.plist usage string + a runtime prompt (a product decision). Wire it as
     -- a follow-up; the shape is identical to the signals above.
 }
+
+-- Each signal learns its own name here: `pushSignal` runs while the table above
+-- is still being CONSTRUCTED, so the key it will be filed under does not exist
+-- yet. Diagnostics are the only reader, and they run long after this.
+for name, sig in pairs(REGISTRY) do sig.name = name end
 
 --- Get a signal by name, or nil if unknown.
 ---@param name string

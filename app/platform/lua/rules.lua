@@ -282,7 +282,7 @@ local function bindOne(id, spec)
                 end
                 matched = now
             end
-        end)
+        end, "rule:" .. id)
     end
     return triggers.bind(spec.on, function() fire(id, spec) end, "rule:" .. id)
 end

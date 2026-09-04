@@ -17,15 +17,27 @@ function urls.encodeComponent(s)
     end))
 end
 
--- "https://sub.host.tld/path?q" -> "sub.host.tld". nil for non-http URLs,
--- localhost, or anything that does not look like a host.
+-- "https://user@sub.host.tld:8443/path?q" -> "sub.host.tld". nil for non-http
+-- URLs, localhost, or anything that does not look like a host.
+--
+-- Peel userinfo and port, then REJECT whatever is left if it is not host-shaped.
+-- Rejecting matters more here than in most parsers: the result is not merely
+-- displayed, it is PERSISTED -- as the `context` column of the user's daily usage
+-- CSV and as a favicon cache filename. Deleting the stray bytes instead folded
+-- them into the name, so `host.com:8443` was recorded as `host.com8443`.
+---@param url string|nil
+---@return string|nil
 function urls.getDomain(url)
     if not url or url:sub(1, 4) ~= "http" then return nil end
-    local domain = (url .. "/"):match("://(.-)/")
-    if not domain then return nil end
-    domain = domain:gsub("[^%w%-_%.]", "")
-    if domain == "" or domain:find("localhost") then return nil end
-    return domain
+    local authority = (url .. "/"):match("://(.-)/")
+    if not authority then return nil end
+    local host = authority:match("@(.*)$") or authority   -- drop user:pass@
+    host = host:match("^([^:]*)") or ""                   -- drop :port
+    if host == "" or host:find("[^%w%-_%.]") then return nil end
+    -- Equality/suffix, not `find`: a substring test also rejected the perfectly
+    -- ordinary `notlocalhost.com`.
+    if host == "localhost" or host:find("%.localhost$") then return nil end
+    return host
 end
 
 return urls

@@ -597,8 +597,16 @@ function M.onScreen(w, s)
 end
 
 --- The screen a frame sits on: the one whose visible frame contains the frame's
---- midpoint, else the first (used by "Capture current layout" to tag each window
---- with its display + ratios). Pure -- no reliance on listWindows' screenName.
+--- midpoint, or nil when the midpoint is on NO display. Pure -- no reliance on
+--- listWindows' screenName.
+---
+--- The frame-space twin of `screenIndexContaining`, and it answers the same
+--- MEMBERSHIP question, so it must be able to answer "none". A window can sit
+--- entirely off every display -- an app restoring a stale frame after a monitor
+--- is unplugged is the ordinary way -- and calling that display 1 hands
+--- "Capture current layout" a placement whose ratios are far outside [0,1],
+--- which nothing downstream clamps. A caller that wants an AIM default writes
+--- the `or screens[1]` itself, where the choice is visible (see focusedScreen).
 ---@param screens table[] screen rows { x,y,w,h,name }
 ---@param f table a frame { x,y,w,h }
 ---@return table|nil
@@ -609,15 +617,15 @@ function M.screenOfFrame(screens, f)
             return s
         end
     end
-    return screens and screens[1] or nil
+    return nil
 end
 
 --- The screen to act on: the FOCUSED window's, else the one under the mouse
 --- (so an action still resolves when focus is on the desktop or a windowless
---- app), else the first -- screenOfFrame's own fallback. Shared by the window
---- modes (Deck's pick entry, Fan's gather). Native only via the ctx passed in
---- (the leaf-util rule); a stale screenIndex that no longer resolves falls
---- through to the mouse path rather than being returned blind.
+--- app), else the first. Shared by the window modes (Deck's pick entry, Fan's
+--- gather). Native only via the ctx passed in (the leaf-util rule); a stale
+--- screenIndex that no longer resolves falls through to the mouse path rather
+--- than being returned blind.
 ---@param ctx table the curated feature ctx
 ---@return table|nil screen a ctx.screen.frames() row { x,y,w,h,name?,index? }, nil when no screens
 function M.focusedScreen(ctx)
@@ -628,23 +636,47 @@ function M.focusedScreen(ctx)
         return screens[f.screenIndex]
     end
     local m = ctx.mouse.position()
-    return M.screenOfFrame(screens, { x = m.x, y = m.y, w = 0, h = 0 })
+    -- The `or` is this function's AIM default, spelled here rather than buried
+    -- in screenOfFrame: a pointer parked in the gap between two displays still
+    -- has to resolve to something an action can run on.
+    return M.screenOfFrame(screens, { x = m.x, y = m.y, w = 0, h = 0 }) or screens[1]
 end
 
---- 1-based index of the screen (in `frames`) whose visible frame contains the
---- point (x,y), else 1. The index space matches adapter.screenFrames /
---- f.screenIndex, so the result feeds straight into `adjacentScreen`.
+--- 1-based index of the screen (in `frames`) that actually contains the point
+--- (x,y), or nil when the point is on NO display. The index space matches
+--- adapter.screenFrames / f.screenIndex.
+---
+--- Use this whenever the question is "which display is this ON" -- a membership
+--- test must be able to answer "none". `screenIndexAt` below answers the
+--- different question "which display do I aim at from here", where a miss has to
+--- resolve to something.
 ---@param frames table[] screen rows { x,y,w,h }
 ---@param x number
 ---@param y number
----@return integer
-function M.screenIndexAt(frames, x, y)
+---@return integer|nil
+function M.screenIndexContaining(frames, x, y)
     for i, s in ipairs(frames or {}) do
         if x >= s.x and x < s.x + s.w and y >= s.y and y < s.y + s.h then
             return i
         end
     end
-    return 1
+    return nil
+end
+
+--- 1-based index of the screen (in `frames`) whose visible frame contains the
+--- point (x,y), else 1. The index space matches adapter.screenFrames /
+--- f.screenIndex, so the result feeds straight into `adjacentScreen`.
+---
+--- The `or 1` is a deliberate AIM default, not a membership answer: a pointer
+--- read between displays still has to pick a screen to act on. Anything asking
+--- whether a window IS on a given display wants `screenIndexContaining` -- with
+--- this fallback, every off-screen window silently reads as display 1.
+---@param frames table[] screen rows { x,y,w,h }
+---@param x number
+---@param y number
+---@return integer
+function M.screenIndexAt(frames, x, y)
+    return M.screenIndexContaining(frames, x, y) or 1
 end
 
 --- The screen spatially adjacent to `frames[curIndex]` in direction `dir`,

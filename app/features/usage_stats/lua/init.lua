@@ -228,9 +228,14 @@ local function start(ctx)
         local now = ctx.now()
         local rows = store.aggregate(st.appTime, topN, TOP_CONTEXTS)
 
+        -- Noon-anchored calendar days, NOT `now - i*86400`: a fixed-second step
+        -- from the current time of day repeats a date across a DST transition
+        -- and drops the seventh. store.dayAnchors owns the why.
+        local anchors = store.dayAnchors(now, 7)
+
         local week, weekTotal, pastTotal, pastDays = {}, 0, 0, 0
         for i = 6, 0, -1 do
-            local t = now - i * 86400
+            local t = anchors[7 - i]
             local secs = (i == 0) and todayTotal() or readDayTotal(dateStr(t))
             weekTotal = weekTotal + secs
             if i > 0 and secs > 0 then

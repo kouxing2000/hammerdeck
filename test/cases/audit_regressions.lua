@@ -225,6 +225,221 @@ return {
                 "P-11: dispatch(nil) returns a failure instead of throwing")
         end
 
+        -- W-1 -----------------------------------------------------------------
+        -- window_snap asked "which display is this window on?" with
+        -- W.screenIndexAt, whose `or 1` fallback answers "display 1" for a point
+        -- on NO display. So a window parked off every screen (a display was
+        -- unplugged, or an app restored a stale frame) was treated as living on
+        -- display 1: the swap dragged it there and counted it, and the picker
+        -- inflated display 1's window count with it. Asserted through the
+        -- feature, not through the helper -- the defect was in which question
+        -- window_snap asked, and a test on screenIndexContaining alone would
+        -- pass against the pre-fix code.
+        do
+            registry.register(require("features.window_snap"))
+            registry.setEnabled("window_snap", true)
+
+            -- Two displays: the swap runs immediately, no picker.
+            fake.screenList = {
+                { x = 0,    y = 0, w = 1000, h = 800 },
+                { x = 1000, y = 0, w = 1000, h = 800 },
+            }
+            fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+            fake.windows = {
+                { id = 71, x = 100, y = 100, w = 400, h = 300 },        -- on display 1
+                { id = 72, x = -5000, y = -5000, w = 100, h = 100 },    -- centre on NO display
+            }
+            fake.windowFrameSets = {}
+            assert(registry.runAction("window_snap", "swap_screens"))
+            local byId = {}
+            for _, s in ipairs(fake.windowFrameSets) do byId[s.id] = s end
+            ok(byId[71], "W-1: a window really on display 1 still swaps")
+            ok(not byId[72],
+                "W-1: an off-screen window is NOT dragged onto display 1 by the swap")
+
+            -- Three displays: the picker opens and carries per-display counts.
+            fake.screenList = {
+                { x = 0,    y = 0, w = 1000, h = 800, name = "Left"   },
+                { x = 1000, y = 0, w = 1000, h = 800, name = "Middle" },
+                { x = 2000, y = 0, w = 1000, h = 800, name = "Right"  },
+            }
+            fake.focusedWindow = { x = 100, y = 100, w = 200, h = 150, screenIndex = 1 }
+            fake.windows = {
+                { id = 73, x = 100, y = 100, w = 200, h = 150 },        -- Left
+                { id = 74, x = -5000, y = -5000, w = 100, h = 100 },    -- nowhere
+            }
+            fake.windowFrameSets = {}
+            assert(registry.runAction("window_snap", "swap_screens"))
+            local dp = fake.displayPickers[#fake.displayPickers]
+            ok(dp.displays[1].windows == 1,
+                "W-1: the off-screen window is not counted on display 1 (got "
+                .. tostring(dp.displays[1].windows) .. ")")
+            dp.userConfirm({ 1, 3 })
+
+            registry.setEnabled("window_snap", false)
+            fake.windows = {}
+        end
+
+        -- N-13 / P-13 --------------------------------------------------------
+        -- getDomain DELETED disallowed bytes instead of rejecting, so a port
+        -- folded into the name. That string is not merely displayed: it is the
+        -- `context` column of the user's daily usage CSV and a favicon cache
+        -- filename, so a scrubbed host is persisted corruption. The localhost
+        -- guard used find(), which rejected any host merely containing it.
+        do
+            local urls = require("platform.urls")
+            local ported = urls.getDomain("https://host.com:8443/app")
+            ok(ported == "host.com",
+                "N-13: the port is dropped, not folded into the domain (got "
+                .. tostring(ported) .. ")")
+            ok(urls.getDomain("https://user:pw@sub.host.com/x") == "sub.host.com",
+                "N-13: userinfo is dropped, not folded into the domain")
+            ok(urls.getDomain("https://[::1]:8080/x") == nil,
+                "N-13: an authority that is not host-shaped is rejected, not scrubbed")
+            ok(urls.getDomain("https://notlocalhost.com/x") == "notlocalhost.com",
+                "P-13: only localhost itself is rejected, not every host containing it")
+            ok(urls.getDomain("http://localhost:3000/") == nil,
+                "P-13: a real localhost dev URL is still rejected")
+            ok(urls.getDomain("https://sub.host.tld/path?q=1") == "sub.host.tld",
+                "N-13: an ordinary URL still yields its host")
+        end
+
+        -- N-4 -----------------------------------------------------------------
+        -- The 7-day series stepped by a fixed 86400 from the CURRENT time of
+        -- day. Anchored at noon instead, so a 23- or 25-hour DST day cannot
+        -- make the step land back on the date it just left.
+        do
+            local store = require("features.usage_stats.store")
+            local a = store.dayAnchors(os.time({ year = 2026, month = 3, day = 15, hour = 9 }), 7)
+            ok(#a == 7, "N-4: dayAnchors returns one anchor per day (" .. #a .. ")")
+            local seen, distinct = {}, 0
+            for _, t in ipairs(a) do
+                local d = os.date("%Y-%m-%d", t)
+                if not seen[d] then seen[d] = true; distinct = distinct + 1 end
+            end
+            ok(distinct == 7, "N-4: the seven anchors are seven distinct dates (" .. distinct .. ")")
+            ok(os.date("%Y-%m-%d", a[7]) == "2026-03-15",
+                "N-4: the newest anchor is the day `now` falls in")
+            ok(tonumber(os.date("%H", a[4])) == 12,
+                "N-4: anchors sit at local noon, the far end from either DST boundary")
+            -- The DST case itself needs a zone that HAS one, so it is asserted in
+            -- Swift (testDailyWindowIsSevenDistinctDaysAcrossDST), which can force TZ.
+        end
+
+        -- P-10 -----------------------------------------------------------------
+        -- The shared watcher fanned out with a bare loop. One throwing rule
+        -- aborted the emit for every rule after it -- and since bindOne advances
+        -- `matched` only after fire() returns, those rules then re-fired on every
+        -- later emit instead of once per edge.
+        do
+            local signals = require("platform.signals")
+            local sig = signals.get("frontmostApp")
+            -- EVERY subscriber counts and THEN throws, so the assertion does not
+            -- depend on pairs()' undefined order: a bare loop stops at whichever
+            -- one it reaches first, and that is enough to fail this whatever the
+            -- order turns out to be.
+            local reached, handles = 0, {}
+            local function thrower()
+                reached = reached + 1
+                error("P-10 probe")
+            end
+            for _ = 1, 2 do handles[#handles + 1] = sig.subscribe(thrower) end
+            -- One LABELLED, the way rules.bindOne subscribes. The raised error
+            -- carries only a rules.lua line shared by every rule on every
+            -- signal, so without the label the log cannot answer the one
+            -- question it is read to answer: which rule broke.
+            handles[#handles + 1] = sig.subscribe(thrower, "rule:p10probe")
+            local nLogs = #fake.logs
+            -- pcall'd so an uncontained throw reports as the assertion below
+            -- rather than a traceback out of the case.
+            local emitOk = pcall(fake.activateApp, "P10Probe")
+            ok(emitOk, "P-10: a throwing subscriber does not escape the emit")
+            ok(reached == 3,
+                "P-10: a throwing subscriber does not abort the fan-out (reached "
+                .. reached .. "/3)")
+            local errLines, named, labelled = 0, 0, 0
+            for i = nLogs + 1, #fake.logs do
+                local L = fake.logs[i]
+                if L:find("subscriber") and L:find("error") then
+                    errLines = errLines + 1
+                    if L:find("frontmostApp", 1, true) then named = named + 1 end
+                    if L:find("rule:p10probe", 1, true) then labelled = labelled + 1 end
+                end
+            end
+            ok(errLines == 3,
+                "P-10: every swallowed subscriber error is logged, not silent ("
+                .. errLines .. "/3)")
+            ok(named == 3,
+                "P-10: each line names the SIGNAL (" .. named .. "/3)")
+            ok(labelled == 1,
+                "P-10: the labelled subscriber is named, so the log says WHICH rule broke ("
+                .. labelled .. "/1)")
+            for _, h in ipairs(handles) do h.stop() end
+
+            -- ...and the WIRING: the label only helps if rules.bindOne actually
+            -- passes one. Asserted by spying on subscribe rather than by making
+            -- a real rule throw -- effects.dispatch is already pcall-contained,
+            -- so a rule that fails through the supported path never reaches the
+            -- line above.
+            local rules = require("platform.rules")
+            local realSubscribe, seenLabel = sig.subscribe, nil
+            sig.subscribe = function(cb, label) seenLabel = label; return realSubscribe(cb, label) end
+            local okSpy = pcall(function()
+                rules.load({
+                    { id = "p10-wiring",
+                      on = { type = "state", signal = "frontmostApp", becomes = "Safari" },
+                      effect = { kind = "notify", title = "HD" } },
+                })
+                rules.startAll()
+            end)
+            sig.subscribe = realSubscribe
+            rules.load({})
+            ok(okSpy and seenLabel == "rule:p10-wiring",
+                "P-10: rules.bindOne subscribes under the rule's id (got "
+                .. tostring(seenLabel) .. ")")
+        end
+
+        -- W-1b ----------------------------------------------------------------
+        -- The frame-space twin of W-1, found reviewing that fix: screenOfFrame
+        -- fell back to screens[1] for a midpoint on NO display, so "Capture
+        -- current layout" tagged an off-screen window with display 1 and stored
+        -- ratios far outside [0,1] -- which nothing downstream clamps. Its own
+        -- doc already promised such a window was skipped; now it is.
+        do
+            local effects = require("platform.effects")
+            -- Both screens EXTERNAL: an unscoped capture skips the built-in, so
+            -- a built-in screens[1] would have hidden the defect behind the
+            -- wrong guard.
+            fake.screenList = {
+                { x = 0, y = 0, w = 1440, h = 900, name = "DELL", index = 1 },
+                { x = 1440, y = 0, w = 1440, h = 900, name = "LG", index = 2 },
+            }
+            fake.windows = {
+                { id = 81, appName = "Notes", x = 100, y = 100, w = 400, h = 300 },
+                { id = 82, appName = "Stale", x = -5000, y = -5000, w = 400, h = 300 },
+            }
+            local caps = effects.captureLayout()
+            ok(#caps == 1,
+                "W-1b: a window on no display is skipped, not captured against display 1 ("
+                .. #caps .. " placements)")
+            ok(caps[1] and caps[1].app == "Notes" and caps[1].screen == "DELL",
+                "W-1b: the on-screen window is still captured, on its own display")
+            ok(caps[1] and caps[1].pos.x >= 0 and caps[1].pos.x <= 1,
+                "W-1b: the surviving placement's ratios are in range")
+            -- focusedScreen keeps the aim default it documents: a pointer in the
+            -- gap between displays still has to resolve to something.
+            fake.windows = {}
+            fake.mouse = { x = -5000, y = -5000 }
+            local fs = W.focusedScreen({
+                screen = { frames = function() return fake.screenList end },
+                window = { frame = function() return nil end },
+                mouse  = { position = function() return fake.mouse end },
+            })
+            ok(fs ~= nil and fs.name == "DELL",
+                "W-1b: focusedScreen still falls back to the first screen (the aim default)")
+            fake.screenList = nil
+        end
+
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
             "clean after the audit regression case")
     end,

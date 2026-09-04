@@ -206,7 +206,13 @@ local function jumperFor(ctx)
                 ctx.log(string.format("jump ok via %s (%s): %s", choice.browser,
                     via or "?", getDomain(url) or "?"))
                 stamp(choice.browser, url)   -- MRU rank; showChooser re-ranks from it
-                if getDomain(url) == getDomain(choice.subText) then
+                -- `and d` first: getDomain returns nil for anything it will not
+                -- vouch for (localhost, a port, an IPv6 literal), and two nils
+                -- compare EQUAL -- which would call two unrelated URLs the same
+                -- site and stamp one of them onto the other's row. An unknown
+                -- domain is not a match with another unknown domain.
+                local d = getDomain(url)
+                if d and d == getDomain(choice.subText) then
                     choice.subText = url   -- same site: refresh the exact url on the row
                 end
                 -- (a domain change is picked up by the next open's background relist)

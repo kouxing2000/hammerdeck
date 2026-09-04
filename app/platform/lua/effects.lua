@@ -937,6 +937,10 @@ function effects.captureLayout(onlyDisplay)
     for _, w in ipairs(wins) do
         if type(w.w) == "number" and w.w > 0 and type(w.h) == "number" and w.h > 0
             and type(w.x) == "number" and type(w.y) == "number" then
+            -- nil means the window's midpoint is on no display at all (an app
+            -- restoring a stale frame after a monitor was unplugged), and the
+            -- `s and` below is what skips it. Tagging it with display 1 instead
+            -- would store ratios far outside [0,1], which no later step clamps.
             local s = windows.screenOfFrame(screens, w)
             local keep = s and s.name and s.w > 0 and s.h > 0
                 and (scoped and (s.name == onlyDisplay) or (not scoped and not s.builtin))

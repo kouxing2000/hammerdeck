@@ -86,6 +86,26 @@ end
 -- Path builders (months live directly under `base`; the chosen folder IS the
 -- usage folder, no extra "usage/" segment).
 function M.dateStr(t)        return os.date("%Y-%m-%d", t) end
+
+--- `n` epoch timestamps, oldest first, one per calendar day ending on the day
+--- `now` falls in -- each anchored at LOCAL NOON.
+---
+--- Noon is the whole point. A calendar day is 23 or 25 hours across a DST
+--- transition, so stepping back by a fixed 86400s from an arbitrary time of day
+--- can land on the date you just left: taken at 23:00 on a 25-hour day it
+--- repeats that date and drops the oldest one, silently making an "N-day" window
+--- cover N-1 days. From noon, an hour either way cannot cross midnight.
+--- (report.lua's isoToTime anchors at noon for exactly this reason.)
+---@param now integer   epoch seconds
+---@param n integer     how many days, including today
+---@return integer[]
+function M.dayAnchors(now, n)
+    local d = os.date("*t", now)
+    local noon = os.time({ year = d.year, month = d.month, day = d.day, hour = 12 })
+    local out = {}
+    for i = n - 1, 0, -1 do out[#out + 1] = noon - i * 86400 end
+    return out
+end
 function M.monthDir(base, d) return base .. "/" .. d:sub(1, 7) end
 function M.appsPath(base, d) return M.monthDir(base, d) .. "/" .. d .. "-apps.csv" end
 function M.sessionsPath(base, d) return M.monthDir(base, d) .. "/" .. d .. ".csv" end

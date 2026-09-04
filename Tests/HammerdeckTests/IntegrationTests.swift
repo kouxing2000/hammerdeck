@@ -2319,6 +2319,314 @@ final class IntegrationTests: XCTestCase {
                        + problems.joined(separator: "\n  "))
     }
 
+    /// Every run-loop source the seam installs must be registered in
+    /// `.commonModes`, never `.defaultMode`.
+    ///
+    /// A source in the default mode alone is NOT SERVED while the main loop runs
+    /// in another mode -- menu tracking, a modal panel, a live window drag. The
+    /// events are not queued for later, they are never delivered, so the observer
+    /// goes deaf for the duration and resumes on stale state. That is what H-5
+    /// was: both AX observers sat in `.defaultMode`, so Window Deck missed every
+    /// focus change while the menubar menu was open.
+    ///
+    /// A lint rather than a test per site: the failure is invisible at runtime
+    /// (nothing errors, events simply do not arrive) and the next source added
+    /// will be copied from whatever is nearest. Guarding the class is the only
+    /// version of this that keeps working.
+    func testEverySeamRunLoopSourceUsesCommonModes() throws {
+        /// The full parenthesised argument list starting at `open`, paren-balanced
+        /// so a nested call (`AXObserverGetRunLoopSource(obs)`) cannot end it early.
+        func arguments(of text: String, from open: String.Index) -> String {
+            var depth = 0
+            var i = open
+            while i < text.endIndex {
+                if text[i] == "(" { depth += 1 }
+                if text[i] == ")" {
+                    depth -= 1
+                    if depth == 0 { return String(text[open...i]) }
+                }
+                i = text.index(after: i)
+            }
+            return String(text[open...])   // unbalanced: hand back the tail, still checkable
+        }
+
+        var problems: [String] = []
+        var scanned = 0, sites = 0, unreadable: [String] = []
+        var perFile: [String: Int] = [:]
+        for tree in ["app", "Sources"] {
+            let root = TestHost.repoRoot + "/" + tree
+            let walker = FileManager.default.enumerator(atPath: root)
+            while let rel = walker?.nextObject() as? String {
+                guard rel.hasSuffix(".swift") else { continue }
+                scanned += 1
+                // Counted as read or counted as broken -- never skipped silently.
+                guard let text = try? String(contentsOfFile: root + "/" + rel, encoding: .utf8)
+                else { unreadable.append(tree + "/" + rel); continue }
+                let path = tree + "/" + rel
+                for call in ["CFRunLoopAddSource", "CFRunLoopRemoveSource"] {
+                    var from = text.startIndex
+                    while let hit = text.range(of: call, range: from..<text.endIndex) {
+                        from = hit.upperBound
+                        guard let open = text[hit.upperBound...].firstIndex(of: "(")
+                        else { continue }
+                        let args = arguments(of: text, from: open)
+                        sites += 1
+                        perFile[path, default: 0] += 1
+                        if !args.contains(".commonModes") {
+                            problems.append("\(path): \(call) does not name .commonModes "
+                                            + "-- the source is unserved while the main loop "
+                                            + "runs in any other mode. Args: "
+                                            + args.replacingOccurrences(of: "\n", with: " "))
+                        }
+                    }
+                }
+            }
+        }
+
+        // A scan that read nothing, or lost files, would pass with an empty list.
+        XCTAssertGreaterThan(scanned, 0, "scanned no Swift sources")
+        XCTAssertEqual(unreadable, [], "could not read these sources -- the scan is partial")
+        XCTAssertGreaterThan(perFile["app/platform/swift/Native+Windows.swift"] ?? 0, 0,
+                             "did not find the AX observers' own registrations -- the scan is "
+                             + "broken, so an empty offender list would mean nothing")
+        XCTAssertGreaterThan(sites, 0, "found no run-loop source registrations at all")
+        XCTAssertEqual(problems, [], "run-loop sources registered in the wrong mode:\n  "
+                       + problems.joined(separator: "\n  "))
+    }
+
+    /// A daily trigger keeps its WALL-CLOCK promise across a DST change.
+    ///
+    /// `Timer(fire:interval:repeats:)` can only add a FIXED interval, and a
+    /// calendar day is 23 or 25 hours at a transition. The 86400s repeat this
+    /// replaced therefore slipped an hour at the boundary and stayed slipped for
+    /// the life of the process -- every user-set daily time silently moved, and
+    /// only a relaunch put it back.
+    func testDailyTimerFollowsTheCalendarAcrossDST() throws {
+        var cal = Calendar(identifier: .gregorian)
+        let tz = try XCTUnwrap(TimeZone(identifier: "America/New_York"),
+                               "the system tz database must carry America/New_York")
+        cal.timeZone = tz
+        let from = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 10,
+                                                              day: 30, hour: 12)))
+        // Landmark: the fixture has to actually straddle a transition, or every
+        // assertion below is green for a reason unrelated to what it tests.
+        XCTAssertNotEqual(tz.isDaylightSavingTime(for: from),
+                          tz.isDaylightSavingTime(for: from.addingTimeInterval(6 * 86400)),
+                          "the 2026-10-30..11-05 window must cross a DST change")
+
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm"
+        fmt.timeZone = tz
+
+        var t = from
+        var fires: [String] = []
+        for step in 0..<5 {
+            t = try XCTUnwrap(Native.nextDailyFire(after: t, hour: 7, minute: 30, calendar: cal),
+                              "no next fire at step \(step)")
+            let c = cal.dateComponents([.hour, .minute], from: t)
+            XCTAssertEqual(c.hour, 7, "fire \(step) landed at \(fmt.string(from: t)), not 07:30")
+            XCTAssertEqual(c.minute, 30, "fire \(step) landed at \(fmt.string(from: t)), not 07:30")
+            fires.append(fmt.string(from: t))
+        }
+        XCTAssertEqual(Set(fires).count, 5, "five fires must be five distinct days: \(fires)")
+
+        // The defect stated concretely, and a second landmark: two fixed 86400s
+        // steps past the first fire land an hour early. If this ever stops
+        // drifting, the fixture stopped crossing the transition and the
+        // assertions above prove nothing.
+        let first = try XCTUnwrap(Native.nextDailyFire(after: from, hour: 7, minute: 30,
+                                                       calendar: cal))
+        XCTAssertEqual(cal.dateComponents([.hour], from: first.addingTimeInterval(2 * 86400)).hour, 6,
+                       "a fixed 86400s repeat is supposed to drift across this boundary")
+    }
+
+    /// No seam code steps a calendar by a hardcoded day length.
+    ///
+    /// 86400 is a fine DURATION and a wrong calendar STEP, and the two are
+    /// indistinguishable at the call site -- so anything that needs the literal
+    /// has to say which it is. Ask the calendar (`Native.nextDailyFire`) instead.
+    func testNoSeamCodeHardcodesADayLength() throws {
+        /// path -> (how many literals are declared there, why each is a duration
+        /// rather than a calendar step). A COUNT, not a bare path, for the same
+        /// reason the subprocess roster carries one: exempting a whole file lets
+        /// the next 86400 added to it inherit an existing entry's reason and
+        /// never be read, turning one written-down exception into a blind spot.
+        let declared: [String: (count: Int, reason: String)] = [:]
+
+        // One classifier, used for the sweep AND for the self-test below, so the
+        // two cannot disagree about what counts.
+        func flags(_ line: String) -> Bool {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            return t.contains("86400") && !t.hasPrefix("//") && !t.hasPrefix("*")
+        }
+        // The instrument, switched on: today's tree has no hit, so an empty
+        // offender list would otherwise be indistinguishable from a dead pattern.
+        XCTAssertTrue(flags("        let timer = Timer(fire: f, interval: 86400, repeats: true) {"),
+                      "the classifier no longer flags the exact line this test exists to forbid")
+        XCTAssertFalse(flags("        // a day is not 86400 seconds"),
+                       "the classifier must ignore prose about the constant")
+
+        var hits: [String: [String]] = [:]
+        var scanned = 0, unreadable: [String] = []
+        for tree in ["app", "Sources"] {
+            let root = TestHost.repoRoot + "/" + tree
+            let walker = FileManager.default.enumerator(atPath: root)
+            while let rel = walker?.nextObject() as? String {
+                guard rel.hasSuffix(".swift") else { continue }
+                scanned += 1
+                guard let text = try? String(contentsOfFile: root + "/" + rel, encoding: .utf8)
+                else { unreadable.append(tree + "/" + rel); continue }
+                let path = tree + "/" + rel
+                for (i, line) in text.components(separatedBy: "\n").enumerated() where flags(line) {
+                    hits[path, default: []].append("\(path):\(i + 1): "
+                                                   + line.trimmingCharacters(in: .whitespaces))
+                }
+            }
+        }
+
+        var offenders: [String] = []
+        for (path, lines) in hits.sorted(by: { $0.key < $1.key }) {
+            guard let site = declared[path] else { offenders += lines; continue }
+            if lines.count != site.count {
+                offenders.append("\(path): \(lines.count) literal(s), declared \(site.count) "
+                                 + "-- a new one cannot inherit an existing entry's reason "
+                                 + "(\(site.reason))")
+            }
+        }
+        for path in Set(declared.keys).subtracting(hits.keys).sorted() {
+            offenders.append("\(path): declared as carrying a day-length duration but no longer "
+                             + "does -- drop the entry: " + (declared[path]?.reason ?? ""))
+        }
+        XCTAssertGreaterThan(scanned, 0, "scanned no Swift sources")
+        XCTAssertEqual(unreadable, [], "could not read these sources -- the scan is partial")
+        XCTAssertEqual(offenders, [], "hardcoded day length in the seam -- use "
+                       + "Native.nextDailyFire for a calendar step, or add the file to "
+                       + "`declared` saying why it is a duration:\n  "
+                       + offenders.joined(separator: "\n  "))
+    }
+
+    /// usage_stats' 7-day window is seven DISTINCT days even when one is 25 hours.
+    ///
+    /// Lives in Swift rather than beside its siblings in the Lua suite because it
+    /// needs a timezone that HAS a transition, and only here can the process TZ be
+    /// forced -- Lua reads the same C library, so `tzset` reaches `os.date` too.
+    func testDailyWindowIsSevenDistinctDaysAcrossDST() throws {
+        let saved = getenv("TZ").map { String(cString: $0) }
+        setenv("TZ", "America/New_York", 1)
+        tzset()
+        defer {
+            if let saved { setenv("TZ", saved, 1) } else { unsetenv("TZ") }
+            tzset()
+        }
+        // 2026-11-01 is the US fall-back day: 25 hours long. Read at 23:00, a
+        // fixed 86400s step from the current time of day lands back on 11-01.
+        let raw = try TestHost.shared.lua.eval("""
+            local store = require("features.usage_stats.store")
+            local now = os.time({ year = 2026, month = 11, day = 1, hour = 23 })
+            local fixed, naive = {}, {}
+            for _, t in ipairs(store.dayAnchors(now, 7)) do
+                fixed[#fixed + 1] = os.date("%Y-%m-%d", t)
+            end
+            for i = 6, 0, -1 do naive[#naive + 1] = os.date("%Y-%m-%d", now - i * 86400) end
+            return table.concat(fixed, ",") .. "|" .. table.concat(naive, ",")
+            """)
+        let halves = (raw as? String ?? "").components(separatedBy: "|")
+        XCTAssertEqual(halves.count, 2, "malformed probe result: \(String(describing: raw))")
+        let days = halves[0].split(separator: ",").map(String.init)
+        let naive = halves[1].split(separator: ",").map(String.init)
+
+        // Landmark first: if forcing TZ silently failed, the machine's own zone
+        // has no transition here and BOTH lists come back clean -- which would
+        // make the real assertion pass while proving nothing.
+        XCTAssertEqual(Set(naive).count, 6,
+                       "the fixed-86400 window is supposed to repeat a date in this zone; "
+                       + "TZ was not applied, so this test proves nothing: \(naive)")
+
+        XCTAssertEqual(days.count, 7, "expected 7 anchors, got \(days)")
+        XCTAssertEqual(Set(days).count, 7, "the 7-day window repeated a date: \(days)")
+        XCTAssertEqual(days.last, "2026-11-01", "the newest anchor is the day `now` is in: \(days)")
+    }
+
+    /// Nothing in the seam calls `FileHandle`'s RAISING API.
+    ///
+    /// The bridged ObjC members raise `NSFileHandleOperationException` on a full
+    /// disk or a revoked descriptor, and Swift cannot catch an NSException -- the
+    /// app aborts. The daily log took that path on every `ctx.log` call, i.e. a
+    /// logger able to kill the host it exists to explain. Each has a THROWING
+    /// Swift replacement, so the whole family is forbidden, not just the one
+    /// member that bit us: a guard scoped narrower than its failure certifies a
+    /// file as clean while its siblings sit a dozen lines away.
+    func testNoSeamCodeCallsTheRaisingFileHandleAPI() throws {
+        /// raising member -> the throwing replacement to reach for instead
+        let raising = [
+            "closeFile(": "close()",
+            "seekToEndOfFile(": "seekToEnd()",
+            "seek(toFileOffset:": "seek(toOffset:)",
+            "truncateFile(atOffset:": "truncate(atOffset:)",
+            "synchronizeFile(": "synchronize()",
+            "readDataToEndOfFile(": "readToEnd()",
+            "readData(ofLength:": "read(upToCount:)",
+        ]
+        // `write(_:)` cannot be matched by name -- every form spells `.write(` --
+        // so it is caught by its ARGUMENT instead: the labelled forms
+        // (`contentsOf:`, `to:`, `toFile:`) all either throw or cannot fail.
+        let unlabelledWrite = try NSRegularExpression(pattern: #"\.write\(\s*(?![A-Za-z_]+\s*:)"#)
+        let anyWrite = try NSRegularExpression(pattern: #"\.write\("#)
+        func hits(_ re: NSRegularExpression, _ s: String) -> Int {
+            re.numberOfMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length))
+        }
+        /// Non-FileHandle unlabelled writes live here with a reason -- e.g.
+        /// `OutputStream.write(_:maxLength:)`, which is a legitimate call this
+        /// pattern cannot tell apart. Empty today.
+        let declaredWrites: [String: String] = [:]
+
+        // The instrument, switched on. Nothing in today's tree matches either
+        // rule, so without these an empty offender list and a dead pattern look
+        // exactly alike.
+        XCTAssertEqual(hits(unlabelledWrite, "if let d = x { logHandle?.write(d) }"), 1,
+                       "the pattern no longer flags the raising write this test forbids")
+        XCTAssertEqual(hits(unlabelledWrite, "try? logHandle?.write(contentsOf: data)"), 0,
+                       "the pattern must not flag the throwing labelled form")
+        XCTAssertTrue("        logHandle?.seekToEndOfFile()".contains("seekToEndOfFile("),
+                      "the raising-member list no longer matches its own member spelling")
+
+        var offenders: [String] = []
+        var scanned = 0, writeSites = 0, unreadable: [String] = []
+        for tree in ["app", "Sources"] {
+            let root = TestHost.repoRoot + "/" + tree
+            let walker = FileManager.default.enumerator(atPath: root)
+            while let rel = walker?.nextObject() as? String {
+                guard rel.hasSuffix(".swift") else { continue }
+                scanned += 1
+                guard let text = try? String(contentsOfFile: root + "/" + rel, encoding: .utf8)
+                else { unreadable.append(tree + "/" + rel); continue }
+                let path = tree + "/" + rel
+                writeSites += hits(anyWrite, text)
+                for (i, line) in text.components(separatedBy: "\n").enumerated() {
+                    let t = line.trimmingCharacters(in: .whitespaces)
+                    if t.hasPrefix("//") || t.hasPrefix("///") || t.hasPrefix("*") { continue }
+                    for (member, replacement) in raising.sorted(by: { $0.key < $1.key })
+                    where t.contains(member) {
+                        offenders.append("\(path):\(i + 1): \(member)...) raises -- "
+                                         + "use \(replacement) under try?: " + t)
+                    }
+                    if hits(unlabelledWrite, line) > 0, declaredWrites[path] == nil {
+                        offenders.append("\(path):\(i + 1): unlabelled .write( raises -- use "
+                                         + "write(contentsOf:) under try?, or declare the file "
+                                         + "in `declaredWrites` if it is not a FileHandle: " + t)
+                    }
+                }
+            }
+        }
+        XCTAssertGreaterThan(scanned, 0, "scanned no Swift sources")
+        XCTAssertEqual(unreadable, [], "could not read these sources -- the scan is partial")
+        XCTAssertGreaterThan(writeSites, 0, "found no .write( calls at all -- the scan is broken, "
+                             + "so an empty offender list would mean nothing")
+        XCTAssertEqual(offenders, [], "raising FileHandle API in the seam -- an NSException here "
+                       + "aborts the app instead of dropping a log line:\n  "
+                       + offenders.joined(separator: "\n  "))
+    }
+
     /// Output is 8-bit clean. `find -print0`, `git -z` and friends emit NUL
     /// separators, and `lua_pushstring` stops at the first one -- a silently short
     /// result indistinguishable from a short command.

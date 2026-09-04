@@ -120,7 +120,12 @@ local function arranger(ctx)
         local moved = 0
         for _, w in ipairs(wins) do
             if not (w.minimized or w.fullscreen) then
-                local idx = W.screenIndexAt(frames, w.x + w.w / 2, w.y + w.h / 2)
+                -- Containing, not At: this asks which display the window IS on,
+                -- and screenIndexAt's `or 1` answered "display 1" for a window
+                -- whose centre is on no display at all -- so an off-screen
+                -- window was dragged onto display 1 and counted as swapped.
+                -- nil matches neither side, which leaves it where it is.
+                local idx = W.screenIndexContaining(frames, w.x + w.w / 2, w.y + w.h / 2)
                 local src, dst
                 if idx == iA then src, dst = A, B
                 elseif idx == iB then src, dst = B, A end
@@ -142,8 +147,11 @@ local function arranger(ctx)
         for i = 1, #frames do counts[i] = 0 end
         for _, w in ipairs(ctx.window.list()) do
             if not (w.minimized or w.fullscreen) then
-                local idx = W.screenIndexAt(frames, w.x + w.w / 2, w.y + w.h / 2)
-                counts[idx] = (counts[idx] or 0) + 1
+                -- Same membership question as swapBetween, and the count has to
+                -- agree with what the swap will move: the `or 1` fallback
+                -- inflated display 1's "N windows" with every off-screen window.
+                local idx = W.screenIndexContaining(frames, w.x + w.w / 2, w.y + w.h / 2)
+                if idx then counts[idx] = (counts[idx] or 0) + 1 end
             end
         end
         local out = {}

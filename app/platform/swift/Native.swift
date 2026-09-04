@@ -319,8 +319,19 @@ final class Native {
     func appendLogLine(_ msg: String) {
         let now = Date()
         let day = Native.dayFormatter.string(from: now)
-        if logHandle == nil || day != logDay {
-            logHandle?.closeFile()
+        // Keyed on the DAY alone, never on `logHandle == nil`. A failed open
+        // leaves the handle nil, so the nil test re-entered this branch for every
+        // later line -- a createDirectory plus a full-directory pruneOldLogs scan
+        // per log line, on a path features call freely. One attempt per day.
+        // Every FileHandle call here is the THROWING Swift form. The bridged ObjC
+        // family -- closeFile / seekToEndOfFile / write(_:) -- raises
+        // NSFileHandleOperationException, which Swift cannot catch, so a full
+        // disk or an unwritable Application Support would abort the app on the
+        // one path every ctx.log call takes. A logger must never be able to kill
+        // the host it exists to explain.
+        if day != logDay {
+            try? logHandle?.close()
+            logHandle = nil
             try? FileManager.default.createDirectory(at: Native.logsDir,
                                                      withIntermediateDirectories: true)
             let path = Native.logsDir.appendingPathComponent(day + ".log").path
@@ -328,12 +339,24 @@ final class Native {
                 FileManager.default.createFile(atPath: path, contents: nil)
             }
             logHandle = FileHandle(forWritingAtPath: path)
-            logHandle?.seekToEndOfFile()
+            try? logHandle?.seekToEnd()
             logDay = day
+            // One attempt per day, keyed on the DAY alone: keyed on
+            // `logHandle == nil` a failed open re-entered this branch for every
+            // later line, costing a createDirectory plus a full-directory
+            // pruneOldLogs scan each time. The cost is that today's file then
+            // stays dead until midnight, so SAY SO on the way past -- an empty
+            // daily log otherwise reads as "the automation never fired", which
+            // sends the next investigation down the wrong path entirely.
+            if logHandle == nil {
+                NSLog("[hammerdeck] daily log unavailable at %@ -- "
+                      + "this day's file stays empty until midnight; stdout still has everything",
+                      path)
+            }
             Native.pruneOldLogs()   // retention rides the day rollover
         }
         let line = "[" + Native.timeFormatter.string(from: now) + "] " + msg + "\n"
-        if let data = line.data(using: .utf8) { logHandle?.write(data) }
+        if let data = line.data(using: .utf8) { try? logHandle?.write(contentsOf: data) }
     }
 
     /// Keep the newest `keep` daily log files; logging is always-on (clues

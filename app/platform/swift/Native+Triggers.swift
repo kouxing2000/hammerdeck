@@ -13,6 +13,12 @@ private final class PowerNotifyBox {
     init(_ fire: @escaping () -> Void) { self.fire = fire }
 }
 
+// Holds whichever link of a daily timer chain is currently armed, so one stable
+// resource id keeps cancelling the right timer as the chain re-arms itself.
+private final class DailyTimerBox {
+    var timer: Timer?
+}
+
 extension Native {
     // MARK: - Triggers
 
@@ -146,23 +152,66 @@ extension Native {
         return 1
     }
 
+    /// The next wall-clock occurrence of `hour:minute` strictly after `date`.
+    ///
+    /// Named and static so the DST behaviour is testable without waiting a day:
+    /// iterate it and every result must land on the requested clock time.
+    static func nextDailyFire(after date: Date, hour: Int, minute: Int,
+                              calendar: Calendar = .current) -> Date? {
+        var comps = DateComponents()
+        comps.hour = hour
+        comps.minute = minute
+        return calendar.nextDate(after: date, matching: comps, matchingPolicy: .nextTime)
+    }
+
+    /// Arm one link of a daily chain, re-arming from inside the fire.
+    ///
+    /// A one-shot chain rather than a repeating Timer because a repeating timer
+    /// can only add a FIXED interval, and a calendar day is 23 or 25 hours across
+    /// a DST transition. A 86400s repeat therefore slips an hour at the boundary
+    /// and stays an hour off for the life of the process -- "sleep at 00:30"
+    /// silently becomes 01:30 until the next relaunch. Re-asking the calendar
+    /// each time is what keeps the wall-clock promise the API makes.
+    private func armDaily(hour: Int, minute: Int, ref: Int32, box: DailyTimerBox) {
+        // A nil here ends the chain FOREVER -- the user's daily automation simply
+        // stops, with the feature still reporting itself bound. `timerDailyAt`
+        // rejects any time this could refuse, so it should be unreachable, which
+        // is exactly why it must speak: an unreachable branch that silently
+        // disables an automation is unfalsifiable from the log otherwise.
+        guard let fire = Native.nextDailyFire(after: Date(), hour: hour, minute: minute) else {
+            seamLog(String(format: "timer_daily_at: no next fire for %02d:%02d -- chain ended",
+                           hour, minute))
+            return
+        }
+        let timer = Timer(fire: fire, interval: 0, repeats: false) { [weak box] _ in
+            MainActor.assumeIsolated {
+                guard let box else { return }
+                // Re-arm BEFORE the callback, so a stop(id) made from inside the
+                // Lua handler cancels the link that is now live, and a raising
+                // handler cannot silently end the chain.
+                Native.shared.armDaily(hour: hour, minute: minute, ref: ref, box: box)
+                Native.shared.lua.callRef(ref)
+            }
+        }
+        box.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     func timerDailyAt(_ L: OpaquePointer?) -> Int32 {
         guard let hhmm = LuaState.string(L, 1) else { return luaError(L, "timer_daily_at: 'HH:MM' required") }
         let parts = hhmm.split(separator: ":").compactMap { Int($0) }
         guard parts.count == 2 else { return luaError(L, "timer_daily_at: bad time '\(hhmm)'") }
-        var comps = DateComponents()
-        comps.hour = parts[0]
-        comps.minute = parts[1]
-        guard let fire = Calendar.current.nextDate(after: Date(), matching: comps,
-                                                   matchingPolicy: .nextTime) else {
+        guard Native.nextDailyFire(after: Date(), hour: parts[0], minute: parts[1]) != nil else {
             return luaError(L, "timer_daily_at: cannot schedule '\(hhmm)'")
         }
         let ref = lua.makeRef(at: 2)
-        let timer = Timer(fire: fire, interval: 86400, repeats: true) { _ in
-            MainActor.assumeIsolated { Native.shared.lua.callRef(ref) }
+        let box = DailyTimerBox()
+        armDaily(hour: parts[0], minute: parts[1], ref: ref, box: box)
+        let id = registerResource {
+            box.timer?.invalidate()
+            box.timer = nil
+            Native.shared.lua.releaseRef(ref)
         }
-        RunLoop.main.add(timer, forMode: .common)
-        let id = registerResource { timer.invalidate(); Native.shared.lua.releaseRef(ref) }
         lua_pushinteger(L, lua_Integer(id))
         return 1
     }
