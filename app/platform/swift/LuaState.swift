@@ -242,18 +242,63 @@ final class LuaState {
 
     /// Take the Lua value at `index` (usually a function argument) and pin it
     /// in the Lua registry so Swift can hold it past the current call.
-    func makeRef(at index: Int32) -> Int32 {
+    ///
+    /// This is the REQUIRED-callback path -- every one of its ~24 callers needs
+    /// the value it asked for, so a nil here is a wiring bug and earns one named
+    /// line AT CREATION. Not silence: `callRef` now refuses a non-positive ref,
+    /// and without this line a typo'd handler would register a global hotkey that
+    /// grabs the combo and does nothing, with no trace anywhere. Not per-event
+    /// either, which is what calling the nil used to produce.
+    ///
+    /// An OPTIONAL callback goes through `makeCallbackRef` instead, which returns
+    /// LUA_REFNIL quietly -- absence is legitimate there, and it never reaches
+    /// this function.
+    func makeRef(at index: Int32, file: StaticString = #fileID, line: UInt = #line) -> Int32 {
         assertMainThread()
         lua_pushvalue(L, index)
         let ref = luaL_ref(L, LUA_REGISTRY_INDEX)
+        guard ref > 0 else {
+            errorSink("required callback at \(file):\(line) is nil -- the binding "
+                      + "will register and then do nothing")
+            return ref
+        }
         #if DEBUG
         pinnedRefCount += 1
         #endif
         return ref
     }
 
+    /// Pin an OPTIONAL Lua callback read from a field or argument.
+    ///
+    /// Absent or nil pins nothing and `callRef` then refuses it -- the panel
+    /// simply has no handler for that event, which is what an optional callback
+    /// means. Anything PRESENT but not callable is a wiring mistake, and it earns
+    /// exactly one named line here rather than an anonymous "attempt to call a
+    /// nil value" at every event for the life of the panel.
+    func makeCallbackRef(at index: Int32, named: String) -> Int32 {
+        assertMainThread()
+        let t = lua_type(L, index)
+        if t == LUA_TNIL || t == LUA_TNONE { return LUA_REFNIL }
+        guard t == LUA_TFUNCTION else {
+            let kind = lua_typename(L, t).map { String(cString: $0) } ?? "?"
+            errorSink("callback `\(named)` is a \(kind), not a function -- ignored")
+            return LUA_REFNIL
+        }
+        return makeRef(at: index)
+    }
+
     func releaseRef(_ ref: Int32) {
         assertMainThread()
+        // Mirror `makeRef` exactly. Decrementing for a ref that was never pinned
+        // drives the counter BELOW baseline, and a negative drift CANCELS a real
+        // leak -- the detector would read green on precisely the bug it exists to
+        // catch, and no test could see it (the two that read the count are both
+        // behind the UI opt-in and skipped in CI).
+        //
+        // The `> 0` also covers the registry itself: `luaL_unref`'s own guard is
+        // `ref >= 0`, so a stray 0 is NOT a no-op -- it writes the freelist head
+        // into slot 0 and then points the freelist at 0.
+        guard ref > 0 else { return }
         luaL_unref(L, LUA_REGISTRY_INDEX, ref)
         #if DEBUG
         pinnedRefCount -= 1
@@ -265,6 +310,18 @@ final class LuaState {
     /// feature callback blowing up must not take the host down.
     func callRef(_ ref: Int32, pushArgs: (OpaquePointer) -> Int32 = { _ in 0 }) {
         assertMainThread()
+        // `luaL_ref` only ever hands back a POSITIVE registry key, so anything
+        // else means "no callback": LUA_REFNIL (-1) from an absent optional
+        // field, or the plain 0 at Native+Triggers' absent release handler.
+        // Guarding the invariant covers LUA_NOREF and any future spelling too.
+        // Silent on purpose -- whichever path produced a non-positive ref has
+        // ALREADY logged (makeRef names a required nil, makeCallbackRef names a
+        // non-function); logging again here would be per-event. Calling such a
+        // ref reaches
+        // lua_pcallk with a nil on the stack and logs an error PER EVENT: on a
+        // drag handler that is a line per mouse-move, naming neither the field
+        // nor the panel.
+        guard ref > 0 else { return }
         lua_rawgeti(L, LUA_REGISTRY_INDEX, lua_Integer(ref))
         let nargs = pushArgs(L)
         if lua_pcallk(L, nargs, 0, 0, 0, nil) != LUA_OK {
@@ -298,7 +355,18 @@ final class LuaState {
         return v
     }
 
-    static func bool(_ L: OpaquePointer?, _ index: Int32) -> Bool {
+    /// Read a boolean argument. nil if the slot is ABSENT or Lua `nil` -- the
+    /// same contract as `string`/`int`/`double`, so `?? someDefault` means what
+    /// it reads as at every call site.
+    ///
+    /// Returning a bare `Bool` was the trap: `lua_toboolean` answers 0 for nil
+    /// and for absent, so a missing argument was indistinguishable from an
+    /// explicit `false`, and `LuaState.bool(L, n) ?? true` compiled into dead
+    /// code that silently defaulted the other way. Lua's own truthiness still
+    /// governs everything that IS present -- only `false` is false.
+    static func bool(_ L: OpaquePointer?, _ index: Int32) -> Bool? {
+        let t = lua_type(L, index)
+        guard t != LUA_TNIL, t != LUA_TNONE else { return nil }
         return lua_toboolean(L, index) != 0
     }
 
@@ -344,7 +412,7 @@ final class LuaState {
                         switch lua_type(L, -1) {
                         case LUA_TSTRING:  dict[key] = string(L, -1)
                         case LUA_TNUMBER:  dict[key] = double(L, -1)
-                        case LUA_TBOOLEAN: dict[key] = bool(L, -1)
+                        case LUA_TBOOLEAN: dict[key] = bool(L, -1) ?? false
                         default: break
                         }
                     }
@@ -388,7 +456,7 @@ final class LuaState {
     /// as an empty array (the historical default `json.lua` shares).
     static func any(_ L: OpaquePointer?, _ index: Int32, depth: Int = 0) -> Any? {
         switch lua_type(L, index) {
-        case LUA_TBOOLEAN: return bool(L, index)
+        case LUA_TBOOLEAN: return bool(L, index) ?? false
         case LUA_TNUMBER:  return double(L, index)
         case LUA_TSTRING:  return string(L, index)
         case LUA_TTABLE:

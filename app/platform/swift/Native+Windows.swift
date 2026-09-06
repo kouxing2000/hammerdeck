@@ -614,7 +614,7 @@ extension Native {
             lua_pushboolean(L, 0)
             return 1
         }
-        let on = LuaState.bool(L, 1)
+        let on = LuaState.bool(L, 1) ?? false
         let ok = AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString,
                                               (on ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef)
         lua_pushboolean(L, ok == .success ? 1 : 0)

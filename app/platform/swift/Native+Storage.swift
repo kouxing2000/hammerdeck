@@ -30,7 +30,7 @@ extension Native {
         guard let key = LuaState.string(L, 1) else { return luaError(L, "set_setting: key required") }
         let defaults = UserDefaults.standard
         switch lua_type(L, 2) {
-        case LUA_TBOOLEAN: defaults.set(LuaState.bool(L, 2), forKey: key)
+        case LUA_TBOOLEAN: defaults.set(LuaState.bool(L, 2) ?? false, forKey: key)
         case LUA_TNUMBER:  defaults.set(LuaState.double(L, 2)!, forKey: key)
         case LUA_TSTRING:  defaults.set(LuaState.string(L, 2)!, forKey: key)
         case LUA_TNIL:     defaults.removeObject(forKey: key)

@@ -77,7 +77,7 @@ extension Native {
     // MARK: - Chooser
 
     func chooserNew(_ L: OpaquePointer?) -> Int32 {
-        let searchSubText = LuaState.bool(L, 1)
+        let searchSubText = LuaState.bool(L, 1) ?? false
         let selectRef = lua.makeRef(at: 2)
         let hideRef = lua.makeRef(at: 3)
         let panel = ChooserPanel(
@@ -658,7 +658,8 @@ extension Native {
             lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.bool(L, -1) ?? d
         }
         func ref(_ k: String) -> Int32 {
-            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return lua.makeRef(at: -1)
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }
+            return lua.makeCallbackRef(at: -1, named: k)
         }
         var colors: [String] = []
         lua_getfield(L, 1, "colors")
@@ -750,7 +751,7 @@ extension Native {
         if lua_type(L, 3) == LUA_TTABLE {
             let n = lua_rawlen(L, 3)
             if n > 0 { for i in 1...n {
-                lua_rawgeti(L, 3, lua_Integer(i)); dead.append(LuaState.bool(L, -1)); lua_settop(L, -2)
+                lua_rawgeti(L, 3, lua_Integer(i)); dead.append(LuaState.bool(L, -1) ?? false); lua_settop(L, -2)
             } }
         }
         w.setCells(colors, dead: dead, cols: LuaState.int(L, 4))
@@ -802,7 +803,7 @@ extension Native {
             lua_getfield(L, -1, k); defer { lua_settop(L, -2) }; return LuaState.string(L, -1) ?? ""
         }
         func fb(_ k: String) -> Bool {
-            lua_getfield(L, -1, k); defer { lua_settop(L, -2) }; return LuaState.bool(L, -1)
+            lua_getfield(L, -1, k); defer { lua_settop(L, -2) }; return LuaState.bool(L, -1) ?? false
         }
         for i in 1...n {
             lua_rawgeti(L, at, lua_Integer(i))
@@ -827,7 +828,8 @@ extension Native {
             lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.double(L, -1) ?? d
         }
         func ref(_ k: String) -> Int32 {
-            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return lua.makeRef(at: -1)
+            lua_getfield(L, 1, k); defer { lua_settop(L, -2) }
+            return lua.makeCallbackRef(at: -1, named: k)
         }
         lua_getfield(L, 1, "rows")
         let rows = fanWidgetRows(L, at: lua_gettop(L))

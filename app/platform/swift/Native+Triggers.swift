@@ -52,7 +52,7 @@ extension Native {
         // stealing it. Two live registrations of one combo dispatch ambiguously,
         // so the incumbent MUST be cleared first (mirrors ChordCenter's sticky
         // follows). No-op when nothing is registered on the combo.
-        let restore: (() -> Void)? = LuaState.bool(L, 5)
+        let restore: (() -> Void)? = (LuaState.bool(L, 5) ?? false)
             ? HotkeyCenter.shared.park(key: key, mods: mods) : nil
         guard let unbind = HotkeyCenter.shared.bind(mods: mods, key: key, handler: {
             Native.shared.lua.callRef(ref)

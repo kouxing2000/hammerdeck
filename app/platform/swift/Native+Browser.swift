@@ -277,8 +277,8 @@ extension Native {
             return luaError(L, "open_site: bundleId and url required")
         }
         let profile = LuaState.string(L, 2) ?? ""
-        let app = LuaState.bool(L, 3)
-        let incognito = LuaState.bool(L, 5)
+        let app = LuaState.bool(L, 3) ?? false
+        let incognito = LuaState.bool(L, 5) ?? false
         // Refuse BEFORE resolving the app: a private open the seam cannot honor
         // must fail the same way whether the browser is missing or merely unvouched.
         if incognito && !BrowserCatalog.supportsPrivateWindow(bundleId) {
