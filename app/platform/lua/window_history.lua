@@ -13,18 +13,28 @@
 -- "the last thing you did", not just the last individual window it happened to
 -- touch. Single-step: only the most-recent group is retained.
 --
--- THE ONE HARD RULE: never call listWindows() WHILE recording. Every list_windows()
--- rebuilds the host's AX window cache and re-mints the numeric ids a batch caller
--- is mid-loop over (Native+Windows.swift), so a stray list would strand those ids
--- and the caller's remaining moves would silently no-op. So the two record paths
--- take NO list: the by-id path reads before-frames from the caller's OWN list
--- (fed in via noteList, which window_ops.list routes here), and the focused path
--- self-captures from focusedWindowFrame()/Wid() (neither touches the AX cache).
--- undoLast() DOES list -- but only at undo time, when no batch is in flight.
+-- THE ONE HARD RULE: never call listWindows() WHILE recording. Two distinct
+-- things go wrong, and only the second is about ids:
+--   * The BEFORE-FRAMES go stale. `lastList` is whatever window_ops.list() fed in
+--     last, and a listing taken mid-batch reports the windows this batch has
+--     ALREADY moved at their NEW frames -- so a later recordById would stash a
+--     post-move frame as the thing to undo to.
+--   * A window whose wid is UNRESOLVED (0) draws a fresh numeric id on every
+--     listing (Native+Windows.swift), so a stray list strands the id a batch
+--     caller is mid-loop over and its remaining moves silently no-op. Windows
+--     with a resolved wid are NOT affected: the host keys their id off the wid
+--     and hands back the same one across listings.
+-- So the two record paths take NO list: the by-id path reads before-frames from
+-- the caller's OWN list (fed in via noteList, which window_ops.list routes here),
+-- and the focused path self-captures from focusedWindowFrame()/Wid() (neither
+-- touches the AX cache). undoLast() DOES list -- but only at undo time, when no
+-- batch is in flight.
 --
--- Before-frames are keyed by the STABLE wid (CGWindowID), because a row's numeric
--- id is valid only until the next list(); undoLast re-resolves each wid to a live
--- id before restoring.
+-- Before-frames are keyed by the STABLE wid (CGWindowID), never by the numeric
+-- id: an id resolves only while its window keeps APPEARING in listings -- one
+-- listing where the app misses the AX ceiling drops it from the host's cache and
+-- the next listing mints it a new id. undoLast re-resolves each wid to a live id
+-- before restoring.
 
 local adapter = require("platform.adapter")
 -- LEAF util (zero-require, pure): the SHARED membership test. Reached for rather

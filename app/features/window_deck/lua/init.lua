@@ -61,10 +61,14 @@
 -- (ctx.window.onFocusChanged) + the existing app-activation watcher.
 --
 -- Needs Accessibility (window enumeration + by-id frame setting + the observer).
--- Window ROW ids churn on every list(), so the deck re-lists right before
--- every by-id placement batch; long-lived member identity rides the ladder in
--- keyOf: the OS-stable CGWindowID first (survives retitles), bundleID+title
--- as the fallback tier (healed by resolveIds' adoption when a title churns).
+-- A window ROW id is stable while its window keeps appearing in listings (the
+-- host keys it off the CGWindowID), but NOT across an absence: a window whose wid
+-- is unresolved, or whose app misses the AX ceiling for one listing, is dropped
+-- from the host's cache and re-minted next time. So the deck re-lists before a
+-- by-id placement batch whenever time or a listing has passed since the last one;
+-- long-lived member identity rides the ladder in keyOf: the OS-stable CGWindowID
+-- first (survives retitles), bundleID+title as the fallback tier (healed by
+-- resolveIds' adoption when a title churns).
 
 local W        = require("platform.windows")
 local identity = require("features.window_deck.identity")
@@ -143,9 +147,9 @@ local function controllerFor(ctx)
         return W.centeredRect(st.screen, ctx.opt("heroPercent") / 100)
     end
 
-    -- key -> current id from a fresh list (row ids churn on every list()),
-    -- with IDENTITY ADOPTION for the FALLBACK tier. Wid-keyed members (the
-    -- common case) survive retitles by construction; but a member keyed by
+    -- key -> current id from a fresh list, with IDENTITY ADOPTION for the
+    -- FALLBACK tier. Wid-keyed members (the common case) survive retitles by
+    -- construction; but a member keyed by
     -- bundleID+title (wid unresolvable), or one whose wid resolution flips
     -- between lists, can vanish from the key space even though its window is
     -- still open -- historically that stranded the old hero at the hero rect
@@ -561,7 +565,9 @@ local function controllerFor(ctx)
     -- a deliberately-focused non-deck window (a "peek") is left alone and stays
     -- on top only while it holds focus. Called on enter and from beat landings
     -- (via recleanIfPeeked) -- NEVER from the bare return-to-hero, which must
-    -- not raise (see recleanIfPeeked). Re-listed because ids churn every list().
+    -- not raise (see recleanIfPeeked). Re-listed because a beat landing has just
+    -- moved windows and a member may have closed during it -- NOT because ids
+    -- churn: a listed window keeps its id (see the header).
     --
     -- The hero's final lift is a real FOCUS (ctx.window.focus -- SLPS
     -- activation), NOT another surgical raise. A surgical raise can't beat the
@@ -1286,8 +1292,18 @@ local function controllerFor(ctx)
         -- reads first, then the promotion.
         local dest = heroFrame()
 
-        -- Step 2. Re-lists first: when it runs a flight after reconcile's
-        -- list(), those ids are stale (ids churn on every list()).
+        -- Step 2. Re-lists first. Not because ids churn -- a listed window keeps
+        -- its id (see the header) -- but because time has passed: when this runs
+        -- after the demotion flight a whole beat has elapsed, a member may have
+        -- closed, and resolveIds' retitle ADOPTION needs the current view.
+        --
+        -- It re-lists on the SYNCHRONOUS call below too, where reconcile's map is
+        -- microseconds old. Sharing it was tried and reverted: `renderBorders()`
+        -- takes its own listing whenever `st.peeked`, and the hero-vanished branch
+        -- above calls it -- so on that path reconcile's map can already hold an id
+        -- the host dropped, and `moveWin` would flight a ring toward a window it
+        -- cannot move. One saved AX walk is not worth an invariant this easy to
+        -- reopen and this hard to see.
         local function launchPromote()
             local ids2 = resolveIds()
             local fb = st.borders and st.borders[member.key]

@@ -593,8 +593,14 @@ extension Native {
         return 1
     }
 
-    // set_window_frame(id, x, y, w, h) -> bool -- move ANY window by an id from
-    // the MOST RECENT list_windows() call (resolved via axWindowCache). The
+    // set_window_frame(id, x, y, w, h) -> bool -- move ANY window by an id from a
+    // list_windows() call (resolved via axWindowCache). Not only the most recent
+    // one: a window with a RESOLVED wid keeps its id for as long as it keeps
+    // APPEARING in listings, so a held id stays good across an intervening list by
+    // another feature. Two ways it stops: the window drops out of a listing
+    // (closed, or its app missed the AX ceiling) and comes back with a NEW id; or
+    // its wid never resolved at all (`wid == 0`), in which case `widToId` cannot
+    // key it and it is re-minted on EVERY listing while still present. The
     // window-layout engine lists, matches by app/title, then places each match.
     func setWindowFrame(_ L: OpaquePointer?) -> Int32 {
         guard let id = LuaState.int(L, 1),
