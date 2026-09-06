@@ -46,7 +46,7 @@ Every feature ships **off by default** except **Confirm Shortcut Presses**, whic
 - **Window Deck** -- A focus workflow: tile a screen's windows into a uniform grid; focus any one and it becomes a large centered hero, the rest peeking behind. ⌥Esc drops the hero, then exits.
 - **Window Fan** -- Every-window switching with zero setup: fan the focused screen's windows against the screen edges so each keeps a full, always-visible edge no other window can cover. Click any one to switch. Turn the rearranging off and nothing on screen moves -- the borders, the list and the switching stay. With it on, the fan declines to run when a screen holds more windows than it can honestly fit, and says how many that is.
 - **Window Rewind** -- Undo for any window move: one hotkey (Hyper+Z) restores every window a snap, screen-swap, grid, or deck move just repositioned, and returns the pointer with them. Single-step -- it rewinds the most recent change.
-- **Pointer Follows Moved Window** -- Comfort: when Snap, Window Mode, Grid or Deck repositions the focused window, the pointer rides along, keeping its place inside it.
+- **Pointer Follows Moved Window** -- Comfort: when Snap, Window Mode or Grid repositions the focused window, the pointer rides along, keeping its place inside it. Multi-window layouts -- Deck, Fan, and rules -- deliberately leave the pointer where it is.
 
 ### Switching & Search
 
