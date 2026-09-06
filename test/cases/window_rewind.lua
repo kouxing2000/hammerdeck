@@ -122,6 +122,42 @@ return {
                 "an unrecordable move does not clobber the prior undo group (it still restores)")
         end
 
+        -- (e) W-16: the skip gate is a MEMBERSHIP test, and it must answer the same
+        -- way platform.windows does. A window parked over the Dock sits outside its
+        -- screen row's VISIBLE rect but inside the FULL one -- it is plainly on that
+        -- display, and listWindows labels it so. Read against the visible rect it
+        -- resolved to "on no connected display", so undo silently dropped it: a
+        -- smaller restored count and a window that never comes back.
+        --
+        -- The test drives undoLast, not the predicate: the defect was in which
+        -- question the gate asked, so an assertion on W.onScreen alone would have
+        -- passed against the pre-fix code (window_history had its own copy).
+        do
+            fake.clockOffset = fake.clockOffset + 2       -- a fresh group
+            fake.screenList = {
+                { x = 0, y = 37, w = 2560, h = 1318, index = 1,
+                  full = { x = 0, y = 0, w = 2560, h = 1440 } },
+            }
+            -- Centre y = 1370: past the visible frame's 1355 bottom, inside the
+            -- full frame's 1440. The Dock strip, in other words.
+            local dockside = { x = 600, y = 1290, w = 420, h = 160 }
+            fake.focusedWindow = { x = dockside.x, y = dockside.y, w = dockside.w,
+                                   h = dockside.h, screenIndex = 1 }
+            fake.focusedWid = 333
+            fake.windows = { { id = 33, wid = 333, x = dockside.x, y = dockside.y,
+                               w = dockside.w, h = dockside.h } }
+            fake.pressHotkey("left", AC)                 -- snap it away from the Dock
+            ok(fake.focusedWindow.x == 0 and fake.focusedWindow.y == 37,
+                "precondition: the snap moved the dock-side window onto the visible frame")
+            fake.windows = { { id = 33, wid = 333, x = 0, y = 37, w = 1280, h = 1318 } }
+            fake.windowFrameSets = {}
+            assert(registry.runAction("window_rewind", "undo"))
+            ok(#fake.windowFrameSets == 1
+                and fake.windows[1].x == dockside.x and fake.windows[1].y == dockside.y
+                and fake.windows[1].w == dockside.w and fake.windows[1].h == dockside.h,
+                "undo restores a window whose before-frame sat over the Dock (W-16)")
+        end
+
         fake.focusedWid = nil
         registry.setEnabled("window_snap", false)
         registry.setEnabled("window_rewind", false)

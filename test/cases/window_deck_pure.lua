@@ -1,7 +1,7 @@
 -- test/cases/window_deck_pure.lua -- window_deck's PURE sibling modules, tested directly
 -- (no deck, no adapter handles) now that the stateful controller's decision logic lives in
 -- them: focus.classify (the 5-way reconcile dispatch, with its precedence), identity (the
--- wid->title key ladder, onScreen/frameFar, matchMembers' wid-beats-title restore), colors
+-- wid->title key ladder, frameFar, matchMembers' wid-beats-title restore), colors
 -- (free-palette dealing around a stored recolor), and store (the last-deck save/read/json
 -- round-trip that carries the PRIMARY wid identity end-to-end).
 --
@@ -50,12 +50,13 @@ return {
             ok(ident.widKey("com.x", 1) ~= ident.titleKey("com.x", "1"),
                 "wid and title key spaces never collide")
 
-            -- onScreen: window CENTRE inside the screen rect.
-            local scr = { x = 0, y = 0, w = 1000, h = 800 }
-            ok(ident.onScreen({ x = 400, y = 300, w = 200, h = 200 }, scr),
-                "onScreen true when centre is inside")
-            ok(not ident.onScreen({ x = 1200, y = 300, w = 200, h = 200 }, scr),
-                "onScreen false when centre is outside")
+            -- Membership is platform.windows' question, asked there by init.lua and
+            -- covered in windows_geometry. A copy here has to re-choose between a
+            -- screen row's visible and full rect, and those two disagree exactly over
+            -- the menu-bar and Dock strips -- so the absence is asserted, not just
+            -- assumed: a re-added copy would look harmless and read the wrong rect.
+            ok(ident.onScreen == nil,
+                "identity grows no onScreen of its own (membership lives in platform.windows)")
 
             -- frameFar: >6px on any axis is "far" (drives the Rearrange dirty flag).
             ok(not ident.frameFar({ x = 0, y = 0, w = 10, h = 10 }, { x = 5, y = 0, w = 10, h = 10 }),

@@ -41,6 +41,26 @@ return {
             fake.pressHotkey("escape", {})
             ok(fake.liveHud() == nil, "escape exits the armed grid")
 
+            -- W-6: a FULLSCREEN window. AX refuses a frame write to one, so placing
+            -- was a silent no-op that still ARMED the mode -- the HUD then highlighted
+            -- a cell the window had never gone to. placeSpan now takes it out of
+            -- fullscreen and reports "not placed", which closes the mode; the next
+            -- press arranges normally (window_modal's prologue does the same).
+            do
+                fake.focusedWindow = { x = 0, y = 0, w = 1200, h = 900,
+                                       screenIndex = 1, fullscreen = true }
+                local before = #fake.windowFrames
+                fake.pressHotkey("9", HYP)
+                fake.pressHotkey("2", {})
+                ok(fake.fullscreenSets[#fake.fullscreenSets] == false,
+                    "a grid press on a fullscreen window exits fullscreen (W-6)")
+                ok(#fake.windowFrames == before,
+                    "...places nothing while it is still fullscreen")
+                ok(fake.liveHud() == nil,
+                    "...and closes the mode rather than arming a cell it never used")
+                fake.focusedWindow = { x = 0, y = 0, w = 100, h = 100, screenIndex = 1 }
+            end
+
             -- 2x2: Hyper+4 -> first digit 3 lands bottom-left (cell 3 = row1,col0 -> 0,450,600x450).
             fake.pressHotkey("4", HYP)
             ok(fake.liveHud() ~= nil and fake.liveHud().title == "2×2 Grid",

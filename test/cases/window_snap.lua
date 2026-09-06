@@ -52,6 +52,36 @@ return {
         lf = lastFrame()
         ok(lf.w == 750 and lf.h == 600, "the retry then applies the toggle")
 
+        -- W-6: the HALF snaps get the same fullscreen prologue the header promises.
+        -- AX refuses a frame write to a fullscreen window, so without it `left` was a
+        -- silent no-op: no move, no alert, nothing in the log.
+        do
+            fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1,
+                                   fullscreen = true }
+            local before = #fake.windowFrames
+            fake.pressHotkey("left", AC)
+            ok(fake.fullscreenSets[#fake.fullscreenSets] == false
+                and #fake.windowFrames == before,
+                "a half-snap on a fullscreen window exits fullscreen first (W-6)")
+            fake.fireTimers("after", 0.5)
+            lf = lastFrame()
+            ok(lf.x == 0 and lf.w == 500 and lf.h == 800,
+                "...and the retry then applies the left half")
+        end
+
+        -- W-7: "already maximized" is a tolerance, not float equality. An app that
+        -- QUANTIZES the frame it accepts (Terminal, to character cells) settles a few
+        -- px short of the screen on both axes; read with `==` it never counted as
+        -- maximized, so the toggle re-maximized forever and the 75% state was
+        -- unreachable for that app.
+        do
+            fake.focusedWindow = { x = 3, y = 4, w = 994, h = 793, screenIndex = 1 }
+            fake.pressHotkey("return", AC)
+            lf = lastFrame()
+            ok(lf.x == 125 and lf.y == 100 and lf.w == 750 and lf.h == 600,
+                "a quantized near-maximized window toggles to 75%, not back to max (W-7)")
+        end
+
         -- throw to the bigger screen: least-distortion scale (1.5), per-axis offsets
         fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
         fake.mousePos = { x = 150, y = 200 }

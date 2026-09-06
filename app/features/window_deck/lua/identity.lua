@@ -36,17 +36,10 @@ function M.keyOf(w)
     return M.titleKey(w.bundleID, w.title)
 end
 
--- Is window `w`'s centre inside screen rect `s`? Pure geometry -- robust across
--- the separate native calls that produce window frames vs screen frames (their
--- screen tables are not the same object, so identity comparison would be wrong).
----@param w table window rect (.x/.y/.w/.h)
----@param s table screen rect (.x/.y/.w/.h)
----@return boolean
-function M.onScreen(w, s)
-    local mx, my = w.x + w.w / 2, w.y + w.h / 2
-    return mx >= s.x and mx < s.x + s.w
-       and my >= s.y and my < s.y + s.h
-end
+-- No `onScreen` here -- membership belongs to `platform.windows`, and init.lua
+-- asks it there. A copy in this file has to re-decide which of a screen row's two
+-- rects to test: the VISIBLE one excludes the menu-bar and Dock strips, so a
+-- window parked over the Dock reads as being on no display at all.
 
 -- Frame proximity for the identity adoption in resolveIds: the window still sits
 -- where the member was last known to be (position ~32px, size ~64px -- generous

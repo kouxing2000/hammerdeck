@@ -631,20 +631,23 @@ local function controllerFor(ctx)
         -- label mode has no slabs (see the gate in enter).
         local cap = st.arranging
             and W.fanCapacity(st.screen, ctx.opt("edge") or 40, PAD) or math.huge
-        -- The high-water index, not a count: reserved slots and holes both mean the
-        -- fan is already larger than the number of windows in it (see fanSizeN).
-        local held = fanSizeN()
         for _, w in ipairs(active) do
             if not st.slot[w.wid] then
-                if held >= cap then
-                    ctx.log("fan: not taking in wid " .. w.wid .. " -- at capacity ("
-                        .. cap .. " on '" .. (st.screen.name or "?") .. "'); left in place")
+                -- Gate on the slot this newcomer would actually TAKE, never on the
+                -- fan's current high-water index. lowestFreeIndex FILLS A HOLE left by
+                -- a closed window, and filling a hole does not grow the fan -- so a
+                -- high-water gate refuses a window the geometry has room for, and it
+                -- keeps refusing: the high-water never falls, so a fan that once
+                -- reached capacity turns away every later window for the rest of the
+                -- mode, however many of its slots have since been freed.
+                local idx = lowestFreeIndex()
+                if idx > cap then
+                    ctx.log("fan: not taking in wid " .. w.wid .. " -- slot " .. idx
+                        .. " is past capacity (" .. cap .. " on '"
+                        .. (st.screen.name or "?") .. "'); left in place")
                 else
-                    st.slot[w.wid] = lowestFreeIndex()
+                    st.slot[w.wid] = idx
                     st.color[w.wid] = lowestFreeColor()
-                    -- Re-read rather than incrementing: lowestFreeIndex may FILL A
-                    -- HOLE left by a closed window, which does not grow the fan at all.
-                    held = fanSizeN()
                     -- NEVER overwrite a retained original. The branch above keeps one
                     -- alive across an AX blind spot; this guard is what makes that
                     -- retention count, and it also covers the bundle-less case that

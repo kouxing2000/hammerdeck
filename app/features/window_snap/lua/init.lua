@@ -18,6 +18,13 @@ local json = require("platform.json")
 
 local RETRY_SECONDS = 0.5   -- fullscreen exit settle time before retrying
 local TOGGLE_SCALE  = 0.75  -- the "smaller" size of the maximize toggle
+-- Slack, in px, for "is this window already maximized". Exact equality is the
+-- wrong test: an app that QUANTIZES the frame it accepts -- Terminal to character
+-- cells, roughly 7px x 17px -- settles a few px short of the screen, so it never
+-- reads as maximized and the toggle just re-maximizes it forever, never reaching
+-- the 75% state. 24 clears any such quantum and stays far inside the 25% gap to
+-- the other state, so the two remain unambiguous.
+local MAX_SLACK     = 24
 
 -- Build the helpers around a ctx once per enablement.
 ---@param ctx Ctx
@@ -40,6 +47,12 @@ local function arranger(ctx)
     function a.snap(xR, yR, wR, hR)
         local f = focused()
         if not f then return end
+        -- Same prologue as every other action here, and the one the header
+        -- promises: AX refuses a frame write to a fullscreen window, so without
+        -- it the shortcut is silent -- no move, no alert, nothing in the log.
+        if f.fullscreen then
+            return unfullscreenThen(function() a.snap(xR, yR, wR, hR) end)
+        end
         ctx.window.setFrame(W.rectFromRatios(f.screen, xR, yR, wR, hR))
     end
 
@@ -49,7 +62,7 @@ local function arranger(ctx)
         if not f then return end
         if f.fullscreen then return unfullscreenThen(a.toggleMax) end
         local s = f.screen
-        if f.w == s.w or f.h == s.h then
+        if f.w >= s.w - MAX_SLACK or f.h >= s.h - MAX_SLACK then
             local m = (1 - TOGGLE_SCALE) / 2
             ctx.window.setFrame(
                 W.rectFromRatios(s, m, m, TOGGLE_SCALE, TOGGLE_SCALE))

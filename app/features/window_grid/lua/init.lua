@@ -68,6 +68,12 @@ end
 -- Place the focused window into a grid-unit `cell` (a single cell or a span) of a
 -- cols x rows grid, or alert via focusedOrAlert when there is no focused window /
 -- Accessibility is missing. Returns true iff a window was actually placed.
+--
+-- A FULLSCREEN window is taken out of fullscreen and reported as not placed: AX
+-- refuses a frame write to it, so placing would be a silent no-op that still
+-- advanced the mode -- the HUD would highlight a cell the window never went to.
+-- Exiting closes the mode (the caller stops on a false), and the next press
+-- arranges normally, which is what window_modal's prologue does too.
 ---@param ctx table scoped feature ctx
 ---@param cols integer grid width
 ---@param rows integer grid height
@@ -77,6 +83,11 @@ end
 local function placeSpan(ctx, cols, rows, cell)
     local f = W.focusedOrAlert(ctx, "Window Grid")
     if not f then return false end
+    if f.fullscreen then
+        ctx.log("grid: focused window is fullscreen -- exiting fullscreen, not placed")
+        ctx.window.setFullscreen(false)
+        return false
+    end
     ctx.window.setFrame(W.gridCellToFrame(f.screen, { w = cols, h = rows }, cell))
     return true
 end
@@ -173,7 +184,11 @@ local function controllerFor(ctx)
         -- highlight it + dim the now-invalid cells, and reset the idle timer.
         local function armAt(b)
             if not placeSpan(ctx, cols, rows, b) then
-                if st.modal then st.modal.stop() end       -- window vanished mid-mode
+                -- Nothing was placed: the window vanished mid-mode, or it was
+                -- fullscreen and placeSpan has just taken it out. Either way there is
+                -- no arrangement to arm, so close rather than highlight a cell the
+                -- window never went to.
+                if st.modal then st.modal.stop() end
                 return
             end
             st.armA = b

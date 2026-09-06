@@ -75,11 +75,16 @@ local focus    = require("features.window_deck.focus")
 local HYPER = { "cmd", "alt", "ctrl" }
 
 -- Window identity keys + frame-proximity geometry (widKey/titleKey/keyOf ladder,
--- onScreen/atFrame/frameFar) are a pure leaf in identity.lua; the border palette
+-- atFrame/frameFar) are a pure leaf in identity.lua; the border palette
 -- + positional dealing are a pure leaf in colors.lua. Aliased here so the
 -- controller body below reads unchanged.
 local widKey, titleKey, keyOf = identity.widKey, identity.titleKey, identity.keyOf
-local onScreen, atFrame, frameFar = identity.onScreen, identity.atFrame, identity.frameFar
+local atFrame, frameFar = identity.atFrame, identity.frameFar
+-- Membership comes from the platform leaf, the same call Window Fan makes: one
+-- question, one answer. Do not re-localize it into identity.lua -- a second copy
+-- has to pick between a screen row's visible and full rect, and the two answers
+-- differ exactly over the menu-bar and Dock strips.
+local onScreen = W.onScreen
 local occludedMembers = identity.occludedMembers
 local PALETTE = colors.PALETTE
 
@@ -603,12 +608,29 @@ local function controllerFor(ctx)
     -- for a short window after we mutate, so only REAL user focus changes (which
     -- arrive after it clears) drive the deck. The timer stops itself so it never
     -- lingers as a live handle.
+    -- A REAL focus change can land inside the window too -- cmd-tab within 300ms of
+    -- entering the deck -- and suppressing it is only half an answer: the deck would
+    -- sit with that window fronted and no hero at all until the user focused
+    -- something else. So the suppression sets st.pendingReconcile and this timer
+    -- re-runs reconcile once the guard is down.
+    --
+    -- It RE-DERIVES from the live focus rather than replaying the event, which is
+    -- what makes it safe to run for our own echoes too: if focus still sits on the
+    -- hero, reconcile classifies "return" and does nothing. Replaying a queued event
+    -- would reintroduce the blink this guard exists to prevent.
     local function beginSettle()
         st.settling = true
         if st.settleTimer then st.settleTimer.stop() end
         st.settleTimer = ctx.afterSeconds(0.3, function()
             st.settling = false
+            -- Clear our own handle BEFORE the deferred reconcile: that call can arm
+            -- a fresh settle, and this cleanup would otherwise stop the new timer.
             if st.settleTimer then st.settleTimer.stop(); st.settleTimer = nil end
+            if st.pendingReconcile then
+                st.pendingReconcile = false
+                ctx.log("reconcile: re-deriving a focus change the settle suppressed")
+                st.reconcile()
+            end
         end)
     end
 
@@ -1109,7 +1131,14 @@ local function controllerFor(ctx)
         -- Ignore events while settling -- they are echoes of our own raises/moves,
         -- not a real user focus change (see beginSettle). Without this the hero and
         -- a peek fight for front (the blink). Logged so a runaway is visible.
-        if st.settling then ctx.log("reconcile: suppressed settling echo"); return end
+        if st.settling then
+            -- Suppressed, not dropped: the settle timer re-derives from the live
+            -- focus when it clears, so a real cmd-tab landing in the window still
+            -- promotes (see beginSettle).
+            st.pendingReconcile = true
+            ctx.log("reconcile: suppressed settling echo (re-derive when it clears)")
+            return
+        end
 
         -- presence bookkeeping (resolveIds also ADOPTS retitled members -- see
         -- its header): mark truly closed members gone; if the hero vanished,
@@ -1127,17 +1156,24 @@ local function controllerFor(ctx)
         local ids = resolveIds()
         local dropped = {}
         for _, bid in ipairs(ctx.window.droppedApps()) do dropped[bid] = true end
+        local heroReserved = false
         for _, m in ipairs(st.group) do
             if ids[m.key] then
                 m.gone = false
             elseif m.bundleID and dropped[m.bundleID] then
+                -- The hero gets the SAME reservation as any other member. Without
+                -- it the check below reads a missed AX ceiling as "hero closed"
+                -- and collapses the whole deck -- the one absence for which the
+                -- reserve/evict distinction above matters most, since the drop is
+                -- immediate and total rather than one member lighting Rearrange.
+                if m.key == st.heroKey then heroReserved = true end
                 ctx.log("reconcile:", m.key, "absent but '" .. (m.appName or "?")
                     .. "' did not answer AX -- RESERVED (not treated as closed)")
             else
                 m.gone = true
             end
         end
-        if st.heroKey and not ids[st.heroKey] then
+        if st.heroKey and not ids[st.heroKey] and not heroReserved then
             dropToGrid("hero vanished")
             renderBorders()
         end
@@ -1171,7 +1207,13 @@ local function controllerFor(ctx)
                 st.peeked and "(reclean deferred to next beat)" or "")
             return
         elseif outcome == "ignore" then
-            return                                  -- focused window not listed yet
+            -- The focused window IS a member but is not listed yet -- its app
+            -- missed the AX ceiling for this listing. The only outcome of the five
+            -- that changes nothing, so without a line the log goes quiet between
+            -- states and "why did nothing promote?" has nothing to read.
+            ctx.log("reconcile: ignore", focusKey,
+                "-- a member, but absent from this listing (app did not answer AX)")
+            return
         elseif outcome == "gridFocus" then
             -- Grid-only mode (Hero off): focusing a deck window does NOT zoom it
             -- into a hero. Just re-show the chrome (a peek may have hidden it)
@@ -1409,6 +1451,7 @@ local function controllerFor(ctx)
         if st.settleTimer then st.settleTimer.stop(); st.settleTimer = nil end
         settlePending()
         st.settling = false
+        st.pendingReconcile = false   -- the deck is gone; nothing left to re-derive
         st.peeked = false
         st.occluded = nil   -- the controller is memoized per-enablement; a stale
                             -- occlusion set would make the NEXT deck's syncScrim

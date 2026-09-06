@@ -27,6 +27,9 @@
 -- id before restoring.
 
 local adapter = require("platform.adapter")
+-- LEAF util (zero-require, pure): the SHARED membership test. Reached for rather
+-- than re-derived here -- see the skip gate in undoLast.
+local W = require("platform.windows")
 
 local M = {}
 
@@ -130,27 +133,12 @@ function M.recordById(id)
     lastWriteAt = now
 end
 
--- Is this frame's center on any currently-connected screen? A window whose
--- original display was unplugged since the move can't be sensibly restored
--- (mirrors Window Deck's skipRestore for a vanished screen).
----@param f {x:number,y:number,w:number,h:number}
----@param screens {x:number,y:number,w:number,h:number}[]
----@return boolean
-local function onScreen(f, screens)
-    local cx, cy = f.x + f.w / 2, f.y + f.h / 2
-    for _, s in ipairs(screens) do
-        if cx >= s.x and cx <= s.x + s.w and cy >= s.y and cy <= s.y + s.h then
-            return true
-        end
-    end
-    return false
-end
-
 --- Restore the most-recent group: move every window it touched back to its
 --- before-frame and return the pointer to where it was at the group's start.
 --- Single-step -- the group is consumed, so a second call is a no-op until a new
 --- change is recorded. Windows that have since closed, or whose original screen is
---- gone, are skipped.
+--- gone, are skipped -- each skip with a log line saying which and why, since the
+--- only other symptom is a restored count smaller than the user expected.
 ---@return integer restored  how many windows were moved back
 function M.undoLast()
     if not group or #group.order == 0 then return 0 end
@@ -172,8 +160,22 @@ function M.undoLast()
         local n = 0
         for _, wid in ipairs(g.order) do
             local id, before = widToId[wid], g.frames[wid]
-            if id and before and onScreen(before, screens) then
-                if adapter.setWindowFrame(id, before) then n = n + 1 end
+            -- Membership goes through the shared predicate, never a local copy:
+            -- a window whose original display was unplugged can't be sensibly
+            -- restored, but one parked over the Dock or the menu bar IS on its
+            -- display and must come back. Those two cases are told apart by which
+            -- rect the test uses, which is why this asks W rather than deciding.
+            if not (id and before) then
+                adapter.log("undoLast: wid " .. tostring(wid)
+                    .. " no longer resolves to a live window -- skipped")
+            elseif not W.screenOfFrame(screens, before) then
+                adapter.log("undoLast: wid " .. tostring(wid)
+                    .. "'s before-frame centre is on no connected display -- skipped")
+            elseif adapter.setWindowFrame(id, before) then
+                n = n + 1
+            else
+                adapter.log("undoLast: wid " .. tostring(wid)
+                    .. " refused the restore frame -- skipped")
             end
         end
         -- Only rewind the pointer if we actually moved something back (no spurious

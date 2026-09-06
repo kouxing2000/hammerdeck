@@ -1205,6 +1205,61 @@ return {
             fake.windows = freshWindows()
         end
 
+        -- ===== W-3: A NEWCOMER THAT FILLS A FREED HOLE IS TAKEN IN, EVEN AT CAPACITY.
+        -- The gate has to test the slot the newcomer would actually TAKE, not the
+        -- fan's high-water index. lowestFreeIndex fills a hole left by a closed
+        -- window, which does not grow the fan at all -- so a high-water gate refuses
+        -- a window the geometry has room for, and it never stops: the high-water
+        -- never falls, so once a fan touches capacity every later window is turned
+        -- away for the rest of the mode, however many slots have since been freed.
+        do
+            -- A screen + edge whose capacity is small enough to REACH. Derived from
+            -- the same call the feature makes, so the block tracks the algorithm
+            -- rather than a magic number -- and asserted, since the whole scenario
+            -- is "the fan is exactly full" and a capacity of 8 would never get there.
+            local TIGHT = { x = 0, y = 0, w = 1100, h = 700, name = "Tight", index = 1 }
+            fake.settings["hammerdeck.opt.window_fan.edge"] = 120
+            local cap = W.fanCapacity(TIGHT, 120, 8)
+            ok(cap == 4, "fixture: this screen + edge fans exactly 4 (" .. cap .. ")")
+
+            fake.screenList = { TIGHT }
+            fake.windows = {
+                { id = 51, wid = 501, title = "One",   appName = "A", bundleID = "com.1", x = 10,  y = 10,  w = 300, h = 200 },
+                { id = 52, wid = 502, title = "Two",   appName = "B", bundleID = "com.2", x = 20,  y = 20,  w = 300, h = 200 },
+                { id = 53, wid = 503, title = "Three", appName = "C", bundleID = "com.3", x = 30,  y = 30,  w = 300, h = 200 },
+                { id = 54, wid = 504, title = "Four",  appName = "D", bundleID = "com.4", x = 40,  y = 40,  w = 300, h = 200 },
+            }
+            fake.focusedWindow = { x = 10, y = 10, w = 300, h = 200, screenIndex = 1 }
+            fake.focusedWid = 501
+            registry.setEnabled("window_fan", true)
+            fake.pressHotkey("f", HYP)
+            ok(#fake.liveOutlines() == cap, "the fan enters exactly full (" .. cap .. " borders)")
+
+            -- Window TWO closes -- freeing slot 2 while the high-water stays at 4 --
+            -- and a newcomer opens. Closing the LAST-slotted window instead would
+            -- drop the high-water too, and the old gate would have let it in: the
+            -- hole has to be in the MIDDLE for this to test anything.
+            fake.windows = {
+                fake.windows[1], fake.windows[3], fake.windows[4],
+                { id = 55, wid = 505, title = "Five", appName = "E", bundleID = "com.5",
+                  x = 50, y = 50, w = 300, h = 200 },
+            }
+            fake.focusedWid = 505
+            fake.focusWindowChanged()
+
+            ok(borderFor(502) == nil, "the closed window's border is pruned")
+            ok(borderFor(505) ~= nil,
+                "the newcomer fills the freed slot rather than being refused at capacity (W-3)")
+            ok(#fake.liveOutlines() == cap, "the fan is full again, not one short")
+
+            fake.pressHotkey("f", HYP)                 -- leave
+            registry.setEnabled("window_fan", false)
+            fake.settings["hammerdeck.opt.window_fan.edge"] = nil
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.windows = freshWindows()
+            registry.setEnabled("window_fan", true)
+        end
+
         -- ===== LEAVE ON DISABLE: a live mode is torn down + restored on stop.
         do
             fake.windows = freshWindows()

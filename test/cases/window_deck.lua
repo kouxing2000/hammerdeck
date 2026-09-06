@@ -898,6 +898,46 @@ return {
             registry.setEnabled("window_deck", false)
         end
 
+        -- T-WD-hero-quiet: the HERO gets the same AX reservation every other member
+        -- gets. The presence loop above reserves a member whose app missed the
+        -- ceiling, but the hero check below it asked only "is this key in the
+        -- listing" -- so a hero whose app went quiet for ONE listing read as "hero
+        -- vanished" and collapsed the entire deck to the flat grid with the user
+        -- having touched nothing. Strictly worse than the member case it sits three
+        -- lines from: that one lights Rearrange, this one drops everything at once.
+        do
+            fake.windows = quadWindows()
+            fake.screenList = { SCREEN }
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            local w = fake.liveWidget()
+            focusWin(2)                             -- promote TL (id 2) -> hero, cell 1
+            ok(w.hero == 1, "TL is the hero before its app goes quiet")
+
+            local tl
+            for i, win in ipairs(fake.windows) do
+                if win.id == 2 then tl = table.remove(fake.windows, i); break end
+            end
+            fake.droppedApps = { "com.tl" }         -- the seam names the quiet app
+            -- Focus lands OUTSIDE the deck, so the focus outcome is "stay" and this
+            -- isolates the presence check -- focusing another member would promote
+            -- it and relight a cell either way, hiding the collapse.
+            fake.windowTitle = "Outsider"
+            fake.activateApp("AppOut", "com.out")
+            fake.fireTimers("after")
+            fake.fireTimers("after")
+            ok(w.hero == 1,
+                "a hero whose app missed the AX ceiling keeps the deck (not 'hero vanished')")
+
+            -- ...and the reservation is not a one-way door here either.
+            table.insert(fake.windows, 2, tl)
+            fake.droppedApps = {}
+            focusWin(2)
+            ok(w.hero == 1, "when the app answers again the hero is still the hero")
+            fake.pressHotkey("k", HYP)
+            registry.setEnabled("window_deck", false)
+        end
+
         -- T-WD-reflow-restore: a reflow drops a member from the GRID but must never
         -- discard its captured original -- otherwise restore-on-exit silently skips
         -- a window that turns out to be alive, stranding it at a deck slot.
@@ -1433,6 +1473,77 @@ return {
         ok(lastSetFor(201) == nil and lastSetFor(202) == nil,
             "windows on the other screen are left untouched")
         fake.pressHotkey("k", HYP)                      -- exit
+
+        -- T-WD-settle-retry (W-5): the 300ms settle guard exists to swallow the
+        -- echoes of our OWN raises and moves. A real focus change can land inside
+        -- that window too -- cmd-tab within 300ms of entering the deck -- and merely
+        -- swallowing it left the deck with that window fronted and NO hero at all,
+        -- until the user happened to focus something else. The guard now re-derives
+        -- from the live focus when it clears. Every other block in this file flushes
+        -- the settle before touching focus, which is exactly why none of them saw it.
+        do
+            fake.windows = quadWindows()
+            fake.screenList = { SCREEN }
+            fake.focusedWindow = nil
+            fake.mousePos = { x = 10, y = 10 }
+            registry.setEnabled("window_deck", true)
+
+            -- enterDeck() ends with a fireTimers that flushes the settle; enter by
+            -- hand WITHOUT it, so the deck is still inside its settle window.
+            fake.pressHotkey("k", HYP)
+            local dp = fake.openDisplayPicker()
+            if dp then dp.userConfirm(dp.preselect) end
+            local p = fake.openWindowPicker()
+            if p then p.confirm(nil) end
+
+            fake.windowFrameSets = {}
+            focusWin(3, nil, true)             -- cmd-tab INSIDE the settle window
+            ok(lastSetFor(3) == nil,
+                "a focus change inside the settle window is suppressed, not acted on")
+            fake.fireTimers("after")           -- settle clears -> re-derive
+            fake.fireTimers("after")           -- the promote beat's flights land
+            fake.fireTimers("after")
+            local promo = lastSetFor(3)
+            ok(promo and near(promo.w, HERO.w) and near(promo.h, HERO.h),
+                "...and it is re-derived when the settle clears: the window promotes (W-5)")
+
+            fake.pressHotkey("k", HYP)         -- exit
+            registry.setEnabled("window_deck", false)
+        end
+
+        -- T-WD-dock-membership (W-16): groupWindows asks the SHARED membership
+        -- predicate, so a window parked over the Dock is decked with the rest. Its
+        -- centre lies outside the screen row's VISIBLE rect and inside the FULL one
+        -- -- the deck's own copy of the test read the visible rect and silently left
+        -- such a window out of its own group. Drives the deck, not the predicate:
+        -- the defect was which question groupWindows asked.
+        do
+            -- 37px menu bar off the top, 63px Dock off the bottom: the visible frame
+            -- runs y 37..837, the full frame y 0..900. The strip between them is what
+            -- the two predicates disagreed about.
+            local DOCKSCREEN = { x = 0, y = 37, w = 1440, h = 800, name = "Main", index = 1,
+                                 full = { x = 0, y = 0, w = 1440, h = 900 } }
+            fake.screenList = { DOCKSCREEN }
+            fake.focusedWindow = nil
+            fake.mousePos = { x = 10, y = 50 }
+            fake.windows = {
+                { id = 41, title = "TL", appName = "AppTL", bundleID = "com.tl",
+                  x = 100, y = 100, w = 300, h = 200 },
+                -- centre y = 790 + 60 = 850: past the visible frame's 837 bottom,
+                -- inside the full frame's 900. Parked over the Dock.
+                { id = 42, title = "Dock", appName = "AppD", bundleID = "com.d",
+                  x = 500, y = 790, w = 300, h = 120 },
+            }
+            fake.windowFrameSets = {}
+            registry.setEnabled("window_deck", true)
+            enterDeck()
+            ok(#fake.windowFrameSets == 2,
+                "a window over the Dock is decked with the rest (W-16 membership)")
+            ok(lastSetFor(42) ~= nil,
+                "...specifically that window, not two placements of the other one")
+            fake.pressHotkey("k", HYP)                  -- exit
+            registry.setEnabled("window_deck", false)
+        end
 
         registry.setEnabled("window_deck", false)
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after window_deck test")
