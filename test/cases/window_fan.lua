@@ -1088,6 +1088,218 @@ return {
                 "the command palette carries one Window Fan row, named for the feature")
         end
 
+        -- ===== W-4: A REFAN RAISES ONLY WHAT IT MOVED.
+        -- A refan re-tiles just the ONE side whose count changed, so most members
+        -- sit exactly where they already are. Raising them anyway is the
+        -- multi-window raise the z-order rule forbids: an activate-on-raise app
+        -- (VSCode, Chrome) fronts ITSELF over the window in view, with no motion to
+        -- cover the flash and no layout gained.
+        --
+        -- Asserted as an IDENTITY between two measured sets -- the wids whose frame
+        -- changed, and the wids raised -- never against a hardcoded count, so the
+        -- expectation is derived from what the tiling actually did rather than from
+        -- what this test's author assumed it would do.
+        do
+            fake.droppedApps = {}
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+
+            local function framesByWid()
+                local m = {}
+                for _, w in ipairs(fake.windows) do
+                    if w.wid then
+                        m[w.wid] = w.x .. "," .. w.y .. "," .. w.w .. "x" .. w.h
+                    end
+                end
+                return m
+            end
+            -- The raise log records row IDS; membership is keyed by wid.
+            local function widOfId(id)
+                for _, w in ipairs(fake.windows) do if w.id == id then return w.wid end end
+            end
+            -- The wids that changed frame, and the wids raised, since the marks.
+            local function movedAndRaised(before, raiseMark)
+                local after, moved, raised = framesByWid(), {}, {}
+                for wid, f in pairs(after) do
+                    if before[wid] and before[wid] ~= f then moved[wid] = true end
+                end
+                for i = raiseMark + 1, #fake.raises do
+                    raised[widOfId(fake.raises[i]) or 0] = true
+                end
+                return moved, raised
+            end
+            local function sameSet(a, b)
+                for k in pairs(a) do if not b[k] then return false end end
+                for k in pairs(b) do if not a[k] then return false end end
+                return true
+            end
+            local function count(t)
+                local n = 0
+                for _ in pairs(t) do n = n + 1 end
+                return n
+            end
+
+            fake.pressHotkey("f", HYP)         -- enter: all five move, all five raise
+            fake.fireTimers("after")           -- let the 0.3s settle pass run
+
+            -- (a) A refan that re-tiles NOBODY. Safari's app goes quiet, so its slot
+            -- stays RESERVED: the fan is still the same five-slot geometry and every
+            -- survivor is already sitting on its own slab.
+            local before, raiseMark = framesByWid(), #fake.raises
+            local focusMark = #fake.focused
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 102 then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            fake.droppedApps = { "com.saf" }
+            fake.activateApp("Mail", "com.mail")           -- membership changed -> refan
+            local moved, raised = movedAndRaised(before, raiseMark)
+            ok(count(moved) == 0, "W-4 premise: a reserved-slot refan re-tiles nobody")
+            ok(count(raised) == 0, "W-4: a refan that moves nothing raises nothing")
+            ok(#fake.focused == focusMark,
+                "W-4: ...and hands focus back to nobody -- with no raise there is no "
+                .. "self-activation to beat, and a gratuitous focus IS an activation")
+
+            -- (b) A refan that DOES re-tile still raises -- and raises exactly the
+            -- movers. Without this the block above would also pass for a pass that
+            -- simply stopped raising, which is the opposite bug.
+            fake.droppedApps = {}
+            fake.windows = freshWindows()
+            fake.pressHotkey("f", HYP)         -- leave, then re-enter cleanly
+            fake.pressHotkey("f", HYP)
+            fake.fireTimers("after")
+
+            -- Close whichever window holds the LAST slot: that lowers the fan's
+            -- high-water index, so every remaining slab re-tiles. Which window that
+            -- is depends on assignNearest, so it is looked up, not assumed.
+            local last, victim = SLOTS[#SLOTS], nil
+            for _, w in ipairs(fake.windows) do
+                if w.x == last.x and w.y == last.y and w.w == last.w and w.h == last.h then
+                    victim = w.wid
+                end
+            end
+            ok(victim ~= nil, "W-4 premise: a window is sitting on the fan's last slot")
+            before, raiseMark = framesByWid(), #fake.raises
+            kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= victim then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            fake.activateApp("Mail", "com.mail")           -- closed -> slot freed -> re-tile
+            moved, raised = movedAndRaised(before, raiseMark)
+            ok(count(moved) > 0, "W-4 premise: freeing the top slot DOES re-tile the fan")
+            ok(sameSet(moved, raised),
+                "W-4: the raised set is exactly the set that moved")
+
+            fake.pressHotkey("f", HYP)         -- leave
+            fake.windows = freshWindows()
+        end
+
+        -- ===== W-4b: THE Z-ORDER MODEL FOLLOWS THE PARTIAL RAISE.
+        -- place() used to assert "every member is on top, in MRU order" -- true
+        -- only because it had just raised every one of them. Once the raise is
+        -- partial that becomes a claim about a stack nobody imposed, and the
+        -- damage lands hardest on the NON-MEMBERS the old model dropped outright:
+        -- a foreign window in front of an unmoved member vanished from the z-order
+        -- entirely, so the member's border drew across the window the user was
+        -- actually looking at until the 0.3s settle pass re-derived the truth.
+        --
+        -- Asserted on the clip AREA, not the clipped flag: slab RECTANGLES overlap
+        -- (only each window's edge STRIP is exclusive), so a member is clipped by
+        -- another member either way and the flag alone cannot tell the two models
+        -- apart. Parking the non-member as a strict superset of the member's slab
+        -- makes the visible area exactly ZERO under the correct model, and non-zero
+        -- under the old one.
+        do
+            fake.droppedApps = {}
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)
+            fake.fireTimers("after")           -- settle: st.order now comes from a real listing
+
+            -- Watch Mail (103): a member, not the focused one (101), and not the
+            -- one about to go quiet (102).
+            local watched
+            for _, w in ipairs(fake.windows) do if w.wid == 103 then watched = w end end
+            ok(watched ~= nil, "W-4b premise: the watched member is in the fan")
+
+            -- The minimized window (106) is on this screen and in the listing but is
+            -- NOT fannable, so it is exactly the non-member the model must keep.
+            -- Park it over the watched member's slab -- larger, so the two frames
+            -- stay distinguishable -- and put it FRONTMOST in the listing.
+            local foreign
+            local rest = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid == 106 then foreign = w else rest[#rest + 1] = w end
+            end
+            foreign.x, foreign.y = watched.x - 5, watched.y - 5
+            foreign.w, foreign.h = watched.w + 10, watched.h + 10
+            table.insert(rest, 1, foreign)
+            fake.windows = rest
+
+            -- A refan that re-tiles nobody (the reserved-slot case from W-4 above).
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 102 then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            fake.droppedApps = { "com.saf" }
+            fake.activateApp("Mail", "com.mail")
+
+            local b = borderFor(103)
+            ok(b ~= nil and b.clipped == true and b.filled == true,
+                "W-4b premise: the unmoved member's border is clipped and filled")
+            ok(b ~= nil and clipArea(b) == 0,
+                "W-4b: a non-member covering an unmoved member leaves NO visible border")
+
+            fake.droppedApps = {}
+            fake.pressHotkey("f", HYP)         -- leave
+            fake.windows = freshWindows()
+        end
+
+        -- ===== W-13: ONE AX ENUMERATION PER RECONCILE PASS.
+        -- Every ctx.window.list() is a full AX walk of every app on the real host --
+        -- the path's own comment calls it dear -- and this one used to take three
+        -- (z-order, membership signature, widget rows), twice per focus signal.
+        -- The count is the whole defect: three listings return exactly what one
+        -- returns, so no value assertion can see the difference.
+        do
+            fake.droppedApps = {}
+            fake.windows = freshWindows()
+            fake.screenList = { SCREEN, SCREEN2 }
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)
+            fake.fireTimers("after")
+
+            -- An UNCHANGED member set: the pass re-reads the z-order, compares the
+            -- signature, and re-clips. One listing must serve all of it.
+            local before = fake.listCalls
+            fake.activateApp("Mail", "com.mail")
+            ok(fake.listCalls - before == 1,
+                "W-13: a reconcile with an unchanged member set enumerates windows ONCE")
+
+            -- And a pass that DOES refan shares the same listing rather than taking
+            -- a fresh one per stage (membership, existence, widget rows).
+            local kept = {}
+            for _, w in ipairs(fake.windows) do
+                if w.wid ~= 105 then kept[#kept + 1] = w end
+            end
+            fake.windows = kept
+            before = fake.listCalls
+            fake.activateApp("Notes", "com.not")
+            ok(fake.listCalls - before == 1,
+                "W-13: a reconcile that REFANS enumerates windows once as well")
+
+            fake.pressHotkey("f", HYP)         -- leave
+            fake.windows = freshWindows()
+        end
+
         -- ===== LABEL MODE (`arrange` off): borders + list, nothing moved.
         -- The arrangement is the expensive half of this feature and the identification
         -- is the half that demonstrably works, so the arrangement is optional. With it

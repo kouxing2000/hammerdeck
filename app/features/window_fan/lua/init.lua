@@ -238,9 +238,19 @@ local function controllerFor(ctx)
     -- that newly appears shows up in `order`/`frames` (so it clips the borders
     -- behind it like any other window in front) -- it is TAKEN into the fan
     -- separately, by refan(), once the member-set change is detected.
-    local function refreshFromList()
+    --
+    -- `list`: a listing already read by the caller, to be shared instead of
+    -- taking another. Every read below is a full AX walk of every app on the
+    -- real host, and one reconcile pass used to take three of them (here,
+    -- currentSig, widgetRows) -- so the pass reads ONCE and threads the result.
+    -- Passed EXPLICITLY rather than memoized on `st`: a cached listing has to be
+    -- invalidated by everything that moves a window, and a missed invalidation
+    -- is a silent wrong-frame bug, whereas an omitted argument just costs the
+    -- extra walk it costs today.
+    ---@param list table[]|nil
+    local function refreshFromList(list)
         local order, frames, live = {}, {}, {}
-        for _, w in ipairs(ctx.window.list()) do
+        for _, w in ipairs(list or ctx.window.list()) do
             if w.wid and w.wid ~= 0 then
                 order[#order + 1] = w.wid
                 frames[w.wid] = { x = w.x, y = w.y, w = w.w, h = w.h }
@@ -300,9 +310,10 @@ local function controllerFor(ctx)
     -- (W.onScreen: centre-in-rect) -- window frames and screen frames come from
     -- separate native calls whose tables are never the same object, so an
     -- identity compare would silently match nothing in the real host.
-    local function fannable(screen)
+    ---@param list table[]|nil a listing to share (see refreshFromList)
+    local function fannable(screen, list)
         local out = {}
-        for _, w in ipairs(ctx.window.list()) do
+        for _, w in ipairs(list or ctx.window.list()) do
             if W.arrangeable(w) and W.onScreen(w, screen) then
                 out[#out + 1] = w
             end
@@ -320,8 +331,9 @@ local function controllerFor(ctx)
     end
 
     -- The current fannable set on the mode's screen, as a signature.
-    local function currentSig()
-        return sigOf(fannable(st.screen))
+    ---@param list table[]|nil a listing to share (see refreshFromList)
+    local function currentSig(list)
+        return sigOf(fannable(st.screen, list))
     end
 
     -- The lowest slot INDEX not held by any known window (active or reserved). Fills
@@ -367,9 +379,13 @@ local function controllerFor(ctx)
     -- (a stable list). Each row carries the window's border color, the EDGE it
     -- exposes (T/B/L/R, for the spatial swatch), its title + bundle (icon), and the
     -- focused flag. Records st.widgetOrder so onSwitch(i) maps a row back to its wid.
-    local function widgetRows()
+    -- A listing may be shared in (see refreshFromList): the only fields read here
+    -- are `title` and `bundleID`, which a window MOVE cannot change, so a
+    -- snapshot taken before a placement is still correct after it.
+    ---@param list table[]|nil
+    local function widgetRows(list)
         local meta = {}
-        for _, w in ipairs(ctx.window.list()) do
+        for _, w in ipairs(list or ctx.window.list()) do
             if w.wid then meta[w.wid] = { title = w.title or "", bundleID = w.bundleID or "" } end
         end
         local rows = {}
@@ -386,9 +402,10 @@ local function controllerFor(ctx)
     end
 
     -- Push the current rows + count into the live widget (no-op if it is off).
-    local function updateWidget()
+    ---@param list table[]|nil a listing to share (see refreshFromList)
+    local function updateWidget(list)
         if not st.widget then return end
-        local rows = widgetRows()
+        local rows = widgetRows(list)
         st.widget.setRows(rows, ctx.plural("widget.count", #rows,
             { one = "%d window", other = "%d windows" }, #rows))
     end
@@ -402,7 +419,10 @@ local function controllerFor(ctx)
     -- while it is gone. Records each slot frame + exposed side, runs the ordered
     -- raise pass + focus hand-back, re-arms observers, refreshes the widget.
     ---@param reason string a short trace label ("entered" | "refanned")
-    local function place(wins, screen, focusWid, reason)
+    ---@param list table[]|nil a listing to share (see refreshFromList). Safe to
+    --- share across the placement below: the two reads it feeds want only
+    --- `title`/`bundleID` (widget rows) or run in LABEL mode, where nothing moved.
+    local function place(wins, screen, focusWid, reason, list)
         local N = fanSizeN()
         if N < 1 then return end
         -- LABEL MODE (st.arranging == false) computes no slab geometry at all: it
@@ -417,6 +437,9 @@ local function controllerFor(ctx)
         -- (built below) is what the raise pass establishes -- reliable now, before
         -- the async AX frames settle.
         local bundleSet = {}
+        -- The windows this pass actually MOVES. Only they may be raised (see the
+        -- raise pass below). Keyed by wid, filled inside the arranging branch.
+        local moved = {}
         for _, w in ipairs(wins) do
             if not st.borders[w.wid] then
                 local color = st.color[w.wid]
@@ -426,6 +449,12 @@ local function controllerFor(ctx)
                 local s = slots[st.slot[w.wid]]
                 st.frames[w.wid] = { x = s.x, y = s.y, w = s.w, h = s.h }
                 st.side[w.wid] = s.side           -- the edge this window exposes (widget swatch)
+                -- Same 2px tolerance the settle diagnostic below uses: AX rounds,
+                -- and a window already sitting on its slot has not moved.
+                if math.abs(w.x - s.x) > 2 or math.abs(w.y - s.y) > 2
+                   or math.abs(w.w - s.w) > 2 or math.abs(w.h - s.h) > 2 then
+                    moved[w.wid] = true
+                end
                 ctx.window.setFrameFor(w.id, st.frames[w.wid])
             else
                 -- The window's OWN frame, untouched. "" side => the widget draws a
@@ -443,36 +472,84 @@ local function controllerFor(ctx)
             end
         end
 
-        -- One ordered raise pass, back-to-front (reversed MRU), so the pile's
-        -- final z-order matches recency -- the window motion covers the churn.
-        -- Then the focused window is lifted with a real focus (a surgical raise
-        -- can't beat an app that activated itself when raised).
+        -- One ordered raise pass, back-to-front (reversed MRU), over the windows
+        -- this pass MOVED -- so the pile's final z-order matches recency and the
+        -- window motion covers the churn. Then the focused window is lifted with a
+        -- real focus (a surgical raise can't beat an app that activated itself
+        -- when raised).
         --
-        -- SKIPPED in label mode, and that is a headline benefit rather than an
-        -- omission: this pass is the raise storm behind the z-order churn, the
-        -- self-activating-app flashes, and (with the seam's per-activation costs) a
-        -- large share of the stalls that started this whole investigation. Labelling
-        -- windows in place needs no reordering, so the user's own stacking is left
-        -- exactly as they arranged it.
+        -- MOVED, not every member. A refan re-tiles only the ONE side whose count
+        -- changed (fanSlots keys geometry off the slot index), so most members sit
+        -- exactly where they already are -- and raising a window that did not move
+        -- is the multi-window raise CLAUDE.md's z-order rule forbids: an
+        -- activate-on-raise app (VSCode, Chrome) fronts ITSELF over the window the
+        -- user is looking at, with no motion to cover it and no layout gained. At
+        -- enter() every window moves, so the full back-to-front pass still runs
+        -- there, under the cover of the motion it exists to order.
+        --
+        -- SKIPPED entirely in label mode, and that is a headline benefit rather
+        -- than an omission: this pass is the raise storm behind the z-order churn,
+        -- the self-activating-app flashes, and (with the seam's per-activation
+        -- costs) a large share of the stalls that started this whole
+        -- investigation. Labelling windows in place needs no reordering, so the
+        -- user's own stacking is left exactly as they arranged it.
         if st.arranging then
-            for i = #wins, 1, -1 do ctx.window.raise(wins[i].id) end
-            if focusWid and focusWid ~= 0 then
+            local raised = 0
+            for i = #wins, 1, -1 do
+                if moved[wins[i].wid] then
+                    ctx.window.raise(wins[i].id)
+                    raised = raised + 1
+                end
+            end
+            -- The focus hand-back exists to beat an app that ACTIVATED itself when
+            -- raised. Nothing raised means nothing activated, so there is nothing
+            -- to hand back -- and a gratuitous focus call is itself an activation.
+            if raised > 0 and focusWid and focusWid ~= 0 then
                 for _, w in ipairs(wins) do
                     if w.wid == focusWid then ctx.window.focus(w.id); break end
                 end
             end
+            ctx.log("fan: raised " .. raised .. "/" .. #wins
+                .. " (only the windows this pass moved)")
         end
 
-        -- The z-order we just imposed: focused window frontmost, then the rest in
-        -- MRU order (st.frames already holds each slot). drawOcclusion clips each
-        -- border against those in front. These are the INTENDED slot frames; the
-        -- delayed refresh below swaps in the ACTUAL frames once AX has applied them.
+        -- The z-order we just imposed, modelled on what the pass ACTUALLY did.
+        -- drawOcclusion clips each border against the ones in front of it, so this
+        -- list is a claim about the real stack and has to stay one.
+        --
+        -- Two halves, and both are needed BECAUSE the raise pass is now partial:
+        -- whatever we raised is on top (the loop above raises back-to-front, so
+        -- `wins` order is the result), and everything else keeps the order the
+        -- LISTING reported -- including NON-MEMBERS, which a partial raise leaves
+        -- in front of an unmoved member. Asserting the member-MRU order outright,
+        -- as this did while every member was raised, would now describe a pass
+        -- that no longer happens: an unmoved member would be modelled above the
+        -- foreign window the user is looking at, and its border would draw over
+        -- it until the settle timer re-derived the truth 0.3s later.
+        --
+        -- st.frames holds each member's INTENDED slot; the delayed refresh below
+        -- swaps in the ACTUAL frames once AX has applied them.
         st.focusedWid = focusWid
-        st.order = {}
-        if focusWid and st.borders[focusWid] then st.order[1] = focusWid end
+        local order, placed = {}, {}
         for _, w in ipairs(wins) do
-            if w.wid ~= focusWid then st.order[#st.order + 1] = w.wid end
+            if moved[w.wid] then order[#order + 1] = w.wid; placed[w.wid] = true end
         end
+        for _, wid in ipairs(st.order) do          -- the pre-pass stack, minus the raised
+            if not placed[wid] then order[#order + 1] = wid; placed[wid] = true end
+        end
+        for _, w in ipairs(wins) do                -- any member the listing had not shown yet
+            if not placed[w.wid] then order[#order + 1] = w.wid; placed[w.wid] = true end
+        end
+        -- The focus hand-back (or the user's own click) puts this one frontmost.
+        if focusWid and st.borders[focusWid] then
+            for i, wid in ipairs(order) do
+                if wid == focusWid then
+                    table.remove(order, i); table.insert(order, 1, wid)
+                    break
+                end
+            end
+        end
+        st.order = order
         drawOcclusion()
 
         local bundleIds = {}
@@ -512,7 +589,13 @@ local function controllerFor(ctx)
             -- non-member window in front (including this feature's own widget card)
             -- would not clip until the first focus event or the 2s poll. Label mode is
             -- precisely the case where windows genuinely overlap.
-            refreshFromList()
+            --
+            -- This is what ENTER needs; on the refan path it is idempotent, because
+            -- resyncFocus already made the identical call with the identical table
+            -- and label mode moved nothing in between. Kept unconditional rather
+            -- than gated on the caller: it costs a table walk, and the alternative
+            -- is place() having to know which of its callers already refreshed.
+            refreshFromList(list)
             drawOcclusion()
         end
 
@@ -539,7 +622,7 @@ local function controllerFor(ctx)
                 reason, #wins, screen.name or "?"))
         end
 
-        updateWidget()   -- reflect the new membership / order / focus in the widget
+        updateWidget(list)   -- reflect the new membership / order / focus in the widget
     end
 
     -- The active set changed (a window opened / dragged in, or one closed / moved
@@ -550,15 +633,17 @@ local function controllerFor(ctx)
     -- free slot + color, its pre-fan frame captured before it moves. Guarded
     -- against re-entry (our own moves fire the observers but never change the SET, so
     -- the signature guard already absorbs those echoes -- refanning is belt-and-braces).
-    local function refan()
+    ---@param list table[]|nil a listing to share (see refreshFromList)
+    local function refan(list)
         if st.refanning then return end
-        local active = fannable(st.screen)
+        list = list or ctx.window.list()
+        local active = fannable(st.screen, list)
         local activeSet = {}
         for _, w in ipairs(active) do activeSet[w.wid] = true end
         -- The FULL window list (all screens) tells a moved-out window (still exists
         -- -> reserve) from a closed one (gone -> free).
         local exists = {}
-        for _, w in ipairs(ctx.window.list()) do
+        for _, w in ipairs(list) do
             if w.wid and w.wid ~= 0 then exists[w.wid] = true end
         end
         -- A member missing from the listing is EITHER closed OR its app just missed
@@ -683,7 +768,7 @@ local function controllerFor(ctx)
         if #active == 0 then                            -- screen emptied: nothing to fan
             for _, b in pairs(st.borders) do b.o.stop() end
             st.borders, st.order, st.frames, st.memberSig = {}, {}, {}, ""
-            updateWidget()
+            updateWidget(list)
             ctx.log("fan: no windows left on screen -- fan cleared (mode still on)")
             return
         end
@@ -691,7 +776,7 @@ local function controllerFor(ctx)
             ctx.log("fan: refan placed nothing -- all " .. #active
                 .. " active windows are past capacity on '" .. (st.screen.name or "?") .. "'")
             st.memberSig = sigOf(active)
-            updateWidget()
+            updateWidget(list)
             return
         end
         -- Keep whoever is focused frontmost if they're a member; else the first one.
@@ -700,7 +785,7 @@ local function controllerFor(ctx)
         for _, w in ipairs(placeable) do if w.wid == fwid then isMember = true; break end end
         if not isMember then fwid = placeable[1].wid end
         st.refanning = true
-        place(placeable, st.screen, fwid, "refanned")
+        place(placeable, st.screen, fwid, "refanned", list)
         st.refanning = false
         -- place() records the signature of what it PLACED, but change detection
         -- compares against the full fannable set (currentSig). With a refused
@@ -730,18 +815,26 @@ local function controllerFor(ctx)
         if w ~= 0 then
             st.focusedWid = w
         end
-        refreshFromList()          -- the switch changed the stacking order
+        -- ONE AX enumeration for the whole pass, shared by every read below. This
+        -- path used to take three (z-order, membership signature, widget rows) and
+        -- runs TWICE per focus signal (syncFocus's immediate pass plus its 0.12s
+        -- settle re-read) on top of the 2s poll -- on a walk the seam's own comment
+        -- calls dear. Sharing is also the more CONSISTENT read: three separate
+        -- listings can disagree about a window that closed between them, and the
+        -- z-order prune would then act on a different set than the signature saw.
+        local list = ctx.window.list()
+        refreshFromList(list)      -- the switch changed the stacking order
         -- st.recycled is checked alongside the signature because the signature CANNOT
         -- see a recycled window id: it is keyed by wid, and a recycle leaves the wid
         -- set identical. Without this the reset that refreshFromList just did would
         -- never be followed by the re-place that gives the new window a slot.
-        if currentSig() ~= st.memberSig or st.recycled then
+        if currentSig(list) ~= st.memberSig or st.recycled then
             ctx.log("fan: window set changed (" .. source .. ") -- refanning")
-            refan()
+            refan(list)
         else
             drawOcclusion()
         end
-        updateWidget()             -- move the widget's highlight to the new focus
+        updateWidget(list)         -- move the widget's highlight to the new focus
     end
 
     -- A genuine focus signal (onFocusChanged / onAppActivated): reconcile NOW, then
