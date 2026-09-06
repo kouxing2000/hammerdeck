@@ -98,9 +98,33 @@ enum McpHttp {
         return data
     }
 
+    /// Encode `object` as the response body.
+    ///
+    /// `isValidJSONObject` FIRST, and it is not belt-and-braces: for an invalid
+    /// object `JSONSerialization` raises an Objective-C exception, which `try?`
+    /// does NOT catch -- it takes the host down. The `?? Data()` that used to
+    /// stand here could therefore never run in the case it was written for.
+    ///
+    /// Reachable, not theoretical: `LuaState.any` maps every Lua number through
+    /// `double()`, and Lua hands out `math.huge` and `0/0` freely, so a tool
+    /// returning one produced a non-finite `Double` -- which JSON cannot express
+    /// and `isValidJSONObject` rejects. `McpServer` boxes a tool result straight
+    /// into this call, so that was a host crash, not an empty body.
+    ///
+    /// An unencodable result is the SERVER's bug, so it answers 500 with a
+    /// readable body rather than 200-with-nothing, which reaches the agent as an
+    /// unexplained parse failure. The body is deliberately NOT a JSON-RPC
+    /// envelope -- there is no `id` to answer with once encoding has failed, so a
+    /// strict client should see a transport error rather than a malformed RPC one.
     static func json(status: Int = 200, reason: String = "OK", _ object: Any) -> Data {
-        let body = (try? JSONSerialization.data(withJSONObject: object,
-                                                options: [.sortedKeys])) ?? Data()
+        guard JSONSerialization.isValidJSONObject(object),
+              let body = try? JSONSerialization.data(withJSONObject: object,
+                                                     options: [.sortedKeys])
+        else {
+            return response(status: 500, reason: "Internal Server Error",
+                            body: Data(#"{"error":"result is not encodable as JSON"}"#.utf8),
+                            contentType: "application/json")
+        }
         return response(status: status, reason: reason, body: body,
                         contentType: "application/json")
     }
