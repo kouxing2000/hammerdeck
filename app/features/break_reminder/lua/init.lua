@@ -7,10 +7,19 @@
 -- work-time stats persist across restarts. Lock/sleep pauses; unlock/wake
 -- restarts a fresh cycle.
 --
--- SERVICE feature: all timers/watchers/dialogs go through ctx (scoped
--- teardown); stop() is not needed.
+-- SERVICE feature: all timers/watchers/dialogs go through ctx, so scoped
+-- teardown handles every handle. stop() exists for ONE thing -- checkpointing
+-- the daily counter (see persistWorkSeconds).
 
 local MAX_SHOW_RETRIES = 10   -- delay the dialog while the user is mid-input
+
+-- The live cycle's checkpoint hook, published for stop(). Going down IS a
+-- boundary: `registry.stopAll` runs on NSApplication.willTerminate, and
+-- disable/reload take the same path -- so without this an ordinary Quit (or a
+-- settings reload) drops the accrual since the last checkpoint out of "Worked
+-- today". Same module-level idiom clipboard_history uses to reach live state
+-- from stop().
+local shared = {}
 
 local function round(x) return math.floor(x + 0.5) end
 
@@ -70,6 +79,20 @@ return {
         end
 
         local function workSecondsTarget() return ctx.opt("workMin") * 60 end
+
+        -- Checkpoint the daily counter to disk. Called on BOUNDARIES ONLY, never
+        -- on the 5s tick: `workSeconds` is read exactly twice (here at start, and
+        -- by the rest dialog), so a per-tick write is ~17k NSUserDefaults writes a
+        -- day serving two reads. The in-memory counter is the live value; disk is
+        -- its checkpoint, taken at each moment the value is about to be READ (the
+        -- dialog), RESET (a new day), to STOP MOVING (lock/sleep), or to be LOST
+        -- (stop -- a quit, a disable, a reload). What that leaves on the table: a
+        -- CRASH or a force-quit, which reaches no boundary at all, loses at most
+        -- one work interval off the DAY TOTAL and nothing off the cycle.
+        local function persistWorkSeconds()
+            ctx.setState("workSeconds", s.workSeconds)
+        end
+        shared.persist = persistWorkSeconds
 
         local startRestTimer        -- forward decls (mutually recursive)
         local showUserRestOption
@@ -143,8 +166,8 @@ return {
             -- Repair stats after system-time jumps.
             if s.workSeconds > now - s.lastStartWorkStamp then
                 s.workSeconds = now - s.lastStartWorkStamp
-                ctx.setState("workSeconds", s.workSeconds)
             end
+            persistWorkSeconds()   -- boundary: the dialog below reads this value
 
             -- Localized action labels, computed once -- DISPLAY only. Dispatch
             -- below is on each row's stable `id`, so the translated text and the
@@ -253,9 +276,9 @@ return {
                 s.lastStartWorkStamp = now
                 s.workSeconds = 0
                 ctx.setState("lastStartWorkTimestamp", s.lastStartWorkStamp)
+                persistWorkSeconds()   -- boundary: a restart must not read yesterday's total
             end
             s.workSeconds = s.workSeconds + 5
-            ctx.setState("workSeconds", s.workSeconds)
 
             if s.restTimer == nil and not s.showingRestOption then
                 ctx.log("active with no timer, starting cycle")
@@ -266,6 +289,7 @@ return {
         local function onLocked()
             if s.systemLocked then return end
             ctx.log("lock/sleep, pausing")
+            persistWorkSeconds()   -- boundary: the counter stops moving here
             -- Set BEFORE stopping: dialog teardown must not restart the cycle.
             s.systemLocked = true
             stopCycleTimers()
@@ -283,5 +307,13 @@ return {
 
         startRestTimer(nil, false, true)
         ctx.everySeconds(5, checkIdle)
+    end,
+
+    ---@param ctx Ctx
+    stop = function(ctx)
+        -- The last boundary. Runs BEFORE scoped teardown (registry.unbindFeature),
+        -- so ctx.setState is still live here.
+        if shared.persist then shared.persist() end
+        shared.persist = nil
     end,
 }
