@@ -27,6 +27,7 @@
 
 local adapter = require("platform.adapter")
 local i18n    = require("platform.i18n")
+local hotkeys = require("platform.hotkeys")
 
 local triggers = {}
 
@@ -463,16 +464,46 @@ end
 -- Conflict detection (hotkey/chord only -- schedules and events may overlap).
 -- ---------------------------------------------------------------------------
 
+-- Long modifier aliases fold to their short names, and case folds away: the SEAM
+-- treats command+K and cmd+k as ONE physical combo (KeyModifier.swift maps both
+-- spellings onto the same key), so conflict detection has to as well. Without it
+-- `{"cmd"}` and `{"command"}` compared unequal and both bound the same key -- and
+-- the CI collision guard rides this very function, so a feature written with a
+-- long alias shipped green while stealing another feature's shortcut.
+--
+-- The map itself lives in the leaf util `hotkeys`, which is the only place it
+-- can live and be shared: a leaf may not `require`, so everyone else reaches
+-- DOWN to it.
+local CANON_MOD = hotkeys.CANON_MOD
+
 -- Canonical "mods|key" of a hotkey, or of a chord's PREFIX hotkey -- the
 -- physical key combo that gets registered with the OS.
+--
+-- Folding happens HERE and deliberately not in `encode`: what the user stored
+-- stays byte-for-byte what they stored, while "what contends for a physical key"
+-- is asked as its own question.
 local function combo(spec)
-    return sortedMods(spec) .. "|" .. tostring(spec.key)
+    local mods = {}
+    for _, m in ipairs(spec.mods or {}) do
+        local c = tostring(m):lower()
+        mods[#mods + 1] = CANON_MOD[c] or c
+    end
+    table.sort(mods)
+    return table.concat(mods, ",") .. "|" .. tostring(spec.key):lower()
 end
 
 -- Is sequence `a` equal to, or a prefix of, sequence `b`?
+--
+-- Case-folded for the same reason `combo` folds: ChordCenter lowercases every
+-- follow key it stores and every key it matches, so "B" and "b" are ONE physical
+-- key at the seam. Comparing them raw lets two features claim the same follow off
+-- a shared prefix and ship green -- the collision this whole function exists to
+-- catch, wearing different capitalization.
 local function seqIsPrefix(a, b)
     if #a > #b then return false end
-    for i = 1, #a do if a[i] ~= b[i] then return false end end
+    for i = 1, #a do
+        if tostring(a[i]):lower() ~= tostring(b[i]):lower() then return false end
+    end
     return true
 end
 

@@ -406,6 +406,17 @@ function registry.all()
     return out
 end
 
+-- Is a feature REGISTERED this boot (loaded, whatever its enabled-state)? The
+-- read `parkReason` needs to tell "your rule points at a feature that is gone"
+-- from "the feature is right here and something else parked the rule" -- blaming
+-- a present feature sends the user to fix what was never broken, and leaves the
+-- real cause with no voice. Enabled-state-independent, like isActionAutomatable.
+---@param id string
+---@return boolean
+function registry.isRegistered(id)
+    return features[id] ~= nil
+end
+
 function registry.isEnabled(id)
     -- A feature may ship enabled (m.defaultEnabled) -- but that is only the
     -- FALLBACK when the user has never toggled it; an explicit stored choice
@@ -735,6 +746,27 @@ function registry.unregister(id)
     return true
 end
 
+-- The rules engine's re-load, injected by the composition root. registry cannot
+-- `require("platform.rules")`: rules reaches registry through `effects`, which
+-- has required it since long before parkReason did -- so this is the same
+-- injection idiom window_ops' pointer-follow predicate and
+-- registry_view.configure already use, and dropping parkReason's direct require
+-- would not make a plain call legal.
+--
+-- Two halves, because the order matters: rules unbind BEFORE the catalog is torn
+-- down (a signal firing mid-reload must not reach a half-loaded catalog), and
+-- re-load AFTER startAll, so a rule parked last boot re-validates against the
+-- features that are actually present now. Without this, `reload()` left every
+-- parked rule greyed until a relaunch -- while the parking comment in rules.lua
+-- promised the next load revives it.
+local reloadRules = { before = nil, after = nil }
+
+---@param before function|nil called before the catalog teardown
+---@param after function|nil called after startAll
+function registry.setRulesReloadHooks(before, after)
+    reloadRules.before, reloadRules.after = before, after
+end
+
 -- Hot reload: tear every feature down, drop the cached feature modules so
 -- `require` re-reads them from disk, then re-load the catalog and re-bind
 -- whatever was enabled. Enabled-state/options persist (they live in settings),
@@ -743,6 +775,10 @@ function registry.reload()
     -- Re-read i18n catalogs too, so "Reload Features" also picks up edited
     -- translations (same locale; a language CHANGE still needs a relaunch).
     i18n.configure({ locale = i18n.locale() })
+    if reloadRules.before then
+        local ok, err = pcall(reloadRules.before)
+        if not ok then adapter.log("reload: rules unbind failed: " .. tostring(err)) end
+    end
     for _, m in ipairs(registry.all()) do registry.unregister(m.id) end
     loadFailures = {}
     for name in pairs(package.loaded) do
@@ -759,8 +795,17 @@ function registry.reload()
     -- folder picked/cleared in Settings takes effect here, without a relaunch.
     registry.loadExtensions()
     registry.startAll()
+    local ruleNote = ""
+    if reloadRules.after then
+        local ok, n = pcall(reloadRules.after)
+        if ok then ruleNote = ", rules=" .. tostring(n)
+        else
+            ruleNote = ", rules RELOAD FAILED"
+            adapter.log("reload: rules re-load failed: " .. tostring(n))
+        end
+    end
     adapter.log("reloaded catalog: " .. #registry.all() .. " features, "
-        .. #loadFailures .. " failed")
+        .. #loadFailures .. " failed" .. ruleNote)
     return { count = #registry.all(), failures = #loadFailures }
 end
 
@@ -793,6 +838,10 @@ function registry.reset()
     end
     loadFailures, startFailures, fireFailures = {}, {}, {}                 -- (3) catalog upvalues
     catalog, discoverDir, extensionsDir = {}, nil, nil
+    -- (4) the injected rules hooks: the composition root sets them at boot and
+    -- the module outlives a case, so a case that wired them would otherwise
+    -- drive the NEXT case's reload through a torn-down rules engine.
+    reloadRules.before, reloadRules.after = nil, nil
     -- Detach the extensions.* require namespace too -- loader state is global,
     -- and a stale root would let the next case resolve modules it never set up.
     require("loader").setExtensionsRoot(nil)
@@ -920,13 +969,18 @@ function registry.clearTrigger(id, actionId)
 end
 
 -- Swap the triggers of two actions (the Shortcut Map's drag-one-row-onto-
--- another gesture): A takes B's current trigger and B takes A's. Safe by
--- construction -- swapping leaves the SET of bound combos unchanged, so no new
--- third-party conflict can arise, and the mutual A<->B "conflict" is the whole
--- point, so it bypasses triggerConflict. Both bindings are dropped before
--- either is re-registered, so the same combo is never live twice (which Carbon
--- would reject). Persists both as overrides and live-rebinds whichever feature
--- is enabled. Returns true (no-op when A and B are the same action).
+-- another gesture): A takes B's current trigger and B takes A's. The COMBO SET is
+-- safe by construction -- swapping leaves it unchanged, so no new third-party
+-- conflict can arise, and the mutual A<->B "conflict" is the whole point, so it
+-- bypasses triggerConflict. Both bindings are dropped before either is
+-- re-registered, so the same combo is never live twice (which Carbon would
+-- reject). Persists both as overrides and live-rebinds whichever feature is
+-- enabled.
+--
+-- The AUTOMATABLE policy is a separate question and is checked below: "the set is
+-- unchanged" says nothing about whether each spec is legal on its new action.
+-- Returns true, or false + reason (no-op returning true when A and B are the
+-- same action).
 function registry.swapTriggers(idA, actA, idB, actB)
     local mA = features[idA]; assert(mA, "no such feature: " .. tostring(idA))
     local mB = features[idB]; assert(mB, "no such feature: " .. tostring(idB))
@@ -936,6 +990,27 @@ function registry.swapTriggers(idA, actA, idB, actB)
 
     local specA = triggerFor(mA, aA)
     local specB = triggerFor(mB, aB)
+
+    -- The combo SET is safe by construction (see the header) -- the AUTOMATABLE
+    -- policy is not, and it is the one `setTrigger` enforces on every other path.
+    -- An automated spec landing on a context-dependent action is refused at LOAD,
+    -- so that action silently falls back to its DEFAULT trigger: the very combo
+    -- the other side has just taken. One press then fires both, and the schedule
+    -- is gone. Refuse the whole swap rather than half-apply it -- a half-swap is
+    -- not a state the user asked for and cannot be undone by swapping back.
+    local function refusal(a, spec, fromId)
+        if spec == nil or not triggers.isAutomated(spec) then return nil end
+        if a.automatable then return nil end
+        return "action '" .. a.id .. "' is not automatable; it cannot take the "
+            .. tostring(spec.type) .. " trigger from '" .. fromId .. "'"
+    end
+    local why = refusal(aA, specB, aB.id) or refusal(aB, specA, aA.id)
+    if why then
+        -- Logged as well as returned: the Swift caller discards the result, so
+        -- without a line the refusal would be invisible on the path that has it.
+        adapter.log("swapTriggers refused: " .. why)
+        return false, why
+    end
 
     -- Drop both live bindings and write the swapped overrides (encode, or clear
     -- when the other side had no trigger at all).

@@ -68,5 +68,43 @@ return {
                 "no two features ship colliding default shortcuts"
                 .. (#clashes > 0 and (" -- " .. table.concat(clashes, "; ")) or ""))
         end
+
+        -- P-5: the scan above is only as good as `triggers.conflicts`, and that
+        -- compared modifier spellings LITERALLY. The seam does not: KeyModifier
+        -- maps command and cmd onto the same physical key, so both bound, one
+        -- press fired two actions, and this very guard shipped it green -- a
+        -- collision check blind to an alias is a check that certifies the
+        -- collision. Case folds for the same reason.
+        do
+            local base = { type = "hotkey", mods = { "cmd", "shift" }, key = "j" }
+            ok(triggers.conflicts(base, { type = "hotkey", mods = { "command", "shift" }, key = "j" }),
+                "long modifier aliases collide with their short names (P-5)")
+            ok(triggers.conflicts(base, { type = "hotkey", mods = { "CMD", "Shift" }, key = "J" }),
+                "modifier and key case fold too")
+            ok(triggers.conflicts({ type = "hotkey", mods = { "option", "control" }, key = "k" },
+                                  { type = "hotkey", mods = { "ctrl", "alt" }, key = "k" }),
+                "option/control fold to alt/ctrl, in either order")
+            -- The fold must not make UNRELATED combos equal -- an over-eager
+            -- canonicalizer would pass every assertion above and refuse every
+            -- legitimate second binding.
+            ok(not triggers.conflicts(base, { type = "hotkey", mods = { "command" }, key = "j" }),
+                "...and a DIFFERENT modifier set still does not collide")
+            ok(not triggers.conflicts(base, { type = "hotkey", mods = { "command", "shift" }, key = "k" }),
+                "...nor does a different key")
+
+            -- The fold has to reach the chord FOLLOW keys too, not just the
+            -- prefix: ChordCenter lowercases what it stores AND what it matches,
+            -- so two features off a shared prefix claiming "B" and "b" both bind
+            -- and one press fires both -- with the prefix folded and the follows
+            -- compared raw, this guard would call that pair distinct.
+            local chordB = { type = "chord", mods = { "cmd", "shift" }, key = "a", follows = { "B" } }
+            ok(triggers.conflicts(chordB,
+                { type = "chord", mods = { "command", "shift" }, key = "A", follows = { "b" } }),
+                "chord follow keys fold case as well as the prefix (P-5)")
+            ok(not triggers.conflicts(chordB,
+                { type = "chord", mods = { "cmd", "shift" }, key = "a", follows = { "c" } }),
+                "...and a genuinely different follow key still does not collide")
+        end
+
     end,
 }

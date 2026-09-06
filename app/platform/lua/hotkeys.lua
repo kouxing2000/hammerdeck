@@ -14,7 +14,15 @@ local MOD_PRIORITY = { "alt", "cmd", "ctrl", "shift" }
 
 -- Long aliases fold to their short names (triggers.validate blesses both, and
 -- the seam treats command+k and cmd+k as one combo -- so must this scan).
-local CANON_MOD = { command = "cmd", option = "alt", control = "ctrl" }
+--
+-- The ONE copy on the Lua side. It lives in this leaf because a leaf may not
+-- `require`, so every other consumer can reach down to it and none can be
+-- reached from here: `triggers.conflicts` (which spellings contend for a
+-- physical key) and the test fake's dispatch both read it. A second copy would
+-- eventually disagree, and a conflict check reading a stale map certifies the
+-- very collision it exists to catch.
+hotkeys.CANON_MOD = { command = "cmd", option = "alt", control = "ctrl" }
+local CANON_MOD = hotkeys.CANON_MOD
 
 function hotkeys.cycleModifier(spec)
     if not (spec and spec.type == "hotkey") then return nil end

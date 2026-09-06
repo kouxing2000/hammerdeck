@@ -203,6 +203,37 @@ return {
         ok(fires2 == of + 1, "after swap, other fires on ctrl+p (the probe's old key)")
         ok(fires == pf + 1, "probe no longer fires on ctrl+p")
 
+        -- P-4: swapTriggers must honour the same automatable policy setTrigger
+        -- enforces. "The combo SET is unchanged" is true, and says nothing about
+        -- whether each spec is LEGAL on its new action: an automated spec landing
+        -- on a context-dependent action is refused at LOAD, so that action falls
+        -- back to its DEFAULT trigger -- the combo the other side has just taken.
+        -- One press then fires both, and the schedule is gone.
+        do
+            package.loaded["features._swap_auto"] = {
+                api = 1, id = "swap_auto", name = "Swap Auto",
+                actions = { { id = "main", automatable = true,
+                              defaultTrigger = { type = "schedule", everyMin = 30 },
+                              run = function() end } },
+            }
+            registry.load("features._swap_auto")
+            registry.setEnabled("swap_auto", true)
+
+            local beforeProbe = fake.settings["hammerdeck.trigger.rebind_probe.main"]
+            local beforeAuto  = fake.settings["hammerdeck.trigger.swap_auto.main"]
+            local okSwap, whySwap =
+                registry.swapTriggers("swap_auto", "main", "rebind_probe", "main")
+            ok(okSwap == false and whySwap ~= nil,
+                "swapTriggers refuses a schedule landing on a non-automatable action (P-4)")
+            ok(fake.settings["hammerdeck.trigger.rebind_probe.main"] == beforeProbe
+                and fake.settings["hammerdeck.trigger.swap_auto.main"] == beforeAuto,
+                "...and writes NEITHER side -- a half-swap cannot be undone by swapping back")
+
+            registry.setEnabled("swap_auto", false)
+            registry.unregister("swap_auto")
+            package.loaded["features._swap_auto"] = nil
+        end
+
         registry.setEnabled("rebind_probe", false)
         registry.setEnabled("rebind_other", false)
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after trigger-rebind tests")

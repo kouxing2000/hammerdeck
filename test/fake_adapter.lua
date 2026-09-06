@@ -74,7 +74,11 @@ end
 -- Canonical short name for a modifier token ("Command" -> "cmd"), mirroring
 -- KeyModifier.canonical -- alias specs must match exactly as the real
 -- bridge's bitmask comparison does (command+k and cmd+k are one combo).
-local CANON_MOD = { command = "cmd", option = "alt", control = "ctrl" }
+--
+-- Read from the shared map rather than copied: a fake that folds differently
+-- from the platform makes the WHOLE suite lie about hotkey dispatch, which is
+-- how a collision check blind to an alias shipped green in the first place.
+local CANON_MOD = require("platform.hotkeys").CANON_MOD
 local function canonMod(m)
     m = tostring(m):lower()
     return CANON_MOD[m] or m

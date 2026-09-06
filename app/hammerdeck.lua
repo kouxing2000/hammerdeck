@@ -82,6 +82,20 @@ local okRules, errRules = pcall(function()
 end)
 if not okRules then adapter.log("rules engine boot FAILED: " .. tostring(errRules)) end
 
+-- Wire the rules engine into "Reload Features" / the MCP `reload` tool. This is
+-- the composition root: registry cannot require rules (rules reaches registry
+-- via `effects`), so the two are joined here, where both are already in hand.
+-- Without it a rule
+-- parked at boot stayed greyed until a relaunch, though the parking contract says
+-- the next load revives it.
+registry.setRulesReloadHooks(
+    function() rules.stopAll() end,
+    function()
+        rules.loadFromSettings()
+        rules.startAll()
+        return rules.count()
+    end)
+
 print("[hammerdeck] started; features=" .. #registry.all()
     .. ", rules=" .. rules.count())
 

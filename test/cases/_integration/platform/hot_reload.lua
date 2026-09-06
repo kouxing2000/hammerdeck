@@ -59,6 +59,51 @@ return {
         end
         ok(not stillHasProbe, "non-catalog features are dropped by reload")
 
+        -- P-7: reload must re-run the rules load. rules.lua's parking contract
+        -- says a parked rule "re-activates automatically once its target returns
+        -- (the next load re-validates it)" -- but reload()'s only caller for that
+        -- was boot, so a rule parked at startup stayed greyed after Reload
+        -- Features or the MCP `reload` tool until the app was relaunched.
+        --
+        -- registry cannot require rules (rules requires registry), so the wiring
+        -- is injected by the composition root; this drives the same seam
+        -- hammerdeck.lua does, because the defect was in the WIRING, not in
+        -- either module.
+        do
+            local rules = require("platform.rules")
+            registry.setRulesReloadHooks(
+                function() rules.stopAll() end,
+                function() rules.loadFromSettings(); rules.startAll(); return rules.count() end)
+
+            -- A rule aimed at a feature that is NOT in the catalog -> parked.
+            fake.settings["hammerdeck.rules"] = '[{"id":"p7","name":"revive me",'
+                .. '"on":{"type":"event","event":"wake"},'
+                .. '"effect":{"kind":"command","feature":"bing_daily","action":"refresh"}}]'
+            rules.loadFromSettings()
+            local parked = rules.describe()[1]
+            ok(parked and parked.unavailable == true,
+                "P-7: the rule parks while its target feature is absent")
+
+            -- The target appears -- a REAL on-disk feature added to the catalog,
+            -- which is what installing/fixing one looks like. A synthetic probe
+            -- cannot stand in here: reload() purges package.loaded and re-requires
+            -- from disk, so a seeded module would simply fail to load and the block
+            -- would pass for the wrong reason.
+            registry.loadCatalog({ "features.sleep_schedule", "features.break_reminder",
+                                   "features.window_switcher", "features.bing_daily" })
+
+            registry.reload()
+            local revived = rules.describe()[1]
+            ok(revived and revived.unavailable ~= true,
+                "P-7: reload re-validates the parked rule and it goes live (was "
+                .. tostring(revived and revived.reason) .. ")")
+
+            rules.stopAll()
+            rules.load({})
+            fake.settings["hammerdeck.rules"] = nil
+            registry.setRulesReloadHooks(nil, nil)
+        end
+
         registry.setEnabled("window_switcher", false)
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after hot-reload test")
 

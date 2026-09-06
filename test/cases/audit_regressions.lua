@@ -630,6 +630,86 @@ return {
             fake.settings["hammerdeck.rules"] = nil
         end
 
+        -- P-8 ------------------------------------------------------------------
+        -- parkReason blamed the target feature for EVERY remaining park with a
+        -- command effect, so a rule parked for an unrelated reason reported
+        -- "feature 'X' isn't available" while X sat there loaded and enabled --
+        -- sending the user to fix what was never broken, and leaving the real
+        -- cause with no voice. Here the real cause is the CONTEXT POLICY: an
+        -- automated trigger may not run a context-dependent action.
+        do
+            local rules = require("platform.rules")
+            fake.settings["hammerdeck.rules"] = nil
+            package.loaded["features._p8_probe"] = {
+                api = 1, id = "p8_probe", name = "P8 Probe",
+                actions = { { id = "main", run = function() end } },   -- NOT automatable
+            }
+            registry.load("features._p8_probe")
+            registry.setEnabled("p8_probe", true)
+
+            rules.load({
+                { id = "p8", name = "auto-fires a context-dependent action",
+                  on = { type = "schedule", everyMin = 5 },
+                  effect = { kind = "command", feature = "p8_probe", action = "main" } },
+            })
+            local row = rules.describe()[1]
+            ok(row and row.unavailable == true, "P-8: the rule parks (context policy)")
+            ok(row.reason:find("isn't available", 1, true) == nil,
+                "P-8: ...and does NOT blame a feature that is loaded and enabled (got "
+                .. tostring(row.reason) .. ")")
+            -- Not blaming the wrong thing is only half the row. Asserting the
+            -- ABSENCE of the bad string passes against any generic filler, so the
+            -- reason has to be held to naming the real cause -- and to arriving
+            -- clean, without the `rules.lua:NNN:` prefix `error()` prepends or the
+            -- rule id the row already displays beside it.
+            ok(row.reason:find("automatable", 1, true) ~= nil,
+                "P-8: ...and it NAMES the context policy that actually parked it (got "
+                .. tostring(row.reason) .. ")")
+            ok(row.reason:find("%.lua:%d+:") == nil and row.reason:find("^rule '") == nil,
+                "P-8: ...with no file:line or rule-id prefix leaking through (got "
+                .. tostring(row.reason) .. ")")
+
+            -- The genuine case still reports the feature, or the fix would be a
+            -- blanket silencing rather than an honest answer.
+            rules.load({
+                { id = "p8b", name = "targets a feature that is gone",
+                  on = { type = "event", event = "wake" },
+                  effect = { kind = "command", feature = "no_such_feature" } },
+            })
+            local gone = rules.describe()[1]
+            ok(gone and gone.reason:find("no_such_feature", 1, true) ~= nil,
+                "P-8: a target that really IS missing is still named (got "
+                .. tostring(gone and gone.reason) .. ")")
+
+            rules.load({})
+            fake.settings["hammerdeck.rules"] = nil
+            registry.setEnabled("p8_probe", false)
+            registry.unregister("p8_probe")
+            package.loaded["features._p8_probe"] = nil
+        end
+
+        -- P-9 ------------------------------------------------------------------
+        -- `enter and on.becomes or on.leaves` collapses to `on.leaves` whenever
+        -- `on.becomes` is boolean FALSE, so the read-back sentence describes the
+        -- OPPOSITE edge -- with the opposite value. Unreachable through validate
+        -- today (a state target must be a non-empty string), so the pure function
+        -- is driven directly: it is the half of the invariant that talks to the
+        -- user, and bindOne already spells its half out rather than rely on that.
+        do
+            local rules = require("platform.rules")
+            local sent = rules.sentence({
+                id = "p9",
+                on = { type = "state", signal = "frontmostApp",
+                       becomes = false, leaves = "Safari" },
+                effect = { kind = "notify", title = "HD" },
+            })
+            ok(type(sent) == "string" and sent ~= "",
+                "P-9: a boolean-false `becomes` still produces a sentence")
+            ok(sent:find("Safari", 1, true) == nil,
+                "P-9: ...and it does NOT fall through to the `leaves` value (got "
+                .. sent .. ")")
+        end
+
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
             "clean after the audit regression case")
     end,

@@ -26,6 +26,11 @@
 local triggers = require("platform.triggers")
 local effects  = require("platform.effects")
 local signals  = require("platform.signals")
+-- parkReason asks whether a command effect's target actually resolves. No new
+-- edge in the layer graph: effects.lua already requires registry, and registry
+-- requires nothing from here (only hammerdeck.lua requires rules), so this
+-- cannot close a cycle.
+local registry = require("platform.registry")
 local adapter  = require("platform.adapter")
 local json     = require("platform.json")
 local windows  = require("platform.windows")
@@ -127,7 +132,9 @@ local function parkedIndex(id)
 end
 
 -- A short, user-facing reason a rule is parked (shown greyed in the list).
-local function parkReason(spec)
+---@param spec table the rule that refused to load
+---@param err string|nil the message `validate` raised, if the caller caught one
+local function parkReason(spec, err)
     if type(spec) ~= "table" then return "rule is malformed" end
     -- An id already claimed by the copy that loaded first outranks every cause
     -- below: the rule cannot run under that id whatever else is wrong with it, and
@@ -144,13 +151,35 @@ local function parkReason(spec)
         and type(on.signal) == "string" and not signals.exists(on.signal) then
         return "signal '" .. on.signal .. "' isn't available"
     end
-    -- Otherwise a command effect almost always parks because its target feature was
-    -- renamed/removed/failed to load this boot (the dominant cause once the signal
-    -- is ruled out).
+    -- A command effect is the dominant cause once the signal is ruled out -- but
+    -- only when its target really is gone. ASK, don't assume: the old form blamed
+    -- the feature for EVERY remaining park with a command effect, so a rule parked
+    -- for an unrelated reason reported "feature 'X' isn't available" while X sat
+    -- there loaded and enabled. That sends the user to fix what was never broken,
+    -- and the actual cause is left with no voice at all.
     local e = spec.effect
     if type(e) == "table" and e.kind == "command"
         and type(e.feature) == "string" and #e.feature > 0 then
-        return "feature '" .. e.feature .. "' isn't available"
+        if not registry.isRegistered(e.feature) then
+            return "feature '" .. e.feature .. "' isn't available"
+        end
+        -- The feature is here but the action is not: a renamed action id, which
+        -- reads nothing like a missing feature and is fixed somewhere else.
+        if registry.actionLabel(e.feature, e.action) == nil then
+            return "feature '" .. e.feature .. "' has no action '"
+                .. tostring(e.action) .. "'"
+        end
+    end
+    -- Nothing structured matched. The refusal message from `validate` is the one
+    -- place the ACTUAL cause is known, and the commonest park lands exactly here
+    -- (an automated trigger meeting a non-automatable action) -- so surface it
+    -- rather than logging it and telling the user "unavailable", which names no
+    -- cause and suggests no fix. It sits BELOW the cases above because those are
+    -- worded for a reader; this one is worded for whoever wrote the rule.
+    if type(err) == "string" then
+        local msg = err:gsub("^.-:%d+:%s*", "")     -- Lua's file:line prefix
+        msg = msg:gsub("^rule '[^']*':%s*", "")     -- the id the row already shows
+        if #msg > 0 then return msg end
     end
     return "rule is currently unavailable"
 end
@@ -213,7 +242,7 @@ function rules.load(list)
             adapter.log("rule load PARKED [" .. tostring(who) .. "]: " .. tostring(err))
             if type(spec) == "table" then
                 parked[#parked + 1] = {
-                    spec = spec, reason = parkReason(spec),
+                    spec = spec, reason = parkReason(spec, err),
                     address = nextParkAddress(spec.id),
                 }
             end
@@ -712,7 +741,15 @@ function rules.sentence(spec)
     if on.type == "state" then
         local m = signals.meta(on.signal) or {}     -- already localized (signals.meta)
         local enter = on.becomes ~= nil
-        local value = enter and on.becomes or on.leaves
+        -- An explicit branch, for the same reason the verb pick below is one:
+        -- `enter and on.becomes or on.leaves` collapses to `on.leaves` whenever
+        -- `on.becomes` is boolean FALSE, so the sentence would describe the
+        -- opposite edge. Unreachable today (validate requires a non-empty string
+        -- target) -- and `bindOne` already spells the same branch out at :321
+        -- rather than rely on that, because it is the reachable half of one
+        -- invariant and this is the half that reads it back to the user.
+        local value
+        if enter then value = on.becomes else value = on.leaves end
         if value == nil or value == "" then return "" end
         -- The fallback verb is resolved UNCONDITIONALLY, not short-circuited behind
         -- `m.enterVerb or ...`. Every shipped signal declares its verbs, so a lazy `or`
