@@ -74,6 +74,7 @@ local function arrangerFor(ctx)
         if not f then return end
         if f.fullscreen then
             -- Exit fullscreen; the next key press applies normally.
+            ctx.log("focused window is fullscreen -- exiting fullscreen, nothing applied")
             ctx.window.setFullscreen(false)
             return
         end
@@ -109,6 +110,20 @@ local function arrangerFor(ctx)
         setFrame(nxt)
     end
 
+    -- The direction, LOCALIZED, for the no-screen alert. Interpolating the raw
+    -- token put an English word inside a translated sentence -- zh-Hans rendered
+    -- "left 方向没有屏幕". Spelled as four literal ctx.t calls rather than
+    -- `"dir." .. dir` so the i18n gate can see each key: it matches literal
+    -- defaults and skips a built one, which is how a leak stays invisible.
+    ---@param dir string
+    ---@return string
+    local function dirName(dir)
+        if dir == "left"  then return ctx.t("dir.left",  "left")  end
+        if dir == "right" then return ctx.t("dir.right", "right") end
+        if dir == "up"    then return ctx.t("dir.up",    "up")    end
+        return ctx.t("dir.down", "down")
+    end
+
     -- Move to another screen: size kept, position scaled per axis (clamped;
     -- shrunk only if larger than the target). dir = left|right|up|down|next.
     local MOVE_DIRS = { left = true, right = true, up = true, down = true, next = true }
@@ -119,6 +134,7 @@ local function arrangerFor(ctx)
         apply(function(f)
             local screens = ctx.screen.frames()
             if #screens < 2 then
+                ctx.log("move-screen " .. dir .. " refused -- only one screen")
                 ctx.alert(ctx.t("alert.oneScreen", "Only one screen"))
                 return nil
             end
@@ -146,7 +162,9 @@ local function arrangerFor(ctx)
                     end
                 end
                 if not best then
-                    ctx.alert(ctx.t("alert.noScreen", "No screen %s", dir))
+                    ctx.log("move-screen " .. dir .. " refused -- no screen lies that way ("
+                        .. #screens .. " connected)")
+                    ctx.alert(ctx.t("alert.noScreen", "No screen %s", dirName(dir)))
                     return nil
                 end
                 target = best.t
@@ -196,10 +214,12 @@ local function arrangerFor(ctx)
 
     function st.toggleMode()
         if st.mode and st.mode.isActive() then
+            ctx.log("window mode off")
             st.mode.stop()
             st.mode = nil
             return
         end
+        ctx.log("window mode on")
         st.mode = ctx.modal {
             name = "Window Mode",
             -- A spatial cheat-sheet: the 3x3 grid mirrors the screen, so each
@@ -228,7 +248,7 @@ local function arrangerFor(ctx)
                 },
                 footer = ctx.t("hud.footer", "esc  exit"),
             },
-            onExit = function() st.mode = nil end,
+            onExit = function() ctx.log("window mode exited"); st.mode = nil end,
             -- repeats=true on the INCREMENTAL keys (nudge/resize/inflate) so
             -- holding one keeps stepping; snaps/corners/screen-moves are
             -- absolute, so repeating them is a no-op and they stay single-shot.

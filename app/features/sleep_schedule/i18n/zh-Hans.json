@@ -12,5 +12,10 @@
   "option.warn2Min.label": "倒计时浮层 (提前分钟数)",
   "option.snoozeMin.label": "小睡时长 (分钟)",
   "option.hardCapAt.label": "小睡硬性上限 (HH:MM)",
-  "option.weekendShiftMin.label": "周末时移 (分钟)"
+  "option.weekendShiftMin.label": "周末时移 (分钟)",
+
+  "schedule.warn1.label": "首次警告",
+  "schedule.warn2.label": "倒计时浮层",
+  "schedule.sleep.label": "强制系统睡眠",
+  "schedule.hardCap.label": "小睡硬性上限"
 }

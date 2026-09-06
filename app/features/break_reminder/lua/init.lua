@@ -36,9 +36,12 @@ return {
     -- reschedules the real break.
     schedule = function(ctx)
         return {
-            { label = "Take a break", everyMin = ctx.opt("workMin"), optionKey = "workMin" },
-            { label = "Pauses after idle", note = "paused after "
-                .. ctx.opt("idleThresholdMin") .. "m idle", optionKey = "idleThresholdMin" },
+            { label = ctx.t("schedule.break.label", "Take a break"),
+              everyMin = ctx.opt("workMin"), optionKey = "workMin" },
+            { label = ctx.t("schedule.idlePause.label", "Pauses after idle"),
+              note = ctx.t("schedule.idlePause.note", "paused after %sm idle",
+                  ctx.opt("idleThresholdMin")),
+              optionKey = "idleThresholdMin" },
         }
     end,
 

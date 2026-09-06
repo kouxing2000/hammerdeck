@@ -17,5 +17,9 @@
 
   "option.workMin.label": "工作间隔 (分钟)",
   "option.idleThresholdMin.label": "空闲暂停阈值 (分钟)",
-  "option.dialogIdleDismissMin.label": "对话框期间空闲计为休息 (分钟)"
+  "option.dialogIdleDismissMin.label": "对话框期间空闲计为休息 (分钟)",
+
+  "schedule.break.label": "该休息了",
+  "schedule.idlePause.label": "空闲时暂停",
+  "schedule.idlePause.note": "空闲 %s 分钟后暂停"
 }

@@ -152,9 +152,10 @@ return {
     -- + rebindable on its own). This descriptor surfaces the OTHER thing the
     -- service does on its own: re-asserting the wallpaper when a display is
     -- plugged in / rearranged -- an event the Timeline's events lane shows.
-    schedule = function()
+    schedule = function(ctx)
         return {
-            { label = "Re-apply on display change", event = "screenChanged" },
+            { label = ctx.t("schedule.reapply.label", "Re-apply on display change"),
+              event = "screenChanged" },
         }
     end,
 

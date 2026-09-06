@@ -6,5 +6,7 @@
 
   "option.applyTo.label": "应用壁纸到",
   "option.applyTo.values.all": "所有显示器",
-  "option.applyTo.values.primary": "仅主显示器"
+  "option.applyTo.values.primary": "仅主显示器",
+
+  "schedule.reapply.label": "显示器变化时重新应用"
 }

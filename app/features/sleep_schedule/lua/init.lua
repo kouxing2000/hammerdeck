@@ -65,10 +65,14 @@ return {
         local sleepSecs = timeToSecs(ctx.opt("sleepAt"))
         local function before(min) return formatTime((sleepSecs - min * 60) % 86400) end
         return {
-            { label = "First warning",     at = before(ctx.opt("warn1Min")) },
-            { label = "Countdown overlay",  at = before(ctx.opt("warn2Min")) },
-            { label = "Force system sleep", at = ctx.opt("sleepAt"),  optionKey = "sleepAt" },
-            { label = "Snooze hard cap",    at = ctx.opt("hardCapAt"), optionKey = "hardCapAt" },
+            { label = ctx.t("schedule.warn1.label", "First warning"),
+              at = before(ctx.opt("warn1Min")) },
+            { label = ctx.t("schedule.warn2.label", "Countdown overlay"),
+              at = before(ctx.opt("warn2Min")) },
+            { label = ctx.t("schedule.sleep.label", "Force system sleep"),
+              at = ctx.opt("sleepAt"),  optionKey = "sleepAt" },
+            { label = ctx.t("schedule.hardCap.label", "Snooze hard cap"),
+              at = ctx.opt("hardCapAt"), optionKey = "hardCapAt" },
         }
     end,
 

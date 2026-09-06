@@ -1,7 +1,7 @@
 {
   "name": "Pointer Follows Moved Window",
   "version": "1.0.0",
-  "description": "Comfort: when Snap, Window Mode, Grid or Deck repositions the focused window, the pointer rides along, keeping its place inside it.",
+  "description": "Comfort: when Snap, Window Mode or Grid repositions the focused window, the pointer rides along, keeping its place inside it. Multi-window layouts -- Deck, Fan, and rules -- deliberately leave the pointer where it is.",
   "category": "windows",
   "order": 7,
   "icon": "cursorarrow.motionlines",

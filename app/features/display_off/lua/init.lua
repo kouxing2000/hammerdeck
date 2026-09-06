@@ -51,8 +51,10 @@ return {
     -- it in the Events/conditions lane rather than on the 24h ruler).
     schedule = function(ctx)
         return {
-            { label = "Turn off display", note = "after " .. ctx.opt("idleThresholdMin")
-                .. "m idle", optionKey = "idleThresholdMin" },
+            { label = ctx.t("schedule.displayOff.label", "Turn off display"),
+              note = ctx.t("schedule.displayOff.note", "after %sm idle",
+                  ctx.opt("idleThresholdMin")),
+              optionKey = "idleThresholdMin" },
         }
     end,
 

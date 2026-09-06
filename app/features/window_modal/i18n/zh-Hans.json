@@ -18,5 +18,10 @@
   "hud.footer": "esc  退出",
 
   "alert.oneScreen": "只有一个屏幕",
-  "alert.noScreen": "%s 方向没有屏幕"
+  "alert.noScreen": "%s 方向没有屏幕",
+
+  "dir.left": "左",
+  "dir.right": "右",
+  "dir.up": "上",
+  "dir.down": "下"
 }
