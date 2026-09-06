@@ -201,8 +201,15 @@ function adapter.getSetting(key, default)
     return v
 end
 
+-- Per-key WRITE COUNT, not just the stored value. A hot loop that persists the
+-- same counter on every tick is invisible to a value assertion -- the value it
+-- leaves behind is correct -- so the only way to fence "this must not write per
+-- tick" is to count the writes.
+fake.settingWrites = {}
+
 function adapter.setSetting(key, value)
     fake.settings[key] = value
+    fake.settingWrites[key] = (fake.settingWrites[key] or 0) + 1
 end
 
 -- System shortcuts the editor warns against; tests can populate fake.systemHotkeys.
@@ -685,7 +692,15 @@ end
 
 -- Windows / apps ---------------------------------------------------------------
 
+-- How many times the window list was enumerated. On the real host each call is a
+-- full AX walk of every app (the seam's own comment calls it "dear"), so the
+-- COUNT is the thing worth fencing -- a pass that lists three times returns
+-- exactly what a pass that lists once returns, and no value assertion can tell
+-- them apart.
+fake.listCalls = 0
+
 function adapter.listWindows()
+    fake.listCalls = fake.listCalls + 1
     return fake.windows
 end
 
@@ -1636,6 +1651,8 @@ function fake.reset()
     fake.windowFrameSets = {}
     fake.fullscreenSets  = {}
     fake.raises        = {}
+    fake.listCalls     = 0
+    fake.settingWrites = {}
     fake.axPrompts     = 0
     fake.axSettingsOpens = 0
     fake.activatedApps = {}
