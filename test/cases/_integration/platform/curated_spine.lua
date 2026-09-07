@@ -14,10 +14,19 @@
 --                     is not a stable marker of curation on its own.
 --
 -- Keeping them identical is what this guard exists for. Turn everything off and
--- the Homepage offers "Enable Essentials", which seeds exactly the `recommended`
--- set -- so a feature that ships ON without being `recommended` is one the user
--- cannot get back, and a feature `recommended` without shipping on is offered as
--- an Essential the install never had. Nothing else notices either case.
+-- the Homepage's get-started card offers "Enable Essentials", which seeds exactly
+-- the `recommended` set -- so a feature that ships ON without being `recommended`
+-- is one the user cannot get back, and a feature `recommended` without shipping
+-- on is offered as an Essential the install never had. Nothing else notices
+-- either case.
+--
+-- That claim rests on the empty-deck state being REACHABLE, which is why it is
+-- ranked first in `getStartedCard` rather than behind the Accessibility ask: the
+-- spine features needing the grant are the ones a user turns off when they seem
+-- to do nothing, so ungranted-and-empty is the likeliest route into it, and
+-- `enableEssentials()` has no other caller. This guard cannot see that ordering
+-- (it reads feature.json off disk and never renders a card) -- if the card is
+-- ever re-ranked, the sentence above stops being true and nothing here fails.
 --
 -- This guard does NOT forbid the two sets differing forever. It forbids them
 -- differing SILENTLY: a defensible reason exists (nine features seizing nine

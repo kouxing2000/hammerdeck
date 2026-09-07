@@ -57,12 +57,14 @@ end
 -- and contract as a built-in feature; loads are quarantined like the catalog's.
 registry.loadExtensions()
 
--- First run: start BLANK -- nothing enabled. A new user lands in the Feature
--- Tour (host-side onboarding: a large auto-playing preview per feature, "Add"
--- to enable) instead of being handed all 19 features at once. We still flip the
--- `hammerdeck.firstRun.done` flag here so the host knows it's first launch (it
--- reads the flag BEFORE this boot runs, to decide whether to greet with the
--- tour). HAMMERDECK_NO_FIRSTRUN=1 skips the flip (CI / smoke tests).
+-- First run: the CURATED SPINE is already on -- the features carrying
+-- `defaultEnabled` (the window suite plus the trust layer) bind here like any
+-- other enabled feature, so a new user lands with the thing they installed for
+-- already working rather than with a blank deck. Everything outside the spine
+-- ships off and is opted into per feature. We flip the `hammerdeck.firstRun.done`
+-- flag here so the host knows it's first launch (it reads the flag BEFORE this
+-- boot runs, to decide whether to greet with the Homepage and its get-started
+-- card). HAMMERDECK_NO_FIRSTRUN=1 skips the flip (CI / smoke tests).
 if os.getenv("HAMMERDECK_NO_FIRSTRUN") == nil
     and adapter.getSetting("hammerdeck.firstRun.done", false) ~= true then
     adapter.setSetting("hammerdeck.firstRun.done", true)

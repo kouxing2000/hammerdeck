@@ -54,6 +54,28 @@ func shouldGreetWithHomepage(noFirstRunEnv: String?, firstRunDone: Bool) -> Bool
 /// turn it off from the menu to reclaim the clean menubar-only feel.
 ///
 /// `.regular` = Dock icon present; `.accessory` = menubar-only. Switchable live.
+/// The first-run try-it step's dismissal, alongside the `firstRun.done` flag the
+/// Lua boot writes. Its own enum for the same reason the preferences below are:
+/// the key is named once, and the upgrade seeding lives next to the flag it reads.
+enum FirstRunPreference {
+    static let ackKey = "hammerdeck.firstRun.acknowledged"
+    static let doneKey = "hammerdeck.firstRun.done"
+
+    /// An EXISTING user has no first run left to guide, so seed the try-it step as
+    /// already dismissed rather than injecting a first-run card at the top of
+    /// their Dashboard on upgrade. Keyed off `firstRun.done`, which the Lua boot
+    /// set on their actual first launch, possibly versions ago.
+    ///
+    /// Must run BEFORE `bootLua`, which sets `firstRun.done` for a genuinely new
+    /// user -- seeding after it would mark every new install as acknowledged and
+    /// silently delete the demo moment for everyone.
+    static func seedIfUpgrading() {
+        let d = UserDefaults.standard
+        guard d.object(forKey: ackKey) == nil, d.bool(forKey: doneKey) else { return }
+        d.set(true, forKey: ackKey)
+    }
+}
+
 enum DockPreference {
     static let key = "hammerdeck.showInDock"
 
@@ -376,7 +398,10 @@ public func hammerdeckMain() {
     // user with the Homepage (onboarding); later launches stay quiet.
     let isFirstRun = shouldGreetWithHomepage(
         noFirstRunEnv: ProcessInfo.processInfo.environment["HAMMERDECK_NO_FIRSTRUN"],
-        firstRunDone: UserDefaults.standard.bool(forKey: "hammerdeck.firstRun.done"))
+        firstRunDone: UserDefaults.standard.bool(forKey: FirstRunPreference.doneKey))
+    // Same window, and for the same reason: bootLua sets `firstRun.done`, so this
+    // must read it first or every new install looks like an upgrade.
+    FirstRunPreference.seedIfUpgrading()
 
     do {
         try bootLua(lua, luaDir: defaultLuaDir())
@@ -427,13 +452,14 @@ public func hammerdeckMain() {
     // icon (when shown) reopens the Homepage -- the point of having the icon.
     app.delegate = statusBar
 
-    // First launch: open the Homepage with the Feature Tour so a new user lands
-    // on a live preview of "here's what Hammerdeck can do" and adds what they
-    // want -- not a bare menubar icon, and not all 19 features pre-enabled. Every
-    // later launch stays quiet (it's "Home…" in the menu) -- a login-item menubar
-    // app must not throw a window up on every boot.
+    // First launch: open the Homepage, not a bare menubar icon. The Dashboard's
+    // get-started card carries the golden path from there -- the Accessibility
+    // ask with its why, then the demo moment on the user's own windows -- and the
+    // Feature Tour is reached from it rather than thrown up first. Every later
+    // launch stays quiet (it's "Home…" in the menu): a login-item menubar app
+    // must not throw a window up on every boot.
     if isFirstRun {
-        homepageWindow.presentTour()
+        homepageWindow.show(.home)
     }
 
     // Debug-only: a file-polled Lua control channel for visual verification

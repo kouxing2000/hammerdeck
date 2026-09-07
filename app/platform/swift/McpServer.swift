@@ -358,7 +358,9 @@ final class McpServer: ObservableObject {
             tool("set_enabled",
                  "Enable or disable one feature. run_action refuses a disabled feature, so "
                  + "enable the extension you just wrote before test-firing it. Enabling a "
-                 + "SERVICE runs its start(ctx).",
+                 + "SERVICE runs its start(ctx). A feature needing the Accessibility grant "
+                 + "still enables; the result carries a `warning` when the grant is missing, "
+                 + "and its actions will onboard the grant instead of running.",
                  ["feature_id": ["type": "string"],
                   "enabled": ["type": "boolean", "description": "true to enable"]],
                  required: ["feature_id", "enabled"]),
@@ -502,31 +504,38 @@ final class McpServer: ObservableObject {
                 let why = row["error"] as? String ?? "it failed to load"
                 return toolFailure("\(id) cannot be enabled -- \(why). Fix it and reload.")
             }
-            // The Settings toggle refuses this same case (SettingsStore.
-            // requestSetEnabled) because a feature that needs Accessibility and
-            // does not have it sits "on" while doing nothing. Refuse here too --
-            // but WITHOUT requestSetEnabled's grant flow: that opens System
-            // Settings, and a socket call must not move the user's windows.
-            if on,
-               (row["requires"] as? [String])?.contains("accessibility") == true,
-               // Fail CLOSED when there is no store to ask: refusing an enable we
-               // cannot verify beats reporting success for a feature that will
-               // sit on and do nothing. `store? ... == false` did the opposite,
-               // since nil == false is false.
-               !(store?.accessibilityTrusted() ?? false) {
-                return toolFailure("\(id) requires the Accessibility grant, which this app does "
-                    + "not have -- ask the user to grant it. Enabling it now would leave the "
-                    + "feature on and inert.")
-            }
+            // A missing Accessibility grant WARNS, it does not refuse. Enabling is
+            // one policy across every path (Settings toggle, Essentials button,
+            // `defaultEnabled` at boot), and the grant is onboarded lazily at first
+            // use -- so refusing only here would report failure for the same call
+            // that succeeds in the UI. The agent still needs to know, because its
+            // next move is `run_action` and the inertness would look like a bug in
+            // the feature; it goes in the RESULT rather than as an error.
+            // Fail LOUD when there is no store to ask: `store? ... == false` reads
+            // nil as granted, so spell the nil case out as ungranted.
+            let axMissing = on
+                && (row["requires"] as? [String])?.contains("accessibility") == true
+                && !(store?.accessibilityTrusted() ?? false)
             _ = try registryCall("setEnabled", [.string(id), .bool(on)], results: 0)
             store?.refresh()   // the Settings toggle and menubar must not lag this
             // Enabling a SERVICE runs start(ctx), and a throw there is quarantined
             // into startFailures -- without this the tool reports a clean enable
             // for a feature that is not actually running. Only on the enable path:
             // a stale entry must not make a disable look like a failure.
+            // The AX note rides BOTH exits. An AX-requiring SERVICE on an
+            // ungranted machine is the likeliest thing to throw in start(ctx), so
+            // reporting only the throw would hand the agent the symptom with its
+            // cause stripped -- the one case where the note is worth most.
+            let axNote = axMissing
+                ? " \(id) also requires the Accessibility grant, which this app does not have; "
+                + "its actions will onboard the grant instead of running until the user grants it."
+                : ""
             if on, let why = ((try registryFirst("failures") as? [String: Any])?["start"]
                                 as? [String: Any])?[id] as? String {
-                return toolFailure("enabled \(id), but it failed to start: \(why)")
+                return toolFailure("enabled \(id), but it failed to start: \(why).\(axNote)")
+            }
+            if axMissing {
+                return try toolResult(["id": id, "enabled": on, "warning": String(axNote.dropFirst())])
             }
             return try toolResult(["id": id, "enabled": on])
         case "read_log":

@@ -250,11 +250,11 @@ final class McpServerTests: XCTestCase {
     // sequence rather than asserting the flag, because the flag was never the
     // point.
     func testSetEnabledUnblocksRunAction() {
-        // count_down deliberately: it declares no `requires`, so this test does
-        // not depend on whether THIS machine has granted Accessibility. Most of
-        // the catalog does require it, and the tool refuses those without the
-        // grant -- picking one of them would make the test pass here and fail on
-        // CI, where nothing is granted.
+        // count_down deliberately: it declares no `requires`, so the result has
+        // no `warning` key and the assertions below stay identical on a granted
+        // machine and on CI, where nothing is granted. Enabling is one policy --
+        // an AX-requiring feature enables too -- but its result carries the extra
+        // key, which is a second shape this test has no reason to straddle.
         let id = "count_down"
         func enabled() -> Bool {
             host.store.features.first { $0.id == id }?.enabled == true
@@ -273,12 +273,12 @@ final class McpServerTests: XCTestCase {
         XCTAssertTrue(enabled(), "the tool must move the SAME state Settings reads")
     }
 
-    // set_enabled's Accessibility refusal reads `requires` straight off the
-    // describe row. The refusal BRANCH cannot be asserted here -- it depends on
+    // set_enabled's Accessibility WARNING reads `requires` straight off the
+    // describe row. The warning BRANCH cannot be asserted here -- it depends on
     // whether this machine has granted Accessibility -- so what must be pinned
-    // is the read: if that key ever stopped decoding as [String], the guard
-    // would silently never fire and the tool would go back to enabling features
-    // into an inert state.
+    // is the read: if that key ever stopped decoding as [String], the warning
+    // would silently never fire and an agent would be told nothing about why a
+    // feature it just enabled does nothing when fired.
     func testDescribeRowCarriesRequiresAsStrings() {
         let (isError, value) = toolJSON("describe_feature",
                                         args: #"{"feature_id":"window_switcher"}"#)

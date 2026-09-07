@@ -79,8 +79,9 @@ enum HomeDestination: Hashable, Identifiable {
 @MainActor
 final class HomeNav: ObservableObject {
     @Published var destination: HomeDestination = .home
-    /// Drives the first-run (and replayable) Feature Tour sheet. Set by the host
-    /// on first launch, and by the Dashboard's "Take the tour" button.
+    /// Drives the opt-in Feature Tour sheet: the Dashboard's "Take the tour"
+    /// button, and the debug control channel via StatusBar.presentTour. NOT first
+    /// launch, which lands on the Dashboard so the grant and the demo come first.
     @Published var showTour = false
 }
 
@@ -224,7 +225,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                emptyStateCard
+                getStartedCard
                 tipCard
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                     rightNowCard
@@ -253,14 +254,31 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: Empty-state hero (blank-start safety net)
+    // MARK: Get-started hero (the first-run golden path, and the blank-start net)
 
-    /// Shown only when nothing is enabled -- which a fresh install is NOT: the
-    /// curated spine carries `defaultEnabled`, so a new user lands with the window
-    /// suite already on. This is the recovery path for a deck the user emptied
-    /// themselves: one click to seed the Essentials back, or jump into the Tour,
-    /// so an empty deck is a starting line rather than a dead end.
-    @ViewBuilder private var emptyStateCard: some View {
+    /// The one card a new user must read, in three states, first match wins.
+    /// Pinned above every other Dashboard card because on a fresh install the
+    /// others are at their least interesting ("Nothing scheduled soon").
+    ///
+    /// 1. **Empty deck** -- the recovery path, and FIRST because it is the
+    ///    narrowest. Ungranted-and-empty is not a corner: the seven spine features
+    ///    that need Accessibility are exactly the ones a user turns off because
+    ///    they appear to do nothing, and `enableEssentials()` has no other caller,
+    ///    so ranking the grant above this would gate the only way back from an
+    ///    empty deck behind the permission being declined. Clicking Enable
+    ///    Essentials refills the deck, and the very next render falls through to
+    ///    the grant below -- the two arrive in sequence rather than competing.
+    /// 2. **Ungranted** -- the up-front Accessibility ask WITH the why. Most of
+    ///    the curated spine needs it, and one of them (Pointer Follows) is a pure
+    ///    service with no trigger, so nothing the user could press would ever
+    ///    onboard it. This is the only surface that can.
+    /// 3. **Granted, unacknowledged** -- the demo moment: the deck hotkey, so the
+    ///    first thing a stranger does is watch their OWN windows move.
+    ///
+    /// State 1 was the whole card until the spine started shipping enabled, which
+    /// made `enabledCount == 0` unreachable on a fresh install and left the
+    /// surface stranded -- it is a state here, not a separate card.
+    @ViewBuilder private var getStartedCard: some View {
         let enabledCount = store.features.filter { $0.enabled }.count
         if enabledCount == 0 {
             let essentials = store.features.filter { $0.recommended && !$0.failed }
@@ -281,8 +299,95 @@ struct DashboardView: View {
                 }
                 .padding(.top, 4)
             }
+        } else if !store.axTrusted {
+            DashCard(title: Strings.t("home.get_started", default: "Get started"),
+                     icon: "hand.raised.fill", tint: .accentColor) {
+                Text(String(format: Strings.t("home.ax_why",
+                    default: "%@ moves your windows from the keyboard. macOS asks for one permission before any app may do that -- grant it once and the window features that shipped switched on start working."),
+                    AppInfo.displayName))
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button { store.promptAccessibility() } label: {
+                        Label(Strings.t("home.ax_grant", default: "Grant Accessibility"),
+                              systemImage: "lock.open.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button { startTour() } label: {
+                        Label(Strings.t("home.take_tour", default: "Take the tour"),
+                              systemImage: "play.fill")
+                    }
+                    Spacer()
+                }
+                .padding(.top, 4)
+            }
+        } else if !firstRunAcknowledged, let (name, glyph) = deckDemoShortcut {
+            DashCard(title: Strings.t("home.try_it", default: "Try it now"),
+                     icon: "sparkles", tint: .accentColor) {
+                // The glyph comes from the LIVE catalog, never a literal: the user
+                // may have rebound it, and a wrong shortcut costs most in the one
+                // place it is the only instruction on screen.
+                Text(String(format: Strings.t("home.try_deck",
+                    default: "Press %1$@ with a few windows open -- %2$@ tiles them, and the one you focus becomes a large hero with the rest peeking behind."),
+                    glyph, name))
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button { acknowledgeFirstRun() } label: {
+                        Label(Strings.t("home.got_it", default: "Got it"),
+                              systemImage: "checkmark")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button { acknowledgeFirstRun(); startTour() } label: {
+                        Label(Strings.t("home.browse_catalog", default: "Browse the catalog"),
+                              systemImage: "play.fill")
+                    }
+                    Spacer()
+                }
+                .padding(.top, 4)
+            }
         }
     }
+
+    /// The demo feature's localized name and its CURRENT shortcut glyph, or nil
+    /// when it is disabled, failed, or bound to nothing a user can press -- state
+    /// 3 collapses rather than printing an instruction that cannot work.
+    ///
+    /// The ACTION is looked up by id, never positionally: this glyph is the only
+    /// instruction on screen at that moment, and `actions.first` would silently
+    /// print a different action's shortcut the day one is added ahead of it.
+    /// Static and pure so it is testable off a plain feature list, like
+    /// `tipFeature` / `upcoming` / `relative` in this same struct.
+    static func demoShortcut(_ features: [FeatureInfo]) -> (name: String, glyph: String)? {
+        guard let f = features.first(where: { $0.id == demoFeatureId }),
+              f.enabled, !f.failed,
+              let a = f.actions.first(where: { $0.id == demoActionId }),
+              let t = a.trigger, t.type == "hotkey" || t.type == "chord"
+        else { return nil }
+        let glyph = shortcutGlyph(t)
+        return glyph.isEmpty ? nil : (f.name, glyph)
+    }
+
+    private var deckDemoShortcut: (name: String, glyph: String)? {
+        Self.demoShortcut(store.features)
+    }
+
+    /// window_deck is the demo because it is the loudest: it moves every window on
+    /// the screen at once, so the wow moment needs no explaining. Its `toggle`
+    /// action is the one bound to the hotkey the card names.
+    static let demoFeatureId = "window_deck"
+    static let demoActionId = "toggle"
+
+    /// Whether the user has dismissed the try-it step. `@AppStorage`, so the view
+    /// declares its dependency on the default rather than reading it through a
+    /// computed property and repainting via an unrelated `store.refresh()` --
+    /// which redrew by accident of a `@Published` write, and did nothing at all on
+    /// the path where `refresh()` early-returns on a failed catalog read.
+    ///
+    /// Boot SEEDS this true for anyone whose first run already happened
+    /// (`FirstRunPreference.seedIfUpgrading`), so an existing user does not get a
+    /// first-run card injected at the top of their Dashboard on upgrade.
+    @AppStorage(FirstRunPreference.ackKey) private var firstRunAcknowledged = false
+
+    private func acknowledgeFirstRun() { firstRunAcknowledged = true }
 
     // MARK: Tip of the day
 

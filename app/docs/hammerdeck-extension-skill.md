@@ -242,9 +242,13 @@ has already done step 0.)
    rewrite the call. Fix all of it before handing the extension over; `reload`
    proves it LOADS, this proves it declared itself honestly.
 6. `set_enabled` — enable it, so it can be test-fired. Enabling a SERVICE runs
-   its `start(ctx)`, and a feature needing the Accessibility grant is refused
-   rather than left on and inert — the tool says so and you ask the user to grant
-   it. Disable again when you are done if the user had it off.
+   its `start(ctx)`. A feature needing the Accessibility grant still enables —
+   enabling is one policy everywhere, and the grant is onboarded at first use —
+   but the result carries a `warning` when the grant is missing. Read it: the
+   feature is on and bound, and its actions will onboard the grant instead of
+   running, so a `run_action` that seems to do nothing is the missing permission
+   rather than a bug in your extension. Ask the user to grant it. Disable again
+   when you are done if the user had it off.
 7. `run_action` — test-fire an enabled feature's action.
 8. `read_log` — check your `ctx.log` traces and any fire errors.
 9. `list_features` / `describe_feature` — verify how the catalog sees it

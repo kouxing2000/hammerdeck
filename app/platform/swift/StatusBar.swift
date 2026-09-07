@@ -528,8 +528,14 @@ final class HomepageWindow {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// First-run onboarding: open the window on the Gallery (so dismissing the
-    /// tour reveals whatever the user added) with the Feature Tour sheet up.
+    /// Open the window on the Gallery (so dismissing the tour reveals whatever the
+    /// user added) with the Feature Tour sheet up.
+    ///
+    /// Only the debug control channel calls this now -- first run lands on the
+    /// Dashboard so the grant and the demo come first, and the Dashboard's own
+    /// "Take the tour" raises the sheet in place (it is already inside the window,
+    /// so it has no window to open). Kept because the visual-check scripts drive
+    /// the tour through it, and it is the one path that also switches the tab.
     func presentTour() {
         show(.features)
         nav.showTour = true

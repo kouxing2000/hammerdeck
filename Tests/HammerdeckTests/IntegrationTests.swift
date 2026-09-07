@@ -670,6 +670,84 @@ final class IntegrationTests: XCTestCase {
                        "editing the key clears the validated flag")
     }
 
+    /// Every feature shipping `defaultEnabled` survives a UI-driven off/on round
+    /// trip -- the altitude the defect lived at, which is the WIRING between the
+    /// boot enable path and the UI one, not either path alone.
+    ///
+    /// They used to disagree: `registry.isEnabled` honors `defaultEnabled` without
+    /// consulting `requires`, while `requestSetEnabled` refused to enable anything
+    /// declaring `accessibility` without the grant. Seven of the nine spine
+    /// features declare it, so on an ungranted machine a user could not switch back
+    /// on what had shipped on sixty seconds earlier -- and the "Enable Essentials"
+    /// button, which calls `registry.setEnabled` directly, turned on the very same
+    /// seven the Toggle beside it rejected.
+    ///
+    /// The grant is STUBBED FALSE at the seam for the duration, because the refusal
+    /// this fences sat behind `!accessibilityTrusted()` -- on a machine that has the
+    /// grant the branch is unreachable and the round trip passes with the bug fully
+    /// present. Measured: reintroducing the refusal left this green until the stub
+    /// existed. `accessibilityTrusted()` reads `platform.adapter.axTrusted` through
+    /// the seam on every call, so replacing that function is the whole injection.
+    func testUIEnableNeverRefusesWhatShipsEnabled() {
+        // The onboarding TRIO, not just the read: an ungranted enable calls
+        // promptAccessibility, which shows Apple's system dialog and, three seconds
+        // later, opens System Settings. The stubbed axOpenSettings RECORDS that it
+        // ran, because the delayed block outlives the loop and the restore below
+        // must not land before it -- otherwise the real one fires and yanks System
+        // Settings open mid-suite on an ungranted machine, silently and only there.
+        eval("""
+        local a = package.loaded["platform.adapter"]
+        a.__real = { axTrusted = a.axTrusted, axPrompt = a.axPrompt,
+                     axOpenSettings = a.axOpenSettings, notify = a.notify }
+        a.__opened        = false
+        a.axTrusted       = function() return false end
+        a.axPrompt        = function() return false end
+        a.axOpenSettings  = function() a.__opened = true; return true end
+        a.notify          = function() return true end
+        return true
+        """)
+        defer {
+            // Wait on the LANDMARK, not on a budget -- this file bans the fixed
+            // sleep it replaces (see the note above waitUntil): the margin there
+            // was ~0.45s against a 3s timer, and losing the race left no trace.
+            let drained = waitUntil(10) {
+                eval("return package.loaded[\"platform.adapter\"].__opened") as? Bool == true
+            }
+            XCTAssertTrue(drained,
+                          "the delayed axOpenSettings must land on the STUB -- if it did not "
+                          + "run before this restore, the real one opens System Settings later")
+            eval("""
+            local a = package.loaded["platform.adapter"]
+            for k, v in pairs(a.__real) do a[k] = v end
+            a.__real, a.__opened = nil, nil
+            return true
+            """)
+        }
+        XCTAssertFalse(host.store.accessibilityTrusted(),
+                       "the stub must actually take -- otherwise this test is blind again")
+
+        // `recommended` rather than `defaultEnabled`, which FeatureInfo does not
+        // carry -- the two name the same set, and curated_spine.lua fails the build
+        // by name if they ever diverge.
+        let shipped = host.store.features.filter { $0.recommended && !$0.failed }
+        XCTAssertGreaterThanOrEqual(shipped.count, 5,
+                                    "the curated spine should be non-trivial (see curated_spine.lua)")
+        XCTAssertTrue(shipped.contains { $0.requires.contains("accessibility") },
+                      "this test is only meaningful while some shipped-on feature needs the grant")
+        for f in shipped {
+            // The observed STATE, not a return value: a reintroduced refusal skips
+            // setEnabled, so this is what catches it. (An earlier draft also
+            // asserted the Bool, which was a literal `true` -- a tautology that
+            // added no detection and made the signature look load-bearing.)
+            host.store.requestSetEnabled(f.id, false)
+            XCTAssertEqual(eval("return require('platform.registry').isEnabled('\(f.id)')") as? Bool,
+                           false, "the UI path must not refuse disabling \(f.id)")
+            host.store.requestSetEnabled(f.id, true)
+            XCTAssertEqual(eval("return require('platform.registry').isEnabled('\(f.id)')") as? Bool,
+                           true, "the UI path must not refuse re-enabling \(f.id), which shipped enabled")
+        }
+    }
+
     func testEnableBindsARealCarbonHotkey() {
         // Measured as a DELTA against whatever the catalog already has bound: the
         // features carrying `defaultEnabled` are bound before the body starts, so
@@ -941,6 +1019,49 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(DashboardView.relative(0), "now")
         XCTAssertEqual(DashboardView.relative(45), "in 45 min")
         XCTAssertEqual(DashboardView.relative(15 * 60 + 30), "in 15h 30m")
+    }
+
+    // The first-run demo instruction: DashboardView.demoShortcut names the deck
+    // hotkey, and in that state it is the ONLY instruction on screen -- a wrong or
+    // absent glyph there is the whole card being wrong. Pure over a feature list,
+    // so it is checked without a live catalog.
+    func testFirstRunDemoShortcutIsReadFromTheLiveBinding() {
+        func deck(enabled: Bool = true, failed: Bool = false,
+                  actions: [[String: Any]]) -> FeatureInfo {
+            FeatureInfo(["id": DashboardView.demoFeatureId, "name": "Window Deck",
+                         "enabled": enabled, "failed": failed, "actions": actions])!
+        }
+        func act(_ id: String, key: String) -> [String: Any] {
+            ["id": id, "label": id,
+             "trigger": ["type": "hotkey", "mods": ["cmd", "alt", "ctrl"], "key": key]]
+        }
+
+        let bound = [deck(actions: [act(DashboardView.demoActionId, key: "k")])]
+        let hit = DashboardView.demoShortcut(bound)
+        XCTAssertEqual(hit?.name, "Window Deck")
+        XCTAssertFalse(hit?.glyph.isEmpty ?? true, "a bound hotkey must yield a glyph")
+
+        // The action is found by ID, not by position: an action added AHEAD of the
+        // demo one must not silently retitle the instruction to its shortcut.
+        let reordered = [deck(actions: [act("peek", key: "p"),
+                                        act(DashboardView.demoActionId, key: "k")])]
+        XCTAssertEqual(DashboardView.demoShortcut(reordered)?.glyph, hit?.glyph,
+                       "the glyph must follow the `toggle` action, not actions.first")
+
+        // Every reason the card must collapse rather than print a dead instruction.
+        XCTAssertNil(DashboardView.demoShortcut([]), "no deck feature at all")
+        XCTAssertNil(DashboardView.demoShortcut(
+            [deck(enabled: false, actions: [act(DashboardView.demoActionId, key: "k")])]),
+            "disabled -- pressing it would do nothing")
+        XCTAssertNil(DashboardView.demoShortcut(
+            [deck(failed: true, actions: [act(DashboardView.demoActionId, key: "k")])]),
+            "failed to load")
+        XCTAssertNil(DashboardView.demoShortcut([deck(actions: [])]),
+                     "no actions -- nothing to press")
+        XCTAssertNil(DashboardView.demoShortcut(
+            [deck(actions: [["id": DashboardView.demoActionId, "label": "toggle",
+                             "trigger": ["type": "schedule", "at": "09:00"]]])]),
+            "rebound to a schedule -- there is no key to tell the user to press")
     }
 
     // The Dashboard's "Tip of the day": DashboardView.tipFeature picks one

@@ -1,10 +1,13 @@
 import SwiftUI
 
-// The Feature Tour: the first-run ONBOARDING surface. A new user starts with a
-// blank deck (nothing enabled -- see lua/hammerdeck.lua) and meets the catalog
-// one feature at a time here: a LARGE, auto-playing preview of what the feature
-// actually does, with a single "Add" to enable it. The point is "see it, decide
-// fast, add it" -- the opposite of dumping all 19 features on a new user.
+// The Feature Tour: the OPT-IN catalog browse. A new user arrives with the
+// curated spine already enabled (see app/hammerdeck.lua) and the Homepage's
+// get-started card carrying the grant and the demo moment -- so this is no
+// longer the thing a stranger must get through, it is where they come to meet
+// the REST of the catalog one feature at a time: a LARGE, auto-playing preview
+// of what the feature actually does, with a single "Add" to enable it. The point
+// is "see it, decide fast, add it" -- the opposite of dumping the whole catalog
+// on a new user.
 //
 // Pure presentation, like the Gallery: it reuses the SAME archetype scenes
 // (FeatureArchetype.scene) the Gallery card plays on hover, only bigger and

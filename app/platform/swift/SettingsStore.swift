@@ -127,31 +127,33 @@ final class SettingsStore: ObservableObject {
         refresh()
     }
 
-    /// The UI's enable/disable entry point (every toggle / "Enable" button). Trying
-    /// to ENABLE a feature that needs Accessibility we don't have yet FAILS (it
-    /// would otherwise sit "on" but silently no-op) and opens the grant flow
-    /// instead -- so the user grants, then enables. Disabling, or enabling a
-    /// feature that has the grant or doesn't need it, passes straight through.
-    /// (setEnabled stays the pure op the integration tests drive directly, so this
-    /// gate never fires -- or opens System Settings -- during `swift test`.)
-    /// Returns whether the change went through.
-    @discardableResult
-    func requestSetEnabled(_ id: String, _ on: Bool) -> Bool {
-        // Order matters: cheap checks first, then the LIVE seam read (not the cached
-        // axTrusted, which only refresh() updates -- a grant made on a non-home tab
-        // would otherwise lag and wrongly refuse the enable).
+    /// The UI's enable/disable entry point (every toggle / "Enable" button). The
+    /// change ALWAYS goes through; enabling a feature that needs Accessibility we
+    /// do not have also kicks off the grant flow.
+    ///
+    /// It does not refuse. Onboarding is LAZY and per-use by design, stated at
+    /// `ctx.lua`'s input gate: a generic up-front gate "would also short-circuit
+    /// the window features, replacing their situation-specific onboarding with a
+    /// generic one". `windows.focusedOrAlert` and `inputAllowed` each prompt AND
+    /// explain, naming the feature, at the moment the user reaches for it.
+    ///
+    /// A refusal here contradicted that, and could not hold the line anyway --
+    /// `defaultEnabled` binds the seven ungranted window features at boot without
+    /// consulting `requires`, and `enableEssentials` calls `registry.setEnabled`
+    /// directly. Refusing on one of three paths only produced a catalog where the
+    /// Essentials button enabled what the Toggle beside it rejected, and where a
+    /// feature that shipped on could not be switched back on.
+    /// Returns nothing: the change always goes through. A `Bool` here would be a
+    /// signal that cannot go false, and every call site already discards it.
+    func requestSetEnabled(_ id: String, _ on: Bool) {
+        setEnabled(id, on)
+        // `axTrusted` rather than a second seam call: `setEnabled` ends in
+        // `refresh()`, which just assigned it from the live read one line ago.
         if on,
            features.first(where: { $0.id == id })?.requires.contains("accessibility") == true,
-           !accessibilityTrusted() {
-            promptAccessibility()     // auto-onboard: system prompt + heads-up + open the pane
-            // The refusal mutates no @Published state, so a Toggle bound to
-            // feature.enabled would stay visually ON -- the exact lie this gate
-            // exists to prevent. Nudge observers so the switch snaps back to OFF.
-            objectWillChange.send()
-            return false              // enable refused until the grant lands
+           !axTrusted {
+            promptAccessibility()     // system prompt + heads-up + open the pane
         }
-        setEnabled(id, on)
-        return true
     }
 
     /// Hot-reload all features from disk: drops cached Lua modules, re-loads the
