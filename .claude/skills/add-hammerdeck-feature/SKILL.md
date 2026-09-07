@@ -110,9 +110,13 @@ capabilities), `app/features/usage_stats/feature.json` (capabilities + a `swift/
 - **`icon`** is an SF Symbol name.
 - **`capabilities`** -- see Step 3. Declared HERE, never in `lua/init.lua`.
 - **`page`** -- only if the feature contributes a `swift/` page (Step 8).
-- Optional booleans validated by `manifest.lua`: `recommended` (first-run one-click
-  offer), `preference`, `defaultEnabled`, `selfEvident` (skips the "what did that do?"
-  flash on manual fire).
+- Optional booleans validated by `manifest.lua`: `preference`, `selfEvident` (skips
+  the "what did that do?" flash on manual fire), and the pair `recommended` +
+  `defaultEnabled` -- membership of the curated SPINE (the window suite + the trust
+  layer), which is what the catalog is sold on and what ships enabled on a fresh
+  install. Set BOTH or NEITHER: `curated_spine.lua` fails the build by name if the
+  two disagree. A new feature almost always sets neither -- joining the spine is a
+  product call, not a step in adding a feature.
 
 ## Step 3 -- Declare capabilities (the gate is checked BOTH ways)
 

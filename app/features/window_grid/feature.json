@@ -7,6 +7,8 @@
   "selfEvident": true,
   "icon": "square.grid.3x3",
   "context": "window",
+  "defaultEnabled": true,
+  "recommended": true,
   "requires": ["accessibility"],
   "preview": {
     "archetype": "windowGrid"

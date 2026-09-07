@@ -671,16 +671,23 @@ final class IntegrationTests: XCTestCase {
     }
 
     func testEnableBindsARealCarbonHotkey() {
+        // Measured as a DELTA against whatever the catalog already has bound: the
+        // features carrying `defaultEnabled` are bound before the body starts, so
+        // this count is never 0 and both ends must be relative to `baseline`. An
+        // absolute floor of 1 is met by the baseline alone and would stay green
+        // with the binding under test entirely broken.
+        let baseline = registryNum("liveHandleCount()") ?? 0
         host.store.setEnabled("plain_paste", true)
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('plain_paste')") as? Bool,
                        true)
-        XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
+        XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, baseline + 1,
                                     "the Carbon hotkey should be registered")
         host.store.setEnabled("plain_paste", false)
-        XCTAssertEqual(registryNum("liveHandleCount()"), 0, "disable must leak nothing")
+        XCTAssertEqual(registryNum("liveHandleCount()"), baseline, "disable must leak nothing")
     }
 
     func testTriggerRebindEvalChunksAndConflict() {
+        let baseline = registryNum("liveHandleCount()") ?? 0
         host.store.setEnabled("plain_paste", true)
         host.store.setEnabled("locate_pointer", true)
 
@@ -703,7 +710,7 @@ final class IntegrationTests: XCTestCase {
 
         host.store.setEnabled("plain_paste", false)
         host.store.setEnabled("locate_pointer", false)
-        XCTAssertEqual(registryNum("liveHandleCount()"), 0)
+        XCTAssertEqual(registryNum("liveHandleCount()"), baseline)
     }
 
     // The Automation Timeline's data: a service's self-reported schedule
@@ -1030,6 +1037,12 @@ final class IntegrationTests: XCTestCase {
     /// see before. Drives + inspects the REAL NSPanels via Native introspection.
     func testCommandPaletteFocusHandoff() throws {
         try requireUITests()
+        // Same delta rule as the sibling handle tests: the catalog boots with the
+        // `defaultEnabled` features bound, so the leak check below is relative.
+        // This one is gated behind requireUITests, which means a normal run SKIPS
+        // it -- an absolute floor here would sit broken and green until someone
+        // ran the opt-in suite.
+        let baseline = registryNum("liveHandleCount()") ?? 0
         // A throwaway feature whose action just opens a chooser -- deterministic,
         // unlike window_switcher (which needs Accessibility + real windows).
         eval("""
@@ -1050,7 +1063,8 @@ final class IntegrationTests: XCTestCase {
             host.store.setEnabled("command_palette", false)
             eval("require('platform.registry').unregister('it_picker'); return true")
             pumpAppEvents(0.1)
-            XCTAssertEqual(registryNum("liveHandleCount()"), 0, "panel test must leak nothing")
+            XCTAssertEqual(registryNum("liveHandleCount()"), baseline,
+                           "panel test must leak nothing")
         }
 
         host.store.setEnabled("it_picker", true)
@@ -1187,16 +1201,17 @@ final class IntegrationTests: XCTestCase {
     }
 
     func testHotReloadPreservesEnabledState() {
+        let baseline = registryNum("liveHandleCount()") ?? 0
         host.store.setEnabled("display_off", true)
         host.store.reload()
         XCTAssertEqual(eval("return require('platform.registry').isEnabled('display_off')") as? Bool,
                        true, "enabled-state must survive a reload")
         XCTAssertEqual(eval("return #require('platform.registry').all()") as? Double,
                        Double(TestHost.diskFeatureCount))
-        XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
+        XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, baseline + 1,
                                     "the enabled service must be re-bound after reload")
         host.store.setEnabled("display_off", false)
-        XCTAssertEqual(registryNum("liveHandleCount()"), 0)
+        XCTAssertEqual(registryNum("liveHandleCount()"), baseline)
     }
 
     func testBannerPanelLifecycle() throws {
@@ -1464,6 +1479,7 @@ final class IntegrationTests: XCTestCase {
     }
 
     func testChordRegistersARealPrefixHotkey() {
+        let chordBaseline = registryNum("liveHandleCount()") ?? 0
         host.store.setEnabled("plain_paste", true)
         // Rebind onto a chord: ChordCenter registers the prefix via the real
         // Carbon HotkeyCenter, so a live handle must exist.
@@ -1471,14 +1487,15 @@ final class IntegrationTests: XCTestCase {
             "plain_paste", "main",
             TriggerSpec(type: "chord", mods: ["cmd", "shift"], key: "a", follows: ["b"]))
         XCTAssertNil(err, "binding a chord should succeed")
-        XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, 1,
+        XCTAssertGreaterThanOrEqual(registryNum("liveHandleCount()") ?? 0, chordBaseline + 1,
                                     "the chord's prefix hotkey should be registered")
         XCTAssertEqual(UserDefaults.standard.string(forKey: "hammerdeck.trigger.plain_paste.main"),
                        "chord|cmd,shift|a|b", "the chord override persisted encoded")
 
         host.store.clearTrigger("plain_paste", "main")   // back to its default hotkey
         host.store.setEnabled("plain_paste", false)
-        XCTAssertEqual(registryNum("liveHandleCount()"), 0, "disable must leak nothing")
+        XCTAssertEqual(registryNum("liveHandleCount()"), chordBaseline,
+                       "disable must leak nothing")
     }
 
     /// AX COLD-START WARM-UP plumbing. An app whose accessibility tree is cold

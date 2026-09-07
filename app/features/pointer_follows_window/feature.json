@@ -6,6 +6,8 @@
   "order": 7,
   "icon": "cursorarrow.motionlines",
   "context": "window",
+  "defaultEnabled": true,
+  "recommended": true,
   "requires": ["accessibility"],
   "preference": true,
   "preview": {

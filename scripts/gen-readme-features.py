@@ -47,13 +47,18 @@ END = "<!-- FEATURES:END -->"
 # CATEGORY_ORDER + categoryLabel in FeatureChrome.swift, so the README sections
 # and the Settings sidebar read in the same order with the same names;
 # manifest.KNOWN_CATEGORIES is the vocabulary's enforcement point.
+# The section order, and the ONLY input to it. Must stay identical to
+# CATEGORY_ORDER (FeatureChrome.swift), which carries the reasoning and which
+# testCategoryVocabularyIsConsistent holds this list to -- as a SEQUENCE, not a
+# set, so the README and the Settings sidebar cannot print the same eight names
+# in two different orders.
 GROUPS = [
     ("windows", "Windows"),
+    ("visibility", "Visibility & Trust"),
     ("switching", "Switching & Search"),
     ("text", "Text"),
     ("health", "Health"),
     ("utilities", "Utilities"),
-    ("visibility", "Visibility & Trust"),
     ("appearance", "Appearance"),
     ("general", "General"),
 ]
@@ -160,28 +165,18 @@ def render(features):
     # with the feature count") applies to this generated block too; a number
     # here also goes stale as the catalog moves.
     lines = [BEGIN, ""]
-    # Derived, never asserted: registry.lua honors `defaultEnabled` in
-    # feature.json, so a hard-coded "everything is off" goes false silently the
-    # first time a feature ships enabled. CI runs --check, so the sentence and
-    # the catalog cannot drift apart.
-    on_by_default = sorted(f["name"] for f in features if f["default_enabled"])
-    if not on_by_default:
-        lines.append(
-            "Every feature ships **off by default** -- switch one on in Settings "
-            "and bind it to any trigger."
-        )
-    else:
-        if len(on_by_default) == 1:
-            named, verb = f"**{on_by_default[0]}**", "is"
-        else:
-            named = ", ".join(f"**{n}**" for n in on_by_default[:-1])
-            named = f"{named} and **{on_by_default[-1]}**"
-            verb = "are"
-        lines.append(
-            f"Every feature ships **off by default** except {named}, which {verb} on "
-            "from a fresh install -- switch any other on in Settings and bind it to "
-            "any trigger."
-        )
+    # One fixed sentence plus a per-row marker below, NOT a sentence assembled
+    # from who currently carries the flag. A generated claim about the roster
+    # ("every feature in X", "as are the trust features") is an identity claim
+    # that no count can guard, so it goes false the moment the curation moves and
+    # --check still passes -- it regenerates the same wrong sentence. The marker
+    # is also strictly more informative: a reader sees WHICH rows are on instead
+    # of inferring it from a section-level claim.
+    lines.append(
+        "A feature ships **off** unless its row says *on by default* -- those "
+        "work from a fresh install. Switch on whatever else you want in Settings "
+        "and bind it to any trigger."
+    )
     lines.append("")
     for cat, heading in ordered:
         items = by_cat.get(cat)
@@ -206,7 +201,8 @@ def render(features):
         # SettingsView.featuresIn sorts by the same two keys.
         for f in sorted(items, key=lambda x: (x["order"] is None, x["order"] or 0, x["name"])):
             reach = f" <sub>Reaches: {f['capabilities']}.</sub>" if f["capabilities"] else ""
-            lines.append(f"- **{f['name']}** -- {f['description']}{reach}")
+            on = " *(on by default)*" if f["default_enabled"] else ""
+            lines.append(f"- **{f['name']}**{on} -- {f['description']}{reach}")
         lines.append("")
     lines.append(END)
     return "\n".join(lines)

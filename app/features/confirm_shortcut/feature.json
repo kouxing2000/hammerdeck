@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "description": "When you fire a feature with a hotkey or chord, briefly flash which action ran -- a quiet, single-slot chip (glyph + name, top-center) that fades on its own. Confirms the press registered and, if you reached for the wrong shortcut, shows what you actually triggered. Automated triggers use the separate notification instead.",
   "category": "visibility",
+  "order": 1,
   "icon": "keyboard",
   "context": "anywhere",
+  "recommended": true,
   "preference": true,
   "defaultEnabled": true,
   "preview": {

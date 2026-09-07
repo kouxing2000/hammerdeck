@@ -205,9 +205,11 @@ struct SettingsPane: View {
         // sections wherever their first member happens to sort. Ties (an unranked
         // category, e.g. the synthesized "failed" one) fall back to their label so
         // the order is still stable rather than scan-dependent.
-        return seen.sorted {
-            (categoryRank($0), categoryLabel($0)) < (categoryRank($1), categoryLabel($1))
-        }
+        //
+        // CATEGORY_ORDER is the ONLY input -- see its own header for why the rank
+        // is declared there rather than derived from `recommended` here.
+        return seen.sorted { (categoryRank($0), categoryLabel($0))
+                           < (categoryRank($1), categoryLabel($1)) }
     }
 }
 

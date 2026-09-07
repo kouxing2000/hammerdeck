@@ -13,7 +13,6 @@
   "requires": [
     "accessibility"
   ],
-  "recommended": true,
   "preview": {
     "archetype": "chooser",
     "sample": "clipboard"

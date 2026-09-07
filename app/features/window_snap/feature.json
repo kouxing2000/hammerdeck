@@ -6,6 +6,7 @@
   "order": 1,
   "icon": "rectangle.lefthalf.inset.filled",
   "context": "window",
+  "defaultEnabled": true,
   "requires": ["accessibility"],
   "recommended": true,
   "preview": {

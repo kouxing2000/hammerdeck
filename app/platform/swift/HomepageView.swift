@@ -255,9 +255,11 @@ struct DashboardView: View {
 
     // MARK: Empty-state hero (blank-start safety net)
 
-    /// Shown only when nothing is enabled (the blank first-run state, or after a
-    /// user turns everything off): one click to seed the curated Essentials, or
-    /// jump into the Tour -- so an empty deck is a starting line, not a dead end.
+    /// Shown only when nothing is enabled -- which a fresh install is NOT: the
+    /// curated spine carries `defaultEnabled`, so a new user lands with the window
+    /// suite already on. This is the recovery path for a deck the user emptied
+    /// themselves: one click to seed the Essentials back, or jump into the Tour,
+    /// so an empty deck is a starting line rather than a dead end.
     @ViewBuilder private var emptyStateCard: some View {
         let enabledCount = store.features.filter { $0.enabled }.count
         if enabledCount == 0 {

@@ -6,6 +6,8 @@
   "order": 6,
   "icon": "arrow.uturn.backward",
   "context": "window",
+  "defaultEnabled": true,
+  "recommended": true,
   "requires": ["accessibility"],
   "preview": {
     "archetype": "windowRewind"

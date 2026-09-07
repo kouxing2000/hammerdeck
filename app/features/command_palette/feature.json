@@ -10,7 +10,6 @@
   "capabilities": [
     "commands"
   ],
-  "recommended": true,
   "preview": {
     "archetype": "chooser",
     "sample": "commands"

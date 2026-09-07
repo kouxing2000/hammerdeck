@@ -428,8 +428,14 @@ function manifest.validate(m)
     end
     m.requires = m.requires or {}
 
-    -- recommended: part of the curated "Essentials" starter set the blank-start
-    -- UI offers to enable in one click. Optional boolean, default false.
+    -- recommended: part of the curated SPINE -- what the catalog is sold on, as
+    -- opposed to what happens to be switched on. Drives the Gallery star, the
+    -- Tour label, and the "Enable Essentials" one-click the Homepage offers when
+    -- a user has turned everything off. It does NOT order any surface: Settings
+    -- and the README both rank sections from their own declared list and rows
+    -- from `order`. Ships in lockstep with `defaultEnabled` (see below), which
+    -- test/cases/_integration/platform/curated_spine.lua holds them to.
+    -- Optional boolean, default false.
     if m.recommended ~= nil then
         assert(type(m.recommended) == "boolean",
             "feature '" .. m.id .. "': recommended must be true/false")
@@ -446,12 +452,14 @@ function manifest.validate(m)
     m.preference = (m.preference == true)
 
     -- defaultEnabled: does this ship ENABLED on a fresh install, before the user
-    -- has toggled it? The catalog is blank-slate by default (everything off; opt
-    -- in via the Essentials one-click or the per-feature toggle) -- but a quiet,
-    -- SELF-GATING system behavior (e.g. confirm_shortcut, which does nothing until
-    -- other features are on) may opt to ship on so a new user discovers it. The
-    -- user's explicit choice always overrides: registry.isEnabled reads this ONLY
-    -- as the fallback when no stored value exists. Optional boolean, default false.
+    -- has toggled it? The curated SPINE ships on, so a stranger who installs the
+    -- app has the window suite and the trust layer working without configuring
+    -- anything; everything outside the spine ships off and is opted into per
+    -- feature. So this flag is not a per-feature judgment call -- it is the same
+    -- membership `recommended` declares, and setting one without the other fails
+    -- test/cases/_integration/platform/curated_spine.lua by name. The user's
+    -- explicit choice always overrides: registry.isEnabled reads this ONLY as the
+    -- fallback when no stored value exists. Optional boolean, default false.
     if m.defaultEnabled ~= nil then
         assert(type(m.defaultEnabled) == "boolean",
             "feature '" .. m.id .. "': defaultEnabled must be true/false")

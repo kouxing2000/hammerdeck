@@ -8,15 +8,23 @@ import SwiftUI
 /// The canonical display order for the manifest categories -- Settings sidebar
 /// sections, and the same order `scripts/gen-readme-features.py` prints under.
 /// Windows leads: it is the deepest capability and the anchor of the product
-/// story, so it should be the first thing both surfaces show.
+/// story, so it should be the first thing both surfaces show. Visibility & Trust
+/// follows, ahead of the commodity sections: the layer that tells you what fired
+/// is co-headline rather than garnish. In the SETTINGS sidebar that section holds
+/// only Usage Stats, because the other two trust features are behavior
+/// preferences and render under General -- the README, which lists preferences,
+/// shows all three. Both surfaces print this one list in this one order, and a
+/// test holds them to it; do NOT derive the rank from `recommended` instead,
+/// which reads a set this sidebar does not display and makes section order
+/// emergent (starring one Text feature would lift the whole Text section).
 ///
 /// Anything absent sorts to the end rather than being dropped -- that path
 /// carries the synthesized "failed" pseudo-category (registry_view.lua) for a
 /// feature whose module would not load, whose red row must never vanish.
 /// `manifest.KNOWN_CATEGORIES` is the enforcement source of truth; keep the two
 /// in step.
-let CATEGORY_ORDER = ["windows", "switching", "text", "health",
-                      "utilities", "visibility", "appearance", "general"]
+let CATEGORY_ORDER = ["windows", "visibility", "switching", "text",
+                      "health", "utilities", "appearance", "general"]
 
 /// Sort key for a category: its index in CATEGORY_ORDER, or past the end.
 func categoryRank(_ category: String) -> Int {
