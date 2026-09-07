@@ -427,6 +427,32 @@ final class Native {
 
     // MARK: - Errors
 
+    /// Raise a Lua error from a native binding.
+    ///
+    /// **This function does not return, and it does not unwind Swift.**
+    /// `lua_error` longjmps straight to the enclosing `lua_pcallk`, so every
+    /// `defer` block still live in the calling Swift frame is skipped and every
+    /// ARC release that would have happened on the way out never happens. The
+    /// `return` in front of a call reads like a Swift return and is only there to
+    /// satisfy the signature.
+    ///
+    /// So the rule at every call site: **call it before you own anything.**
+    /// Validate arguments at the top of a binding, while no `defer` is live and
+    /// nothing has been allocated or pinned -- never from inside a loop that has
+    /// pushed values, never after a `defer { lua_settop(...) }` that is balancing
+    /// them, and never once a `makeRef` has pinned a callback. Where a site must
+    /// raise later, it releases by hand first: `Native+Triggers.swift:60-63`
+    /// and `:101-103` are the worked examples.
+    ///
+    /// The same rule applies to anything ELSE that can raise, which is every
+    /// `lua_getfield` / `lua_geti` on a value that might not be a table --
+    /// `deckWidgetShow` and `fanWidgetShow` type-check arg 1 up front for that
+    /// reason.
+    ///
+    /// The alternative -- returning an error code and letting each binding unwind
+    /// normally -- is not available cheaply: `LuaState.Function` is
+    /// `@convention(c)`, and the ~40 sites are spread across every `Native+*`
+    /// slice. Documented rather than removed, deliberately.
     func luaError(_ L: OpaquePointer?, _ message: String) -> Int32 {
         lua_pushstring(L, message)
         return lua_error(L)

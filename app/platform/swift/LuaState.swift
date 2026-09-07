@@ -115,8 +115,16 @@ final class LuaState {
     }
 
     /// Run a chunk of Lua source. Throws with the Lua error message on failure.
+    ///
+    /// LUA_MULTRET keeps whatever the chunk returned, and these two run OUTSIDE
+    /// any call frame -- so anything left behind is parked on the main stack for
+    /// the life of the process. Boot alone runs several files; harmless at that
+    /// scale, and unbounded the day a value-returning chunk lands on a poll path.
+    /// Restoring the entry depth costs one line and makes the leak unrepresentable.
     func run(_ code: String) throws {
         assertMainThread()
+        let base = lua_gettop(L)
+        defer { lua_settop(L, base) }
         // luaL_dostring / lua_pcall are C macros (not imported to Swift), so we
         // spell them out: load the chunk, then protected-call it.
         if luaL_loadstring(L, code) != LUA_OK || lua_pcallk(L, 0, LUA_MULTRET, 0, 0, nil) != LUA_OK {
@@ -124,9 +132,11 @@ final class LuaState {
         }
     }
 
-    /// Run a Lua file by path.
+    /// Run a Lua file by path. Stack-restoring for the same reason as `run`.
     func runFile(_ path: String) throws {
         assertMainThread()
+        let base = lua_gettop(L)
+        defer { lua_settop(L, base) }
         if luaL_loadfilex(L, path, nil) != LUA_OK || lua_pcallk(L, 0, LUA_MULTRET, 0, 0, nil) != LUA_OK {
             throw popError()
         }
@@ -175,9 +185,9 @@ final class LuaState {
     /// the Lua error on a require/call failure; the stack is restored on every path.
     ///
     /// Returns exactly `results` values (Lua nil-pads/truncates to fit) -- there is
-    /// no MULTRET "all returns" mode; pass the count you read. Like the rest of the
-    /// bridge it assumes the default Lua stack headroom (LUA_MINSTACK) -- fine for
-    /// the shallow arg shapes callers pass, not a deep-recursion marshaller.
+    /// no MULTRET "all returns" mode; pass the count you read. Arg marshalling
+    /// rides the default LUA_MINSTACK headroom; see `push` for why that is sound
+    /// for a Swift-only argument type and what would change it.
     @discardableResult
     func call(_ module: String, _ function: String,
               _ args: [LuaArg] = [], results: Int32 = 1) throws -> [Any?] {
@@ -188,6 +198,16 @@ final class LuaState {
         lua_pushstring(L, module)
         if lua_pcallk(L, 1, 1, 0, 0, nil) != LUA_OK {
             let e = popError(); lua_settop(L, base); throw e
+        }
+        // `lua_getfield` on a non-table RAISES, and a raise here longjmps past
+        // every `lua_settop(L, base)` below -- so one module returning a number
+        // would leave the stack unbalanced for every later host call, not just
+        // for this one. Ask the type first; a wrong-shaped module is a Swift
+        // error the caller can report, not a corrupted state.
+        guard lua_type(L, -1) == LUA_TTABLE else {
+            let kind = lua_typename(L, lua_type(L, -1)).map { String(cString: $0) } ?? "?"
+            lua_settop(L, base)
+            throw LuaError(message: "require(\"\(module)\") returned a \(kind), not a table")
         }
         // module[function], then drop the module table so the function sits
         // directly above the args (where lua_pcallk expects it).
@@ -207,6 +227,21 @@ final class LuaState {
     }
 
     /// Push one marshalled argument onto the stack (recursive for table/array).
+    ///
+    /// Carries no depth bound or `lua_checkstack`, unlike `any` on the way back,
+    /// and that asymmetry is deliberate rather than an oversight. `any` reads
+    /// tables built by LUA, where a feature can hand over `local t = {}; t.me = t`
+    /// and the depth is whatever the caller made it. `LuaArg` is a Swift-only
+    /// type: no Lua value, MCP payload or extension can construct one, and every
+    /// builder in the tree was enumerated -- `SettingsModels.TriggerSpec.luaArg`
+    /// is the only one that builds a container at all, at depth 2. Two levels
+    /// against the 20 slots LUA_MINSTACK guarantees is not a near miss.
+    ///
+    /// What would change that: a builder that maps UNTRUSTED structure into
+    /// `LuaArg` -- an MCP tool forwarding an agent's JSON, say. Add the room
+    /// check with it, not before; a guard that cannot fire is a guard nobody
+    /// maintains, and the natural "push nil instead" fallback is quietly wrong
+    /// under `.table`, where `lua_setfield` with nil DELETES the key.
     private func push(_ arg: LuaArg) {
         switch arg {
         case .string(let s): lua_pushstring(L, s)

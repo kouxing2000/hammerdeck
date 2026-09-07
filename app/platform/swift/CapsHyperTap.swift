@@ -68,12 +68,23 @@ final class CapsHyperTap {
 
     var isEnabled: Bool { tap != nil }
 
-    /// Remap Caps→F18 and start the tap. Returns false when the tap cannot be
+    /// Start the tap, then remap Caps→F18. Returns false when the tap cannot be
     /// created (no Accessibility grant) -- the caller then prompts and re-applies.
+    ///
+    /// TAP FIRST, REMAP SECOND, and nothing here depends on the other order: the
+    /// tap filters on `f18KeyCode`, so it does not care whether Caps is producing
+    /// F18 yet. Remapping first meant the denied-grant path had to undo it, which
+    /// put two `hidutil property --set` writes back to back -- and hidutil is
+    /// last-writer-wins on that property. `tapCreate` returns in microseconds, so
+    /// the two children started together and the scheduler decided the outcome:
+    /// when the "on" write landed last, Caps was left remapped to F18 with NO tap
+    /// running -- a dead key until the next launch reconciles it, re-run on every
+    /// launch for a user who has the preference on and the grant off. The blocking
+    /// `waitUntilExit()` in `remapCapsToF18` was the only thing serializing them.
+    /// This ordering removes the pair, so the wait is no longer load-bearing.
     @discardableResult
     func enable() -> Bool {
         guard tap == nil else { return true }
-        Self.remapCapsToF18(true)
 
         let mask = (1 << CGEventType.keyDown.rawValue)
                  | (1 << CGEventType.keyUp.rawValue)
@@ -84,10 +95,19 @@ final class CapsHyperTap {
             options: .defaultTap, eventsOfInterest: CGEventMask(mask),
             callback: capsHyperCallback, userInfo: refcon)
         else {
-            // Denied (no grant): undo the remap so Caps isn't stranded as F18.
+            // Denied (no grant). This process remapped nothing, but a PREVIOUS
+            // one may have: the remap is session state that survives a crash,
+            // a force quit and a killed host (see the class header), and this
+            // launch is the reconcile. Without this clear, a user whose grant
+            // went away -- the install-location move re-signs the bundle, and
+            // TCC keys on the signature -- gets a dead Caps key for the whole
+            // session, every session. Safe against the write race the ordering
+            // above exists to prevent: this branch and the one below are
+            // mutually exclusive, so `enable()` still issues at most one write.
             Self.remapCapsToF18(false)
             return false
         }
+        Self.remapCapsToF18(true)
         tap = port
         let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
         source = src
@@ -254,6 +274,25 @@ final class CapsHyperTap {
     /// the whole UserKeyMapping (off). NOTE: hidutil --set replaces the entire
     /// mapping list, so toggling this off also clears any other hidutil key
     /// remaps -- acceptable for this single-author app, which owns the Caps remap.
+    ///
+    /// LAUNCH-AND-FORGET, and deliberately NOT on `Native+Process.runProcessCore`
+    /// despite being a spawn: nothing reads its stdout, stderr or exit status, so
+    /// the core would attach two pipes, two readability handlers, a DispatchGroup,
+    /// a pipe-retention box and two watchdogs to a fire-and-forget property write.
+    /// It also has to survive the host -- the OFF call runs from the willTerminate
+    /// hook, and the child is what hands the user back a working Caps Lock key.
+    /// `posix_spawn` has already happened when `run()` returns, so it finishes
+    /// after this process is gone.
+    ///
+    /// The unbounded `waitUntilExit()` is gone: on the main thread with no ceiling
+    /// it was the freeze class the seam rules forbid. It was also, quietly, the
+    /// only thing serializing two writes to a last-writer-wins property. Two
+    /// things replace it. Within `enable()`, the ordering -- see its own note.
+    /// ACROSS calls, the fact that `CapsHyperPreference.apply()` calls `enable()`
+    /// or `disable()`, never both, and `willTerminate` calls `disable()` alone;
+    /// so the only remaining gap between two writes is a human toggling the
+    /// preference, which is orders of magnitude longer than one hidutil run.
+    /// A caller that ever issued both back to back would need the wait back.
     private static func remapCapsToF18(_ on: Bool) {
         let mapping = on
             ? #"{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}"#
@@ -261,8 +300,21 @@ final class CapsHyperTap {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/hidutil")
         p.arguments = ["property", "--set", mapping]
-        try? p.run()
-        p.waitUntilExit()
+        // Inherited otherwise, and what they are inherited FROM depends on how the
+        // host was launched -- the same pinning runProcessCore does for every
+        // child it owns.
+        p.standardInput = FileHandle.nullDevice
+        p.currentDirectoryURL = URL(fileURLWithPath: "/")
+        do {
+            try p.run()
+        } catch {
+            // Discarding this was silent in both directions, and the OFF one is
+            // the expensive silence: the tap is torn down believing Caps is a
+            // plain key again, when it is still remapped to F18 -- a DEAD key
+            // until the next launch reconciles it. Say which direction failed.
+            Native.shared.seamLog("hidutil Caps remap (\(on ? "on" : "off")) did not spawn: "
+                                  + error.localizedDescription)
+        }
     }
 }
 

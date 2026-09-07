@@ -357,6 +357,123 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(host.lua.stackTop, top0, "call leaves the Lua stack balanced across all paths")
     }
 
+    /// `run` / `runFile` load with LUA_MULTRET and run OUTSIDE any call frame, so
+    /// whatever a chunk returns is parked on the main stack for the life of the
+    /// process. One value per boot file is harmless; the same code on a poll path
+    /// is not, and nothing else in the host would ever notice the drift.
+    func testRunningAChunkParksNothingOnTheStack() {
+        let top0 = host.lua.stackTop
+        XCTAssertNoThrow(try host.lua.run("return 1, 2, 3"))
+        XCTAssertEqual(host.lua.stackTop, top0,
+                       "run() leaves the stack at its entry depth even when the chunk returns values")
+
+        // The failing path too: the error message must be popped, not left behind.
+        XCTAssertThrowsError(try host.lua.run("this is not lua"))
+        XCTAssertEqual(host.lua.stackTop, top0, "a failed load leaves nothing behind either")
+    }
+
+    /// The two widget bindings take a single opts TABLE, and every field reader
+    /// inside them does `lua_getfield(L, 1, ...)`. Handed a number, Lua raises
+    /// from whichever reader ran first, with a message that names neither the
+    /// binding nor the field -- readable only by someone already looking at the
+    /// seam. The refusal has to name itself.
+    func testWidgetBindingsRefuseANonTableByName() {
+        for fn in ["deck_widget_show", "fan_widget_show"] {
+            let err = eval("local ok, e = pcall(native.\(fn), 42) return ok and 'NO ERROR' or e")
+            guard let message = err as? String else {
+                XCTFail("\(fn): expected an error string, got \(String(describing: err))")
+                continue
+            }
+            XCTAssertTrue(message.contains(fn),
+                          "\(fn) must name itself in the refusal, got: \(message)")
+            XCTAssertTrue(message.contains("opts table"),
+                          "\(fn) must say what it wanted, got: \(message)")
+        }
+    }
+
+    /// `CapsHyperTap.enable()` must not remap Caps until the tap EXISTS.
+    ///
+    /// `hidutil property --set` is last-writer-wins and the spawn is no longer
+    /// serialized by a blocking wait, so two writes on ONE path race -- and the
+    /// losing order leaves Caps remapped to F18 with no tap running, a dead key
+    /// until the next launch reconciles it. The old shape had exactly that pair:
+    /// remap first, then undo it when `tapCreate` was denied, on the
+    /// no-Accessibility path a new user is on.
+    ///
+    /// The invariant is the ORDER, not a call count. `enable()` legitimately
+    /// mentions the remap twice -- once to clear a stale one left by a crashed
+    /// session, once to apply a new one -- and those branches are mutually
+    /// exclusive, so counting text would fail the correct code. What must stay
+    /// true is that the apply follows `tapCreate`, because that is what leaves
+    /// the denied branch with nothing to undo. Nothing about creating the tap
+    /// depends on the remap: it filters on `f18KeyCode`.
+    ///
+    /// A source scan rather than a behavioral test on purpose: exercising this
+    /// needs the AX grant and remaps the machine's real keyboard.
+    func testCapsHyperRemapsOnlyAfterTheTapExists() throws {
+        let path = TestHost.repoRoot + "/app/platform/swift/CapsHyperTap.swift"
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+
+        // Brace-balanced, so a doc comment above the NEXT function cannot land
+        // inside the scanned body -- the sibling run-loop lint balances parens
+        // for the same reason.
+        guard let head = text.range(of: "func enable() -> Bool {") else {
+            XCTFail("could not locate enable() in CapsHyperTap.swift -- the scan is broken, "
+                    + "so a clean result would mean nothing")
+            return
+        }
+        var depth = 0
+        var i = text.index(before: head.upperBound)   // the opening brace itself
+        var end: String.Index?
+        while i < text.endIndex {
+            if text[i] == "{" { depth += 1 }
+            if text[i] == "}" {
+                depth -= 1
+                if depth == 0 { end = i; break }
+            }
+            i = text.index(after: i)
+        }
+        guard let close = end else {
+            XCTFail("enable()'s braces do not balance -- the scan is broken")
+            return
+        }
+        let body = String(text[head.upperBound..<close])
+
+        guard let tapCreate = body.range(of: "CGEvent.tapCreate("),
+              let apply = body.range(of: "remapCapsToF18(true)") else {
+            XCTFail("enable() no longer contains both `CGEvent.tapCreate(` and "
+                    + "`remapCapsToF18(true)` -- the anchors moved, so this scan proves nothing")
+            return
+        }
+        XCTAssertGreaterThan(apply.lowerBound, tapCreate.upperBound,
+            "enable() remaps Caps BEFORE creating the tap. That forces an undo on the "
+            + "denied-grant path, and the two hidutil writes then race with no wait to "
+            + "serialize them -- the losing order leaves Caps a dead key. Create the tap "
+            + "first and apply the remap only on success.")
+    }
+
+    /// `LuaState.call` reads `module[function]` off whatever `require` handed
+    /// back. `lua_getfield` on a NON-table raises, and a raise here has no
+    /// protected frame above it -- so it does not throw to Swift, it panics and
+    /// aborts the process, taking every `lua_settop(L, base)` restore with it.
+    ///
+    /// Like `testCyclicTableDoesNotOverflowTheHost`, this one cannot go red on a
+    /// regression: reverting the type check takes the test process down, which is
+    /// exactly what the defect does to the app. A crash in this test IS the
+    /// failure report.
+    func testCallRefusesAModuleThatIsNotATable() {
+        XCTAssertNoThrow(try host.lua.run("package.loaded['test.nontable'] = 42"))
+        defer { try? host.lua.run("package.loaded['test.nontable'] = nil") }
+
+        let top0 = host.lua.stackTop
+        XCTAssertThrowsError(try host.lua.call("test.nontable", "anything")) { error in
+            XCTAssertTrue("\(error)".contains("not a table"),
+                          "the error names the shape problem, got: \(error)")
+        }
+        XCTAssertEqual(host.lua.stackTop, top0,
+                       "the refusal restores the stack rather than longjmping past the restore")
+    }
+
     /// Pump the real application event queue (what app.run() does) -- plain
     /// RunLoop spinning does not drain the Carbon event queue that delivers
     /// RegisterEventHotKey presses.
@@ -2391,8 +2508,9 @@ final class IntegrationTests: XCTestCase {
                  + "speech and the core has no unbounded mode -- ANY finite ceiling cuts "
                  + "it off mid-sentence, so the port needs that answered first"),
             "app/platform/swift/CapsHyperTap.swift":
-                (1, false, "DEBT: waitUntilExit() on the main thread with no ceiling -- "
-                 + "the freeze class the seam rules forbid. hidutil reads no input"),
+                (1, true, "launch-and-forget: nothing consumes hidutil's output or exit "
+                 + "status, and the OFF call runs from willTerminate -- it restores the "
+                 + "user's Caps key, so the child must OUTLIVE the host"),
         ]
 
         // `Process(` / `Process.init(` rather than one literal spelling: a guard that

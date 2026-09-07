@@ -642,6 +642,16 @@ extension Native {
     // Hero toggle state; onMove(x,y) / onExit() / onSwitch(i) / onToggleHero(bool)
     // / onRearrange() / onReorder(from,to) [mini-map cell drag-swap] callbacks.
     func deckWidgetShow(_ L: OpaquePointer?) -> Int32 {
+        // Every reader below does `lua_getfield(L, 1, ...)`, which RAISES on a
+        // non-table. The raise is contained -- it lands in the `lua_pcallk` that
+        // every entry into Lua goes through -- and each reader registers its
+        // `defer` only AFTER its getfield returns, so nothing leaks. What is lost
+        // is the diagnosis: the caller gets Lua's own "attempt to index" text,
+        // naming neither this binding nor the argument. Ask once, up front, where
+        // no defer is live and nothing is pinned (the rule at `Native.luaError`).
+        guard lua_type(L, 1) == LUA_TTABLE else {
+            return luaError(L, "deck_widget_show: an opts table is required")
+        }
         // Field readers over the opts table at stack index 1. makeRef is
         // stack-neutral (it pushes a copy then luaL_refs it), so getfield ->
         // makeRef(at:-1) -> pop reads a callback cleanly.
@@ -821,6 +831,12 @@ extension Native {
     // rows (array of {color, side, title, bundleID, focused}); onMove(x,y) / onExit() /
     // onSwitch(i) callbacks. Returns a resource id (stop() closes + releases the refs).
     func fanWidgetShow(_ L: OpaquePointer?) -> Int32 {
+        // Same reason as deckWidgetShow: a non-table arg 1 raises out of the
+        // readers below with a message that names neither this binding nor the
+        // field. Refuse by name instead.
+        guard lua_type(L, 1) == LUA_TTABLE else {
+            return luaError(L, "fan_widget_show: an opts table is required")
+        }
         func str(_ k: String) -> String {
             lua_getfield(L, 1, k); defer { lua_settop(L, -2) }; return LuaState.string(L, -1) ?? ""
         }

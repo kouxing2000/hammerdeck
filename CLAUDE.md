@@ -234,10 +234,16 @@ onto `platform.windows`, which the `window_*` features ride.
   calls are grouped into `Native+<domain>.swift` extensions. The only place
   macOS-API surface should grow.
   **Anything that blocks the main thread on ANOTHER process must be bounded.**
-  A synchronous cross-process call also spins a NESTED event loop while it waits,
-  so timers keep firing inside it and re-enter Lua mid-call -- the symptom is a
-  freeze of tens of seconds that looks like a dead loop but burns ~0% CPU. Two
-  rules hold the line, and a new
+  A synchronous **Apple event** also spins a NESTED event loop while it waits, so
+  timers keep firing inside it and re-enter Lua mid-call -- the symptom is a
+  freeze of tens of seconds that looks like a dead loop but burns ~0% CPU. That
+  re-entrancy is specific to Apple events, and the distinction is load-bearing in
+  BOTH directions: **AX messaging and `CGWindowListCopyWindowInfo` do NOT pump the
+  run loop** (measured -- a 1ms `.common` timer fires 0 times across a third of a
+  second of real AX IPC), so they block for latency without ever re-entering. Read
+  "blocking" as "must be bounded" everywhere, and "re-entrant" as "Apple events
+  only" -- reading it as both is how a re-entrancy bug gets derived for
+  `listWindows`, which cannot have one. Two rules hold the line, and a new
   call site must not sidestep them: every synchronous AppleScript goes through
   `Native+AppleScript.runAppleScript`, which liveness-gates the target via
   `requiring:` and imposes a `with timeout` ceiling (never `NSAppleScript` bare --
