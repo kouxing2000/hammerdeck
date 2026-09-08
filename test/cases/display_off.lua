@@ -100,6 +100,64 @@ return {
         fake.fireTimers("every", 5)
         ok(fake.actions.displaySleep == dimsBefore + 2, "display sleeps normally after the video ends")
 
+        -- THE SECOND REGRESSION GUARD: back from a long absence. The idle counter
+        -- keeps running through system sleep and the wake itself (lid, power button,
+        -- Touch ID) is not an input event that resets it, so the first poll after
+        -- waking reads the ENTIRE absence. Counting it opens a countdown in the face
+        -- of a user who has just sat down. Without the wake clamp in the feature,
+        -- "wake from a long absence: no countdown on the first poll" goes red.
+        --
+        -- The three assertions are one invariant in three parts, and NONE of them is
+        -- redundant -- each kills a different wrong clamp that the others let pass:
+        -- time-since-wake is a CEILING on idle, never a replacement for it (the
+        -- active-user loop), and it holds for the whole absence, not just the first
+        -- poll (the multi-poll window).
+        fake.idle = 0
+        fake.fireTimers("every", 5)                        -- back to armed and clean
+        fake.clockOffset = fake.clockOffset + 3600
+        fake.idle = 3600                                   -- what the counter reads across sleep
+        fake.systemEvent("wake")
+        fake.fireTimers("every", 5)
+        ok(liveBanners() == 0, "wake from a long absence: no countdown on the first poll")
+        ok(fake.actions.displaySleep == dimsBefore + 2, "wake from a long absence: display not slept")
+
+        -- A clamp that fires ONCE and forgets reproduces the exact field symptom five
+        -- seconds later, so drive the whole window the stale counter spans, not one tick.
+        local sawBanner = false
+        for _ = 1, 40 do                                   -- 200s, still short of the threshold
+            fake.clockOffset = fake.clockOffset + 5
+            fake.idle        = fake.idle + 5               -- nobody has touched anything yet
+            fake.fireTimers("every", 5)
+            if liveBanners() > 0 then sawBanner = true end
+        end
+        ok(not sawBanner, "wake from a long absence: no countdown for the whole stale window")
+
+        -- ...and a clamp that REPLACES idle rather than capping it warns an active user
+        -- at the threshold regardless of input. Work steadily for well past it.
+        local dimsAtProbe = fake.actions.displaySleep
+        for _ = 1, 80 do                                   -- 400s of clock, user active throughout
+            fake.clockOffset = fake.clockOffset + 5
+            fake.idle        = 0
+            fake.fireTimers("every", 5)
+            if liveBanners() > 0 then sawBanner = true end
+        end
+        ok(not sawBanner, "active user after waking: never sees a countdown")
+        ok(fake.actions.displaySleep == dimsAtProbe, "active user after waking: display never slept")
+
+        -- But a user who wakes the Mac and then walks away IS genuinely idle, and the
+        -- post-wake cycle must complete -- countdown AND the sleep it exists to lead into.
+        fake.idle = 0
+        for _ = 1, 61 do                                   -- 305s of real, observed idleness
+            fake.clockOffset = fake.clockOffset + 5
+            fake.idle        = fake.idle + 5
+            fake.fireTimers("every", 5)
+        end
+        ok(liveBanners() == 2, "idle for the full threshold AFTER waking: the countdown starts")
+        fake.clockOffset = fake.clockOffset + 30
+        fake.idle        = fake.idle + 30
+        fake.fireTimers("every", 5)
+        ok(fake.actions.displaySleep == dimsAtProbe + 1, "post-wake countdown expires into a display sleep")
+
         registry.setEnabled("display_off", false)
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after display_off test")
     end,

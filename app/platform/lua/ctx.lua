@@ -676,6 +676,13 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.extractFavicons(outDir, domains, cb)
         return trackOneShot(function(f) return adapter.extractFavicons(outDir, domains, f) end, cb)
     end
+    -- Seconds since the last keyboard/mouse input. It runs on the WALL CLOCK and
+    -- keeps counting straight through system sleep, and the thing that wakes a Mac
+    -- (lid, power button, Touch ID) is not one of the input events that reset it --
+    -- so on the first polls after a wake this reads the WHOLE absence, with the
+    -- user sitting right there. Anything acting on idleness across a sleep/wake
+    -- boundary must bound it by the time since the wake (display_off's `wokeAt`
+    -- clamp) or by the interval it is measuring (usage_stats' elapsed guard).
     function ctx.idleSeconds()       return adapter.idleSeconds() end
     -- Name of a process holding the display awake (video playback, a call, a
     -- presentation), or nil. ALWAYS pair this with idleSeconds before acting on

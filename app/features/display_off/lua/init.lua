@@ -60,7 +60,8 @@ return {
 
     ---@param ctx Ctx
     start = function(ctx)
-        local s = { warnedAt = nil, dimmed = false, banners = nil, heldBy = nil }
+        local s = { warnedAt = nil, dimmed = false, banners = nil, heldBy = nil,
+                    wokeAt = nil }
 
         -- Drop the countdown banners (idempotent; safe when none are up).
         local function clearBanners()
@@ -121,6 +122,27 @@ return {
             local idle      = ctx.idleSeconds()
             local threshold = ctx.opt("idleThresholdMin") * 60
 
+            -- The idle counter runs on the WALL CLOCK, straight through system
+            -- sleep, and the thing that wakes a Mac -- lid, power button, Touch
+            -- ID -- is not one of the input events that reset it. So the first
+            -- poll after a long absence reads the whole absence and opens a
+            -- countdown in the face of a user who is sitting right there. Only
+            -- idleness accrued since the wake is idleness we actually observed,
+            -- so the time since the wake is a CEILING on idle -- never a
+            -- replacement for it, or a user working steadily since the wake would
+            -- get a countdown at the threshold regardless of their input.
+            if s.wokeAt then
+                local sinceWake = ctx.now() - s.wokeAt
+                if idle <= sinceWake then
+                    -- The last input landed AFTER the wake, so the counter is
+                    -- honest again and the ceiling comes off.
+                    ctx.log("input since wake -- idle counter trusted again")
+                    s.wokeAt = nil
+                else
+                    idle = sinceWake
+                end
+            end
+
             -- Active (or just woke): re-arm.
             if idle < threshold then
                 -- Only a countdown still RUNNING was cancelled. After the display
@@ -169,6 +191,12 @@ return {
         -- the idle state that preceded it.
         local function onWake()
             if s.warnedAt or s.dimmed then ctx.log("wake -- dropping the armed countdown") end
+            s.wokeAt = ctx.now()
+            -- The clamp above is otherwise a SILENT branch: a poll it suppresses
+            -- emits nothing and reads exactly like a user at the desk. This line
+            -- is the raw counter value the clamp is about to hide, which is the
+            -- number this whole bug was diagnosed from.
+            ctx.log("wake -- ignoring " .. math.floor(ctx.idleSeconds()) .. "s of pre-wake idle")
             rearm()
         end
         ctx.onSystemEvent("wake", onWake)
