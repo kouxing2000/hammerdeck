@@ -52,6 +52,37 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
 
+      # `actions/checkout` does NOT bring the annotation. For a tag push its
+      # ref-helper builds the refspec `+<github.sha>:refs/tags/<name>`, which
+      # writes a COMMIT object into refs/tags/ -- a lightweight tag. Measured
+      # against this repo: `git cat-file -t v0.1.2` then reports `commit`, and
+      # `git tag -l --format='%(contents)'` answers with the tagged commit's
+      # SUBJECT. Without this step the notes generator refuses (correctly) and
+      # tells the maintainer to force-re-tag a tag that was annotated all along.
+      - name: Fetch the annotated tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: git fetch --force --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+
+      # The release notes live in that annotation, and both channels below read
+      # them from there. Checked FIRST, before a twenty-minute build and
+      # notarization: a tag with no prose fails this job either way, and the
+      # cheap failure should not arrive last. It also prints what will ship, so
+      # the run log shows the notes before anything is published.
+      #
+      # Skipped without the signing secrets, which keeps this file's promise at
+      # the top that a fork "degrades to Tier A and still produces an artifact,
+      # rather than failing the job": a Tier A release publishes $UNSIGNED_NOTE
+      # and never reads these notes, so refusing its tag would gate a fork's
+      # build on prose nothing would have used.
+      - name: Release notes gate
+        if: env.MACOS_CERT_P12_BASE64 != ''
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "--- notes for $TAG ---"
+          scripts/release-notes.py "$TAG"
+
       # Package.swift is swift-tools-version 6.0, so the toolchain must be Swift 6+.
       # Select the newest Xcode on the image and then ASSERT the Swift version,
       # rather than pinning a version series: pinning breaks silently the day the
@@ -211,6 +242,23 @@ jobs:
           # The site step reads this to decide whether to touch the update feed.
           echo "TIER=$TIER" >> "$GITHUB_ENV"
 
+          # The tag's annotation, through the same generator the appcast uses, so
+          # the two channels cannot describe one release differently. It replaced
+          # --generate-notes, which for a repo with no merged PRs produced a body
+          # of exactly one line: the Full Changelog link.
+          #
+          # Not gh's own --notes-from-tag, which falls back to the tagged COMMIT's
+          # message on a lightweight tag -- that publishes a commit subject as
+          # release notes and looks entirely plausible. The generator refuses.
+          #
+          # Assigned here rather than inlined as `--notes "$(...)"` below: a
+          # command substitution that fails inside an argument does NOT stop the
+          # outer command under `bash -e`, so gh would publish empty notes. As its
+          # own assignment it aborts the step, which is the whole point.
+          if [ "$TIER" = B ]; then
+            NOTES="$(scripts/release-notes.py "$TAG")"
+          fi
+
           # Idempotent: `gh release create` hard-fails with "a release with the same
           # tag name already exists", so re-running a tag after fixing something
           # downstream threw away a completed build (and, now, a completed
@@ -223,15 +271,25 @@ jobs:
             # presenting itself as the signed one.
             if [ "$TIER" = A ]; then
               gh release edit "$TAG" --prerelease --notes "$UNSIGNED_NOTE"
+            else
+              # The notes are re-applied on a re-run for the same reason the
+              # marking is: the tag is the source, so a run after correcting an
+              # annotation must carry the correction. It is also the only route
+              # by which a release published without notes ever gets them.
+              #
+              # `--prerelease=false` because this branch is the REPAIR path: if
+              # the first run degraded to Tier A it created the release marked
+              # prerelease, and a re-run that now produces a notarized build must
+              # clear that too -- otherwise the fixed release stays flagged and
+              # excluded from Latest, half-repaired.
+              gh release edit "$TAG" --notes "$NOTES" --prerelease=false
             fi
           elif [ "$TIER" = A ]; then
             gh release create "$TAG" dist/Hammerdeck-*.zip \
               --title "$TAG" --prerelease --notes "$UNSIGNED_NOTE"
           else
-            # --generate-notes and --notes are mutually exclusive, so the two tiers
-            # cannot share one invocation.
             gh release create "$TAG" dist/Hammerdeck-*.zip \
-              --title "$TAG" --generate-notes
+              --title "$TAG" --notes "$NOTES"
           fi
 
       # Deliberately AFTER the GitHub Release: that release is the durable record

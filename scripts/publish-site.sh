@@ -3,7 +3,11 @@
 # Publish hammerdeck.peach-studio.com: the download page, the update feed, and
 # the release archive Sparkle hands to installed copies of the app.
 #
-# Run it AFTER scripts/package.sh has produced a Tier B build.
+# Run it AFTER scripts/package.sh has produced a Tier B build, and after the
+# ANNOTATED tag for this version exists -- `git tag -a v0.1.0` -- because the
+# tag's message is where the release notes come from (scripts/release-notes.py).
+# An untagged version cannot be published, which is the intent: the feed's notes
+# have no other source, and a release with no tag has no durable record either.
 #
 #   scripts/publish-site.sh 0.1.0
 #   scripts/publish-site.sh 0.1.0 --stage-only   build + sign + verify, deploy nothing
@@ -104,6 +108,18 @@ if [[ "$STAGE_ONLY" -eq 0 ]] && ! command -v firebase > /dev/null 2>&1; then
   exit 1
 fi
 
+# Read the notes with the other gates, before signing: a bad tag should not cost
+# a signature and a staged archive first. A non-zero exit must abort here --
+# the whole point is that an empty <description> is an EMPTY dialog at the moment
+# a user decides whether to trust an auto-update -- so the generator runs as a
+# bare command substitution, where errexit fires on its own rather than on
+# `pipefail` still being set 80 lines further up.
+NOTES_HTML="$("$ROOT/scripts/release-notes.py" "$VERSION" --format html)"
+# Indented here rather than in the generator: the indentation belongs to the XML
+# heredoc below, not to the HTML.
+NOTES_HTML="$(printf '%s\n' "$NOTES_HTML" | sed 's/^/                /')"
+echo "    release notes: $(printf '%s' "$NOTES_HTML" | wc -c | tr -d ' ') bytes from the v$VERSION tag"
+
 # --- sign --------------------------------------------------------------------
 
 # Sign the FINAL archive: for a Tier B build package.sh re-zips after stapling,
@@ -141,6 +157,9 @@ cat > "$STAGE/appcast.xml" <<XML
         <language>en</language>
         <item>
             <title>$VERSION</title>
+            <description><![CDATA[
+$NOTES_HTML
+            ]]></description>
             <pubDate>$PUB_DATE</pubDate>
             <link>$SITE_HOST/</link>
             <sparkle:version>$VERSION</sparkle:version>
