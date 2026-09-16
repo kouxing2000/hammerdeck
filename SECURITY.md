@@ -22,10 +22,10 @@ reason). Being blunt about the surface is more useful than a short list:
 
 | Surface | Why it's needed | When it's asked for |
 |---|---|---|
-| **Accessibility** | reading and moving other apps' windows (AXUIElement); synthesizing keystrokes (paste-as-plain-text, insert date/time, paste from clipboard history); and the Caps->Hyper remap, which is an event tap that REWRITES keys | on first use of a feature that needs it |
+| **Accessibility** | reading and moving other apps' windows (AXUIElement); synthesizing keystrokes (paste-as-plain-text, insert date/time, paste from clipboard history, and locking the screen -- which posts the system ctrl-cmd-Q shortcut); and the Caps->Hyper remap, which is an event tap that REWRITES keys | on first use of a feature that needs it |
 | **Automation (per browser)** | listing Chrome/Safari tabs for the tab and site switchers | lazily, the first time a switcher runs |
 | **Login Keychain** | storing a feature's API key (today: OpenAI) | only if you enter one |
-| **Subprocesses** | the `exec` capability, available to user extensions only | never for a built-in feature |
+| **Subprocesses** | two different things. The seam spawns a small set of **fixed, named** commands with arguments it builds itself -- sleeping the machine, starting the screensaver, speaking text, running a Shortcut, scripting a browser. Some sit behind a capability; some are reachable only from the rules engine and have no capability of their own. Separately, the `exec` capability runs an **arbitrary** command line, and that one is for user extensions only (`grep -rn 'runCommand(\|runProcessCore(\|runJXA(' app/platform/swift/` enumerates the fixed set -- a list written out here would go stale) | the fixed ones with whatever invokes them; `exec` never for a built-in feature |
 
 Two-step chords are deliberately absent from that list: the prefix and each
 follow key are ordinary Carbon hotkeys, so a chord needs no permission at all.
@@ -51,7 +51,10 @@ contain hostile code, and `load()` defeats any static scan.
 An extension you drop in the extensions folder gets the same runtime capability
 gate but none of our CI guards. A child process can do anything you can, so a
 first-party feature is forbidden from declaring `exec` -- a built-in that needs OS
-surface grows it in the seam, where the call is one reviewed named thing.
+surface grows it in the seam, where the call is one reviewed named thing. Read
+that as "no built-in runs a command *you* supplied", not as "no built-in spawns a
+process": several of those reviewed seam calls are themselves fixed command
+lines, listed in the surface table above.
 
 **The debug eval channel is `#if DEBUG` only** and compiles to a no-op in the
 released build. The shipping MCP endpoint deliberately has **no eval tool**:
@@ -61,8 +64,11 @@ and make its verdicts meaningless.
 ## Network
 
 Hammerdeck has no telemetry, no analytics, no crash reporting, and no account.
-Nothing is sent anywhere on a schedule. It makes exactly **four** kinds of
-outbound request, all of them consequences of something you turned on or did:
+Nothing *about you* is ever transmitted -- but two of the four requests below do
+run unprompted on a timer, so "nothing happens on a schedule" would be wrong: the
+update check polls the feed, and Bing Daily Wallpaper fetches on the schedule you
+set it. It makes exactly **four** kinds of outbound request, all of them
+consequences of something you turned on or did:
 
 1. **Update checks** -- Sparkle polls the appcast at `hammerdeck.peach-studio.com`
    and downloads a release you approve. Every update is EdDSA-signed against a
@@ -78,8 +84,14 @@ outbound request, all of them consequences of something you turned on or did:
 4. **Favicons** -- Tab Switcher and Quick Sites show a site's icon. They first ask
    your local Chrome icon database; only for a domain that answers nothing do
    they fetch `https://<that-domain>/favicon.ico`, once, cached to disk
-   thereafter. The domain is one you were already opening in a browser. No
-   third-party service is involved and nothing about you is transmitted.
+   thereafter. The domain is one you were already opening in a browser, and no
+   third-party service is involved -- but it is still a request you did not type,
+   so that site learns your IP and the time, as any HTTP request does. Nothing
+   identifying you is *sent*; a connection is a connection.
+
+All four are what the **built-in** catalog does. A user extension you install
+declares `network` and can then reach anything -- the list above describes code
+that ships with the app, not a limit the app imposes on your own.
 
 ## The MCP endpoint
 
@@ -94,8 +106,31 @@ never its reach.
 
 ## Logs and stored data
 
-Everything stays on the machine, in
-`~/Library/Application Support/Hammerdeck/` -- plain-text daily logs (14-day
-retention), feature data such as clipboard history and usage CSVs, and cached
-favicons. Settings live in the `Hammerdeck` defaults domain. Clipboard History
-never records entries copied from a password manager.
+Everything stays on the machine. It is in more than one place, so here is each:
+
+- `~/Library/Application Support/Hammerdeck/` -- plain-text daily logs, and
+  feature data such as clipboard history.
+- `~/Library/Caches/` -- downloaded favicons. The OS may purge this at will,
+  which is why nothing durable lives here.
+- **Wherever the feature is configured to write.** Usage Stats defaults to
+  `~/.computer-usage`, outside Application Support entirely, and that folder is a
+  setting you can change. A feature that writes outside the app's own data
+  directory needs the `files` capability to do it.
+- **Preferences** go to the app's own defaults domain -- `com.peach-studio.hammerdeck`
+  for a packaged build. (Running from source it is `Hammerdeck`, the executable
+  name; that is the one `defaults read Hammerdeck` reaches during development.)
+
+**Log retention keeps the newest 14 log FILES, not 14 days.** One file is written
+per day the app runs, so on daily use those coincide -- but a machine used
+occasionally keeps logs going back much further than a fortnight. Delete the
+folder if that matters to you.
+
+**Clipboard History skips entries marked as secrets, which is not the same as
+recognizing password managers.** It reads the [nspasteboard.org][nsp] convention:
+a clip carrying a concealed/transient marker is never recorded. Password managers
+set that marker, and so does Hammerdeck's own Password Generator for the
+passwords it mints. An application that copies a secret WITHOUT marking it is
+indistinguishable from one copying ordinary text, and its clip is recorded like
+any other.
+
+[nsp]: http://nspasteboard.org
