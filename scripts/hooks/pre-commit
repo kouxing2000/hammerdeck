@@ -28,12 +28,22 @@ if [ "${1:-}" = "--all" ]; then
     # repo root and refuse an empty list, so a partial scan can never pass green.
     cd "$(git rev-parse --show-toplevel)" || exit 1
     list_files() { git ls-files; }
+    # Whole-tree sweep: the working file IS the subject, and a tracked path with
+    # no working file is a pending deletion with nothing left to scan.
+    read_candidate() { [ -f "$1" ] && cat -- "$1" > "$SCAN_TMP"; }
     if [ -z "$(git ls-files | head -1)" ]; then
         printf 'pre-commit --all: git ls-files returned nothing -- refusing a vacuous pass.\n' >&2
         exit 1
     fi
 else
     list_files() { git diff --cached --name-only --diff-filter=ACM; }
+    # The INDEX blob, never the working file. A commit writes what is staged, so
+    # reading the working copy asks about bytes that are not the ones going into
+    # history: stage prohibited content, then clean or delete the working file,
+    # and a hook that greps the working tree finds nothing and lets the staged
+    # blob through. `git show ":$f"` is the object the commit will actually
+    # record, and it exists even when the path no longer does on disk.
+    read_candidate() { git show ":$1" > "$SCAN_TMP" 2>/dev/null; }
 fi
 
 # Unambiguous business-strategy signals. Deliberately EXCLUDES words that carry a
@@ -50,6 +60,11 @@ EXEMPT=(
     "CLAUDE.md"                  # the "Where a document goes" rule
 )
 
+# Per-process temp, atomic in the sense that matters here: two hooks running at
+# once (a commit while CI runs --all) must not scan each other's bytes.
+SCAN_TMP="$(mktemp "${TMPDIR:-/tmp}/pre-commit-scan.$$.XXXXXX")"
+trap 'rm -f "$SCAN_TMP"' EXIT
+
 is_exempt() {
     local candidate="$1" e
     for e in "${EXEMPT[@]}"; do
@@ -61,13 +76,21 @@ is_exempt() {
 found=0
 
 while IFS= read -r f; do
-    [ -f "$f" ] || continue
     is_exempt "$f" && continue
-    # Skip binaries (icons, bundles) -- grep on them is noise.
-    if file --mime "$f" 2>/dev/null | grep -q 'charset=binary'; then
+    # Materialize the candidate bytes ONCE, then classify and scan the same file.
+    # Reading into a shell variable instead would silently drop NUL bytes (bash
+    # warns and truncates), which both mangles binaries and re-reads a path that
+    # may be changing underneath us.
+    : > "$SCAN_TMP"
+    read_candidate "$f"
+    [ -s "$SCAN_TMP" ] || continue
+    # Skip binaries (icons, bundles) -- grep on them is noise. Asked of the bytes
+    # in hand, so the staged blob is classified rather than whatever the working
+    # tree happens to hold at that path.
+    if file --mime "$SCAN_TMP" 2>/dev/null | grep -q 'charset=binary'; then
         continue
     fi
-    matches=$(grep -inE "$PATTERN" -- "$f" 2>/dev/null | head -5)
+    matches=$(grep -inE "$PATTERN" -- "$SCAN_TMP" 2>/dev/null | head -5)
     if [ -n "$matches" ]; then
         if [ "$found" -eq 0 ]; then
             printf '\n\033[31mBLOCKED\033[0m: business/strategy content in a checked file.\n' >&2

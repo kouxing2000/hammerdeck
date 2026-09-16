@@ -40,6 +40,34 @@ SIGN_UPDATE="$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 # env var and the file path are supplied by whoever runs this.
 SPARKLE_KEY_FILE="${SPARKLE_KEY_FILE:-}"
 
+# Read, never re-declared. package.sh is the single source for both: the bundle id
+# it stamps into Info.plist, and the EdDSA public key it bakes in as SUPublicEDKey
+# -- the one installed copies verify every update against. A second copy here
+# could drift, and the drift would only surface as a feed the whole install base
+# silently refuses.
+PACKAGE_SH="$ROOT/scripts/package.sh"
+# Pull a constant out of package.sh. Handles both shapes it uses: a bare literal
+# (SPARKLE_PUBLIC_KEY) and an env-overridable default (BUNDLE_ID, written
+# "${HAMMERDECK_BUNDLE_ID:-com.peach-studio.hammerdeck}") -- the second would
+# otherwise come back as the literal text of the expression, which then fails
+# every comparison it is used in and reads like a mismatched artifact.
+read_package_const() {
+  awk -F'"' -v k="^$1=" '$0 ~ k {print $2; exit}' "$PACKAGE_SH" \
+    | sed -E 's/^\$\{[A-Za-z_][A-Za-z0-9_]*:-(.*)\}$/\1/'
+}
+# Read from package.sh like the key, rather than re-spelled here: a second copy
+# of an identity string is a second thing to forget when it changes, and this
+# script's whole job is to notice when two artifacts disagree.
+BUNDLE_ID="${HAMMERDECK_BUNDLE_ID:-$(read_package_const BUNDLE_ID)}"
+BUNDLE_ID="${BUNDLE_ID:-com.peach-studio.hammerdeck}"
+SHIPPED_PUBKEY="$(read_package_const SPARKLE_PUBLIC_KEY)"
+if [[ -z "$SHIPPED_PUBKEY" ]]; then
+  echo "error: could not read SPARKLE_PUBLIC_KEY out of $PACKAGE_SH." >&2
+  echo "       That constant is what installed copies verify against; refusing to" >&2
+  echo "       publish a feed this script cannot check against it." >&2
+  exit 1
+fi
+
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
   echo "usage: scripts/publish-site.sh <version>   (e.g. 0.1.0)" >&2
@@ -72,18 +100,84 @@ if [[ ! -d "$APP" ]]; then
   exit 1
 fi
 
+# --- inspect the archive we are actually shipping ----------------------------
+
+# Every gate below asks its question of the app INSIDE the zip, not of
+# dist/Hammerdeck.app sitting beside it. They are separate objects: package.sh
+# produces both, but nothing downstream re-checks that they still agree, so
+# validating the loose app certified a build no user would ever receive and a
+# stale or hand-dropped zip passed on its neighbour's reputation. The zip is what
+# the appcast points at, so the zip is what has to answer.
+VERIFY_DIR="$DIST/.verify.$$"
+# ONE handler, registered once. bash keeps a single trap per signal, so a second
+# `trap ... EXIT` further down REPLACES this rather than adding to it -- and the
+# thing it would drop is the extracted app bundle, on the deploy path only, where
+# a --stage-only rehearsal never reaches the second registration and so looks
+# clean. Everything that needs cleaning is torn down here.
+#
+# `if`, never `[[ -n "$CREDS" ]] && rm ...`: under `set -e` a false test as the
+# function's LAST statement trips errexit inside the function, which exits the
+# script 1 on a completely successful run.
+CREDS=""
+cleanup() {
+  rm -rf "$VERIFY_DIR"
+  if [[ -n "$CREDS" ]]; then rm -f "$CREDS"; fi
+}
+trap cleanup EXIT
+rm -rf "$VERIFY_DIR"
+mkdir -p "$VERIFY_DIR"
+if ! ditto -x -k "$ZIP" "$VERIFY_DIR" 2>/dev/null; then
+  echo "error: $ZIP could not be extracted -- it is not a readable archive." >&2
+  exit 1
+fi
+
+# Exactly one app, at the top level. A zip carrying two (or one nested somewhere
+# unexpected) is not the shape package.sh produces, and guessing which one
+# Sparkle would install is not a judgement this script should make.
+ARCHIVED_APP="$VERIFY_DIR/$APP_NAME.app"
+APP_COUNT="$(find "$VERIFY_DIR" -maxdepth 2 -name '*.app' | wc -l | tr -d ' ')"
+if [[ ! -d "$ARCHIVED_APP" || "$APP_COUNT" != "1" ]]; then
+  echo "error: expected exactly one $APP_NAME.app in $ZIP, found $APP_COUNT:" >&2
+  find "$VERIFY_DIR" -maxdepth 2 -name '*.app' >&2
+  exit 1
+fi
+
+ARCHIVED_PLIST="$ARCHIVED_APP/Contents/Info.plist"
+plist_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$ARCHIVED_PLIST" 2>/dev/null || true; }
+
+# The version the archive CLAIMS must be the version the feed advertises -- this
+# is the check that catches a rebuilt-but-not-rezipped release, where the feed
+# offers 0.1.3 and hands the user 0.1.2 which then never updates again.
+ARCHIVED_VERSION="$(plist_value CFBundleShortVersionString)"
+ARCHIVED_BUILD="$(plist_value CFBundleVersion)"
+ARCHIVED_ID="$(plist_value CFBundleIdentifier)"
+if [[ "$ARCHIVED_VERSION" != "$VERSION" || "$ARCHIVED_BUILD" != "$VERSION" ]]; then
+  echo "error: $ZIP contains version $ARCHIVED_VERSION (build $ARCHIVED_BUILD), not $VERSION." >&2
+  echo "       Re-run scripts/package.sh $VERSION; the archive is stale." >&2
+  exit 1
+fi
+if [[ "$ARCHIVED_ID" != "$BUNDLE_ID" ]]; then
+  echo "error: $ZIP contains bundle id '$ARCHIVED_ID', expected '$BUNDLE_ID'." >&2
+  exit 1
+fi
+echo "    archive contents: $APP_NAME $ARCHIVED_VERSION ($ARCHIVED_ID)"
+
 # The hard one. An appcast entry is an INSTRUCTION to every installed copy to
 # download and run this archive, so publishing an un-notarized build does not
 # just ship something rough -- it pushes users an update macOS then refuses to
 # open, and the app that would have offered them a working one has already been
 # replaced. Asked of the artifact, never of whether a signing secret was set.
-if ! xcrun stapler validate "$APP" > /dev/null 2>&1; then
-  echo "error: $APP carries no notarization ticket." >&2
+if ! xcrun stapler validate "$ARCHIVED_APP" > /dev/null 2>&1; then
+  echo "error: the app inside $ZIP carries no notarization ticket." >&2
   echo "       Refusing to publish an update feed for an unsigned build -- it would" >&2
   echo "       hand every installed copy an app that will not open." >&2
   exit 1
 fi
-echo "    notarization ticket: present"
+if ! codesign --verify --deep --strict "$ARCHIVED_APP" > /dev/null 2>&1; then
+  echo "error: the app inside $ZIP fails codesign --verify --deep --strict." >&2
+  exit 1
+fi
+echo "    notarization ticket: present; signature intact"
 
 if [[ ! -x "$SIGN_UPDATE" ]]; then
   echo "error: sign_update not at $SIGN_UPDATE" >&2
@@ -133,7 +227,18 @@ fi
 LENGTH="$(stat -f%z "$ZIP")"
 echo "    signature: ${ED_SIG:0:16}...  length: $LENGTH"
 
-MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")"
+# The one archive value with no comparison behind it: version, bundle id and
+# public key are each checked against something, so a soft read shows up there as
+# a mismatch. An empty MIN_OS would sail through into
+# <sparkle:minimumSystemVersion></sparkle:minimumSystemVersion> and render
+# "macOS +" on the download page -- and the page's token guard only catches
+# UNREPLACED tokens, never an empty replacement. So ask explicitly.
+MIN_OS="$(plist_value LSMinimumSystemVersion)"
+if [[ -z "$MIN_OS" ]]; then
+  echo "error: the app inside $ZIP declares no LSMinimumSystemVersion." >&2
+  echo "       Publishing would advertise an update with no minimum OS." >&2
+  exit 1
+fi
 PUB_DATE="$(date '+%a, %d %b %Y %H:%M:%S %z')"
 ZIP_NAME="$APP_NAME-$VERSION.zip"
 
@@ -197,11 +302,72 @@ PY
 
 # --- verify before deploying -------------------------------------------------
 
-# Round-trip the signature against the staged archive. sign_update --verify is
-# the same check Sparkle performs on the user's machine, so a pass here means a
-# working update rather than a well-formed XML file.
+# Round-trip the signature against the staged archive.
 printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify "$STAGE/$ZIP_NAME" "$ED_SIG" --ed-key-file - > /dev/null
 echo "    signature verifies against the staged archive"
+
+# ...which on its own proves nothing about the CLIENT. sign_update derives its
+# verification key from the private key it was just handed, so --verify is
+# self-consistent by construction and passes for ANY well-formed key. Sparkle on
+# the user's machine checks against SUPublicEDKey in the app's Info.plist. Sign
+# with a different key and this script reports success while every installed copy
+# refuses the update -- the feed is then broken for the whole install base until
+# somebody notices by hand.
+#
+# So verify the way the client will: the archived app's OWN public key, over the
+# exact bytes being published. Reading the key from the archive rather than from
+# package.sh is what makes this a check and not an assumption -- then confirm the
+# archive carries the key package.sh believes it stamped.
+ARCHIVED_PUBKEY="$(plist_value SUPublicEDKey)"
+if [[ -z "$ARCHIVED_PUBKEY" ]]; then
+  echo "error: the app inside $ZIP declares no SUPublicEDKey -- it can never accept an update." >&2
+  exit 1
+fi
+if [[ "$ARCHIVED_PUBKEY" != "$SHIPPED_PUBKEY" ]]; then
+  echo "error: the archived app trusts a different key than $PACKAGE_SH declares." >&2
+  echo "       archive's SUPublicEDKey:  $ARCHIVED_PUBKEY" >&2
+  echo "       package.sh's constant:    $SHIPPED_PUBKEY" >&2
+  exit 1
+fi
+
+# Gated on a POSITIVE LANDMARK, not on the exit status. A missing toolchain, a
+# compile error in the snippet, or a sandbox denial all exit non-zero too, and
+# reporting any of those as "the signature is wrong" blocks a release with a
+# confidently false cause pointing at the signing key. Only the word VERIFIED,
+# which nothing but a completed check can print, is taken as a pass -- and the
+# output stays visible so the real reason is on screen when it is something else.
+VERIFY_OUT="$(ED_SIG="$ED_SIG" PUBKEY="$ARCHIVED_PUBKEY" ZIP_PATH="$STAGE/$ZIP_NAME" \
+  swift -e '
+import Foundation
+import CryptoKit
+let env = ProcessInfo.processInfo.environment
+guard let keyData = Data(base64Encoded: env["PUBKEY"]!),
+      let sigData = Data(base64Encoded: env["ED_SIG"]!),
+      let payload = FileManager.default.contents(atPath: env["ZIP_PATH"]!),
+      let key = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData) else {
+    print("MALFORMED")
+    exit(2)
+}
+print(key.isValidSignature(sigData, for: payload) ? "VERIFIED" : "REJECTED")
+' 2>&1 || true)"
+case "$VERIFY_OUT" in
+  *VERIFIED*)
+    echo "    signature verifies against the archived app's SUPublicEDKey" ;;
+  *REJECTED*)
+    echo "error: the signature does NOT verify against the archived app's own public key." >&2
+    echo "       The signing key's public half is not $ARCHIVED_PUBKEY." >&2
+    echo "       Publishing would hand every installed copy an update it refuses." >&2
+    exit 1 ;;
+  *MALFORMED*)
+    echo "error: the archived app's SUPublicEDKey or the signature is not valid base64/ed25519." >&2
+    echo "       key: $ARCHIVED_PUBKEY" >&2
+    exit 1 ;;
+  *)
+    echo "error: the signature check did not RUN -- so nothing here says the update is installable." >&2
+    echo "       This is not a signature failure, it is a missing verdict. Output was:" >&2
+    printf '%s\n' "$VERIFY_OUT" | sed 's/^/         /' >&2
+    exit 1 ;;
+esac
 
 # --- deploy ------------------------------------------------------------------
 
@@ -212,14 +378,9 @@ if [[ "$STAGE_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
-CREDS=""
-# `if`, never `[[ -n "$CREDS" ]] && rm ...`: under `set -e` a false test as a
-# function's LAST statement trips errexit inside the function, which here exits
-# the script 1 on a completely successful run. Traps are not special -- this bites
-# any function or sourced script ending in a `&&` list whose test can be false.
-cleanup() { if [[ -n "$CREDS" ]]; then rm -f "$CREDS"; fi; }
-trap cleanup EXIT
-
+# CREDS and the EXIT trap that removes it are set up with the extraction cleanup
+# at the top -- one handler for both, since a second `trap ... EXIT` would replace
+# the first rather than join it.
 if [[ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]]; then
   CREDS="$(mktemp)"
   printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$CREDS"
