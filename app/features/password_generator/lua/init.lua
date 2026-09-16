@@ -70,7 +70,9 @@ local function generate(ctx)
     end
 
     local pw = build(ctx, length, pools)
-    ctx.pasteboardWrite(pw)
+    -- CONCEALED, not a plain write: this is a credential we just minted, and an
+    -- unmarked clip is one Clipboard History persists to disk in plaintext.
+    ctx.pasteboardWriteConcealed(pw)
     ctx.notify(ctx.t("notify.copied.title", "Password copied"), ctx.t("notify.copied.body", "%d-character password is on the clipboard", length))
     ctx.log("generated a", length, "char password (", #pools, "char classes)")
     return pw   -- returned for tests; ignored by the trigger path

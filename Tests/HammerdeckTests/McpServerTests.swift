@@ -357,6 +357,46 @@ final class McpServerTests: XCTestCase {
         XCTAssertTrue(text.contains("lua/init.lua"))
     }
 
+    // read_log's `lines` arrives as untrusted JSON, and JSONSerialization hands
+    // any unsuffixed number back as a Double. `Int(someDouble)` TRAPS outside
+    // Int's range, so converting before clamping made one authenticated request
+    // -- {"lines": 1e100} -- kill the whole host process with SIGTRAP, taking
+    // every running feature with it. The clamp has to happen in Double space.
+    //
+    // Driven through the real MCP dispatch rather than against the expression,
+    // because the defect was in the ORDER of two operations that both still
+    // exist: a unit test on a clamp helper would pass either way. A crash here
+    // takes the test runner down with it, so a failure is unmissable.
+    //
+    // 200 and 400 are both PASSES: a literal past Double's own range (9.9e308,
+    // 1e400) is rejected by the JSON parser before dispatch ever sees it, which
+    // is the parser doing its job. The only failure mode this test hunts is the
+    // one that produces no status at all.
+    func testReadLogSurvivesOutOfRangeLineCounts() {
+        let hostile = ["1e100", "-1e100", "9.9e308", "-9.9e308", "1e400", "-1e400",
+                       "1e19", "-1e19", "0.5", "-0.5", "0", "-1",
+                       "1", "2000", "2001", "1.5e3"]
+        for raw in hostile {
+            let (status, json) = rpc("tools/call",
+                params: "{\"name\":\"read_log\",\"arguments\":{\"lines\":\(raw)}}")
+            XCTAssertTrue(status == 200 || status == 400,
+                          "read_log lines=\(raw) answered \(status)")
+            if status == 200 {
+                // A log, or "no log file yet" -- both are answers. The point is
+                // that the process is still alive to give one.
+                XCTAssertNotNil(json["result"], "read_log lines=\(raw) produced no result")
+            }
+        }
+        // The positive landmark. Without it the loop above would pass just as
+        // well against a socket that had stopped answering, since an assertion
+        // that only accepts two statuses cannot tell a live server from a dead
+        // one it never reached.
+        let (status, json) = rpc("tools/call",
+                                 params: #"{"name":"read_log","arguments":{"lines":10}}"#)
+        XCTAssertEqual(status, 200, "the endpoint stopped serving after the hostile inputs")
+        XCTAssertNotNil(json["result"])
+    }
+
     func testUnknownMethodAndUnknownResource() {
         let (_, unknown) = rpc("no/such/method")
         XCTAssertEqual(((unknown["error"] as? [String: Any])?["code"] as? Int), -32601)

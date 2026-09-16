@@ -643,9 +643,12 @@ EFFECT_KINDS = {
         label = "Speak text aloud",
     },
     lockScreen = {
+        -- The adapter's own verdict, never a hardcoded true: without the
+        -- Accessibility grant the lock is discarded silently, and a rule that
+        -- reported success would put "locked the screen" in the log of a machine
+        -- that is still open.
         run = function()
-            adapter.lockScreen()
-            return true
+            return adapter.lockScreen() == true
         end,
         describe = function() return desc("lockScreen", "Lock the screen") end,
         contextFree = true,

@@ -141,6 +141,15 @@ function adapter.pasteboardWrite(text)
     native.pasteboard_write(text)
 end
 
+-- Write `text` MARKED AS A SECRET: clipboard managers that honor the
+-- nspasteboard.org convention -- Hammerdeck's own Clipboard History among them --
+-- skip it instead of persisting it. Anything a feature GENERATES as a credential
+-- goes through here, never pasteboardWrite.
+---@param text string
+function adapter.pasteboardWriteConcealed(text)
+    native.pasteboard_write_concealed(text)
+end
+
 -- { change = <changeCount>, concealed = bool } -- change detection without
 -- reading contents; concealed marks password-manager/transient entries that
 -- a clipboard history must not record.
@@ -1162,8 +1171,12 @@ function adapter.systemSleep()
     native.system_sleep()
 end
 
+-- Locks the session by posting the system ctrl-cmd-Q shortcut. Returns false when
+-- the Accessibility grant is missing, in which case NOTHING happened -- a caller
+-- that ignores the result reports a lock it did not perform.
+---@return boolean locked
 function adapter.lockScreen()
-    native.lock_screen()
+    return native.lock_screen()
 end
 
 function adapter.displaySleep()

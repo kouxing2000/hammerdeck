@@ -134,6 +134,7 @@ final class Native {
             // clipboard (general pasteboard -- no permission required)
             "pasteboard_read":  { L in MainActor.assumeIsolated { Native.shared.pasteboardRead(L) } },
             "pasteboard_write": { L in MainActor.assumeIsolated { Native.shared.pasteboardWrite(L) } },
+            "pasteboard_write_concealed": { L in MainActor.assumeIsolated { Native.shared.pasteboardWriteConcealed(L) } },
             "pasteboard_info":  { L in MainActor.assumeIsolated { Native.shared.pasteboardInfo(L) } },
             // output
             "notify":        { L in MainActor.assumeIsolated { Native.shared.notify(L) } },

@@ -688,6 +688,11 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- clipboard ----------------------------------------------------------------
     function ctx.pasteboardRead()      return adapter.pasteboardRead() end
     function ctx.pasteboardWrite(text) adapter.pasteboardWrite(text) end
+    -- For anything the feature GENERATED as a secret. A plain pasteboardWrite
+    -- leaves it an ordinary clip, and Clipboard History then writes it to disk
+    -- in plaintext -- the exclusion it applies to password managers only fires
+    -- on the marker this sets.
+    function ctx.pasteboardWriteConcealed(text) adapter.pasteboardWriteConcealed(text) end
     function ctx.pasteboardInfo()      return adapter.pasteboardInfo() end
 
     -- network / files / wallpaper -----------------------------------------------
@@ -844,7 +849,14 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ---@return string|nil
     function ctx.displaySleepPrevented() return adapter.displaySleepPrevented() end
     function ctx.systemSleep()       adapter.systemSleep() end
-    function ctx.lockScreen()        adapter.lockScreen() end
+    -- Gated like keyStroke/typeText/mediaKey: locking posts ctrl-cmd-Q through the
+    -- same CGEvent path, and without the grant the event is discarded in silence.
+    -- A lock is the one verb where that silence is worst -- the user walks away.
+    ---@return boolean locked
+    function ctx.lockScreen()
+        if not inputAllowed() then return false end
+        return adapter.lockScreen()
+    end
     function ctx.displaySleep()      adapter.displaySleep() end
     function ctx.startScreensaver()  adapter.startScreensaver() end
     function ctx.setAppearance(mode) return adapter.setAppearance(mode) end

@@ -8,6 +8,9 @@
   "capabilities": [
     "power"
   ],
+  "requires": [
+    "accessibility"
+  ],
   "preview": {
     "archetype": "banner",
     "sample": "breakReminder"

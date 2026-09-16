@@ -235,16 +235,55 @@ extension Native {
         return 0
     }
 
+    /// Lock the session, by synthesizing the system Lock Screen shortcut.
+    ///
+    /// ctrl-cmd-Q is what the Apple menu's "Lock Screen" item posts, so this is a
+    /// real lock: the session goes to the login window whatever the password
+    /// grace period is set to. Do NOT reach for `pmset displaysleepnow` here --
+    /// it only turns the display off, and for anyone whose "require password
+    /// after sleep" delay is not immediate it turns it off WITHOUT locking. A
+    /// lock action that leaves the machine unlocked is worse than no lock action,
+    /// because the user walks away believing it worked. That delay is also no
+    /// longer readable to check: `askForPassword` is gone from
+    /// com.apple.screensaver as of macOS 26, so "lock, or report that we could
+    /// not" is not implementable -- locking for real is the only honest option.
+    ///
+    /// Needs the Accessibility grant, like every other synthesized key -- and
+    /// `inputTrusted` logs and returns rather than failing silently, so a denied
+    /// grant is diagnosable from the daily log instead of looking like a dead
+    /// shortcut. The alternative considered and rejected was
+    /// `SACLockScreenImmediate` in login.framework: private API, no grant needed,
+    /// and nothing to notice when Apple removes it. `CGSession -suspend` is not a
+    /// third option -- the User.menu bundle that carried it is gone as of macOS 26.
+    /// Returns a BOOLEAN: did the lock actually get posted? Lua cannot otherwise
+    /// tell a lock from a silently discarded one, and a lock action that reports
+    /// success while leaving the machine open is the failure this whole change
+    /// exists to remove -- it would just have moved one layer up.
     func lockScreen(_ L: OpaquePointer?) -> Int32 {
-        // Display sleep locks the session when "require password immediately"
-        // is on (the default). Direct lock APIs are private; revisit in M3.
-        runCommand("/usr/bin/pmset", ["displaysleepnow"])
-        return 0
+        guard inputTrusted("lock_screen") else { lua_pushboolean(L, 0); return 1 }
+        // Through HotkeyCenter's table, the same one key_stroke resolves against,
+        // so there is one place key codes are spelled rather than two.
+        guard let code = HotkeyCenter.keyCodes["q"] else {
+            seamLog("lock_screen: no key code for 'q' -- cannot synthesize the lock shortcut")
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let src = CGEventSource(stateID: .combinedSessionState)
+        let flags: CGEventFlags = [.maskControl, .maskCommand]
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(code), keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+        }
+        lua_pushboolean(L, 1)
+        return 1
     }
 
     func displaySleep(_ L: OpaquePointer?) -> Int32 {
-        // Turn the display off (no lock intent -- distinct from lockScreen,
-        // which will switch to a real lock API in M3).
+        // Turn the display off, with no lock intent -- distinct from lockScreen,
+        // which synthesizes the system lock shortcut. Same pmset call the two
+        // shared before lockScreen became a real lock; that they look alike here
+        // is a coincidence of macOS having one way to sleep a display.
         runCommand("/usr/bin/pmset", ["displaysleepnow"])
         return 0
     }

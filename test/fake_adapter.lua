@@ -1042,6 +1042,14 @@ function adapter.pasteboardWrite(text)
     fake.pasteboardConcealed = false
 end
 
+-- Mirrors the seam: the marker rides along in the same write, so a poller
+-- reading pasteboardInfo right after sees concealed = true.
+function adapter.pasteboardWriteConcealed(text)
+    fake.pasteboard = text
+    fake.pasteboardChange = fake.pasteboardChange + 1
+    fake.pasteboardConcealed = true
+end
+
 function adapter.pasteboardInfo()
     return { change = fake.pasteboardChange, concealed = fake.pasteboardConcealed }
 end
@@ -1422,7 +1430,13 @@ function adapter.cacheDir()
 end
 
 function adapter.systemSleep()      fake.actions.sleep = fake.actions.sleep + 1 end
-function adapter.lockScreen()       fake.actions.lock = fake.actions.lock + 1 end
+-- Mirrors the seam's boolean: false means the Accessibility grant is missing and
+-- NOTHING was locked. Tests drive the ungranted case via fake.axTrusted.
+function adapter.lockScreen()
+    if fake.axTrusted == false then return false end
+    fake.actions.lock = fake.actions.lock + 1
+    return true
+end
 function adapter.displaySleep()     fake.actions.displaySleep = fake.actions.displaySleep + 1 end
 function adapter.startScreensaver() fake.actions.screensaver = fake.actions.screensaver + 1 end
 

@@ -59,6 +59,30 @@ extension Native {
         return 0
     }
 
+    /// Write `s` and MARK IT AS A SECRET, so clipboard managers skip it.
+    ///
+    /// Same nspasteboard.org convention `pasteboardInfo` reads on the way in: a
+    /// bare marker type alongside the string. Without it a generated password is
+    /// an ordinary clip, and Hammerdeck's own Clipboard History persists it to
+    /// disk in plaintext -- we would be the password manager defeating our own
+    /// exclusion. The marker has to be set in the SAME declare/clear cycle as the
+    /// string, hence a separate entry point rather than a follow-up call: a
+    /// second `clearContents()` would drop the value it is meant to label.
+    func pasteboardWriteConcealed(_ L: OpaquePointer?) -> Int32 {
+        guard let s = LuaState.string(L, 1) else {
+            return luaError(L, "pasteboard_write_concealed: string required")
+        }
+        let marker = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.declareTypes([.string, marker], owner: nil)
+        pb.setString(s, forType: .string)
+        // The convention marks by PRESENCE of the type; the value is ignored, and
+        // an empty string is what the reference implementations write.
+        pb.setString("", forType: marker)
+        return 0
+    }
+
     // The pasteboard types clipboard managers must not record -- password
     // managers mark secrets Concealed; expansion utilities mark ephemera
     // Transient (the nspasteboard.org convention, donor ClipboardTool's list).

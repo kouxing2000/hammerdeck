@@ -539,7 +539,19 @@ final class McpServer: ObservableObject {
             }
             return try toolResult(["id": id, "enabled": on])
         case "read_log":
-            let asked = args["lines"] as? Int ?? Int(args["lines"] as? Double ?? 100)
+            // Clamp as a Double FIRST. `Int(someDouble)` traps when the value is
+            // outside Int's range, so converting before clamping hands an
+            // authenticated client a one-word crash of the whole host: read_log
+            // with {"lines": 1e100} took the process down with SIGTRAP.
+            // NaN survives neither comparison, hence the explicit fallback.
+            let asked: Int
+            if let i = args["lines"] as? Int {
+                asked = i
+            } else if let d = args["lines"] as? Double, d.isFinite {
+                asked = Int(min(max(d, 1), 2000))
+            } else {
+                asked = 100
+            }
             let lines = max(1, min(asked, 2000))
             guard let text = Self.tailOfNewestLog(lines: lines) else {
                 return toolFailure("no log file yet")
