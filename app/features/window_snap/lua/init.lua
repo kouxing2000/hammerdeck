@@ -253,6 +253,33 @@ local function arranger(ctx)
 end
 
 -- One arranger per enablement (ctx changes on re-enable; ctx.perEnable memoizes).
+
+-- A window MODE (Window Deck, Window Fan) holds each member's pre-mode frame so
+-- it can put it back on exit; moving a member underneath it does not update that
+-- record, so the mode's restore quietly stops being one. Every action here
+-- therefore asks first when a mode owns the screen it is about to touch -- the
+-- platform shows the dialog, tears that mode down and waits for its layout to
+-- land before running us. No mode live (the normal case) = synchronous, no
+-- dialog, so an auto-repeating arrow key costs nothing.
+--
+-- W.focusedScreen, not f.screen: a frame's `screen` is a bare {x,y,w,h} with no
+-- index to key a lease by, and focusedScreen also falls back to the display under
+-- the POINTER -- so focus on the desktop asks about the right screen instead of
+-- resolving to nothing and running ungated over a mode's windows.
+---@param ctx Ctx
+---@param fn fun()
+local function onFocusedScreen(ctx, fn)
+    ctx.window.requestExclusive({ screen = W.focusedScreen(ctx) }, fn)
+end
+
+-- Reaches BOTH displays, so no single screen describes it: every live mode has to
+-- be cleared first.
+---@param ctx Ctx
+---@param fn fun()
+local function onAnyScreen(ctx, fn)
+    ctx.window.requestExclusive({ screen = ctx.window.ANY_SCREEN }, fn)
+end
+
 ---@param ctx Ctx
 local function with(ctx)
     return ctx.perEnable(arranger)
@@ -361,25 +388,25 @@ return {
           defaultTrigger = { type = "hotkey", mods = MODS, key = "left" },
           mnemonic = "Hyper+← — the arrow points to the edge",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).snap(0, 0, 0.5, 1) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).snap(0, 0, 0.5, 1) end) end },
         { id = "right", label = "Right half", icon = "rectangle.righthalf.filled",
           description = "Move the focused window to the right half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "right" },
           mnemonic = "Hyper+→ — the arrow points to the edge",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).snap(0.5, 0, 0.5, 1) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).snap(0.5, 0, 0.5, 1) end) end },
         { id = "top", label = "Top half", icon = "rectangle.tophalf.filled",
           description = "Move the focused window to the top half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "up" },
           mnemonic = "Hyper+↑ — the arrow points to the edge",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).snap(0, 0, 1, 0.5) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).snap(0, 0, 1, 0.5) end) end },
         { id = "bottom", label = "Bottom half", icon = "rectangle.bottomhalf.filled",
           description = "Move the focused window to the bottom half of the screen.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "down" },
           mnemonic = "Hyper+↓ — the arrow points to the edge",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).snap(0, 0.5, 1, 0.5) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).snap(0, 0.5, 1, 0.5) end) end },
 
         -- The thirds (and quarters, center, ...) are no longer hardcoded here: they
         -- live as a QUICK-ADD recipe library in the placement editor. Add one and it
@@ -391,21 +418,21 @@ return {
           defaultTrigger = { type = "hotkey", mods = MODS, key = "return" },
           mnemonic = "Hyper+Return — Return = fill the screen",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).toggleMax() end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).toggleMax() end) end },
         { id = "screen_next", label = "To next screen", icon = "arrow.right.to.line",
           description = "Throw the focused window to the next screen, rescaling it "
               .. "proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "]" },
           mnemonic = "Hyper+] — ] pushes forward to the next screen",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).moveScreen(W.DIR.NEXT) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).moveScreen(W.DIR.NEXT) end) end },
         { id = "screen_prev", label = "To previous screen", icon = "arrow.left.to.line",
           description = "Throw the focused window to the previous screen, rescaling "
               .. "it proportionally and carrying the pointer along.",
           defaultTrigger = { type = "hotkey", mods = MODS, key = "[" },
           mnemonic = "Hyper+[ — [ pushes back to the previous screen",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).moveScreen(W.DIR.PREV) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).moveScreen(W.DIR.PREV) end) end },
 
         -- Swap the whole layout across the two displays. No default trigger (like
         -- the thirds): a swap-all is a deliberate, occasional action, not worth
@@ -417,6 +444,6 @@ return {
               .. "proportionally. On three or more displays it first asks which "
               .. "one. Minimized and fullscreen windows stay put.",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).swapScreens() end },
+          run = function(ctx) onAnyScreen(ctx, function() with(ctx).swapScreens() end) end },
     },
 }

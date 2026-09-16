@@ -65,7 +65,22 @@ not show): **SEAM** = `adapter.lua` (the only file here that reaches `native.*`)
 `require` them). `registry_view` is the registry's read model -- stateless
 itself, but registry-injected and firmly off the feature allowlist. `window_ops` owns the live focused-window move +
 "pointer-follows-window" policy (`ctx.window.setFrame` delegates to it); the
-registry injects its pointer-follow predicate at boot. `window_history` is the
+registry injects its pointer-follow predicate at boot. It ALSO owns the
+EXCLUSIVE WINDOW-MODE LEASE: one mode per screen, because Window Deck and
+Window Fan each capture a member's current frame as the frame to restore, so a
+second mode over the first records the FIRST one's arrangement as the "original
+layout" and the user's real one is then unrecoverable. It lives here for the
+same reason pointer-follow does -- a policy spanning features has to sit where
+no feature can require another. Features reach it only through
+`ctx.window.requestExclusive`, which arbitrates, asks the user, evicts, waits
+for the restore to land, and claims, all in ONE call: splitting grant from
+claim is what leaves the slot readable as empty, and a second mode let in there
+re-creates the exact bug. Every window MOVER consults it too (window_snap,
+window_grid, window_modal, window_rewind), passing `W.focusedScreen(ctx)` --
+NOT `ctx.window.frame().screen`, which is a bare `{x,y,w,h}` with no index to
+key a lease by and no pointer fallback. A guard case fails a new FEATURE that
+moves a window without consulting it; it is a per-file scan, so it does not
+catch a new unGATED ACTION inside a feature that already consults it elsewhere. `window_history` is the
 single-step window-undo engine behind `ctx.window.undoLast` (only `window_ops`
 requires it). **SUBSYSTEM** = the automation rules engine
 (`rules` + `signals` + `effects` -- domain logic that, like core, requires the

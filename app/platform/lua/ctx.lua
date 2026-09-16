@@ -497,6 +497,153 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- this so the recording cost is paid only while that feature is enabled.
     function ctx.window.enableHistory(on) window_ops.setHistoryEnabled(on) end
 
+    -- Target for a window action whose reach is not one display (window rewind's
+    -- undoLast restores whatever the last layout change touched, which may span
+    -- screens): matches a mode holding ANY screen.
+    ctx.window.ANY_SCREEN = window_ops.ANY_SCREEN
+
+    -- How long to wait after an evicted mode's restore is DISPATCHED before the
+    -- newcomer may look at the screen. AX applies a frame asynchronously and
+    -- reports no completion, so a timer is the only mechanism there is; 0.3s is
+    -- the value the window features already settle on (window_deck's settle guard,
+    -- window_fan's settle timer). Without the wait the newcomer lists the frames
+    -- the OUTGOING mode put there and captures them as the layout to restore --
+    -- the exact defect the lease exists to prevent, reintroduced by the fix.
+    local EXCLUSIVE_SETTLE_SECONDS = 0.3
+
+    -- Ask for exclusive use of a screen's windows, then run `onGranted`.
+    --
+    -- One call does the whole dance -- arbitrate, ask, evict, settle, CLAIM --
+    -- because splitting it is what opens the gaps: between a grant and a later
+    -- claim the slot reads empty, so a second mode is let in with no prompt and
+    -- goes on to capture the first one's arrangement as its "original layout".
+    -- By the time `onGranted` runs the lease is ALREADY held, and the handle it
+    -- receives is the release.
+    --
+    -- EXACTLY ONE RESOLUTION, ALWAYS. Every path ends in `onGranted` or in
+    -- `opts.onDenied`, never in silence: a caller that latches state before
+    -- asking (Window Deck sets `st.picking` so the toggle cannot re-enter while a
+    -- panel is open) has no other way to unwind, and a request that simply
+    -- evaporates leaves that latch set -- which reads to the user as a shortcut
+    -- that has stopped working, with nothing on screen to explain it. There are
+    -- four ways to be denied: the user cancels, an arbitration is already in
+    -- flight, a mode named no real screen, and the request lost a claim race.
+    --
+    -- `onEvict` present = the caller is a MODE (it will hold the screen until it
+    -- releases). Absent = a one-shot mover (Window Snap, the rewind): it still
+    -- waits for any incumbent to be gone and settled, but claims nothing, and
+    -- `onGranted` gets nil.
+    --
+    -- The dialog is only ever shown for ANOTHER feature's mode. A caller that
+    -- already holds the screen is re-granted silently with a FRESH handle -- so
+    -- always store the handle you are given and drop the previous one.
+    ---@param opts { screen: table|integer|string|nil, onEvict: fun()|nil, onDenied: fun()|nil }
+    ---@param onGranted fun(lease: Handle|nil)
+    function ctx.window.requestExclusive(opts, onGranted)
+        local function deny(why)
+            ctx.log("exclusive: denied -- " .. why)
+            if opts.onDenied then opts.onDenied() end
+        end
+
+        local s = opts and opts.screen
+        ---@type integer|string|nil
+        local idx
+        if type(s) == "table" then idx = s.index else idx = s end
+        -- A MODE must name a real display -- it is about to hold one, and it
+        -- cannot hold "whichever screen answers". ANY_SCREEN and an unresolvable
+        -- screen are both refusals for it.
+        if opts.onEvict and type(idx) ~= "number" then
+            return deny("a mode must name a real screen, got " .. tostring(idx))
+        end
+        -- A one-shot MOVER with no resolvable screen runs UNGATED rather than not
+        -- at all. Refusing here would turn "we could not tell which display this
+        -- window is on" into a shortcut that silently does nothing, which is a
+        -- worse failure than the layout drift the gate exists to prevent.
+        if not idx then
+            ctx.log("exclusive: screen unresolved -- running ungated")
+            return onGranted(nil)
+        end
+        local name = i18n.tFeature(m.id, "name", m.name or m.id)
+
+        -- BEFORE the holder lookup, not after. Across an eviction the slot is
+        -- already empty while the outgoing mode's restore is still being written,
+        -- so the uncontended fast path below would read "free" and grant against
+        -- frames that are about to change underneath it.
+        if window_ops.arbitrating() then
+            return deny("an arbitration is already in flight")
+        end
+
+        -- Who is in the way. Resolved ONCE, here, and evicted by these exact rows
+        -- later: the dialog is async, so a second scan at answer time can return a
+        -- different set and tear down a mode the user was never asked about.
+        local blocking = {}
+        if idx == window_ops.ANY_SCREEN then
+            for _, row in ipairs(window_ops.heldScreens()) do
+                if row.holder.id ~= m.id then blocking[#blocking + 1] = row end
+            end
+        elseif type(idx) == "number" then
+            local holder = window_ops.modeHolder(idx)
+            if holder and holder.id ~= m.id then
+                blocking[1] = { key = idx, holder = holder }
+            end
+        end
+
+        local function claimAndRun()
+            local lease = nil
+            if opts.onEvict and type(idx) == "number" then
+                lease = track(window_ops.claimMode(idx, m.id, name, opts.onEvict))
+            end
+            onGranted(lease)
+        end
+        if #blocking == 0 then return claimAndRun() end
+
+        -- ANY_SCREEN is blocked by a mode on any display and must clear them ALL:
+        -- the actions that use it (the rewind's undo, the screen-swap) reach more
+        -- than one display, so leaving the second mode standing would mean the
+        -- guard does not hold in the very case it was added for.
+        local names = {}
+        for i, row in ipairs(blocking) do names[i] = row.holder.name end
+        local busy = table.concat(names, ", ")
+
+        local arb = window_ops.beginArbitration()
+        if not arb then return deny("lost the arbitration race") end
+        arb = track(arb)   -- scope-tracked: teardown must be able to free the slot
+
+        local h
+        h = ctx.askChoice {
+            title = ctx.t("window.modeBusy", "%1$s is using this screen", busy),
+            infos = { ctx.t("window.modeBusyInfo",
+                "%1$s needs this screen to itself. Quitting %2$s puts its windows back "
+                .. "where they were.", name, busy) },
+            actions = {
+                { id = "quit", label = ctx.t("window.modeBusyQuit", "Quit %1$s and continue", busy) },
+                { id = "cancel", label = ctx.t("window.modeBusyCancel", "Cancel") },
+            },
+            onChoose = function(choice)
+                if h then h.stop() end
+                if choice ~= "quit" then
+                    arb.stop()
+                    return deny(busy .. " keeps the screen (cancelled)")
+                end
+                local evicted = 0
+                for _, row in ipairs(blocking) do
+                    if window_ops.evictHolder(row.key, row.holder.token) then
+                        evicted = evicted + 1
+                    end
+                end
+                ctx.log("exclusive: evicted " .. evicted .. " of " .. #blocking
+                    .. " for " .. m.id .. " -- settling " .. EXCLUSIVE_SETTLE_SECONDS .. "s")
+                -- The arbitration slot stays TAKEN across the settle: no holder
+                -- remains, and a request granted inside this window would list
+                -- frames the restore has not finished writing.
+                ctx.afterSeconds(EXCLUSIVE_SETTLE_SECONDS, function()
+                    arb.stop()
+                    claimAndRun()
+                end)
+            end,
+        }
+    end
+
     ctx.screen = {}
     ---Visible frame of every screen, primary first. `screenIndex` arguments
     ---elsewhere in this API index into THIS list.

@@ -833,10 +833,71 @@ local function controllerFor(ctx)
     -- per-app memory a fresh pick uses, and commits WITHOUT rewriting the saved
     -- template (isRestore -- so a partial restore doesn't erode it). If fewer
     -- than two survive by now, alert rather than enter a one-window "deck".
+    -- Give the screen lease back, and forget it. Every path that takes the lease
+    -- and then does NOT end up in a live deck goes through here -- the pick flow
+    -- has five such exits (cancel at either panel, and three "fewer than two
+    -- windows" refusals), and a lease left behind on any of them makes the next
+    -- mode ask the user about a deck that never opened.
+    function st.releaseScreen()
+        if st.lease then st.lease.stop(); st.lease = nil end
+    end
+
+    -- Hand the screen to another mode. Called by the platform when the user
+    -- answers "quit Window Deck and continue" -- which can land mid-PICK as well
+    -- as on a live deck, because the lease is taken as soon as the screen is
+    -- known. Mid-pick there is nothing to restore: dismiss the panel instead, or
+    -- the user is left choosing windows for a deck that will never commit.
+    function st.evictForOtherMode()
+        if st.active then
+            st.exitDeck()
+        else
+            if st.panel then st.panel.stop(); st.panel = nil end
+            st.picking = false
+            ctx.log("deck: evicted mid-pick -- panel dismissed")
+        end
+        -- releaseScreen, not `st.lease = nil`: the platform cleared the SLOT, but
+        -- the handle is still on this ctx's scope, and dropping the reference
+        -- without stopping it leaks one tracked handle per eviction. The release
+        -- is token-checked, so it cannot take the screen back off the new holder.
+        st.releaseScreen()
+    end
+
+    -- Ask for the screen, then run `fn(lease)`. Both deck entry paths funnel
+    -- through here at the FIRST moment the target screen is known -- before the
+    -- window multi-select, so a Cancel costs the user at most the screen pick,
+    -- and before the `ctx.window.list()` in commit that captures the originals.
+    ---@param screen table
+    ---@param fn fun(lease: Handle|nil)
+    local function withScreen(screen, fn)
+        ctx.window.requestExclusive(
+            {
+                screen = screen,
+                onEvict = st.evictForOtherMode,
+                -- The entry is off. `st.picking` was latched by st.enter before
+                -- any of this, and st.toggle refuses to re-enter while it is set --
+                -- so without this the single most likely click in that dialog
+                -- ("Cancel") would leave the deck's hotkey dead for the rest of
+                -- the session, long after the other mode had gone.
+                onDenied = function()
+                    st.picking = false
+                    st.releaseScreen()
+                    ctx.log("deck: entry abandoned -- screen not available")
+                end,
+            },
+            function(lease)
+                st.lease = lease
+                fn(lease)
+            end)
+    end
+
     function st.restoreLast(restore)
+        withScreen(restore.screen, function() st.restoreLastOn(restore) end)
+    end
+
+    function st.restoreLastOn(restore)
         st.picking = false
         local last = readLastDeck()
-        if not last then return end
+        if not last then return st.releaseScreen() end
         local screen = restore.screen
         -- match against ALL on-screen windows (uncapped) so a member past the
         -- top-9 in MRU order isn't wrongly seen as closed (see groupWindows).
@@ -844,7 +905,7 @@ local function controllerFor(ctx)
         if #matched < 2 then
             ctx.alert(ctx.t("alert.restoreGone",
                 "The last deck's windows are no longer open on this screen."))
-            return
+            return st.releaseScreen()
         end
         local cellColors = colors.assign(matched, readColors())
         local chosen = {}
@@ -857,12 +918,16 @@ local function controllerFor(ctx)
     -- Show the multi-select of a screen's deckable windows (all pre-checked;
     -- uncheck to exclude). Confirm needs >= 2 checked (the panel enforces it too).
     function st.pickWindows(screen)
+        withScreen(screen, function() st.pickWindowsOn(screen) end)
+    end
+
+    function st.pickWindowsOn(screen)
         local wins = groupWindows(screen)
         if #wins < 2 then
             st.picking = false
             ctx.alert(ctx.t("alert.needTwo",
                 "Window Deck needs at least two windows on this screen."))
-            return
+            return st.releaseScreen()
         end
         local items = {}
         local cellColors = colors.assign(wins, readColors())   -- previewed as clickable dots in the picker
@@ -885,17 +950,21 @@ local function controllerFor(ctx)
             -- opt in to the picker's Hero switch (its initial state = persisted)
             heroLabel = ctx.t("pick.hero", "Enlarge focused window (hero)"),
             hero    = readHeroMode(),
+            -- Kept on st so an eviction landing mid-pick can dismiss it: the
+            -- lease is held from here, so another mode CAN take the screen while
+            -- this panel is open.
 
             onChoose = function(kept, heroOn)
                 if h then h.stop() end   -- drop the one-shot from the scope
+                st.panel = nil
                 st.picking = false
-                if not kept then return end          -- cancelled
+                if not kept then return st.releaseScreen() end   -- cancelled
                 -- Persist the picker's Hero switch (on() below reads it back).
                 if heroOn ~= nil then saveHeroMode(heroOn) end
                 if #kept < 2 then
                     ctx.alert(ctx.t("alert.needTwo",
                         "Window Deck needs at least two windows on this screen."))
-                    return
+                    return st.releaseScreen()
                 end
                 -- key -> chosen color (the hex doubles as set membership)
                 local chosen = {}
@@ -903,6 +972,7 @@ local function controllerFor(ctx)
                 st.commit(screen, chosen)
             end,
         }
+        st.panel = h
     end
 
     -- Grid: re-list (ids churn between the pick and now), keep only the chosen
@@ -921,7 +991,7 @@ local function controllerFor(ctx)
         if #wins < 2 then
             ctx.alert(ctx.t("alert.needTwo",
                 "Window Deck needs at least two windows on this screen."))
-            return
+            return st.releaseScreen()
         end
 
         -- capture originals (color = the picker's choice, else positional)
@@ -1412,6 +1482,10 @@ local function controllerFor(ctx)
             return
         end
         st.screen = cur
+        -- Display indices shuffle across a reconfig (we re-match by name for
+        -- exactly that reason), so carry the screen lease onto the new index --
+        -- otherwise it guards a display this deck has left.
+        if st.lease and st.lease.rekey then st.lease.rekey(cur.index) end
         if st.scrim then st.scrim.reanchor(cur) end
         if st.widget then
             st.widget.reanchor({ x = cur.x + st.widgetDx, y = cur.y + st.widgetDy }, cur)
@@ -1503,6 +1577,8 @@ local function controllerFor(ctx)
         if st.scrim        then st.scrim.stop() end
         if st.widget       then st.widget.stop() end
         st.active = false
+        st.releaseScreen()   -- a no-op when we were evicted: the lease is
+                             -- token-checked and we are no longer the holder
         st.group, st.screen, st.heroKey, st.mode = nil, nil, nil, nil
         st.pruned = nil
         st.appWatcher, st.focusWatcher, st.escHotkey = nil, nil, nil

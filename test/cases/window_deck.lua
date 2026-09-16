@@ -148,8 +148,9 @@ return {
         ok(fake.liveOutline("hero") == nil and fake.liveOutline("ghost") == nil,
             "no hero/ghost border in the flat grid (no hero yet)")
         ok(fake.liveWidget() ~= nil, "the draggable indicator widget shows while the deck is active")
-        ok(registry.liveHandleCount() == 16,
-            "active deck = 7 base + frame watcher + 4 member borders + 4 ⌥number hotkeys")
+        ok(registry.liveHandleCount() == 17,
+            "active deck = 7 base + frame watcher + 4 member borders + 4 ⌥number hotkeys "
+            .. "+ the exclusive-screen lease")
 
         -- toggle off -> restore original frames, scrim gone
         local before = #fake.windowFrameSets
@@ -166,8 +167,9 @@ return {
         fake.windows = quadWindows()
         fake.windowFrameSets = {}
         enterDeck()                                    -- re-enter
-        ok(registry.liveHandleCount() == 16,
-            "re-entered the deck (7 base + frame watcher + 4 member borders + 4 ⌥number hotkeys)")
+        ok(registry.liveHandleCount() == 17,
+            "re-entered the deck (7 base + frame watcher + 4 member borders + 4 ⌥number "
+            .. "hotkeys + the exclusive-screen lease)")
         registry.setEnabled("window_deck", false)      -- disable mid-deck
         ok(lastSetFor(1) and lastSetFor(1).w == 300,
             "disabling mid-deck restores original frames via stop()")
@@ -198,8 +200,8 @@ return {
         ok(#fake.windowFrameSets == 3, "excluding a window decks only the kept three")
         ok(lastSetFor(4) == nil, "the excluded window is left untouched")
         ok(#fake.liveOutlines("member") == 3, "only the kept three windows get member borders")
-        ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 14,
-            "the deck is live after an exclude (7 base + frame watcher + 3 member borders + 3 ⌥number hotkeys)")
+        ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 15,
+            "the deck is live after an exclude (7 base + frame watcher + 3 member borders + 3 ⌥number hotkeys + the lease)")
         fake.pressHotkey("k", HYP)                      -- exit
         ok(registry.liveHandleCount() == 1, "clean after the exclude test")
 
@@ -406,8 +408,8 @@ return {
             ok(fake.frontmostId == "com.tr",
                 "the hero's own app is frontmost after the reclean (hero lift came last)")
             fake.fireTimers("after")       -- clear the reclean's settle window
-            ok(registry.liveHandleCount() == 17,
-                "no stray handle: 7 base + frame watcher + 4 member borders + 1 ghost + 4 ⌥number hotkeys (FOCUS)")
+            ok(registry.liveHandleCount() == 18,
+                "no stray handle: 7 base + frame watcher + 4 member borders + 1 ghost + 4 ⌥number hotkeys + the lease (FOCUS)")
 
             fake.pressHotkey("k", HYP)     -- exit
             ok(registry.liveHandleCount() == 1, "clean after the blink regression")
@@ -634,7 +636,7 @@ return {
             local w = fake.liveWidget()
             ok(w and w.name == SCREEN.name, "the widget shows the deck screen's display name")
             ok(w.screen and w.screen.w == SCREEN.w, "the widget gets the deck screen as its drag clamp")
-            ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 16, "deck live before the Exit click")
+            ok(fake.liveScrim() ~= nil and registry.liveHandleCount() == 17, "deck live before the Exit click")
             w.onExit()                                  -- click the Exit button
             ok(fake.liveScrim() == nil and registry.liveHandleCount() == 1,
                 "the widget Exit button exits the deck (chrome gone, only the toggle left)")

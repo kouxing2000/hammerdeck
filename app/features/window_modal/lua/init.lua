@@ -219,6 +219,15 @@ local function arrangerFor(ctx)
             st.mode = nil
             return
         end
+        -- Gated on the ENTER half only, and deliberately: this action is also the
+        -- documented way OUT of the layer, so asking "quit Window Deck and
+        -- continue?" on the way out would leave the modal layer up with its own
+        -- exit refusing to fire. Nothing above this line touches a window.
+        ctx.window.requestExclusive({ screen = W.focusedScreen(ctx) },
+            function() st.enterMode() end)
+    end
+
+    function st.enterMode()
         ctx.log("window mode on")
         st.mode = ctx.modal {
             name = "Window Mode",

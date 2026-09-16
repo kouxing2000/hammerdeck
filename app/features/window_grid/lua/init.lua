@@ -274,6 +274,25 @@ local function controllerFor(ctx)
     return st
 end
 
+
+-- A window MODE (Window Deck, Window Fan) holds each member's pre-mode frame so
+-- it can put it back on exit; moving a member underneath it does not update that
+-- record, so the mode's restore quietly stops being one. Every action here
+-- therefore asks first when a mode owns the screen it is about to touch -- the
+-- platform shows the dialog, tears that mode down and waits for its layout to
+-- land before running us. No mode live (the normal case) = synchronous, no
+-- dialog, so an auto-repeating arrow key costs nothing.
+--
+-- W.focusedScreen, not f.screen: a frame's `screen` is a bare {x,y,w,h} with no
+-- index to key a lease by, and focusedScreen also falls back to the display under
+-- the POINTER -- so focus on the desktop asks about the right screen instead of
+-- resolving to nothing and running ungated over a mode's windows.
+---@param ctx Ctx
+---@param fn fun()
+local function onFocusedScreen(ctx, fn)
+    ctx.window.requestExclusive({ screen = W.focusedScreen(ctx) }, fn)
+end
+
 ---@param ctx Ctx
 local function with(ctx)
     return ctx.perEnable(controllerFor)
@@ -291,7 +310,7 @@ return {
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "9" },
           mnemonic = "Hyper+9 — 9 cells = 3×3",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).enter(3, 3) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).enter(3, 3) end) end },
         { id = "grid_2x2", label = "2×2 grid placement", icon = "square.grid.2x2",
           description = "Deem the screen a 2×2 grid, then press a cell to place the "
               .. "focused window there -- or press a second cell down-right of it to "
@@ -299,7 +318,7 @@ return {
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "4" },
           mnemonic = "Hyper+4 — 4 cells = 2×2",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).enter(2, 2) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).enter(2, 2) end) end },
 
         -- A 6-cell grid, oriented to the screen (3×2 wide / 2×3 tall) -- the split
         -- that 2×2 and 3×3 can't express, and the one an ultrawide actually wants.
@@ -312,6 +331,6 @@ return {
           defaultTrigger = { type = "hotkey", mods = HYPER, key = "6" },
           mnemonic = "Hyper+6 — 6 cells = 3×2 (wide) or 2×3 (tall)",
           ---@param ctx Ctx
-          run = function(ctx) with(ctx).enterOriented(6) end },
+          run = function(ctx) onFocusedScreen(ctx, function() with(ctx).enterOriented(6) end) end },
     },
 }

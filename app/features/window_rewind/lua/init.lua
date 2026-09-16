@@ -14,6 +14,21 @@
 
 local HYPER = { "cmd", "alt", "ctrl" }
 
+--- Restore the most recent layout change and report what happened.
+---@param ctx Ctx
+local function undo(ctx)
+    local n = ctx.window.undoLast()
+    if n > 0 then
+        ctx.confirmAction(
+            ctx.plural("flash.restored", n,
+                { one = "Restored %d window", other = "Restored %d windows" }, n))
+        ctx.log("window_rewind: undo -- restored " .. n .. " window(s)")
+    else
+        ctx.confirmAction(ctx.t("flash.nothing", "Nothing to undo"))
+        ctx.log("window_rewind: undo -- nothing to undo")
+    end
+end
+
 return {
     api     = 1,
     id      = "window_rewind",
@@ -54,16 +69,13 @@ return {
                             "%1$s needs the Accessibility permission -- grant %2$s in System Settings, then try again", "Window Rewind", ctx.appName))
                     return
                 end
-                local n = ctx.window.undoLast()
-                if n > 0 then
-                    ctx.confirmAction(
-                        ctx.plural("flash.restored", n,
-                            { one = "Restored %d window", other = "Restored %d windows" }, n))
-                    ctx.log("window_rewind: undo -- restored " .. n .. " window(s)")
-                else
-                    ctx.confirmAction(ctx.t("flash.nothing", "Nothing to undo"))
-                    ctx.log("window_rewind: undo -- nothing to undo")
-                end
+                -- A live window mode's own placements are in this same history (they
+                -- ride ctx.window.setFrameFor), so an undo fired inside one rolls that
+                -- mode's last beat back underneath it: the windows move, the mode's
+                -- record of where they are does not. Whatever the last change touched
+                -- may span displays, hence ANY_SCREEN.
+                ctx.window.requestExclusive({ screen = ctx.window.ANY_SCREEN },
+                    function() undo(ctx) end)
             end,
         },
     },

@@ -780,6 +780,11 @@ function registry.reload()
         if not ok then adapter.log("reload: rules unbind failed: " .. tostring(err)) end
     end
     for _, m in ipairs(registry.all()) do registry.unregister(m.id) end
+    -- Every mode is gone with its ctx scope, so no exclusive-screen lease can
+    -- still be legitimate. Dropping them here is what stops a reload during a
+    -- live deck from leaving a holder that outlives the controller behind it --
+    -- the next mode would ask the user about a feature that no longer exists.
+    window_ops.resetModes()
     loadFailures = {}
     for name in pairs(package.loaded) do
         local n = tostring(name)

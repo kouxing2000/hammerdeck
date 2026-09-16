@@ -871,6 +871,14 @@ local function controllerFor(ctx)
         st.memberSig, st.screen = nil, nil
     end
 
+    -- Give the screen lease back. Called from every path that takes the lease and
+    -- then does NOT end up in the mode -- an entry refused after the grant (no
+    -- windows, over capacity) holds a lease over a screen it is not using, and the
+    -- next mode would be made to ask about a fan that never happened.
+    function st.abandon()
+        if st.lease then st.lease.stop(); st.lease = nil end
+    end
+
     function st.enter()
         if not ctx.axTrusted() then
             ctx.axPrompt()
@@ -882,13 +890,30 @@ local function controllerFor(ctx)
         local screen = W.focusedScreen(ctx)
         if not screen then return end
 
+        -- One mode per screen. Another mode holding this screen has ALREADY moved
+        -- these windows, so capturing originals now would record ITS arrangement as
+        -- the layout to restore. The platform asks the user, tears the incumbent
+        -- down, and waits for its restore to land before calling us back -- so
+        -- everything below runs against the user's real layout.
+        ctx.window.requestExclusive(
+            { screen = screen, onEvict = function() st.leave() end },
+            function(lease) st.enterOn(screen, lease) end)
+    end
+
+    -- The mode's real entry, once the screen is exclusively ours. Split out from
+    -- enter() because the grant is asynchronous whenever it has to ask the user.
+    ---@param screen table
+    ---@param lease Handle|nil
+    function st.enterOn(screen, lease)
+        st.lease = lease
+
         -- Read focus BEFORE anything moves: a self-activating app fronting itself
         -- mid-pass must not change who we hand focus back to.
         local fwid = ctx.window.focusedWid()
         local wins = fannable(screen)
         if #wins == 0 then
             ctx.alert(ctx.t("fan.none", "No windows to fan on this screen"))
-            return
+            return st.abandon()
         end
 
         -- The mode's SHAPE, latched for the session rather than read per pass: with
@@ -932,7 +957,7 @@ local function controllerFor(ctx)
                     "Too many windows to fan on this screen -- %1$d open, and it fits %2$d",
                     #wins, cap))
             end
-            return
+            return st.abandon()
         end
 
         -- Fresh slot / color / original maps for this mode session. assignNearest
@@ -1089,6 +1114,8 @@ local function controllerFor(ctx)
             end
         end
         st.active = false
+        st.abandon()   -- release the screen (a no-op when we were evicted: the
+                       -- lease is token-checked and we are no longer the holder)
         st.slot, st.color, st.side, st.originals, st.bundle = {}, {}, {}, {}, {}
         ctx.log("fan: left mode -- " .. ((not st.arranging)
             and (#members .. " labels cleared; nothing was moved, nothing restored")
@@ -1117,6 +1144,9 @@ local function controllerFor(ctx)
             return
         end
         st.screen = cur
+        -- The reconfig may have renumbered the displays; carry the screen lease
+        -- onto the new index so it keeps guarding the display we are actually on.
+        if st.lease and st.lease.rekey then st.lease.rekey(cur.index) end
         if st.widget then
             st.widget.reanchor({ x = cur.x + st.widgetDx, y = cur.y + st.widgetDy }, cur)
         end
