@@ -1564,10 +1564,19 @@ local function controllerFor(ctx)
             for _, list in ipairs({ st.group, st.pruned or {} }) do
                 for _, m in ipairs(list) do
                     if ids[m.key] then
-                        ctx.window.setFrameFor(ids[m.key], m.orig)
+                        -- norecord: putting a member back IS the undo of the deck.
+                        -- Recorded, it would leave Rewind holding the deck's grid
+                        -- as the frame to "restore" once this state is gone.
+                        ctx.window.setFrameFor(ids[m.key], m.orig, true)
                     end
                 end
             end
+            -- ...and drop whatever group the deck's own moves left pending. A
+            -- retile, a reflow, a promotion -- each opened a group whose
+            -- before-frames are the GRID, and history keeps only the newest, so
+            -- without this an undo after leaving re-applies the grid we just
+            -- finished undoing.
+            ctx.window.forgetPendingLayout()
         end
         if st.appWatcher   then st.appWatcher.stop() end
         if st.focusWatcher then st.focusWatcher.stop() end

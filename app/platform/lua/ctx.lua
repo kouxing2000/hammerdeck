@@ -463,7 +463,14 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ---@param id integer from a CURRENT list() -- re-list before a placement batch
     ---@param f Frame
     ---@return boolean
-    function ctx.window.setFrameFor(id, f) return window_ops.setFrameFor(id, f) end
+    -- `norecord`: this write is a window mode restoring its own captured layout,
+    -- so it must not become an undoable step (see window_ops.setFrameFor).
+    function ctx.window.setFrameFor(id, f, norecord)
+        return window_ops.setFrameFor(id, f, norecord)
+    end
+    -- Call after a mode has restored its members: drops the pending undo group,
+    -- which by then can only describe the mode's own arrangement.
+    function ctx.window.forgetPendingLayout() return window_ops.forgetPendingLayout() end
     -- Raise a listed window above others WITHOUT activating its app or moving the
     -- pointer -- a surgical AXRaise (no same-app-sibling drag, no app activation,
     -- so no spurious focus events; see adapter.raiseWindow). Window Deck keeps the

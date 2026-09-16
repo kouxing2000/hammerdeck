@@ -376,7 +376,12 @@ return {
                 id    = "preset_" .. p.id,
                 label = p.name,
                 description = "Move the focused window to your saved \"" .. p.name .. "\" placement.",
-                run   = function(ctx) with(ctx).snap(p.x, p.y, p.w, p.h) end,
+                -- Through the lease like every built-in snap. A preset is an
+                -- ordinary window move; the only thing separating it from the
+                -- Left-half action above is that the user drew the rectangle.
+                run   = function(ctx)
+                    onFocusedScreen(ctx, function() with(ctx).snap(p.x, p.y, p.w, p.h) end)
+                end,
             }
         end
         return out

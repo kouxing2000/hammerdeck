@@ -1106,12 +1106,18 @@ local function controllerFor(ctx)
             for _, wid in ipairs(members) do
                 local o, id = st.originals[wid], byWid[wid]
                 if o and id then
-                    ctx.window.setFrameFor(id, { x = o.x, y = o.y, w = o.w, h = o.h })
+                    -- norecord: this restore IS the undo of the fan (same reason
+                    -- as Deck's exit path).
+                    ctx.window.setFrameFor(id, { x = o.x, y = o.y, w = o.w, h = o.h }, true)
                     restored = restored + 1
                 else
                     gone = gone + 1
                 end
             end
+            -- Same as Deck's exit: every group the fan opened while it was up has
+            -- the FAN's slabs as its before-frames, and history keeps only the
+            -- newest one. Leaving it pending lets a later undo re-apply the fan.
+            ctx.window.forgetPendingLayout()
         end
         st.active = false
         st.abandon()   -- release the screen (a no-op when we were evicted: the

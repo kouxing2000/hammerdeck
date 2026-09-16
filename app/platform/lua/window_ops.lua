@@ -90,11 +90,19 @@ end
 --- Place a SPECIFIC listed window by id (batch layout). Records the before-frame
 --- for undo, then writes WITHOUT pointer-follow -- a multi-window layout must never
 --- yank the cursor to chase one of its members (same rule the rules engine follows).
+---
+--- `norecord` is for a window mode putting its members BACK: that restore is itself
+--- an undo, and recording it creates a second one whose before-frames are the
+--- arrangement. Rewind fired afterwards then re-applies the arrangement -- with the
+--- mode already gone and its captured originals discarded, so the user's real
+--- layout is unrecoverable. Entering a mode stays recorded, so undo still works
+--- inside a live one; only the way out is exempt.
 ---@param id integer
 ---@param f {x:number,y:number,w:number,h:number}
+---@param norecord boolean? true when this write is a mode restoring its own capture
 ---@return boolean ok
-function M.setFrameFor(id, f)
-    history.recordById(id)
+function M.setFrameFor(id, f, norecord)
+    if not norecord then history.recordById(id) end
     return adapter.setWindowFrame(id, f)
 end
 
@@ -106,6 +114,22 @@ function M.undoLast() return history.undoLast() end
 --- Turn window-layout history recording on/off (window_rewind toggles this).
 ---@param on boolean
 function M.setHistoryEnabled(on) history.setEnabled(on) end
+
+--- Forget the pending undo group. Called by a window mode once it has put its
+--- members back, and it is the OTHER half of setFrameFor's `norecord`.
+---
+--- norecord alone stops the restore from becoming an undoable step, which is not
+--- enough: history keeps only the most-recent group, so any move the mode made
+--- WHILE it was up -- a retile on a resolution change, a reflow when a member
+--- closed, a hero promotion, a Rearrange -- has already replaced the enter-group
+--- with one whose before-frames are the mode's OWN arrangement. Rewind after the
+--- mode exits then re-applies that arrangement, with the originals the mode has
+--- just finished restoring and then discarded. Single-step undo means they are
+--- gone for good.
+---
+--- Every group a live mode can leave behind describes the mode's own layout, so
+--- once it has restored there is nothing left that is meaningful to undo.
+function M.forgetPendingLayout() history.clear() end
 
 -- ---------------------------------------------------------------------------
 -- The exclusive window-mode lease
@@ -149,10 +173,17 @@ function M.setHistoryEnabled(on) history.setEnabled(on) end
 --- not holding in exactly the multi-display case it was added for.
 M.ANY_SCREEN = "*"
 
----@alias ModeHolder { id: string, name: string, onEvict: fun(), token: table }
+---@alias ModeHolder { id: string, name: string, onEvict: fun(), token: table, screen: integer }
 ---@alias HeldScreen { key: integer, holder: ModeHolder }
 
----@type table<integer, ModeHolder>
+--- Keyed by the lease's own TOKEN, not by the screen it holds -- the screen is a
+--- FIELD, because it changes and the identity does not. A display reconfig
+--- renumbers indices (both modes re-match their screen by name across one), so an
+--- index is the one thing about a lease that cannot be its name: keyed by index,
+--- following a mode onto a new display means moving a row between keys, and two
+--- displays trading indices then makes the two moves collide. Keyed by token,
+--- that same reconfig is a field assignment per lease and cannot collide at all.
+---@type table<table, ModeHolder>
 local holders = {}
 -- Non-nil while an arbitration is in flight (its dialog is open, or an eviction is
 -- settling). Holds the RELEASE closure rather than a bool so the handle handed to
@@ -164,7 +195,10 @@ local arbitration = nil
 ---@param screenIndex integer
 ---@return ModeHolder|nil
 function M.modeHolder(screenIndex)
-    return holders[screenIndex]
+    for _, h in pairs(holders) do
+        if h.screen == screenIndex then return h end
+    end
+    return nil
 end
 
 --- Every screen currently held, as {key, holder} rows. The caller resolves the set
@@ -174,10 +208,12 @@ end
 ---@return HeldScreen[]
 function M.heldScreens()
     local out = {}
-    for key, holder in pairs(holders) do
-        out[#out + 1] = { key = key, holder = holder }
+    for _, holder in pairs(holders) do
+        out[#out + 1] = { key = holder.screen, holder = holder }
     end
-    -- Stable order, so the dialog lists them the same way twice running.
+    -- Stable order, so the dialog lists them the same way twice running. Load-
+    -- bearing here rather than incidental: `holders` is keyed by an opaque table,
+    -- so pairs() order is not even consistent between two runs of the same build.
     table.sort(out, function(a, b) return a.key < b.key end)
     return out
 end
@@ -192,31 +228,31 @@ end
 ---@return { stop: fun(), rekey: fun(newIndex: integer) }
 function M.claimMode(screenIndex, id, name, onEvict)
     local token = {}
-    local at = screenIndex
-    holders[at] = { id = id, name = name, onEvict = onEvict, token = token }
+    holders[token] = { id = id, name = name, onEvict = onEvict,
+                       token = token, screen = screenIndex }
     return {
         stop = function()
-            local h = holders[at]
-            if h and h.token == token then holders[at] = nil end
+            holders[token] = nil
         end,
         -- Follow the mode onto a new screen index. A display reconfig SHUFFLES
-        -- indices (both window modes re-match their screen by name across one),
-        -- so a lease keyed to the index it was taken at would end up guarding a
-        -- display the mode has left -- claiming to hold a screen it does not, and
-        -- leaving the one it does hold open to a second mode.
+        -- indices, so a lease that kept the index it was taken at would end up
+        -- guarding a display the mode has left -- claiming a screen it does not
+        -- hold, and leaving the one it does hold open to a second mode.
+        --
+        -- Two occupied displays trading indices is the ordinary shape of this, and
+        -- each mode rekeys from its OWN screenChanged handler, so the two arrive
+        -- one at a time. Between them the map briefly shows both leases on one
+        -- index. That is invisible: the handlers run back-to-back inside a single
+        -- screenChanged dispatch, and nothing between them reads a holder --
+        -- arbitration only happens on a user action. The state that MATTERS, that
+        -- every live mode holds exactly one lease and no mode is ever left without
+        -- one, holds at every step, which is what the index-keyed version could
+        -- not manage: there, the second mode's move found the first still recorded
+        -- at the index it was leaving, and had nowhere to go.
         ---@param newIndex integer
         rekey = function(newIndex)
-            if newIndex == at then return end
-            local h = holders[at]
-            if not h or h.token ~= token then return end   -- no longer ours
-            -- Never displace a mode that already holds the destination: two modes
-            -- on one screen is the state this whole module exists to prevent, and
-            -- a reconfig must not create it by overwrite. Release instead -- our
-            -- mode is about to reconcile onto that display anyway.
-            if holders[newIndex] then holders[at] = nil; return end
-            holders[at] = nil
-            at = newIndex
-            holders[at] = h
+            local h = holders[token]
+            if h then h.screen = newIndex end
         end,
     }
 end
@@ -234,9 +270,14 @@ end
 ---@param token table the `holder.token` read when the question was asked
 ---@return boolean evicted
 function M.evictHolder(screenIndex, token)
-    local h = holders[screenIndex]
-    if not h or h.token ~= token then return false end
-    holders[screenIndex] = nil
+    local h = holders[token]
+    -- The screen is still checked, not just the token: the caller asked the user
+    -- about a mode on a NAMED display, and a reconfig between the question and
+    -- the answer can have carried that same lease onto a different one. Evicting
+    -- it then tears down a mode the user was never asked about -- the same
+    -- mistake as evicting by key alone, arriving from the other direction.
+    if not h or h.screen ~= screenIndex then return false end
+    holders[token] = nil
     h.onEvict()
     return true
 end
