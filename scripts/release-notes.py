@@ -6,7 +6,8 @@ tagging, by the person who knows what shipped, and it is already the only
 per-version prose anywhere in the repo -- see `git tag -l v0.1.2
 --format='%(contents)'`. A CHANGELOG.md would be a second place to remember,
 and the pipeline's standing rule is that nothing in the tracked tree carries a
-version number that can go stale (scripts/publish-site.sh:13).
+version number that can go stale (see publish-site.sh's header: everything it
+deploys is generated into dist/site/).
 
 Two channels, one source:
 

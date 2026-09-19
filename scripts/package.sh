@@ -56,11 +56,28 @@ NOTARY_PROFILE="${HAMMERDECK_NOTARY_PROFILE:-hammerdeck-notary}"
 # an installed build never learns a new address -- so this hostname must keep
 # resolving for as long as any install survives. Treat it like the bundle id.
 #
-# Both of these are deliberately CONSTANTS, not env-overridable. An override on a
-# value that must never vary can only produce a silently wrong build: ship the
-# wrong public key and the app rejects every update it is ever offered, with
-# nothing in the pipeline noticing. Change them here, in a reviewed commit.
-SPARKLE_FEED_URL="https://hammerdeck.peach-studio.com/appcast.xml"
+# Both URLs are CONSTANTS here, and the public key below is not overridable at all.
+# An override on a value that must never vary can only produce a silently wrong
+# build: ship the wrong public key and the app rejects every update it is ever
+# offered, with nothing in the pipeline noticing. Change them here, in a reviewed
+# commit.
+#
+# The STAGING feed exists so the update/recovery rehearsal has somewhere to run:
+# install A, offer B, watch the replacement happen, without pointing a single real
+# client at a test feed. `HAMMERDECK_FEED` selects between two reviewed constants
+# -- it cannot introduce a third address. And the choice is not merely labelled in
+# the bundle, it IS the baked `SUFeedURL`: publish-site.sh reads that value back
+# out of the archive and derives the destination from it, so a staging build
+# cannot be published to production even by someone who means to.
+SPARKLE_FEED_URL_RELEASE="https://hammerdeck.peach-studio.com/appcast.xml"
+SPARKLE_FEED_URL_STAGING="https://hammerdeck-staging.web.app/appcast.xml"
+case "${HAMMERDECK_FEED:-release}" in
+  release) SPARKLE_FEED_URL="$SPARKLE_FEED_URL_RELEASE" ;;
+  staging) SPARKLE_FEED_URL="$SPARKLE_FEED_URL_STAGING" ;;
+  *)
+    echo "error: HAMMERDECK_FEED='$HAMMERDECK_FEED' -- expected 'release' or 'staging'." >&2
+    exit 1 ;;
+esac
 # Public half of the EdDSA update-signing key; the private half is in the login
 # Keychain and backed up outside this repo. Public by design -- it ships in every
 # Info.plist, and its whole job is to let a user verify what we signed.
@@ -113,6 +130,7 @@ PROVENANCE="$DIST/$APP_NAME-$VERSION.provenance.txt"
 
 echo "==> Packaging $APP_NAME $VERSION (bundle id $BUNDLE_ID)"
 echo "    source: $SRC_COMMIT ($SRC_STATUS)"
+echo "    feed:   $SPARKLE_FEED_URL"
 
 # 0. Validate the entitlements XML, in BOTH tiers and before the slow build.
 #
@@ -432,6 +450,7 @@ if [[ "$TIER" == "B" && "${HAMMERDECK_SKIP_NOTARIZE:-0}" != "1" ]]; then NOTARIZ
   echo "tree:       $SRC_STATUS"
   echo "tier:       $TIER"
   echo "notarized:  $NOTARIZED"
+  echo "feed:       $SPARKLE_FEED_URL"
   echo "min macOS:  $MIN_MACOS"
   echo "built:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "zip:        $(basename "$ZIP")"

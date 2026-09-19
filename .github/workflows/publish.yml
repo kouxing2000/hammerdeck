@@ -1,0 +1,81 @@
+name: Publish
+
+# Put a release on hammerdeck.peach-studio.com and into the update feed every
+# installed copy polls. Run BY HAND, after the candidate has been tested:
+#
+#   gh workflow run publish.yml -f tag=v0.1.3
+#
+# It builds nothing. It downloads the archive `release.yml` already built,
+# notarized and attached to that tag's GitHub Release, and publishes those exact
+# bytes -- the ones a tester downloaded and ran. A rebuild here would produce a
+# different digest (timestamps alone see to that) and quietly void every piece of
+# evidence gathered against the first archive.
+#
+# The destination is not an input either: scripts/publish-site.sh reads the
+# `SUFeedURL` baked into the app inside the archive and derives the Hosting site
+# from it, so a staging build cannot land on the production feed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v0.1.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read   # read the Release asset; this workflow creates nothing
+
+jobs:
+  publish:
+    # macos, not ubuntu: the gates in publish-site.sh are macOS trust services --
+    # `xcrun stapler validate`, `codesign --verify`, `ditto`, and a `swift -e`
+    # CryptoKit snippet that verifies the feed signature the way a client will.
+    runs-on: macos-15
+    env:
+      TAG: ${{ inputs.tag }}
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      # The release notes live in the tag's ANNOTATION, and the generator refuses
+      # a lightweight tag. Checking out an explicit tag ref should bring the
+      # annotation down intact (unlike a tag-push checkout, which resolves from
+      # github.sha and writes a lightweight tag) -- `cat-file -t` settles it per
+      # run instead of assuming either way, and the fetch is skipped when the
+      # object is already the right type.
+      - name: Ensure the tag object is annotated
+        run: |
+          type="$(git cat-file -t "$TAG" 2>/dev/null || echo missing)"
+          echo "tag object type: $type"
+          if [ "$type" != tag ]; then
+            git fetch --force --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            git cat-file -t "$TAG"
+          fi
+
+      # `sign_update` lives inside the Sparkle SPM artifact bundle, so the
+      # publish path needs it on disk. `resolve` is enough and takes seconds --
+      # measured: it lands the binary at
+      # .build/artifacts/sparkle/Sparkle/bin/sign_update with no compile.
+      - name: Fetch the Sparkle artifact (for sign_update)
+        run: swift package resolve
+
+      # --clobber is not passed and must not be: this downloads, it never writes.
+      - name: Download the built archive from the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --pattern 'Hammerdeck-*.zip' --dir dist
+          ls -l dist
+          shasum -a 256 dist/Hammerdeck-*.zip
+
+      - name: Publish site and update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          npm install -g firebase-tools
+          scripts/publish-site.sh "${TAG#v}"

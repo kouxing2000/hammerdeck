@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
 #
-# Publish hammerdeck.peach-studio.com: the download page, the update feed, and
-# the release archive Sparkle hands to installed copies of the app.
+# Publish the download page, the update feed, and the release archive Sparkle
+# hands to installed copies of the app.
 #
-# Run it AFTER scripts/package.sh has produced a Tier B build, and after the
-# ANNOTATED tag for this version exists -- `git tag -a v0.1.0` -- because the
-# tag's message is where the release notes come from (scripts/release-notes.py).
-# An untagged version cannot be published, which is the intent: the feed's notes
-# have no other source, and a release with no tag has no durable record either.
+# WHERE it publishes is not an argument: it is read off the `SUFeedURL` baked
+# into the app inside `dist/<name>-<version>.zip`. A release build goes to
+# hammerdeck.peach-studio.com; a staging build (HAMMERDECK_FEED=staging at
+# package time) goes to the staging site, which is where the update/recovery
+# rehearsal runs. Nothing can send one to the other's feed.
+#
+# Run it on an archive scripts/package.sh already produced. On the RELEASE
+# channel the ANNOTATED tag for the version must exist -- `git tag -a v0.1.0` --
+# because the tag's message is where the notes come from (scripts/release-notes.py)
+# and because the archive's recorded commit is checked against it. A staging
+# rehearsal needs no tag: it is thrown away after the run, and burning a real
+# version number on practice is worse than having no durable record of it.
 #
 #   scripts/publish-site.sh 0.1.0
-#   scripts/publish-site.sh 0.1.0 --stage-only   build + sign + verify, deploy nothing
+#   scripts/publish-site.sh 0.1.0 --stage-only   sign + verify, deploy nothing
 #
-# CI calls this; it is standalone on purpose, so a release can still go out by
-# hand when CI is down. Everything it deploys is generated into dist/site/ --
-# nothing in the tracked tree carries a version number that can go stale.
+# `.github/workflows/publish.yml` calls this by hand, against the archive
+# release.yml already built and attached to the GitHub Release -- so the bytes
+# published are the bytes tested. It is standalone on purpose, so a release can
+# still go out by hand when CI is down. Everything it deploys is generated into
+# dist/site/ -- nothing in the tracked tree carries a version number that can go
+# stale.
 #
 # Credentials, both optional locally:
 #   SPARKLE_PRIVATE_KEY        the EdDSA key, as text. If unset, it is read from
@@ -26,11 +36,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Hammerdeck"
-SITE_HOST="https://hammerdeck.peach-studio.com"
 FIREBASE_PROJECT="peach-studio"
+# SITE_HOST and the Hosting site are NOT constants here: they are derived below
+# from the feed URL baked into the app inside the archive. See "which feed".
 
 DIST="$ROOT/dist"
-APP="$DIST/$APP_NAME.app"
 STAGE="$DIST/site"
 SIGN_UPDATE="$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 # Where the EdDSA private key sits when it is not passed in the environment.
@@ -67,6 +77,14 @@ if [[ -z "$SHIPPED_PUBKEY" ]]; then
   echo "       publish a feed this script cannot check against it." >&2
   exit 1
 fi
+FEED_RELEASE="$(read_package_const SPARKLE_FEED_URL_RELEASE)"
+FEED_STAGING="$(read_package_const SPARKLE_FEED_URL_STAGING)"
+if [[ -z "$FEED_RELEASE" || -z "$FEED_STAGING" ]]; then
+  echo "error: could not read both feed URLs out of $PACKAGE_SH." >&2
+  echo "       Without them this script cannot tell a release build from a staging one," >&2
+  echo "       which is the check that keeps a rehearsal off the production feed." >&2
+  exit 1
+fi
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
@@ -87,16 +105,16 @@ elif [[ -n "${2:-}" ]]; then
   exit 1
 fi
 
-echo "==> Publishing $APP_NAME $VERSION to $SITE_HOST"
+echo "==> Publishing $APP_NAME $VERSION"
 
 # --- gates -------------------------------------------------------------------
 
+# The ARCHIVE is the only input. `dist/Hammerdeck.app` used to be required here
+# too, and is not: since REL-1 every gate asks the app extracted from the zip, and
+# the publish job downloads that zip from the GitHub Release with no loose build
+# anywhere beside it.
 if [[ ! -f "$ZIP" ]]; then
   echo "error: $ZIP not found -- run scripts/package.sh $VERSION first" >&2
-  exit 1
-fi
-if [[ ! -d "$APP" ]]; then
-  echo "error: $APP not found -- run scripts/package.sh $VERSION first" >&2
   exit 1
 fi
 
@@ -162,6 +180,35 @@ if [[ "$ARCHIVED_ID" != "$BUNDLE_ID" ]]; then
 fi
 echo "    archive contents: $APP_NAME $ARCHIVED_VERSION ($ARCHIVED_ID)"
 
+# --- which feed this build polls, and therefore where it may be published -----
+#
+# Not a flag, and not a label stamped alongside: the destination is READ OFF the
+# `SUFeedURL` baked into the app, which is the address installed copies will
+# actually poll for the rest of their lives. A label could say "release" on a
+# build wired to staging, and publishing that would point the whole install base
+# at a test feed. The baked URL cannot lie about itself.
+#
+# Same shape as the SUPublicEDKey check below -- read from the artifact, compared
+# against package.sh's constants, so this is a check rather than an assumption.
+# An address matching neither constant is refused: it is either an archive older
+# than the staging split or one built by something that is not package.sh.
+ARCHIVED_FEED="$(plist_value SUFeedURL)"
+case "$ARCHIVED_FEED" in
+  "$FEED_RELEASE")
+    CHANNEL="release"; FIREBASE_SITE="hammerdeck"
+    SITE_HOST="https://hammerdeck.peach-studio.com" ;;
+  "$FEED_STAGING")
+    CHANNEL="staging"; FIREBASE_SITE="hammerdeck-staging"
+    SITE_HOST="https://hammerdeck-staging.web.app" ;;
+  *)
+    echo "error: the app inside $ZIP polls a feed this script does not publish:" >&2
+    echo "       archive's SUFeedURL: ${ARCHIVED_FEED:-<none>}" >&2
+    echo "       release: $FEED_RELEASE" >&2
+    echo "       staging: $FEED_STAGING" >&2
+    exit 1 ;;
+esac
+echo "    channel: $CHANNEL -> $SITE_HOST (hosting site '$FIREBASE_SITE')"
+
 # Which SOURCE is in there. A version string is a label anyone can pass to
 # package.sh; it says nothing about the code inside, so two archives claiming
 # 0.1.2 can hold different builds and a test run against one proves nothing
@@ -182,20 +229,30 @@ if [[ "$ARCHIVED_TREE" != "clean" ]]; then
   echo "       re-reviewed from the record. Commit, then re-package." >&2
   exit 1
 fi
-TAG_COMMIT="$(git -C "$ROOT" rev-parse -q --verify "refs/tags/v$VERSION^{commit}" 2>/dev/null || true)"
-if [[ -z "$TAG_COMMIT" ]]; then
-  echo "error: no tag v$VERSION in this checkout, so there is nothing to match the" >&2
-  echo "       archive's commit against (and no source for the release notes)." >&2
-  exit 1
+# The TAG match is a release-channel gate only. A staging build exists for one
+# rehearsal and is thrown away after it, so requiring a tag would burn a real
+# version number on every practice run -- and a tag is a durable public record of
+# something that was never released. Provenance itself (a commit, a clean tree)
+# still holds on both channels: a rehearsal whose build cannot be reproduced
+# teaches nothing either.
+if [[ "$CHANNEL" == "release" ]]; then
+  TAG_COMMIT="$(git -C "$ROOT" rev-parse -q --verify "refs/tags/v$VERSION^{commit}" 2>/dev/null || true)"
+  if [[ -z "$TAG_COMMIT" ]]; then
+    echo "error: no tag v$VERSION in this checkout, so there is nothing to match the" >&2
+    echo "       archive's commit against (and no source for the release notes)." >&2
+    exit 1
+  fi
+  if [[ "$ARCHIVED_COMMIT" != "$TAG_COMMIT" ]]; then
+    echo "error: the app inside $ZIP was built from a different commit than v$VERSION." >&2
+    echo "       archive's HDSourceCommit:  $ARCHIVED_COMMIT" >&2
+    echo "       v$VERSION points at:       $TAG_COMMIT" >&2
+    echo "       Publishing would ship bytes no reviewed commit produced." >&2
+    exit 1
+  fi
+  echo "    provenance: built from ${ARCHIVED_COMMIT:0:12} (clean tree), matching v$VERSION"
+else
+  echo "    provenance: built from ${ARCHIVED_COMMIT:0:12} (clean tree), untagged -- staging"
 fi
-if [[ "$ARCHIVED_COMMIT" != "$TAG_COMMIT" ]]; then
-  echo "error: the app inside $ZIP was built from a different commit than v$VERSION." >&2
-  echo "       archive's HDSourceCommit:  $ARCHIVED_COMMIT" >&2
-  echo "       v$VERSION points at:       $TAG_COMMIT" >&2
-  echo "       Publishing would ship bytes no reviewed commit produced." >&2
-  exit 1
-fi
-echo "    provenance: built from ${ARCHIVED_COMMIT:0:12} (clean tree), matching v$VERSION"
 
 # The hard one. An appcast entry is an INSTRUCTION to every installed copy to
 # download and run this archive, so publishing an un-notarized build does not
@@ -216,7 +273,8 @@ echo "    notarization ticket: present; signature intact"
 
 if [[ ! -x "$SIGN_UPDATE" ]]; then
   echo "error: sign_update not at $SIGN_UPDATE" >&2
-  echo "       It ships inside the Sparkle SPM artifact bundle; run 'swift build' first." >&2
+  echo "       It ships inside the Sparkle SPM artifact bundle; 'swift package resolve'" >&2
+  echo "       fetches it (measured: it lands at that exact path, no compile needed)." >&2
   exit 1
 fi
 
@@ -243,11 +301,21 @@ fi
 # a user decides whether to trust an auto-update -- so the generator runs as a
 # bare command substitution, where errexit fires on its own rather than on
 # `pipefail` still being set 80 lines further up.
-NOTES_HTML="$("$ROOT/scripts/release-notes.py" "$VERSION" --format html)"
+#
+# A staging build has no tag to read them from, and inventing prose for a
+# rehearsal would put a sentence in the update dialog that describes nothing. It
+# says what it is instead -- the tester is the only reader it will ever have.
+if [[ "$CHANNEL" == "release" ]]; then
+  NOTES_HTML="$("$ROOT/scripts/release-notes.py" "$VERSION" --format html)"
+  NOTES_SOURCE="the v$VERSION tag"
+else
+  NOTES_HTML="<p>Staging rehearsal build ${ARCHIVED_COMMIT:0:12}. Not a release.</p>"
+  NOTES_SOURCE="the staging placeholder"
+fi
 # Indented here rather than in the generator: the indentation belongs to the XML
 # heredoc below, not to the HTML.
 NOTES_HTML="$(printf '%s\n' "$NOTES_HTML" | sed 's/^/                /')"
-echo "    release notes: $(printf '%s' "$NOTES_HTML" | wc -c | tr -d ' ') bytes from the v$VERSION tag"
+echo "    release notes: $(printf '%s' "$NOTES_HTML" | wc -c | tr -d ' ') bytes from $NOTES_SOURCE"
 
 # --- sign --------------------------------------------------------------------
 
@@ -425,7 +493,10 @@ else
   echo "    auth: local firebase login"
 fi
 
-firebase deploy --only hosting --project "$FIREBASE_PROJECT" --non-interactive
+# Named target, never a bare `--only hosting`: firebase.json now declares two
+# sites, and the unqualified form deploys BOTH -- which would overwrite the live
+# download page with a staging rehearsal's.
+firebase deploy --only "hosting:$FIREBASE_SITE" --project "$FIREBASE_PROJECT" --non-interactive
 
 echo
 echo "==> Live:"

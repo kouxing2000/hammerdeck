@@ -25,14 +25,39 @@ name: Release
 # too so this file names nothing account-specific.
 #
 # Note: the download people are pointed at is the one on hammerdeck.peach-studio.com,
-# published by the site step below -- not the GitHub Release asset. The Release is
-# the durable record of what shipped; the site is the distribution channel, and it
-# is what Sparkle's appcast points every installed copy at.
+# NOT the GitHub Release asset. The Release is the durable record of what shipped
+# and the source of the candidate a tester downloads; the site is the distribution
+# channel, and it is what Sparkle's appcast points every installed copy at.
+#
+# This workflow does not touch the production site. `publish.yml` does, by hand,
+# from this release's assets -- so a candidate can be built and tested before
+# anyone is offered it.
+#
+# It has a SECOND trigger, and only one thing can come out of it: a STAGING build
+# for the update/recovery rehearsal.
+#
+#   gh workflow run release.yml -f staging_version=9.9.8
+#
+# That path packages with HAMMERDECK_FEED=staging, creates no GitHub Release, and
+# publishes straight to the staging feed. It lives here rather than in a workflow
+# of its own because the eighty lines of certificate import above it are the
+# expensive part, and a rehearsal must be built the way a release is or it
+# rehearses nothing. It cannot reach production users: publish-site.sh derives
+# its destination from the feed URL baked into the archive, so a staging build
+# has nowhere else to go. The credentials are the other reason -- notarization
+# and the Sparkle key live in repo secrets, so CI is where a rehearsal build can
+# actually be produced.
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      staging_version:
+        description: 'Staging rehearsal version (e.g. 9.9.8). Publishes to the STAGING feed only.'
+        required: true
+        type: string
 
 permissions:
   contents: write   # create the Release and upload assets
@@ -47,7 +72,11 @@ jobs:
       ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      # What is being built and where it may go, answered once. A dispatch is a
+      # staging rehearsal and a tag push is a release -- there is deliberately no
+      # input that can make a dispatch produce a release build.
+      FEED: ${{ github.event_name == 'workflow_dispatch' && 'staging' || 'release' }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.staging_version || github.ref_name }}
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
@@ -59,7 +88,11 @@ jobs:
       # `git tag -l --format='%(contents)'` answers with the tagged commit's
       # SUBJECT. Without this step the notes generator refuses (correctly) and
       # tells the maintainer to force-re-tag a tag that was annotated all along.
+      #
+      # A staging dispatch has no tag and needs no notes, so it skips this and
+      # the gate below.
       - name: Fetch the annotated tag
+        if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
         run: git fetch --force --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
@@ -76,7 +109,7 @@ jobs:
       # and never reads these notes, so refusing its tag would gate a fork's
       # build on prose nothing would have used.
       - name: Release notes gate
-        if: env.MACOS_CERT_P12_BASE64 != ''
+        if: github.event_name == 'push' && env.MACOS_CERT_P12_BASE64 != ''
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -216,9 +249,14 @@ jobs:
         # package.sh runs `swift test` (the pre-package gate) before building, then
         # picks its tier: Developer ID identity present -> sign, notarize, staple.
         # ASC_* reach notarytool from the job env; ASC_KEY_PATH was set above.
-        run: scripts/package.sh "${{ github.ref_name }}"
+        # HAMMERDECK_FEED decides which of package.sh's two feed constants gets
+        # baked in, and therefore where the archive is allowed to be published.
+        env:
+          HAMMERDECK_FEED: ${{ env.FEED }}
+        run: scripts/package.sh "$VERSION"
 
       - name: Publish GitHub Release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -292,25 +330,32 @@ jobs:
               --title "$TAG" --notes "$NOTES"
           fi
 
-      # Deliberately AFTER the GitHub Release: that release is the durable record
-      # of what shipped, and an appcast pointing at a build no release documents
-      # is the harder failure to unpick.
-      #
-      # Skipped entirely on Tier A rather than allowed to fail. A fork without a
-      # certificate should still get its build published; what it must never do
-      # is hand every installed copy an update macOS will refuse to open. The
-      # script carries the same gate itself, so a hand-run cannot bypass it.
-      - name: Publish site and update feed
-        # FIREBASE_SERVICE_ACCOUNT is surfaced at job level because a secret
-        # cannot be read directly in an `if:` expression; an env var carrying it
-        # can. The Sparkle key is not tested here, so it stays scoped to the one
-        # step that needs it.
-        if: env.TIER == 'B' && env.FIREBASE_SERVICE_ACCOUNT != ''
+      # The staging rehearsal's whole output. No GitHub Release, no durable
+      # record, no production surface: publish-site.sh reads the feed URL baked
+      # into the archive and will deploy this to the staging site or refuse.
+      # An unnotarized build is refused there too, which is deliberate -- a
+      # rehearsal of an update macOS would block teaches the wrong lesson.
+      - name: Publish to the staging feed
+        if: github.event_name == 'workflow_dispatch'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           npm install -g firebase-tools
-          scripts/publish-site.sh "${{ github.ref_name }}"
+          scripts/publish-site.sh "$VERSION"
+
+      # On a tag push this job STOPS here, and that is the point. Publishing the
+      # production site and appcast is `publish.yml`, run by hand against this
+      # release's assets.
+      #
+      # It used to be the next step, which meant a notarized candidate could not
+      # exist without every installed copy already having been offered it -- so
+      # the checklist's order (download the candidate, test it on a clean
+      # machine, rehearse the update, THEN publish) was unreachable. Splitting
+      # them also means the bytes that get published are the bytes that were
+      # tested: publish.yml downloads this release's asset rather than building
+      # again, and a rebuild would produce a different digest and void the
+      # evidence gathered against the first one.
 
       - name: Clean up credentials
         if: always()
