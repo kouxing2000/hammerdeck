@@ -429,7 +429,7 @@ extension Native {
     /// Push `data` as a Lua string without a NUL-terminator round trip.
     nonisolated static func pushBytes(_ L: OpaquePointer, _ data: Data) {
         data.withUnsafeBytes { raw in
-            lua_pushlstring(L, raw.baseAddress?.assumingMemoryBound(to: CChar.self), raw.count)
+            _ = lua_pushlstring(L, raw.baseAddress?.assumingMemoryBound(to: CChar.self), raw.count)
         }
     }
 }

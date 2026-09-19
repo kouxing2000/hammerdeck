@@ -340,7 +340,7 @@ final class Native {
                 FileManager.default.createFile(atPath: path, contents: nil)
             }
             logHandle = FileHandle(forWritingAtPath: path)
-            try? logHandle?.seekToEnd()
+            _ = try? logHandle?.seekToEnd()
             logDay = day
             // One attempt per day, keyed on the DAY alone: keyed on
             // `logHandle == nil` a failed open re-entered this branch for every
