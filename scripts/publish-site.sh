@@ -162,6 +162,41 @@ if [[ "$ARCHIVED_ID" != "$BUNDLE_ID" ]]; then
 fi
 echo "    archive contents: $APP_NAME $ARCHIVED_VERSION ($ARCHIVED_ID)"
 
+# Which SOURCE is in there. A version string is a label anyone can pass to
+# package.sh; it says nothing about the code inside, so two archives claiming
+# 0.1.2 can hold different builds and a test run against one proves nothing
+# about the other. package.sh stamps HDSourceCommit, and the release tag is the
+# only commit this feed is allowed to advertise -- asked of the app inside the
+# zip, like every other gate here.
+ARCHIVED_COMMIT="$(plist_value HDSourceCommit)"
+ARCHIVED_TREE="$(plist_value HDSourceStatus)"
+if [[ -z "$ARCHIVED_COMMIT" || "$ARCHIVED_COMMIT" == "unknown" ]]; then
+  echo "error: the app inside $ZIP names no source commit (HDSourceCommit)." >&2
+  echo "       It predates provenance stamping, or was built outside a git checkout." >&2
+  echo "       Re-run scripts/package.sh $VERSION on the tagged commit." >&2
+  exit 1
+fi
+if [[ "$ARCHIVED_TREE" != "clean" ]]; then
+  echo "error: the app inside $ZIP was built from a '$ARCHIVED_TREE' working tree." >&2
+  echo "       Its contents are not in any commit, so nothing can be re-built or" >&2
+  echo "       re-reviewed from the record. Commit, then re-package." >&2
+  exit 1
+fi
+TAG_COMMIT="$(git -C "$ROOT" rev-parse -q --verify "refs/tags/v$VERSION^{commit}" 2>/dev/null || true)"
+if [[ -z "$TAG_COMMIT" ]]; then
+  echo "error: no tag v$VERSION in this checkout, so there is nothing to match the" >&2
+  echo "       archive's commit against (and no source for the release notes)." >&2
+  exit 1
+fi
+if [[ "$ARCHIVED_COMMIT" != "$TAG_COMMIT" ]]; then
+  echo "error: the app inside $ZIP was built from a different commit than v$VERSION." >&2
+  echo "       archive's HDSourceCommit:  $ARCHIVED_COMMIT" >&2
+  echo "       v$VERSION points at:       $TAG_COMMIT" >&2
+  echo "       Publishing would ship bytes no reviewed commit produced." >&2
+  exit 1
+fi
+echo "    provenance: built from ${ARCHIVED_COMMIT:0:12} (clean tree), matching v$VERSION"
+
 # The hard one. An appcast entry is an INSTRUCTION to every installed copy to
 # download and run this archive, so publishing an un-notarized build does not
 # just ship something rough -- it pushes users an update macOS then refuses to

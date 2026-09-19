@@ -84,11 +84,35 @@ if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
   VERSION="0.0.0"
 fi
 
+# Provenance: which source this artifact was built from. Stamped into the bundle
+# AND written beside the zip, because the two answer different questions -- the
+# plist travels with an installed copy ("which commit is this app I am testing?"),
+# the sidecar records the bytes ("which archive did that evidence belong to?").
+# Without both, provenance can only be argued from timestamps, which is how a
+# whole day of real-lock evidence became unusable: nothing tied the running app
+# to the commit whose fix it was supposed to be demonstrating.
+#
+# `--porcelain` non-empty means DIRTY, untracked files included -- not pedantry:
+# step 3 rsyncs the whole `app/` tree into the bundle, so an untracked .lua in
+# there ships, and a build containing code that is in no commit is exactly what
+# this stamp exists to disclose. A clone with no git present stamps "unknown",
+# which publish-site.sh refuses.
+SRC_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+if [[ "$SRC_COMMIT" == "unknown" ]]; then
+  SRC_STATUS="unknown"
+elif [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  SRC_STATUS="dirty"
+else
+  SRC_STATUS="clean"
+fi
+
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
 ZIP="$DIST/$APP_NAME-$VERSION.zip"
+PROVENANCE="$DIST/$APP_NAME-$VERSION.provenance.txt"
 
 echo "==> Packaging $APP_NAME $VERSION (bundle id $BUNDLE_ID)"
+echo "    source: $SRC_COMMIT ($SRC_STATUS)"
 
 # 0. Validate the entitlements XML, in BOTH tiers and before the slow build.
 #
@@ -175,6 +199,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
+  <!-- Provenance, read by scripts/publish-site.sh and by anyone holding a copy:
+       defaults read /path/to/Hammerdeck.app/Contents/Info HDSourceCommit
+       An installed app can then name the commit it was built from, which is the
+       one thing a manual test cannot establish about itself. -->
+  <key>HDSourceCommit</key><string>$SRC_COMMIT</string>
+  <key>HDSourceStatus</key><string>$SRC_STATUS</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
   <!-- The string macOS puts in the Automation consent prompt. Without the key
@@ -386,6 +416,30 @@ elif [[ "$TIER" == "B" ]]; then
   echo "==> SKIPPING notarization (HAMMERDECK_SKIP_NOTARIZE=1) -- signed but Gatekeeper-blocked"
 fi
 
+# 7. The provenance record, written LAST -- after the Tier B re-zip, so the
+#    digest below is the digest of the archive that actually ships. Written for
+#    every tier: a Tier A build is not publishable, and saying which commit an
+#    unpublishable build came from is how a local trial stays attributable.
+#
+#    Artifact facts only. This file gets pasted into audit records in a public
+#    repo, so no hostname, no user, no signing-identity name.
+NOTARIZED="no"
+if [[ "$TIER" == "B" && "${HAMMERDECK_SKIP_NOTARIZE:-0}" != "1" ]]; then NOTARIZED="yes"; fi
+{
+  echo "app:        $APP_NAME $VERSION"
+  echo "bundle id:  $BUNDLE_ID"
+  echo "commit:     $SRC_COMMIT"
+  echo "tree:       $SRC_STATUS"
+  echo "tier:       $TIER"
+  echo "notarized:  $NOTARIZED"
+  echo "min macOS:  $MIN_MACOS"
+  echo "built:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "zip:        $(basename "$ZIP")"
+  echo "sha256:     $(shasum -a 256 "$ZIP" | awk '{print $1}')"
+  echo "bytes:      $(stat -f%z "$ZIP")"
+} > "$PROVENANCE"
+
 echo "==> done (Tier $TIER)"
 echo "    app: $APP"
 echo "    zip: $ZIP"
+echo "    provenance: $PROVENANCE"
