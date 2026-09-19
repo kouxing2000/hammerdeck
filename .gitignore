@@ -71,3 +71,4 @@ __pycache__/
 # directories, and a symlink is not a directory. `/.meta/` would fail to match this
 # link, git would happily commit it, and the private path would ship.
 /.meta
+/scratchpad

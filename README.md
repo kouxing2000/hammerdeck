@@ -10,10 +10,12 @@ display or to swap what sits on each.
 Hammerdeck puts all of it on keys: **arbitrary grids** (name two corners),
 **throws and swaps between displays**, a **deck** that keeps every window
 reachable, a **modal layer** for arranging by feel, and **one-key undo** for any
-of it. Then it does the same thing without you -- every action also binds to a
-**chord** (`cmd+shift+a`, then `b`), **a schedule, or a system event**, and a
-**rules engine** reacts to the Mac itself, so connecting a display rearranges
-your windows instead of you doing it again.
+of it -- each on a hotkey or a **chord** (`cmd+shift+a`, then `b`). Then it does
+the same thing without you: a **rules engine** reacts to the Mac itself, so
+connecting a display rearranges your windows instead of you doing it again.
+Actions that read your live window stay on keys by design; the ones that need no
+context -- refresh the wallpaper, open a set of tabs -- also take **a schedule or
+a system event**.
 
 It is a native Swift app with a Lua engine inside -- think a focused, miniature
 Hammerspoon -- except you never write Lua. Every feature is a switch, some
