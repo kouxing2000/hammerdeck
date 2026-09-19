@@ -46,13 +46,17 @@ extension Native {
     /// report success, and do nothing with nothing written down.
     ///
     /// Throttled: a held-down hotkey would otherwise write a line per repeat.
+    /// Per CALLER, not one window for all of them -- a key repeat and a denied
+    /// `lock_screen` are different failures, and a shared key lets the chatty one
+    /// swallow the rare one for a minute. That silence reads in the log exactly
+    /// like a lock that was never attempted.
     ///
     /// Note the grant is keyed to the CODE SIGNATURE, so a Developer-ID-signed
     /// .app and a dev build are separate entries in System Settings, and granting
     /// one does nothing for the other.
     private func inputTrusted(_ what: String) -> Bool {
         if AXIsProcessTrusted() { return true }
-        seamLogThrottled("input:untrusted",
+        seamLogThrottled("input:untrusted:\(what)",
                          "\(what): Accessibility not granted -- synthesized input is silently "
                          + "discarded by the system. Grant it in System Settings > Privacy & "
                          + "Security > Accessibility for THIS build (the grant is per code signature).")

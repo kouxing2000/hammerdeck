@@ -179,6 +179,9 @@ return {
                 screensaver = ctx.t("action.screensaver", "Start Screensaver"),
                 lock        = ctx.t("action.lock", "Lock Screen"),
                 sleep       = ctx.t("action.sleep", "System Sleep"),
+                lockFailed  = ctx.t("alert.lockFailed",
+                    "Couldn't lock the screen -- grant Hammerdeck Accessibility in "
+                    .. "System Settings > Privacy & Security. Your screen is still unlocked."),
             }
 
             s.dialog = ctx.askChoice {
@@ -217,7 +220,14 @@ return {
 
                     ctx.log("rest dialog chose: " .. tostring(choice))
                     if choice == "lock" then
-                        ctx.lockScreen()
+                        -- The verdict is the point: the lock is discarded without
+                        -- the Accessibility grant, and this user is about to walk
+                        -- away from a machine they believe is locked. Say so here,
+                        -- not only in the log they will read tomorrow.
+                        if ctx.lockScreen() ~= true then
+                            ctx.log("lock refused: Accessibility not granted -- screen still unlocked")
+                            ctx.alert(L.lockFailed)
+                        end
                     elseif choice == "screensaver" then
                         ctx.startScreensaver()
                     elseif choice == "sleep" then

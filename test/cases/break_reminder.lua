@@ -86,6 +86,54 @@ return {
         fake.fireTimers("every", 5)
         ok(fake.fireTimers("after") == 0, "long idle cancelled the rest timer")
 
+        -- The rest dialog's "Lock Screen" must not walk the user away from a
+        -- machine that never locked. ctx.lockScreen() returns false when the
+        -- Accessibility grant is missing and NOTHING happened; this dialog is the
+        -- last place that can be said to someone who is already standing up.
+        -- (SEC-2's ctx-level caller -- the rules-engine half is
+        -- _integration/rules/rules_lock_denied.lua.)
+        -- The 5s bump clears the feature's own 2s start-throttle: without it the
+        -- unlock's restart is skipped and the cycle never re-arms.
+        local function openRestDialog()
+            fake.clockOffset = fake.clockOffset + 5
+            fake.idle = 0
+            fake.systemEvent("screenLock")                 -- ...and unlock starts
+            fake.systemEvent("screenUnlock")               --    a fresh cycle
+            fake.clockOffset = fake.clockOffset + 25 * 60
+            fake.idle = 3                                  -- pausable, so it shows at once
+            fake.fireTimers("after", 25 * 60)
+            return fake.openDialog()
+        end
+
+        fake.axTrusted = false
+        local denied = openRestDialog()
+        ok(denied ~= nil, "a fresh cycle re-opens the rest dialog")
+        local locks = fake.actions.lock
+        denied.choose("Lock Screen")
+        ok(fake.actions.lock == locks, "denied grant: the Lock choice locked nothing")
+        ok(fake.alerts[#fake.alerts]:find("still unlocked", 1, true) ~= nil,
+           "denied grant: the user is told the screen is STILL UNLOCKED")
+
+        -- The SECOND denial is the one that needs this feature-level alert: ctx's
+        -- own Accessibility onboarding alert is one-shot per lost grant, so from
+        -- here on it says nothing at all and the outcome is the only signal left.
+        local secondDenial = openRestDialog()
+        ok(secondDenial ~= nil, "a third cycle opens for the repeat-denial case")
+        locks = fake.actions.lock
+        local alerts = #fake.alerts
+        secondDenial.choose("Lock Screen")
+        ok(fake.actions.lock == locks and #fake.alerts == alerts + 1
+           and fake.alerts[#fake.alerts]:find("still unlocked", 1, true) ~= nil,
+           "a repeat denial still reports -- exactly one alert, the outcome one")
+
+        fake.axTrusted = true
+        local granted = openRestDialog()
+        ok(granted ~= nil, "the granted control gets its own dialog")
+        locks, alerts = fake.actions.lock, #fake.alerts
+        granted.choose("Lock Screen")
+        ok(fake.actions.lock == locks + 1 and #fake.alerts == alerts,
+           "granted: the screen locks, with nothing to report")
+
         -- Going down is the LAST boundary: registry.stopAll runs on quit, and
         -- disable/reload take the same path, so an ordinary Quit must not drop the
         -- accrual since the last checkpoint out of "Worked today".

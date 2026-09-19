@@ -647,8 +647,14 @@ EFFECT_KINDS = {
         -- Accessibility grant the lock is discarded silently, and a rule that
         -- reported success would put "locked the screen" in the log of a machine
         -- that is still open.
+        -- A bare `false` reaches the log as "effect FAILED: nil" and the
+        -- keeps-failing alert as "keeps failing:\nnil" -- the one moment the
+        -- user is told the lock did not happen, spent on a word that names no
+        -- cause. The grant is the only way this call fails.
         run = function()
-            return adapter.lockScreen() == true
+            if adapter.lockScreen() == true then return true end
+            return false, "couldn't lock the screen -- grant Accessibility in "
+                .. "System Settings > Privacy & Security"
         end,
         describe = function() return desc("lockScreen", "Lock the screen") end,
         contextFree = true,

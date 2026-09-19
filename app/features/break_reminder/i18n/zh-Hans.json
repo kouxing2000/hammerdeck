@@ -14,6 +14,7 @@
   "action.screensaver": "启动屏幕保护",
   "action.lock": "锁定屏幕",
   "action.sleep": "系统睡眠",
+  "alert.lockFailed": "无法锁定屏幕——请在“系统设置 > 隐私与安全性 > 辅助功能”中授权 Hammerdeck。屏幕仍处于未锁定状态。",
 
   "option.workMin.label": "工作间隔 (分钟)",
   "option.idleThresholdMin.label": "空闲暂停阈值 (分钟)",
