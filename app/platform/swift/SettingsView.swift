@@ -330,6 +330,8 @@ private struct GeneralSettingsDetail: View {
     // Seeded from Sparkle, which owns the persistence -- there is no
     // `hammerdeck.*` key for this, deliberately (two sources of truth drift).
     @State private var autoUpdate = Updater.shared.automaticallyChecks
+    // Read once into state so clearing the override re-renders the section.
+    @State private var testFeedHost = Updater.shared.testFeedHost
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
     @State private var extensionsDir = ExtensionsPreference.dir
@@ -383,6 +385,28 @@ private struct GeneralSettingsDetail: View {
                     Text(String(format: Strings.t("settings.auto_update_caption", default: "Look for a new %@ in the background and offer it when one appears. Every update is signature-verified before it installs; you are always asked before anything is replaced."), AppInfo.displayName))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    // Only ever visible on a copy someone pointed at a test feed
+                    // from a terminal (the update rehearsal). It exists for the
+                    // way BACK: the redirect survives updates and a machine left
+                    // on a test feed behaves normally right up until it silently
+                    // stops being offered real releases.
+                    if let host = testFeedHost {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(Strings.t("settings.test_feed", default: "Updates are coming from a test feed."))
+                                .font(.callout.weight(.semibold))
+                            Text(String(format: Strings.t("settings.test_feed_caption", default: "This copy checks %@ instead of the release feed, and will not be offered real releases until you switch back."), host))
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button(Strings.t("settings.test_feed_reset", default: "Use the release feed")) {
+                                Updater.shared.usePackagedFeed()
+                                testFeedHost = Updater.shared.testFeedHost
+                            }
+                            .padding(.top, 2)
+                        }
+                        .padding(10)
+                        .overlay(RoundedRectangle(cornerRadius: 7)
+                            .stroke(.secondary.opacity(0.45), lineWidth: 1))
+                    }
                 }
                 Toggle(Strings.t("settings.show_in_dock", default: "Show in Dock"), isOn: $showInDock)
                     .onChange(of: showInDock) { on in DockPreference.set(on); DockPreference.apply() }

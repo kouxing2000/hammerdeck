@@ -33,6 +33,42 @@ final class Updater {
     /// for menu-item validation, which is what Sparkle's headers recommend it for.
     var canCheck: Bool { controller?.updater.canCheckForUpdates ?? false }
 
+    /// The feed actually in use, when it is NOT the one packaged into this build --
+    /// otherwise nil.
+    ///
+    /// Sparkle resolves `SUFeedURL` from the host's user defaults BEFORE the
+    /// Info.plist (`SUHost -objectForKey:ofClass:`), so `defaults write
+    /// com.peach-studio.hammerdeck SUFeedURL ...` redirects any packaged copy at
+    /// a test feed. That is how the update/recovery rehearsal points the real
+    /// release candidate at the staging appcast instead of building a lookalike.
+    ///
+    /// It is deliberately read back through Sparkle's `feedURL` rather than from
+    /// UserDefaults directly: Sparkle owns the resolution order (delegate, then
+    /// defaults, then plist), and a second reader here would eventually disagree
+    /// with the one doing the polling.
+    ///
+    /// The redirect survives an update and outlives the reason for it, and a
+    /// machine left on a test feed looks completely normal -- so Settings shows
+    /// this whenever it is set, with a way back. There is no UI to turn it ON:
+    /// the test feed can offer a version number higher than any real release, so
+    /// a user who flipped such a switch would stop being offered real ones.
+    var testFeedHost: String? {
+        guard let effective = controller?.updater.feedURL else { return nil }
+        // Both sides through URL parsing before comparing: the plist holds a
+        // string and Sparkle hands back a parsed URL, so a difference in
+        // encoding or a trailing slash would otherwise read as a redirect that
+        // nobody made.
+        let packaged = Updater.feedURL.flatMap(URL.init(string:))
+        guard effective.absoluteString != packaged?.absoluteString else { return nil }
+        return effective.host ?? effective.absoluteString
+    }
+
+    /// Drop a defaults-set feed, returning the app to the one it was built with.
+    /// Sparkle's own API, which knows which defaults domain the host reads.
+    func usePackagedFeed() {
+        controller?.updater.clearFeedURLFromUserDefaults()
+    }
+
     /// Background update checks. Sparkle persists this itself in the app's
     /// UserDefaults domain, so there is no separate preference to keep in sync --
     /// deliberately NOT mirrored into a `hammerdeck.*` key, which would create two
