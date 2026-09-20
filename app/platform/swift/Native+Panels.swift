@@ -826,10 +826,12 @@ extension Native {
         return out
     }
 
-    // fan_widget_show(opts) -- opts is a single table: title, count (both strings);
-    // x, y (top-left global corner); sx, sy, sw, sh (screen frame, for the drag clamp);
-    // rows (array of {color, side, title, bundleID, focused}); onMove(x,y) / onExit() /
-    // onSwitch(i) callbacks. Returns a resource id (stop() closes + releases the refs).
+    // fan_widget_show(opts) -- opts is a single table: title, count, resizeTip (all
+    // strings); x, y (top-left global corner); w, h (a previously dragged card size --
+    // either one non-positive means "auto-fit", the unresized state); sx, sy, sw, sh
+    // (screen frame, for the drag clamp); rows (array of {color, side, title, bundleID,
+    // focused}); onMove(x,y) / onResize(w,h) / onExit() / onSwitch(i) callbacks.
+    // Returns a resource id (stop() closes + releases the refs).
     func fanWidgetShow(_ L: OpaquePointer?) -> Int32 {
         // Same reason as deckWidgetShow: a non-table arg 1 raises out of the
         // readers below with a message that names neither this binding nor the
@@ -852,13 +854,22 @@ extension Native {
         lua_settop(L, -2)
 
         let moveRef = ref("onMove"), exitRef = ref("onExit"), switchRef = ref("onSwitch")
+        let resizeRef = ref("onResize")
+        let storedW = dbl("w", 0), storedH = dbl("h", 0)
         let widget = FanWidgetPanel(
             title: str("title"), count: str("count"), rows: rows,
             topLeft: CGPoint(x: dbl("x", 40), y: dbl("y", 60)),
             screen: flipToAppKit(dbl("sx", 0), dbl("sy", 0), dbl("sw", 1440), dbl("sh", 900)),
+            size: (storedW > 0 && storedH > 0) ? NSSize(width: storedW, height: storedH) : nil,
+            resizeTip: str("resizeTip"),
             onMove: { nx, ny in
                 Native.shared.lua.callRef(moveRef) { L in
                     lua_pushnumber(L, nx); lua_pushnumber(L, ny); return 2
+                }
+            },
+            onResize: { nw, nh in
+                Native.shared.lua.callRef(resizeRef) { L in
+                    lua_pushnumber(L, nw); lua_pushnumber(L, nh); return 2
                 }
             },
             onExit: { Native.shared.lua.callRef(exitRef) },
@@ -869,6 +880,7 @@ extension Native {
             })
         let id = registerResource {
             Native.shared.lua.releaseRef(moveRef)
+            Native.shared.lua.releaseRef(resizeRef)
             Native.shared.lua.releaseRef(exitRef)
             Native.shared.lua.releaseRef(switchRef)
             widget.close()

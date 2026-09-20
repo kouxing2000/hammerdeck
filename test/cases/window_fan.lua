@@ -698,6 +698,37 @@ return {
             ok(#fake.liveOutlines() == 0, "Exit leaves the mode (borders gone)")
         end
 
+        -- ===== WIDGET SIZE: the card's corner grip reports the size it was dragged to,
+        -- which is persisted and handed back on the next enter -- and 0,0 (the grip
+        -- double-clicked) restores the auto fit. The CLAMPS live in Swift
+        -- (FanWidgetPanel.cardWidth / userListHeight, tested there); what is Lua's to
+        -- get right is that the pair survives a leave and is passed back unchanged.
+        do
+            fake.windows = freshWindows()
+            fake.focusedWindow = { x = 300, y = 200, w = 900, h = 600, screenIndex = 1 }
+            fake.focusedWid = 101
+            fake.pressHotkey("f", HYP)                 -- enter
+            local wdg = fake.liveFanWidget()
+            ok(wdg and wdg.size and wdg.size.w == 0 and wdg.size.h == 0,
+                "a card that was never resized starts at the auto fit (0x0)")
+            ok(wdg and wdg.resizeTip and #wdg.resizeTip > 0,
+                "the grip carries a localized tooltip")
+            wdg.onResize(520, 412)                     -- the user drags the grip
+            fake.pressHotkey("f", HYP)                 -- leave
+
+            fake.pressHotkey("f", HYP)                 -- re-enter
+            local again = fake.liveFanWidget()
+            ok(again and again.size.w == 520 and again.size.h == 412,
+                "the dragged size is persisted and restored on the next enter")
+
+            again.onResize(0, 0)                       -- double-click the grip
+            fake.pressHotkey("f", HYP)                 -- leave
+            fake.pressHotkey("f", HYP)                 -- re-enter
+            ok(fake.liveFanWidget().size.w == 0 and fake.liveFanWidget().size.h == 0,
+                "0x0 is stored as-is, so the next card is back on the auto fit")
+            fake.pressHotkey("f", HYP)                 -- leave
+        end
+
         -- ===== WIDGET OPT-OUT: the "widget" option off suppresses the card, and the
         -- mode still works (borders, restore) without it.
         do

@@ -658,17 +658,20 @@ function adapter.usageWidget(screenIndex)
     }
 end
 
-fake.fanWidgets = {}   -- {title, count, rows, pos, screen, onSwitch, onExit, onMove, stopped}
+-- {title, count, rows, pos, size, screen, onSwitch, onExit, onMove, onResize, stopped}
+fake.fanWidgets = {}
 function adapter.fanWidget(opts)
     opts = opts or {}
     local w = { title = opts.title, count = opts.count, rows = opts.rows or {},
-                pos = opts.pos, screen = opts.screen,
+                pos = opts.pos, size = opts.size, resizeTip = opts.resizeTip,
+                screen = opts.screen,
                 onSwitch = opts.onSwitch, onExit = opts.onExit, onMove = opts.onMove,
+                onResize = opts.onResize,
                 stopped = false }
     fake.fanWidgets[#fake.fanWidgets + 1] = w
     alloc()
     return {
-        -- drive w.onSwitch(i)/w.onExit()/w.onMove(x,y) from a test.
+        -- drive w.onSwitch(i)/w.onExit()/w.onMove(x,y)/w.onResize(w,h) from a test.
         setRows  = function(rows, count) w.rows = rows or {}; w.count = count end,
         reanchor = function(p, s) w.pos, w.screen = p, s end,
         stop     = function() freeOnce(w) end,

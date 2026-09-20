@@ -566,19 +566,28 @@ end
 
 -- Window Fan's DRAGGABLE switcher card: a floating list of the fan's windows, each
 -- row an edge-swatch (color + exposed side) + app icon + title, the focused one lit.
--- opts = { title, count (strings); pos = {x,y} top-left global; screen = {x,y,w,h};
+-- opts = { title, count, resizeTip (strings); pos = {x,y} top-left global;
+-- size = {w,h} a card size the user previously dragged to (omit it, or pass either
+-- side as 0, for the auto fit); screen = {x,y,w,h};
 -- rows = { {color, side, title, bundleID, focused}, ... };
--- onMove(x,y), onExit(), onSwitch(i) }. Returns { setRows(rows, count),
+-- onMove(x,y), onResize(w,h), onExit(), onSwitch(i) }. Returns { setRows(rows, count),
 -- reanchor(pos, screen), stop() }.
+--
+-- onResize reports the card's outer size after a grip drag, and `0, 0` when the user
+-- double-clicks the grip back to the auto fit -- so a caller persists the pair it is
+-- handed and passes it straight back as `size`, with no third state to encode.
 function adapter.fanWidget(opts)
     opts = opts or {}
-    local pos, scr = opts.pos or {}, opts.screen or {}
+    local pos, scr, size = opts.pos or {}, opts.screen or {}, opts.size or {}
     local id = native.fan_widget_show({
         title = opts.title or "", count = opts.count or "",
+        resizeTip = opts.resizeTip or "",
         x = pos.x or 40, y = pos.y or 60,
+        w = size.w or 0, h = size.h or 0,
         sx = scr.x or 0, sy = scr.y or 0, sw = scr.w or 1440, sh = scr.h or 900,
         rows = opts.rows or {},
         onMove = opts.onMove or function() end,
+        onResize = opts.onResize or function() end,
         onExit = opts.onExit or function() end,
         onSwitch = opts.onSwitch or function() end,
     })

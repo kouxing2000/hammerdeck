@@ -15,6 +15,15 @@
 // or clicking it never steals focus from a fanned window (the click switches the
 // TARGET window, not the widget). The row list is fully rebuilt on setRows as the fan
 // gains/loses windows or focus moves.
+//
+// It is also RESIZABLE, by the grip in its bottom-right corner, and the size persists
+// alongside the position. Hand-rolled: the panel is `.borderless`, which has no system
+// resize edge at all. Dragging the grip pins the card's size on BOTH axes -- width to
+// give long window titles room, height to show more rows than the auto fit chose -- and
+// from then on the card no longer grows and shrinks as windows join and leave the fan.
+// That is the deliberate trade, not an oversight: a card the user has sized is a card
+// that should stay where and how they put it. Double-click the grip to hand both axes
+// back to the auto fit.
 
 import AppKit
 
@@ -34,6 +43,10 @@ final class FanWidgetPanel {
     private let panel: FloatingPanel
     private let card: DraggableCardView
     private let onMove: (Double, Double) -> Void
+    /// Reports the card's outer size after a resize drag, for the caller to persist.
+    /// `(0, 0)` means "back to the auto fit" -- the same state a card that was never
+    /// resized is in, so restoring it needs no third value.
+    private let onResize: (Double, Double) -> Void
     private let onSwitch: (Int) -> Void
     private let countLabel = NSTextField(labelWithString: "")
     private let list = FlippedStackView()
@@ -46,20 +59,38 @@ final class FanWidgetPanel {
     /// live here.
     private let scroll = NSScrollView()
     private var scrollHeight: NSLayoutConstraint!
+    /// The content column's width. A constraint rather than a literal so the resize
+    /// grip has something to drive; `defaultContentWidth` until the user drags.
+    private var contentWidth: NSLayoutConstraint!
     /// Height of everything in the card that is NOT the row list, MEASURED once from
     /// the live view tree rather than hardcoded. An earlier version carried a literal
     /// `10 + 20 + 8 + 11`, which silently goes stale the moment an inset or the header
     /// changes -- and no test could catch that, because a formula that subtracts its
     /// own constant validates against itself for any value of it.
     private var chromeHeight: CGFloat?
+    /// The horizontal twin: the card's width minus the content column, i.e. the side
+    /// insets. Measured the same way and for the same reason -- it is what converts
+    /// the OUTER size the user drags (and the caller persists) into the inner column.
+    private var chromeWidth: CGFloat?
+    /// The outer card size the user dragged to, or nil while the card still auto-fits
+    /// its rows. Set on every resize drag, cleared by a double-click on the grip.
+    private var userSize: NSSize?
+    private var resizeStart: (mouse: NSPoint, frame: NSRect)?
+    /// Whether the drag in progress actually moved. A bare CLICK on the grip must not
+    /// pin the size: it would silently end the auto fit with nothing to show for it.
+    private var resizeMoved = false
     private var clamp: NSRect
 
     init(title: String, count: String,
          rows: [Row], topLeft: CGPoint, screen: NSRect,
+         size: NSSize?, resizeTip: String,
          onMove: @escaping (Double, Double) -> Void,
+         onResize: @escaping (Double, Double) -> Void,
          onExit: @escaping () -> Void, onSwitch: @escaping (Int) -> Void) {
         self.onMove = onMove
+        self.onResize = onResize
         self.onSwitch = onSwitch
+        self.userSize = size
         self.clamp = screen
 
         card = DraggableCardView()
@@ -70,6 +101,14 @@ final class FanWidgetPanel {
             keyable: false, mouseTransparent: false, hasShadow: true)
         panel.backgroundColor = .clear
         panel.isOpaque = false
+        // Without this, the grip's tooltip never appears: AppKit withholds tooltips
+        // while the owning app is inactive, and this app is ALWAYS inactive while a fan
+        // is on -- the frontmost app is whichever window the user is working in, by
+        // design. The property is the documented opt-out, and the only affordance that
+        // survives here (see the note on ResizeGripView: every cursor mechanism is
+        // defeated on a never-key panel, measured, so the tooltip is not a nice-to-have
+        // -- it is where the double-click-to-reset gesture is written down at all).
+        panel.allowsToolTipsWhenApplicationIsInactive = true
 
         card.wantsLayer = true
         card.layer?.cornerRadius = 14
@@ -118,6 +157,7 @@ final class FanWidgetPanel {
         // Sized in setRows to the content height, capped so the card always fits the
         // screen. Placeholder value only.
         scrollHeight = scroll.heightAnchor.constraint(equalToConstant: 100)
+        contentWidth = vstack.widthAnchor.constraint(equalToConstant: Self.defaultContentWidth)
         NSLayoutConstraint.activate([
             vstack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
             vstack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -11),
@@ -134,11 +174,30 @@ final class FanWidgetPanel {
             // Titles would lose exactly the width the card is sized to give them.
             // Invisible with overlay scrollers, which cost no width.
             list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            // A comfortable fixed content width so window titles get real room (the
-            // header alone would otherwise size the card and collapse the titles).
-            // Fixed, not title-driven, so the draggable card never jumps width as
-            // membership / focus changes; long titles still truncate with a tail.
-            vstack.widthAnchor.constraint(equalToConstant: 320),
+            // A comfortable content width so window titles get real room (the header
+            // alone would otherwise size the card and collapse the titles). Never
+            // title-driven, so the draggable card does not jump width as membership /
+            // focus changes; long titles truncate with a tail until the user widens it
+            // by the grip below.
+            contentWidth,
+        ])
+
+        // The grip is added AFTER the content, so it is hit-tested before the row list
+        // it overlaps -- a geometric corner test on the card itself would never see the
+        // click, because a RowView (or the scroller) claims that point first. The cost
+        // of winning that contest is that the corner 14pt of the LAST row switches no
+        // window, and with legacy scrollers the very bottom of the scroller track is
+        // unreachable: both are a few points at the one spot a resize is reached for.
+        let grip = ResizeGripView()
+        grip.toolTip = resizeTip.isEmpty ? nil : resizeTip
+        grip.onBegin = { [weak self] in self?.beginResize() }
+        grip.onDrag = { [weak self] in self?.dragResize() }
+        grip.onEnd = { [weak self] in self?.endResize() }
+        grip.onReset = { [weak self] in self?.resetSize() }
+        card.addSubview(grip)
+        NSLayoutConstraint.activate([
+            grip.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
+            grip.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -4),
         ])
 
         panel.contentView = card
@@ -150,6 +209,16 @@ final class FanWidgetPanel {
         panel.orderFrontRegardless()
     }
 
+    /// The content column's width before the user has resized anything.
+    static let defaultContentWidth: CGFloat = 320
+    /// Below this the card stops being a list of window titles and starts being a
+    /// column of ellipses, so the grip refuses to go further.
+    static let minCardWidth: CGFloat = 240
+    /// A list too short to show one row is useless.
+    static let minListHeight: CGFloat = 80
+    /// Keeps a full-height card off both screen edges rather than exactly filling it.
+    static let screenMargin: CGFloat = 40
+
     /// The row list's height: its content, but never more than the screen can show
     /// once `chrome` (everything else in the card) is accounted for.
     ///
@@ -160,8 +229,27 @@ final class FanWidgetPanel {
     /// may exceed the screen, because a list too small to show one row is useless.
     static func listHeight(content: CGFloat, screenHeight: CGFloat,
                            chrome: CGFloat) -> CGFloat {
-        // The 40 keeps the card off both screen edges rather than exactly filling it.
-        min(content, max(80, screenHeight - chrome - 40))
+        min(content, max(minListHeight, screenHeight - chrome - screenMargin))
+    }
+
+    /// The same bound, applied to a height the USER dragged to rather than one the
+    /// content asked for: their number is honored between the one-row floor and the
+    /// identical screen cap. Composed from `listHeight` rather than restating it, so a
+    /// dragged card and an auto-fitting one can never disagree about what fits.
+    ///
+    /// The floor matters twice here: a drag can ask for a NEGATIVE height (pull the
+    /// grip up past the header), which `listHeight` would pass straight through.
+    static func userListHeight(requested: CGFloat, screenHeight: CGFloat,
+                               chrome: CGFloat) -> CGFloat {
+        max(minListHeight, listHeight(content: requested, screenHeight: screenHeight,
+                                      chrome: chrome))
+    }
+
+    /// The card's outer width for a dragged `requested`: at least a readable minimum,
+    /// at most the screen less the same margin the height uses. Pure, for the same
+    /// reason as the two above -- the clamps are the part worth testing.
+    static func cardWidth(requested: CGFloat, screenWidth: CGFloat) -> CGFloat {
+        min(max(requested, minCardWidth), max(minCardWidth, screenWidth - screenMargin))
     }
 
     /// Rebuild the row list (called whenever the fan's membership or focus changes)
@@ -189,28 +277,109 @@ final class FanWidgetPanel {
             scrollHeight.constant = 0
             card.layoutSubtreeIfNeeded()
             chromeHeight = card.fittingSize.height
+            // Measured at the same moment, from the same collapsed tree: whatever the
+            // card fits to beyond the content column IS the side chrome.
+            chromeWidth = card.fittingSize.width - contentWidth.constant
             scrollHeight.constant = keep
         }
-        list.layoutSubtreeIfNeeded()
-        scrollHeight.constant = Self.listHeight(content: list.fittingSize.height,
-                                               screenHeight: clamp.height,
-                                               chrome: chromeHeight ?? 0)
-
-        // Re-fit while pinning the top-left corner (AppKit origin is bottom-left,
-        // so growing height must drop the origin to keep the top edge fixed).
-        card.layoutSubtreeIfNeeded()
-        let topY = panel.frame.maxY
-        let size = card.fittingSize
-        panel.setContentSize(size)
-        var f = panel.frame
-        f.origin.y = topY - f.height
-        panel.setFrame(clampedFrame(f), display: true)
+        applySize()
+        refit()
         // Restore the user's scroll position (AppKit clamps it if the list shrank).
         // The document view is FLIPPED, so y grows downward and a fresh panel's 0 is
         // the TOP -- with an unflipped NSStackView this same code showed the BOTTOM of
         // the list, hiding row 1 and the selected row at entry.
         scroll.contentView.scroll(to: wasScrolledTo)
         scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    /// Push the current size decision into the two constraints -- the user's dragged
+    /// size when there is one, the content's own fit otherwise, both clamped to the
+    /// screen. Split out of setRows because a resize drag re-runs exactly this, many
+    /// times a second, without rebuilding a single row.
+    private func applySize() {
+        let chromeH = chromeHeight ?? 0
+        if let u = userSize {
+            contentWidth.constant = Self.cardWidth(requested: u.width, screenWidth: clamp.width)
+                - (chromeWidth ?? 0)
+            scrollHeight.constant = Self.userListHeight(requested: u.height - chromeH,
+                                                        screenHeight: clamp.height,
+                                                        chrome: chromeH)
+        } else {
+            // Only this branch reads the list's own fit, so only this branch pays for
+            // laying the whole row list out -- a resize drag runs applySize per tick.
+            list.layoutSubtreeIfNeeded()
+            contentWidth.constant = Self.defaultContentWidth
+            scrollHeight.constant = Self.listHeight(content: list.fittingSize.height,
+                                                    screenHeight: clamp.height,
+                                                    chrome: chromeH)
+        }
+    }
+
+    /// Re-fit the panel to the card while pinning the TOP-LEFT corner (AppKit origins
+    /// are bottom-left, so growing height must drop the origin to keep the top edge
+    /// fixed -- otherwise the header, and with it the Exit button, walks up the screen).
+    ///
+    /// The final clamp can MOVE that corner -- growing against the bottom or right edge
+    /// pushes the card back onto the screen. That is why both resize paths report the
+    /// position afterwards: a size the user can later shrink leaves the card where the
+    /// clamp put it, and a stale stored offset would then teleport it on the next
+    /// enter. (The auto-fit path does not report, deliberately: its height is a
+    /// function of the row count, so `place` re-derives the same clamp on re-entry, and
+    /// persisting a clamp that a later membership change undoes is the same bug
+    /// inverted.)
+    private func refit() {
+        card.layoutSubtreeIfNeeded()
+        let topY = panel.frame.maxY
+        panel.setContentSize(card.fittingSize)
+        var f = panel.frame
+        f.origin.y = topY - f.height
+        panel.setFrame(clampedFrame(f), display: true)
+    }
+
+    // MARK: - Resize (the bottom-right grip)
+
+    private func beginResize() {
+        resizeStart = (NSEvent.mouseLocation, panel.frame)
+        resizeMoved = false
+    }
+
+    /// Called only for a press that cleared the grip's slop, so reaching here IS the
+    /// evidence a real drag happened.
+    private func dragResize() {
+        guard let s = resizeStart else { return }
+        resizeMoved = true
+        let now = NSEvent.mouseLocation
+        // Bottom-right grip with the top-left pinned: rightward is wider, and DOWNWARD
+        // is taller -- which is a MINUS in AppKit's bottom-left origin, where dragging
+        // down lowers y.
+        userSize = NSSize(width: s.frame.width + (now.x - s.mouse.x),
+                          height: s.frame.height - (now.y - s.mouse.y))
+        applySize()
+        refit()
+        // Bank what the clamps ALLOWED rather than what the pointer asked for -- that
+        // is the value endResize persists, and a raw 5000pt width stored from a drag
+        // against the edge of a small display would come back as a 5000pt card on a
+        // large one. (It does not change the rubber-band: every tick recomputes from
+        // the mouse-down frame `s.frame`, which this never touches.)
+        userSize = panel.frame.size
+    }
+
+    private func endResize() {
+        let moved = resizeStart != nil && resizeMoved
+        resizeStart = nil
+        resizeMoved = false
+        guard moved, let u = userSize else { return }
+        onResize(Double(u.width), Double(u.height))
+        reportMove()
+    }
+
+    /// Double-click the grip: hand the size back to the auto fit, on both axes.
+    private func resetSize() {
+        userSize = nil
+        applySize()
+        refit()
+        onResize(0, 0)
+        reportMove()
     }
 
     private func clamped(_ o: NSPoint) -> NSPoint {
@@ -237,6 +406,12 @@ final class FanWidgetPanel {
 
     func reanchor(topLeft: CGPoint, screen: NSRect) {
         clamp = screen
+        // A size the user chose on one display can be too big for the one the mode
+        // just moved to, so re-clamp here rather than waiting for the next setRows --
+        // which a static fan (no membership or focus change) may never run.
+        applySize()
+        card.layoutSubtreeIfNeeded()
+        panel.setContentSize(card.fittingSize)
         place(topLeft: topLeft)
     }
 
@@ -385,6 +560,85 @@ private final class EdgeSwatchView: NSView {
         }
         ctx.addPath(CGPath(roundedRect: bar, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil))
         ctx.fillPath()
+    }
+}
+
+/// The bottom-right resize grip: the three short diagonal strokes macOS has always
+/// used for one. Its own view rather than a hit-test region on the card, because the
+/// card's own mouseDown starts a DRAG and the row list sits on top of that corner --
+/// a geometric test on the card would never be reached.
+///
+/// It reports the gesture and nothing else: every clamp, constraint and frame change
+/// lives in the panel, so the view stays free of layout knowledge it would otherwise
+/// duplicate.
+private final class ResizeGripView: NSView {
+    var onBegin: (() -> Void)?
+    var onDrag: (() -> Void)?
+    var onEnd: (() -> Void)?
+    var onReset: (() -> Void)?
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 14),
+            heightAnchor.constraint(equalToConstant: 14),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// How far the pointer must travel before a press counts as a drag. AppKit
+    /// delivers mouseDragged for hand tremor, so without this a bare CLICK on the grip
+    /// pins the current size -- permanently ending the auto fit with nothing on screen
+    /// to explain it, and only the undocumented double-click to undo it.
+    private static let slop: CGFloat = 3
+    private var downAt: NSPoint = .zero
+    private var dragged = false
+    /// Whether the PREVIOUS press of this click sequence turned into a drag. A
+    /// fine-tuning drag of a few points leaves the second press inside the
+    /// double-click distance, so `clickCount == 2` alone reads "grab it again to
+    /// adjust" as "reset it" -- and throws away the size just set.
+    private var previousDragged = false
+
+    override func mouseDown(with e: NSEvent) {
+        downAt = NSEvent.mouseLocation
+        dragged = false
+        if e.clickCount == 2 && !previousDragged { onReset?() } else { onBegin?() }
+    }
+    override func mouseDragged(with e: NSEvent) {
+        if !dragged {
+            let now = NSEvent.mouseLocation
+            guard abs(now.x - downAt.x) > Self.slop || abs(now.y - downAt.y) > Self.slop
+            else { return }
+            dragged = true
+        }
+        onDrag?()
+    }
+    override func mouseUp(with e: NSEvent) {
+        previousDragged = dragged
+        onEnd?()
+    }
+
+    // NO RESIZE CURSOR, and that is a hard constraint rather than an omission -- see
+    // the measured note on HyperHintPanel's KeyCapView, which covers this same class of
+    // panel: never key, in an app that is never active, which defeats every cursor
+    // mechanism AppKit offers (cursor rects need a key window; `.activeAlways` tracking
+    // is documented not to deliver `cursorUpdate`; and a cursor set by hand is
+    // overridden by the frontmost app's within our own frame). The glyph below is the
+    // affordance that works.
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.4).cgColor)
+        ctx.setLineWidth(1.4)
+        ctx.setLineCap(.round)
+        for len in [4.0, 8.0, 12.0] as [CGFloat] {
+            ctx.move(to: CGPoint(x: bounds.maxX - len, y: bounds.minY + 1))
+            ctx.addLine(to: CGPoint(x: bounds.maxX - 1, y: bounds.minY + len))
+        }
+        ctx.strokePath()
     }
 }
 

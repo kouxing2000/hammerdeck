@@ -1022,11 +1022,21 @@ local function controllerFor(ctx)
             -- move) and kept in st so onScreenChanged can re-anchor to the new frame.
             st.widgetDx = ctx.getState("widgetDx", math.max(0, math.floor(screen.w / 2 - 170)))
             st.widgetDy = ctx.getState("widgetDy", math.floor(screen.h * 0.26))
+            -- The card SIZE, dragged by its corner grip, persisted the same way. 0
+            -- means the card still fits itself to the row count, which is both the
+            -- default and what a double-click on the grip restores -- so the stored
+            -- pair is the whole state, with no separate "has been resized" flag that
+            -- could disagree with it.
+            st.widgetW = ctx.getState("widgetW", 0)
+            st.widgetH = ctx.getState("widgetH", 0)
             st.widget = ctx.fanWidget({
                 title = ctx.t("widget.title", NAME),
                 count = ctx.plural("widget.count", #wins,
                     { one = "%d window", other = "%d windows" }, #wins),
+                resizeTip = ctx.t("widget.resizeTip",
+                    "Drag to resize -- double-click to fit the list"),
                 pos = { x = screen.x + st.widgetDx, y = screen.y + st.widgetDy },
+                size = { w = st.widgetW, h = st.widgetH },
                 screen = { x = screen.x, y = screen.y, w = screen.w, h = screen.h },
                 rows = widgetRows(),
                 onMove = function(x, y)
@@ -1034,6 +1044,20 @@ local function controllerFor(ctx)
                     st.widgetDy = y - (st.screen and st.screen.y or screen.y)
                     ctx.setState("widgetDx", st.widgetDx)
                     ctx.setState("widgetDy", st.widgetDy)
+                end,
+                onResize = function(w, h)
+                    st.widgetW, st.widgetH = w, h
+                    ctx.setState("widgetW", w)
+                    ctx.setState("widgetH", h)
+                    -- Two branches, two lines: a reset and a drag are different
+                    -- decisions and must not read identically in the log. "%.0f", not
+                    -- "%d" -- a card frame is a float and "%d" RAISES on a fractional
+                    -- one, inside a callback the user is mid-drag on.
+                    if w > 0 and h > 0 then
+                        ctx.log(("fan: widget resized to %.0fx%.0f"):format(w, h))
+                    else
+                        ctx.log("fan: widget size reset to auto-fit")
+                    end
                 end,
                 onExit = function() if st.active then st.leave() end end,
                 onSwitch = function(i)

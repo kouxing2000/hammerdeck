@@ -1845,6 +1845,49 @@ final class IntegrationTests: XCTestCase {
         XCTAssertGreaterThan(tiny + chrome, 120, "and that floor knowingly exceeds such a screen")
     }
 
+    /// The card is RESIZABLE by its bottom-right grip, and a dragged size is honored
+    /// between a floor and the same screen cap the auto fit obeys -- a user must not be
+    /// able to pull the card off the display, nor squeeze it down to a column of
+    /// ellipses with no way back.
+    ///
+    /// Pure clamps again, for the reason the test above gives: the pixels need an
+    /// unlocked screen and Screen Recording, and a locked display answers every
+    /// "is not off-screen" assertion with an all-black frame.
+    func testFanWidgetClampsADraggedSize() {
+        let screenH: CGFloat = 938, screenW: CGFloat = 1512
+        let chrome: CGFloat = 49
+
+        // A drag is honored verbatim inside the bounds -- the whole point of the grip.
+        XCTAssertEqual(FanWidgetPanel.userListHeight(requested: 400, screenHeight: screenH,
+                                                     chrome: chrome), 400,
+                       "a height that fits is taken as dragged")
+        XCTAssertEqual(FanWidgetPanel.cardWidth(requested: 520, screenWidth: screenW), 520,
+                       "a width that fits is taken as dragged")
+
+        // Dragging the grip UP past the header asks for a negative height. The auto-fit
+        // clamp alone would pass that straight through (it only caps from above), which
+        // is exactly why the user path has its own floor.
+        XCTAssertEqual(FanWidgetPanel.userListHeight(requested: -300, screenHeight: screenH,
+                                                     chrome: chrome),
+                       FanWidgetPanel.minListHeight, "a negative drag lands on the floor")
+        XCTAssertEqual(FanWidgetPanel.cardWidth(requested: 10, screenWidth: screenW),
+                       FanWidgetPanel.minCardWidth, "a too-narrow drag lands on the floor")
+
+        // And the screen still wins at the top end, on both axes.
+        XCTAssertLessThanOrEqual(
+            FanWidgetPanel.userListHeight(requested: 5_000, screenHeight: screenH,
+                                          chrome: chrome) + chrome,
+            screenH, "a drag past the bottom of the screen is capped like the auto fit")
+        XCTAssertLessThanOrEqual(FanWidgetPanel.cardWidth(requested: 5_000, screenWidth: screenW),
+                                 screenW, "a drag past the right edge is capped")
+
+        // A display narrower than the floor: the floor wins, knowingly, so the card is
+        // never unreadable -- the same documented trade the height floor makes.
+        XCTAssertEqual(FanWidgetPanel.cardWidth(requested: 1_000, screenWidth: 200),
+                       FanWidgetPanel.minCardWidth,
+                       "a tiny display falls back to the minimum readable width")
+    }
+
     func testDroppedAppsAlwaysAnswersATable() {
         let dropped = eval("return require('platform.adapter').windowsDroppedApps()") as? [Any]
         XCTAssertNotNil(dropped, "windowsDroppedApps always answers a table, never nil")

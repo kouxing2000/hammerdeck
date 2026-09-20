@@ -11,6 +11,7 @@
   "option.widget.label": "显示切换小组件",
   "option.widget.hint": "一个可拖动的小卡片，列出所有窗口 -- 点某一行即可切换，点退出离开模式。",
   "widget.title": "窗口扇形",
+  "widget.resizeTip": "拖动可调整大小，双击恢复自动贴合列表",
   "widget.count": {
     "one": "%d 个窗口",
     "other": "%d 个窗口"
