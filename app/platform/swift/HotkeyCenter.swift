@@ -70,7 +70,22 @@ final class HotkeyCenter {
             let hkID = EventHotKeyID(signature: OSType(0x48_44_4B_59) /* 'HDKY' */, id: id)
             let status = RegisterEventHotKey(UInt32(keyCode), carbonMods, hkID,
                                              GetEventDispatcherTarget(), 0, &ref)
-            guard status == noErr, let hotkeyRef = ref else { return nil }
+            guard status == noErr, let hotkeyRef = ref else {
+                // Carry the OSStatus into the log. The seam turns a nil return
+                // into one Lua error whatever the cause, and "could not register
+                // cmd+alt+k" reads identically for the two that actually happen:
+                // -9878 eventHotKeyExistsErr, another Carbon hot-key holder owns
+                // the combo, and -9868, a bad parameter. Only the first is the
+                // user's to resolve, and only the log can tell them apart.
+                //
+                // Note the limit, so nobody reads a clean log as proof of no
+                // conflict: Carbon reports EXCLUSIVE Carbon registrations only.
+                // A macOS system shortcut and another app's menu key equivalent
+                // both register fine here and simply never fire.
+                Native.shared.seamLog("hotkey refused (OSStatus \(status)): "
+                    + mods.joined(separator: "+") + "+" + key)
+                return nil
+            }
             refs[id] = hotkeyRef
         } else {
             suspendedIds.insert(id)
