@@ -267,7 +267,7 @@ final class McpServer: ObservableObject {
             let supported: Set<String> = ["2024-11-05", "2025-03-26", "2025-06-18"]
             let asked = params["protocolVersion"] as? String ?? ""
             let version = supported.contains(asked) ? asked : "2025-06-18"
-            let bundle = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            let bundle = AppInfo.version
             return [
                 "protocolVersion": version,
                 "capabilities": ["tools": [String: Any](), "resources": [String: Any]()],

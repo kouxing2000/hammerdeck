@@ -326,6 +326,10 @@ private struct GeneralSettingsDetail: View {
     let searchQuery: String
     @State private var capsHyper = CapsHyperPreference.enabled
     @State private var showInDock = DockPreference.showInDock
+    // Seeded from launchd, which owns this one -- see LoginItem. Approval-pending
+    // seeds the switch ON: the user did ask, macOS is just holding it.
+    @State private var openAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
+    @State private var loginItemError: String?
     @State private var appearance = AppearancePreference.mode
     // Seeded from Sparkle, which owns the persistence -- there is no
     // `hammerdeck.*` key for this, deliberately (two sources of truth drift).
@@ -408,6 +412,40 @@ private struct GeneralSettingsDetail: View {
                             .stroke(.secondary.opacity(0.45), lineWidth: 1))
                     }
                 }
+                // Absent in a dev `swift run` for the same reason the updater
+                // rows above are: there is no bundle for launchd to register.
+                if LoginItem.isAvailable {
+                    Toggle(Strings.t("settings.login_item", default: "Open at login"), isOn: $openAtLogin)
+                        .onChange(of: openAtLogin) { on in
+                            // The macOS state, not the switch's: approval-pending
+                            // counts as "the user asked for it" even though it is
+                            // not running yet.
+                            let current = LoginItem.isEnabled || LoginItem.needsApproval
+                            // Our own write-back below re-enters here; only a real
+                            // user flip differs from what the OS already reports.
+                            guard on != current else { return }
+                            loginItemError = LoginItem.set(on)
+                            openAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
+                        }
+                    Text(String(format: Strings.t("settings.login_item_caption", default: "Start %@ when you log in. Its shortcuts, schedules and automation rules only run while it is open, so without this they stop at every restart -- with no menubar icon left to say so."), AppInfo.displayName))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let err = loginItemError {
+                        Text(String(format: Strings.t("settings.login_item_failed", default: "Could not set this: %@"), err))
+                            .font(.caption).foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if LoginItem.needsApproval {
+                        // Registered, and macOS is waiting on the user. Saying
+                        // nothing here would leave a switch that reads ON above an
+                        // app that never starts.
+                        Text(Strings.t("settings.login_item_approval", default: "macOS is holding this until you allow it in Login Items."))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button(Strings.t("settings.login_item_open_settings", default: "Open Login Items…")) {
+                            LoginItem.openSystemSettings()
+                        }
+                    }
+                }
                 Toggle(Strings.t("settings.show_in_dock", default: "Show in Dock"), isOn: $showInDock)
                     .onChange(of: showInDock) { on in DockPreference.set(on); DockPreference.apply() }
                 Text(String(format: Strings.t("settings.dock_caption", default: "Keep a %@ icon in the Dock (and a Cmd-Tab entry); click it to open Home. Off = a pure menubar app."), AppInfo.displayName))
@@ -472,6 +510,19 @@ private struct GeneralSettingsDetail: View {
                         }
                     }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    // What the last scan actually found. Picking a folder used to
+                    // change this row's path text and nothing else, so an empty
+                    // folder, a wrongly laid-out one, and one whose extensions
+                    // were all rejected were the same pixels.
+                    if let status = store.extensionsStatus {
+                        Text(status)
+                            .font(.caption)
+                            // A flag, not a substring test on the message: the
+                            // zh-Hans string contains no "failed" to match.
+                            .foregroundStyle(store.extensionsHaveFailures ? .red : .secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     Text(Strings.t("settings.extensions_caption", default: "Load your own Lua features from a folder. Each extension is a subfolder laid out like a built-in feature -- <id>/lua/init.lua, plus an optional feature.json. Applied immediately, and re-scanned on every Reload Features."))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -584,6 +635,10 @@ private struct GeneralSettingsDetail: View {
         .onAppear {
             capsHyper = CapsHyperPreference.enabled
             showInDock = DockPreference.showInDock
+            // System Settings can revoke this behind our back, so re-read launchd
+            // every time the pane appears rather than trusting the last write.
+            openAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
+            loginItemError = nil
             appearance = AppearancePreference.mode
             language = LocalePreference.override
             extensionsDir = ExtensionsPreference.dir
@@ -628,7 +683,7 @@ private struct GeneralSettingsDetail: View {
     private func setExtensionsDir(_ dir: String?) {
         ExtensionsPreference.set(dir)
         extensionsDir = ExtensionsPreference.dir
-        store.reload()
+        store.userReload()
     }
 
     /// Is the endpoint actually serving right now (vs merely switched on)?

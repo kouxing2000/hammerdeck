@@ -321,6 +321,61 @@ func makeDockIcon() -> NSImage {
     return icon
 }
 
+/// Say on screen that the app cannot start, and leave something a bug report can
+/// carry.
+///
+/// A `print` reaches nobody here: launched from Finder there is no stdout, so the
+/// only symptom is an icon that bounces once and stops -- indistinguishable from a
+/// corrupt download, an unsupported macOS, or a quarantined copy, and reportable
+/// by nobody.
+///
+/// The failure goes to the ordinary daily log, not a file of its own: `seamLog` is
+/// live by now (`Native.shared.attach` + `installBindings` run before `bootLua`,
+/// and the log writer only touches files), it is the log "Open Logs" opens and a
+/// bug report attaches, and `pruneOldLogs` keeps the newest 14 entries sorted by
+/// NAME -- so a differently-named file would sort past every `YYYY-MM-DD.log`,
+/// never be pruned, and permanently spend one of those slots.
+@MainActor
+private func presentBootFailure(_ error: Error) {
+    // Leave the machine as we found it. CapsHyperPreference.apply() runs well
+    // before bootLua, so by the time we get here Caps Lock may already be
+    // remapped to F18 -- and the willTerminate hook that normally restores it is
+    // registered later and would not run under exit(1) anyway. Without this, a
+    // failed launch leaves Caps Lock dead until the next reboot, which is a
+    // worse symptom than the failure itself and looks nothing like its cause.
+    CapsHyperTap.shared.disable()
+
+    let detail = "\(AppInfo.displayName) \(AppInfo.version ?? "dev") could not start "
+        + "the Lua platform.\n\n\(error)"
+
+    Native.shared.seamLog("boot FAILED: \(error)")
+
+    // The alert text is not selectable, and the user is about to lose the window.
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(detail, forType: .string)
+
+    // Strings reads the JSON catalogs directly, not through Lua, so the one
+    // message the user sees when Lua is dead is still localized.
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    alert.messageText = String(format: Strings.t("boot.failed", default: "%@ could not start."),
+                               AppInfo.displayName)
+    alert.informativeText = Strings.t("boot.failed_detail",
+        default: "The feature platform did not load, so none of its shortcuts or rules would work. "
+        + "The details are on your clipboard, and in today's log.") + "\n\n\(error)"
+    alert.addButton(withTitle: Strings.t("boot.failed_quit", default: "Quit"))
+    alert.addButton(withTitle: Strings.t("menu.logs", default: "Open Logs"))
+    // Without this the alert can open BEHIND the frontmost app: `runModal` does not
+    // activate, and an accessory app (Show in Dock off) is not activated on launch
+    // either -- which would reproduce the exact bounced-once-and-nothing symptom
+    // this function exists to replace. Same line InstallLocation takes before its
+    // own launch-time modal.
+    NSApp.activate(ignoringOtherApps: true)
+    if alert.runModal() == .alertSecondButtonReturn {
+        NSWorkspace.shared.open(Native.logsDir)
+    }
+}
+
 /// Wire package.path and run the platform entry point on an attached LuaState.
 @MainActor
 func bootLua(_ lua: LuaState, luaDir: String) throws {
@@ -406,7 +461,7 @@ public func hammerdeckMain() {
     do {
         try bootLua(lua, luaDir: defaultLuaDir())
     } catch {
-        print("[hammerdeck] FAILED to boot the Lua platform: \(error)")
+        presentBootFailure(error)
         exit(1)
     }
 
@@ -451,6 +506,12 @@ public func hammerdeckMain() {
     // The status bar controller doubles as the app delegate so clicking the Dock
     // icon (when shown) reopens the Homepage -- the point of having the icon.
     app.delegate = statusBar
+
+    // AFTER the delegate is set: every main-menu item is nil-target, and the
+    // app-specific ones reach StatusBarController only because the delegate sits
+    // at the tail of the menu responder chain. Installing the bar first would
+    // build a menu whose Settings row greys itself out until the next runloop.
+    MainMenu.install(into: app)
 
     // First launch: open the Homepage, not a bare menubar icon. The Dashboard's
     // get-started card carries the golden path from there -- the Accessibility

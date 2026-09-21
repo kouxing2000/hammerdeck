@@ -389,7 +389,12 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         store.runAction(pair[0], pair[1])
     }
 
-    @objc private func showSettings() {
+    // The four handlers below are NOT `private`, unlike their siblings: MainMenu
+    // forms `#selector`s for them from another file, and Swift `private` is
+    // file-scoped, so the selector would not compile. Internal access keeps the
+    // compile-time check that a string selector would throw away. They are still
+    // dispatched nil-target down the responder chain -- see MainMenu.
+    @objc func showSettings() {
         openHome(.settings)
     }
 
@@ -402,7 +407,7 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         openHome(.rules)
     }
 
-    @objc private func showHome() {
+    @objc func showHome() {
         openHome(.home)
     }
 
@@ -419,10 +424,10 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
     }
 
     @objc private func reloadFeatures() {
-        store.reload()
+        store.userReload()
     }
 
-    @objc private func openLogs() {
+    @objc func openLogs() {
         try? FileManager.default.createDirectory(at: Native.logsDir,
                                                  withIntermediateDirectories: true)
         NSWorkspace.shared.open(Native.logsDir)
@@ -435,14 +440,13 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
     /// to paste even if the compose window arrives truncated or empty. Losing the
     /// details is the exact failure this feature exists to prevent, so it does not
     /// rely on the mailto surviving.
-    @objc private func reportProblem() {
+    @objc func reportProblem() {
         let body = Diagnostics.report(store)
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(body, forType: .string)
 
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let subject = "\(AppInfo.displayName) \(version ?? "dev") -- "
+        let subject = "\(AppInfo.displayName) \(AppInfo.version ?? "dev") -- "
         let intro = Strings.t("report.intro",
                               default: "Describe what you did and what you expected. Technical details "
                               + "below (also copied to your clipboard). The daily log is often the "
@@ -466,7 +470,7 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
     /// lets the existing ingestion label them and file them as issues.
     private static let feedbackEmail = "studio.peach.go+hammerdeck@gmail.com"
 
-    @objc private func checkForUpdates() {
+    @objc func checkForUpdates() {
         // Sparkle's own UI takes over from here (found / up-to-date / error), so
         // there is nothing to report back. Activate first: a menubar app is often
         // an accessory with no Dock tile, and Sparkle's window would otherwise

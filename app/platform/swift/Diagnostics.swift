@@ -23,7 +23,7 @@ enum Diagnostics {
     static func report(_ store: SettingsStore) -> String {
         var out: [String] = []
 
-        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let v = AppInfo.version
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         let bundleID = Bundle.main.bundleIdentifier
         out.append("\(AppInfo.displayName) \(v ?? "dev") (\(build ?? "-"))")

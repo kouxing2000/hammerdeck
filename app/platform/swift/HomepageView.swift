@@ -119,7 +119,7 @@ struct HomepageView: View {
                           systemImage: HomeDestination.settings.icon)
                         .tag(HomeDestination.settings)
                     Button {
-                        store.reload()
+                        store.userReload()
                     } label: {
                         Label(Strings.t("home.reload_features", default: "Reload Features"), systemImage: "arrow.clockwise")
                     }
@@ -131,6 +131,18 @@ struct HomepageView: View {
                 HStack(spacing: 7) {
                     Image(systemName: "hammer.fill").foregroundStyle(.tint)
                     Text(AppInfo.displayName).font(.headline)
+                    // The app's own version, which otherwise appears nowhere a
+                    // user can see -- only in a bug-report mail subject. Here
+                    // rather than only in the About panel: the main menu bar is
+                    // unreachable while another app is frontmost, and absent
+                    // entirely when "Show in Dock" is off, which is exactly how a
+                    // menubar utility is usually run. Omitted, not faked, in a dev
+                    // `swift run`, which has no Info.plist and so no version.
+                    if let v = AppInfo.version {
+                        Text(v).font(.caption).foregroundStyle(.secondary)
+                            .accessibilityLabel(String(format: Strings.t("home.version",
+                                                                         default: "Version %@"), v))
+                    }
                     Spacer()
                 }
                 .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)

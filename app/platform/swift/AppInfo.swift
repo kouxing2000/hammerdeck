@@ -21,4 +21,15 @@ enum AppInfo {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
         ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
         ?? "Hammerdeck"
+
+    /// The marketing version, as packaged (`CFBundleShortVersionString`, written
+    /// by scripts/package.sh from its VERSION var). nil in a dev `swift run`,
+    /// which has no Info.plist.
+    ///
+    /// Deliberately NOT defaulted to a literal here: callers choose their own
+    /// stand-in, because the right one differs. A bug report says "dev" (a number
+    /// that matched no shipped artifact would send the reader hunting for a build
+    /// that never existed), while a UI label shows nothing at all.
+    static let version: String? =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
 }

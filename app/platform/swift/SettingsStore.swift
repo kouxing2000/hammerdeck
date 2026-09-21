@@ -158,9 +158,71 @@ final class SettingsStore: ObservableObject {
 
     /// Hot-reload all features from disk: drops cached Lua modules, re-loads the
     /// catalog, and re-binds whatever was enabled. Enabled-state/options persist.
+    ///
+    /// Silent, because most callers are the option editors re-registering after a
+    /// saved change -- a notice on every edited option would be noise. A reload a
+    /// human ASKED for goes through `userReload` instead.
     func reload() {
         _ = try? lua.call("platform.registry", "reload")
         refresh()
+    }
+
+    /// A reload the user asked for, which says what it found.
+    ///
+    /// Here rather than in the menubar handler because there are four such
+    /// buttons -- the menulet, the Homepage sidebar, the Gallery's refresh, and
+    /// picking an extensions folder -- and wiring the notice to one of them is
+    /// how the sidebar button ends up the silent one. Reload Features also
+    /// carries a key equivalent, so this is `flash` (single-slot, each replacing
+    /// the last) rather than `show`, whose cards would stack on a held key.
+    func userReload() {
+        reload()
+        Toast.flash(symbol: "arrow.clockwise", text: reloadSummary, seconds: 2.5)
+    }
+
+    /// One line describing the catalog the last scan produced.
+    ///
+    /// Derived from `features`, which the UI is already rendering, rather than
+    /// from a count handed back by Lua: two producers of the same number drift,
+    /// and the failed rows are in here already.
+    var reloadSummary: String {
+        let live = features.filter { !$0.failed }.count
+        let base = String(format: Strings.plural("reload.features", live,
+                                                 one: "%d feature reloaded",
+                                                 other: "%d features reloaded"), live)
+        guard let ext = extensionsStatus else { return base }
+        return base + " -- " + ext
+    }
+
+    /// What the last scan found in the user's extensions folder, or nil when no
+    /// folder is set.
+    ///
+    /// The empty and the all-failed cases read differently on purpose: they were
+    /// indistinguishable before, and "nothing appeared" after writing an
+    /// extension is a very different problem from "it was rejected".
+    /// Whether any extension in that folder was rejected -- the one state the
+    /// status line renders in red. A flag rather than the caller matching on the
+    /// message, which is localized and would never match in zh-Hans.
+    var extensionsHaveFailures: Bool {
+        ExtensionsPreference.dir != nil && features.contains { $0.isExtension && $0.failed }
+    }
+
+    var extensionsStatus: String? {
+        guard ExtensionsPreference.dir != nil else { return nil }
+        let mine = features.filter { $0.isExtension }
+        let failed = mine.filter { $0.failed }.count
+        let loaded = mine.count - failed
+        if failed > 0 {
+            return String(format: Strings.t("reload.extensions_failed",
+                                            default: "%1$d of %2$d extensions failed to load -- see Open Logs"),
+                          failed, mine.count)
+        }
+        if loaded == 0 {
+            return Strings.t("reload.extensions_none",
+                             default: "no extensions found -- each one is a subfolder containing lua/init.lua")
+        }
+        return String(format: Strings.plural("reload.extensions", loaded,
+                                             one: "%d extension", other: "%d extensions"), loaded)
     }
 
     // MARK: - Automation rules (Rules page; delegates to the tested rules.lua engine)

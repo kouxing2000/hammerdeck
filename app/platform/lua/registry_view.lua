@@ -479,6 +479,11 @@ function view.describe()
             kind = "failed", enabled = false,
             triggerDesc = "load error", options = {},
             failed = true, error = tostring(f.error),
+            -- Carried on the FAILED rows too, not just the live ones above: the
+            -- host counts a folder's extensions from this list, and a rejected
+            -- extension that reports as a built-in makes "nothing was found"
+            -- indistinguishable from "all of them were refused".
+            extension = tostring(f.source or ""):match("^extensions%.") ~= nil,
         }
     end
     return out

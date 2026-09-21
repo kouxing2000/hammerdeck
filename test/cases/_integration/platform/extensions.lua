@@ -119,6 +119,20 @@ return {
                 and f.error:find("must not contain", 1, true) then dotFailed = true end
         end
         ok(dotFailed, "a dotted extension folder name is refused, not misresolved")
+
+        -- The FAILED row must own up to being an extension. The host counts a
+        -- folder's extensions off describe(), so a rejected one reporting as a
+        -- built-in makes "nothing was found here" and "all of them were refused"
+        -- render identically -- which is the confusion this flag exists to end.
+        local dotRow
+        for _, r in ipairs(registry.describe()) do
+            if r.id == "extensions.we.ird" then dotRow = r end
+        end
+        ok(dotRow ~= nil, "a refused extension still gets a row in describe()")
+        ok(dotRow and dotRow.failed == true, "that row reads as failed")
+        ok(dotRow and dotRow.extension == true,
+            "a FAILED extension row is marked extension, not mistaken for a built-in")
+
         fake.featuresByDir[EXT_DIR] = { "ext_probe" }
         end
 

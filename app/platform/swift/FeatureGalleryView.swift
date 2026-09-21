@@ -71,7 +71,7 @@ struct FeatureGalleryView: View {
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
             Button {
-                store.reload()
+                store.userReload()
                 recomputeConflicts()
             } label: {
                 Image(systemName: "arrow.clockwise")
