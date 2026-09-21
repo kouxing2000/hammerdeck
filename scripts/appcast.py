@@ -11,11 +11,10 @@ not of the hosting:
     publish V            feed = [current production item] + [V, channel beta]
     promote V            feed = [V]
 
-The STAGING site is not on this ladder and takes a third mode, `rehearsal`: it
-is a rig for proving the update mechanism against a normal copy, and a normal
-copy is not subscribed to beta, so a rehearsal published to the beta channel
-would be invisible to the very thing it exists to test. A rehearsal feed is one
-default-channel item and nothing else.
+There is one feed and one site. `beta` is a channel inside this file, not a
+second address: a copy opts in with a toggle, which ADDS the candidates to what
+it already sees. A second feed would be baked in at package time, making it a
+property of the build rather than of the user.
 
 Archives are not hosted here. Every enclosure points at a GitHub Release asset,
 which `firebase deploy` cannot touch -- so a production item carried forward
@@ -31,7 +30,7 @@ over the local file is a byte-identity check that downloads nothing.
 
 Usage:
   appcast.py carried --live live.xml
-  appcast.py build --stage beta|production|rehearsal --version V --site-host URL \\
+  appcast.py build --stage beta|production --version V --site-host URL \\
       --archive-url URL --length N --signature SIG --min-os 13.0 \\
       --notes-file F [--live live.xml] [--pub-date STR]
   appcast.py --self-test
@@ -239,12 +238,6 @@ def build(args) -> str:
         channel=BETA if args.stage == "beta" else None,
     )
 
-    if args.stage == "rehearsal":
-        # No ladder, no carry, no gate: the staging feed is a rig, and its one
-        # item has to be visible to a copy that never opted into anything.
-        fresh.channel = None
-        return render_feed(args.app_name, args.site_host, [fresh])
-
     if args.stage == "beta":
         # The production entry rides along untouched. Dropping it would strand
         # everyone NOT on beta on whatever they have, with the feed advertising
@@ -429,10 +422,6 @@ def self_test() -> None:
     ok("a beta publish keeps the production item beside it",
        build(_Args(stage="beta", version="2.0.0", signature="S",
                    live_xml=feed(prod))).count("<item>") == 2)
-    ok("a rehearsal publishes one item on no channel, ignoring the live feed",
-       "sparkle:channel" not in build(_Args(stage="rehearsal", version="9.9.8",
-                                            signature="S", live_xml=live)))
-
     # The retarget the publish script performs when it carries an entry whose
     # URL still points at hosting. Without this the old URL is re-emitted
     # verbatim and the move never actually happens for the carried release.
@@ -455,11 +444,11 @@ def self_test() -> None:
     # download back at hosting that no longer carries the file.
     ok("the enclosure is the url passed in, not one derived from the site host",
        '<enclosure url="https://github.com/o/r/releases/download/v2.0.0/'
-       'Hammerdeck-2.0.0.dmg"' in build(_Args(stage="rehearsal", version="2.0.0",
+       'Hammerdeck-2.0.0.dmg"' in build(_Args(stage="beta", version="2.0.0",
                                               signature="S")))
     ok("the item's link still points at the page on the site, not at the archive",
        "<link>https://example.test/</link>"
-       in build(_Args(stage="rehearsal", version="2.0.0", signature="S")))
+       in build(_Args(stage="beta", version="2.0.0", signature="S")))
 
     ok("carried reports the production version, length and url",
        carried(_Args(live_xml=feed(prod))).split("\t")[:3]
@@ -488,7 +477,7 @@ def main() -> None:
     carried_cmd.add_argument("--live", required=True)
 
     b = sub.add_parser("build")
-    b.add_argument("--stage", choices=["beta", "production", "rehearsal"], required=True)
+    b.add_argument("--stage", choices=["beta", "production"], required=True)
     b.add_argument("--version", required=True)
     b.add_argument("--app-name", default="Hammerdeck")
     b.add_argument("--site-host", required=True)

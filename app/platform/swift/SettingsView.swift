@@ -400,11 +400,11 @@ private struct GeneralSettingsDetail: View {
                     Text(Strings.t("settings.beta_channel_caption", default: "Every release is offered here first, before it goes out to everyone. Betas are signed and verified exactly like a release, but they have had less use -- turn this off at any time to go back to the general releases."))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    // Only ever visible on a copy someone pointed at a test feed
-                    // from a terminal (the update rehearsal). It exists for the
-                    // way BACK: the redirect survives updates and a machine left
-                    // on a test feed behaves normally right up until it silently
-                    // stops being offered real releases.
+                    // Only ever visible on a copy someone pointed at another
+                    // feed from a terminal. Nothing we ship does that, and this
+                    // exists for the way BACK: the redirect survives updates,
+                    // and such a machine behaves normally right up until it
+                    // silently stops being offered real releases.
                     if let host = testFeedHost {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(Strings.t("settings.test_feed", default: "Updates are coming from a test feed."))

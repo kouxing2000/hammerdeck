@@ -39,8 +39,9 @@ final class Updater {
     /// Sparkle resolves `SUFeedURL` from the host's user defaults BEFORE the
     /// Info.plist (`SUHost -objectForKey:ofClass:`), so `defaults write
     /// com.peach-studio.hammerdeck SUFeedURL ...` redirects any packaged copy at
-    /// a test feed. That is how the update/recovery rehearsal points the real
-    /// release candidate at the staging appcast instead of building a lookalike.
+    /// another feed. Nothing we ship does that -- there is one feed, and a
+    /// pre-release is a CHANNEL within it -- but the capability is Sparkle's and
+    /// exists whether or not we use it, which is exactly why this is here.
     ///
     /// It is deliberately read back through Sparkle's `feedURL` rather than from
     /// UserDefaults directly: Sparkle owns the resolution order (delegate, then
@@ -48,13 +49,13 @@ final class Updater {
     /// with the one doing the polling.
     ///
     /// The redirect survives an update and outlives the reason for it, and a
-    /// machine left on a test feed looks completely normal -- so Settings shows
-    /// this whenever it is set, with a way back. There is no UI to turn it ON:
-    /// the test feed can offer a version number higher than any real release, so
-    /// a user who flipped such a switch would stop being offered real ones. That
-    /// is what `receivesBeta` is for -- it selects a CHANNEL within the one real
-    /// feed, so a beta subscriber keeps being offered production releases and
-    /// never sees a rehearsal build.
+    /// machine left on another feed looks completely normal right up until it
+    /// silently stops being offered real releases -- so Settings shows this
+    /// whenever it is set, with a way back. There is no UI to turn it ON: a
+    /// foreign feed can advertise a version above every real release, and a
+    /// copy that accepted one would never be offered a genuine version again.
+    /// Trying a build early is `receivesBeta` instead, which selects a channel
+    /// within this same feed and stays additive.
     var testFeedHost: String? {
         guard let effective = controller?.updater.feedURL else { return nil }
         // Both sides through URL parsing before comparing: the plist holds a

@@ -32,8 +32,7 @@ library. The raw 32-byte key from package.sh is wrapped in the fixed
 SubjectPublicKeyInfo prefix for Ed25519; `-rawin` is required, since Ed25519
 signs the message rather than a digest of it.
 
-  scripts/feed-watch.py                 check every feed
-  scripts/feed-watch.py --feed release  check one (release|staging)
+  scripts/feed-watch.py
 """
 
 import argparse
@@ -155,25 +154,15 @@ def check_feed(name: str, feed_url: str, key_pem: str) -> list[str]:
 
 
 def main() -> int:
-    feeds = {"release": package_const("SPARKLE_FEED_URL_RELEASE"),
-             "staging": package_const("SPARKLE_FEED_URL_STAGING")}
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--feed", choices=sorted(feeds))
-    args = parser.parse_args()
-    if args.feed:
-        feeds = {args.feed: feeds[args.feed]}
-
-    key_pem = public_key_pem()
-    failures = []
-    for name, url in feeds.items():
-        failures += check_feed(name, url, key_pem)
-
+    argparse.ArgumentParser(description=__doc__).parse_args()
+    failures = check_feed("release", package_const("SPARKLE_FEED_URL_RELEASE"),
+                          public_key_pem())
     if failures:
         print()
         for failure in failures:
             print(f"FAIL {failure}", file=sys.stderr)
         return 1
-    print(f"\nevery enclosure on {len(feeds)} feed(s) resolves anonymously and verifies")
+    print("\nevery enclosure on the live feed resolves anonymously and verifies")
     return 0
 
 

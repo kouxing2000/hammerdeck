@@ -2,7 +2,7 @@ name: Release
 
 # Tag-driven release: push a version tag (e.g. `v0.1.0`) and this builds the
 # .app on a macOS runner via the SAME scripts/package.sh used locally, then
-# attaches the zip to a GitHub Release for that tag. The tag IS the version
+# attaches the disk image to a GitHub Release for that tag. The tag IS the version
 # (single source of truth) -- nothing here is hand-edited per release.
 #
 # Signing tier is chosen by package.sh from what it finds, not by a flag here:
@@ -36,36 +36,15 @@ name: Release
 # from this release's assets -- so a candidate can be built and tested before
 # anyone is offered it.
 #
-# It has a SECOND trigger, and only one thing can come out of it: a STAGING build
-# for the update/recovery rehearsal.
-#
-#   gh workflow run release.yml -f staging_version=9.9.8
-#
-# That path packages with HAMMERDECK_FEED=staging and publishes straight to the
-# staging feed. Its archive goes to ONE reusable prerelease, tag
-# `staging-rehearsal` -- not a tag per drill, because a rehearsal version is
-# invented and a real tag for it would be a durable public record of something
-# that was never released. The asset is named `-staging` for the same reason the
-# prerelease body spells it out: the file outlives the page that explained it,
-# and a copy installed from one polls the rig for life. It lives here rather than in a workflow
-# of its own because the eighty lines of certificate import above it are the
-# expensive part, and a rehearsal must be built the way a release is or it
-# rehearses nothing. It cannot reach production users: publish-site.sh derives
-# its destination from the feed URL baked into the archive, so a staging build
-# has nowhere else to go. The credentials are the other reason -- notarization
-# and the Sparkle key live in repo secrets, so CI is where a rehearsal build can
-# actually be produced.
+# A tag push is the only trigger. Trying a build before it is offered to anyone
+# is what the BETA channel is for -- `publish.yml -f tag=v1.2.3` puts it where
+# only a copy with the toggle on can see it, and a promote later moves the same
+# bytes to everyone.
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      staging_version:
-        description: 'Staging rehearsal version (e.g. 9.9.8). Publishes to the STAGING feed only.'
-        required: true
-        type: string
 
 permissions:
   contents: write   # create the Release and upload assets
@@ -80,11 +59,8 @@ jobs:
       ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      # What is being built and where it may go, answered once. A dispatch is a
-      # staging rehearsal and a tag push is a release -- there is deliberately no
-      # input that can make a dispatch produce a release build.
-      FEED: ${{ github.event_name == 'workflow_dispatch' && 'staging' || 'release' }}
-      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.staging_version || github.ref_name }}
+      # The tag IS the version; nothing here is hand-edited per release.
+      VERSION: ${{ github.ref_name }}
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
@@ -96,11 +72,7 @@ jobs:
       # `git tag -l --format='%(contents)'` answers with the tagged commit's
       # SUBJECT. Without this step the notes generator refuses (correctly) and
       # tells the maintainer to force-re-tag a tag that was annotated all along.
-      #
-      # A staging dispatch has no tag and needs no notes, so it skips this and
-      # the gate below.
       - name: Fetch the annotated tag
-        if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
         run: git fetch --force --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
@@ -117,7 +89,7 @@ jobs:
       # and never reads these notes, so refusing its tag would gate a fork's
       # build on prose nothing would have used.
       - name: Release notes gate
-        if: github.event_name == 'push' && env.MACOS_CERT_P12_BASE64 != ''
+        if: env.MACOS_CERT_P12_BASE64 != ''
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -257,14 +229,9 @@ jobs:
         # package.sh runs `swift test` (the pre-package gate) before building, then
         # picks its tier: Developer ID identity present -> sign, notarize, staple.
         # ASC_* reach notarytool from the job env; ASC_KEY_PATH was set above.
-        # HAMMERDECK_FEED decides which of package.sh's two feed constants gets
-        # baked in, and therefore where the archive is allowed to be published.
-        env:
-          HAMMERDECK_FEED: ${{ env.FEED }}
         run: scripts/package.sh "$VERSION"
 
       - name: Publish GitHub Release
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -375,46 +342,7 @@ jobs:
           fi
 
       # The rig's archive has to be anonymously downloadable before the feed can
-      # advertise it, so it is uploaded BEFORE publish-site.sh, whose last gate
-      # fetches that exact URL with no credentials.
-      #
-      # `gh release upload` names the asset after the file's basename and has no
-      # rename flag, which is why the -staging copy is made here rather than
-      # asked of package.sh -- publish-site.sh still reads the unsuffixed file
-      # for Info.plist, signing and the byte count.
-      - name: Stage the rehearsal archive on its prerelease
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG=staging-rehearsal
-          BODY=$'Rehearsal builds for the update drill. **Not releases.**\n\nEvery archive here is wired to the STAGING update feed: a copy installed from one polls the rehearsal rig for the rest of its life and will never be offered a real version. Versions are invented and assets are replaced without notice.\n\nReal downloads are on the Releases page, and on https://hammerdeck.peach-studio.com/.'
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release edit "$TAG" --prerelease --notes "$BODY"
-          else
-            gh release create "$TAG" --prerelease \
-              --title "Staging rehearsal (not a release)" --notes "$BODY"
-          fi
-          cp "dist/Hammerdeck-$VERSION.dmg" "dist/Hammerdeck-$VERSION-staging.dmg"
-          gh release upload "$TAG" "dist/Hammerdeck-$VERSION-staging.dmg" --clobber
-          gh release view "$TAG" --json assets \
-            -q '.assets[] | .name + "  " + (.size|tostring) + "B"'
-
-      # The staging rehearsal's whole output. No tag, no durable version record,
-      # no production surface: publish-site.sh reads the feed URL baked into the
-      # archive and will deploy this to the staging site or refuse. An
-      # unnotarized build is refused there too, which is deliberate -- a
-      # rehearsal of an update macOS would block teaches the wrong lesson.
-      - name: Publish to the staging feed
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: |
-          npm install -g firebase-tools
-          scripts/publish-site.sh "$VERSION"
-
-      # On a tag push this job STOPS here, and that is the point. Publishing the
+      # This job STOPS here, and that is the point. Publishing the
       # production site and appcast is `publish.yml`, run by hand against this
       # release's assets.
       #

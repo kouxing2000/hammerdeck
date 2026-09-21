@@ -13,20 +13,6 @@
           ]
         }
       ]
-    },
-    {
-      "site": "hammerdeck-staging",
-      "public": "dist/site",
-      "ignore": ["**/.*"],
-      "headers": [
-        {
-          "source": "/appcast.xml",
-          "headers": [
-            { "key": "Content-Type", "value": "application/xml; charset=utf-8" },
-            { "key": "Cache-Control", "value": "no-store" }
-          ]
-        }
-      ]
     }
   ]
 }

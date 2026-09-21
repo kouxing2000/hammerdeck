@@ -1,6 +1,6 @@
 name: Feed watch
 
-# Does every archive the live feeds advertise still exist, and is it still the
+# Does every archive the live feed advertises still exist, and is it still the
 # file that was signed?
 #
 # This is the only check for a whole class of breakage that happens AFTER a
@@ -50,5 +50,5 @@ jobs:
             -in /tmp/probe.txt -sigfile /tmp/probe.sig
           rm -f /tmp/probe.*
 
-      - name: Check every enclosure on both live feeds
+      - name: Check every enclosure on the live feed
         run: scripts/feed-watch.py

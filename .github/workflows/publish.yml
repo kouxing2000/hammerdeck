@@ -18,9 +18,10 @@ name: Publish
 # different digest (timestamps alone see to that) and quietly void every piece of
 # evidence gathered against the first archive.
 #
-# The destination is not an input either: scripts/publish-site.sh reads the
-# `SUFeedURL` baked into the app inside the archive and derives the Hosting site
-# from it, so a staging build cannot land on the production feed.
+# The destination is not an input either. There is one site and one feed;
+# scripts/publish-site.sh reads the `SUFeedURL` baked into the app inside the
+# archive and refuses anything that does not poll it, which is how an archive
+# built by something other than package.sh is kept off the feed.
 
 on:
   workflow_dispatch:
