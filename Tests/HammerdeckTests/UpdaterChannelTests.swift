@@ -35,12 +35,23 @@ final class UpdaterChannelTests: XCTestCase {
         super.tearDown()
     }
 
+    // `SPUUpdaterDelegate` is declared `NS_SWIFT_UI_ACTOR`, so `ChannelDelegate`
+    // and its static are main-actor isolated: each test below needs `@MainActor`
+    // to construct or read them. Not on the CLASS, because `setUp`/`tearDown`
+    // override nonisolated members and only touch UserDefaults.
+    //
+    // And every read is hoisted into a `let` first. An `XCTAssert*` argument is
+    // a `@autoclosure`, which stays NONISOLATED however the enclosing test is
+    // annotated -- so `XCTAssertEqual(ChannelDelegate.allowed, [])` does not
+    // compile no matter how much isolation is added around it.
+
     // The selector Sparkle actually sends. Spelled out here as a literal, not
     // derived from the Swift name, so that renaming the Swift method cannot move
     // the expectation along with the code it is meant to pin.
+    @MainActor
     func testTheDelegateRespondsToTheSelectorSparkleSends() {
-        let delegate = ChannelDelegate()
-        XCTAssertTrue(delegate.responds(to: Selector(("allowedChannelsForUpdater:"))),
+        let responds = ChannelDelegate().responds(to: Selector(("allowedChannelsForUpdater:")))
+        XCTAssertTrue(responds,
                       "Sparkle asks for channels via allowedChannelsForUpdater:; an unmatched "
                       + "selector leaves the beta toggle inert and reports nothing")
     }
@@ -48,20 +59,26 @@ final class UpdaterChannelTests: XCTestCase {
     // Off is an EMPTY set, never a set naming the default channel: Sparkle
     // documents the default as always included, so returning something like
     // ["release"] would filter out the real releases instead of adding to them.
+    @MainActor
     func testUnsubscribedAllowsNoExtraChannel() {
         UserDefaults.standard.set(false, forKey: Updater.betaChannelKey)
-        XCTAssertEqual(ChannelDelegate.allowed, [])
+        let allowed = ChannelDelegate.allowed
+        XCTAssertEqual(allowed, [])
     }
 
+    @MainActor
     func testSubscribedAllowsExactlyBeta() {
         UserDefaults.standard.set(true, forKey: Updater.betaChannelKey)
-        XCTAssertEqual(ChannelDelegate.allowed, ["beta"])
+        let allowed = ChannelDelegate.allowed
+        XCTAssertEqual(allowed, ["beta"])
     }
 
     // An absent key is the state every existing install upgrades into, and it
     // must mean production -- not "no channel configured, offer everything".
+    @MainActor
     func testAnUnsetKeyMeansProductionOnly() {
         UserDefaults.standard.removeObject(forKey: Updater.betaChannelKey)
-        XCTAssertEqual(ChannelDelegate.allowed, [])
+        let allowed = ChannelDelegate.allowed
+        XCTAssertEqual(allowed, [])
     }
 }
