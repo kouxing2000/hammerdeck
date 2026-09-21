@@ -1,0 +1,54 @@
+name: Feed watch
+
+# Does every archive the live feeds advertise still exist, and is it still the
+# file that was signed?
+#
+# This is the only check for a whole class of breakage that happens AFTER a
+# publish, which is why no gate in publish-site.sh can cover it: a release
+# deleted or re-drafted, an asset replaced with `--clobber`, the repository
+# flipped private. Each one silently breaks updates for every installed copy
+# still on that version, and the feed and the download page look fine
+# throughout. The archives live on GitHub Releases, so "nobody deployed
+# anything" is no longer the same as "nothing changed".
+#
+# ubuntu, not macos: the verification is `openssl pkeyutl -rawin`, which needs
+# OpenSSL 3 and nothing Apple. A scheduled job should be the cheap runner.
+#
+# A failed run emails the repository owner -- that is the whole alerting story,
+# deliberately, because a second channel is a second thing to maintain for an
+# event that should never fire.
+#
+# Note GitHub disables `schedule` on a repository with no pushes for 60 days.
+# If this stops running, that is why, and the dispatch below still works.
+
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read   # it reads the feeds over the public internet and writes nothing
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+
+      # Asserted rather than assumed: an image without Ed25519 support would
+      # fail every archive with a signature error, which reads as "someone
+      # replaced our releases" instead of "the runner changed".
+      - name: Assert OpenSSL can do Ed25519
+        run: |
+          openssl version
+          openssl genpkey -algorithm ed25519 -out /tmp/probe.pem
+          echo probe > /tmp/probe.txt
+          openssl pkeyutl -sign -inkey /tmp/probe.pem -rawin \
+            -in /tmp/probe.txt -out /tmp/probe.sig
+          openssl pkey -in /tmp/probe.pem -pubout -out /tmp/probe.pub
+          openssl pkeyutl -verify -pubin -inkey /tmp/probe.pub -rawin \
+            -in /tmp/probe.txt -sigfile /tmp/probe.sig
+          rm -f /tmp/probe.*
+
+      - name: Check every enclosure on both live feeds
+        run: scripts/feed-watch.py
