@@ -50,6 +50,7 @@
   }
   .dl:hover { filter: brightness(1.08); }
   .meta { color: var(--muted); font-size: .875rem; margin-top: .85rem; }
+  .install { color: var(--muted); font-size: .875rem; margin-top: .4rem; max-width: 34rem; }
   .beats { margin: 4rem 0 0; display: grid; gap: 1rem; }
   .beat { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: 1.25rem 1.4rem; }
   .beat h2 { font-size: 1rem; margin: 0 0 .4rem; letter-spacing: .01em; }
@@ -76,8 +77,12 @@
       Big screens, many screens, no dragging. Every window arrangement on a key
       &mdash; and a Mac that rebuilds the layout by itself when your displays change.
     </p>
-    <a class="dl" href="{{ZIP}}">Download for macOS</a>
+    <a class="dl" href="{{DMG}}">Download for macOS</a>
     <p class="meta">Version {{VERSION}} &middot; {{SIZE}} &middot; {{DATE}}</p>
+    <p class="install">
+      Open the disk image and drag Hammerdeck to Applications. Running it from
+      the image works, but it cannot update itself from there.
+    </p>
   </header>
 
   <section class="beats">

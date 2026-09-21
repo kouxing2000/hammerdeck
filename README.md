@@ -138,12 +138,11 @@ conspicuous.
 **[Download Hammerdeck](https://hammerdeck.peach-studio.com/)** -- universal
 (Apple Silicon and Intel), macOS 13 or later. It is signed with a Developer ID
 and notarized by Apple, so there is no "unidentified developer" wall -- macOS
-still asks once whether to open an app downloaded from the internet. Unzip and
-open it; if it is not in `/Applications` yet, it offers to move itself there on
-first launch (drag its icon across, or press the button). That move is not
-housekeeping: macOS runs a downloaded app from a randomised read-only path until
-it has been moved, and an app running from there can never install its own
-updates.
+still asks once whether to open an app downloaded from the internet. Open the
+disk image and drag Hammerdeck to Applications; if you run it from somewhere
+else it offers to move itself on first launch. That move is not housekeeping:
+macOS runs a downloaded app from a randomised read-only path until it has been
+moved, and an app running from there can never install its own updates.
 
 It keeps itself up to date: Hammerdeck checks for new versions and asks you
 before installing any of them.

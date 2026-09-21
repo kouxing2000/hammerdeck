@@ -108,6 +108,31 @@ enum InstallLocation {
 
     // MARK: - The move
 
+    /// The bundle to install, on a volume we are allowed to take it from.
+    ///
+    /// Both routes below consume their source -- `moveItem` by definition, and
+    /// `replaceItemAt` because it swaps the item in rather than duplicating it --
+    /// so neither can run against a read-only volume. That is the normal case for
+    /// a DMG: double-clicking the app inside the mounted image is the commonest
+    /// way to launch it, and the whole install prompt would then fail with a
+    /// permissions error at the one moment it exists to be useful.
+    ///
+    /// The temporary directory is requested `appropriateFor: target`, which puts
+    /// it on the destination volume, so the move that follows is a rename rather
+    /// than a second copy of the whole bundle.
+    private static func stagedForInstall(_ source: URL, target: URL) throws -> URL {
+        let readOnly = (try? source.resourceValues(forKeys: [.volumeIsReadOnlyKey]))?
+            .volumeIsReadOnly ?? false
+        guard readOnly else { return source }
+
+        let fm = FileManager.default
+        let scratch = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                 appropriateFor: target, create: true)
+        let copy = scratch.appendingPathComponent(source.lastPathComponent)
+        try fm.copyItem(at: source, to: copy)
+        return copy
+    }
+
     /// Move, strip the quarantine flag, relaunch, exit.
     ///
     /// Clearing `com.apple.quarantine` is the load-bearing step, not tidiness: the
@@ -120,13 +145,24 @@ enum InstallLocation {
         let fm = FileManager.default
 
         do {
+            let staged = try stagedForInstall(source, target: target)
+            // The scratch copy is a whole app bundle. Both routes below CONSUME
+            // it on success, but on the error path it is left behind -- and the
+            // DMG case is exactly where the move can fail (a managed volume, a
+            // root-owned /Applications), so pressing Move again next launch
+            // would orphan another copy.
+            defer {
+                if staged != source {
+                    try? fm.removeItem(at: staged.deletingLastPathComponent())
+                }
+            }
             if fm.fileExists(atPath: target.path) {
                 // Replacing a copy that is not running: the one running IS this
                 // process only when it was launched from /Applications, and that
                 // case never reaches here (isWellPlaced would have returned true).
-                _ = try fm.replaceItemAt(target, withItemAt: source)
+                _ = try fm.replaceItemAt(target, withItemAt: staged)
             } else {
-                try fm.moveItem(at: source, to: target)
+                try fm.moveItem(at: staged, to: target)
             }
         } catch {
             // A failed move is not fatal -- the app runs fine from where it is, it

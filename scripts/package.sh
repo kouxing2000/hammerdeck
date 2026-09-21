@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Package Hammerdeck into a runnable macOS .app bundle (+ a zip for release upload).
+# Package Hammerdeck into a runnable macOS .app bundle and the .dmg that ships.
 #
 # This is the version-controlled package recipe -- run it locally OR from CI
 # (.github/workflows/release.yml calls this exact script on a v* tag).
@@ -10,7 +10,7 @@
 #
 #   Tier B  a Developer ID Application identity is in the keychain -> hardened
 #           runtime + Developer ID signature + notarization + stapled ticket. The
-#           zip opens on a stranger's Mac with no Gatekeeper wall.
+#           image opens on a stranger's Mac with no Gatekeeper wall.
 #   Tier A  no such identity -> ad-hoc signature. Runs on THIS machine only; a
 #           browser download is Gatekeeper-blocked and needs
 #           `xattr -dr com.apple.quarantine`. The script says so, loudly.
@@ -39,7 +39,11 @@
 #   HAMMERDECK_SKIP_NOTARIZE=1   Tier B signing without the notarization round
 #              trip -- for checking the signature without waiting on Apple.
 #
-# Output: dist/Hammerdeck.app and dist/Hammerdeck-<version>.zip
+# Output: dist/Hammerdeck.app and dist/Hammerdeck-<version>.dmg
+#
+# The DMG is the only shippable artifact. A zip is still made partway through,
+# because notarytool takes an archive rather than a bundle, but it is deleted
+# before this script exits so nothing downstream can pick it up by accident.
 set -euo pipefail
 
 APP_NAME="Hammerdeck"
@@ -102,7 +106,7 @@ if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
 fi
 
 # Provenance: which source this artifact was built from. Stamped into the bundle
-# AND written beside the zip, because the two answer different questions -- the
+# AND written beside the image, because the two answer different questions -- the
 # plist travels with an installed copy ("which commit is this app I am testing?"),
 # the sidecar records the bytes ("which archive did that evidence belong to?").
 # Without both, provenance can only be argued from timestamps, which is how a
@@ -125,7 +129,9 @@ fi
 
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
-ZIP="$DIST/$APP_NAME-$VERSION.zip"
+DMG="$DIST/$APP_NAME-$VERSION.dmg"
+# Notarization input only -- notarytool will not take a bundle. Deleted at the end.
+ZIP="$DIST/$APP_NAME-$VERSION.notarize.zip"
 PROVENANCE="$DIST/$APP_NAME-$VERSION.provenance.txt"
 
 echo "==> Packaging $APP_NAME $VERSION (bundle id $BUNDLE_ID)"
@@ -262,7 +268,7 @@ rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
 cp -R "$SPARKLE_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # The license notices travel with the BINARY, not merely with the repo. Most
-# people who ever hold this app will have downloaded a zip and will never see the
+# people who ever hold this app will have downloaded a disk image and never see the
 # source, and all three obligations are addressed to them: GPLv3 s6 requires the
 # License be conveyed with the object code, and both MIT notices require the
 # permission text "in all copies". Into Resources rather than inside Sparkle's
@@ -381,16 +387,37 @@ else
   codesign --verify --deep --strict "$APP"
 fi
 
-# 5. Zip the bundle (ditto preserves the .app structure, symlinks, signature).
-#    Tier B zips TWICE on purpose: notarytool takes an archive, but the ticket
-#    staples onto the .app, so the archive that was submitted does not carry it.
-#    The shippable zip is the one made after stapling.
-zip_app() {
-  rm -f "$ZIP"
-  ( cd "$DIST" && ditto -c -k --keepParent "$APP_NAME.app" "$(basename "$ZIP")" )
+# 5. Wrap the bundle for notarytool, which takes an archive and not a bundle.
+#    ditto preserves the .app structure, symlinks and signature. This archive is
+#    a courier: the ticket staples onto the .app, not onto the thing submitted,
+#    and the DMG built in step 6 is what ships.
+echo "==> zipping $ZIP (notarization carrier)"
+rm -f "$ZIP"
+( cd "$DIST" && ditto -c -k --keepParent "$APP_NAME.app" "$(basename "$ZIP")" )
+
+# `hdiutil create` fails intermittently on GitHub's macOS runners with
+# "Resource busy" (exit 49168) when another process is still settling a mount.
+# It is transient and a re-run succeeds, so a bounded retry here is the
+# difference between a flaky release job and a reliable one.
+make_dmg() {
+  local attempt
+  # Captured rather than `-quiet`, which closes stderr too: a DETERMINISTIC
+  # failure (disk full, unreadable source, an unsupported filesystem) would
+  # otherwise print five identical retry lines and nothing about the cause.
+  for attempt in 1 2 3 4 5; do
+    rm -f "$DMG"
+    if hdiutil create "$DMG" -volname "$APP_NAME $VERSION" \
+         -srcfolder "$DMG_ROOT" -fs APFS -format ULFO > "$DIST/hdiutil.log" 2>&1; then
+      rm -f "$DIST/hdiutil.log"
+      return 0
+    fi
+    echo "==> hdiutil create failed (attempt $attempt); retrying in $((attempt * 3))s"
+    sleep $((attempt * 3))
+  done
+  echo "error: hdiutil create did not succeed after 5 attempts. Last output:" >&2
+  cat "$DIST/hdiutil.log" >&2
+  return 1
 }
-echo "==> zipping $ZIP"
-zip_app
 
 # 6. Notarize + staple (Tier B only).
 if [[ "$TIER" == "B" && "${HAMMERDECK_SKIP_NOTARIZE:-0}" != "1" ]]; then
@@ -419,11 +446,13 @@ if [[ "$TIER" == "B" && "${HAMMERDECK_SKIP_NOTARIZE:-0}" != "1" ]]; then
     exit 1
   fi
 
+  # Stapled onto the .app and not only onto the DMG below. Gatekeeper ingests a
+  # mounted DMG's own ticket, so an ONLINE first launch works either way -- but a
+  # copy dragged to /Applications and first opened with no network (a plane, a
+  # captive portal) has nothing to check and is refused. One extra submission
+  # buys the unconditional promise this file makes at the top.
   echo "==> stapling the ticket onto $APP"
   xcrun stapler staple "$APP"
-
-  echo "==> re-zipping with the stapled ticket"
-  zip_app
 
   # The real acceptance test: what Gatekeeper itself says about the bundle.
   # `codesign --verify` only proves the signature is intact -- it says nothing
@@ -434,8 +463,50 @@ elif [[ "$TIER" == "B" ]]; then
   echo "==> SKIPPING notarization (HAMMERDECK_SKIP_NOTARIZE=1) -- signed but Gatekeeper-blocked"
 fi
 
-# 7. The provenance record, written LAST -- after the Tier B re-zip, so the
-#    digest below is the digest of the archive that actually ships. Written for
+# 6b. The disk image, built from the app as it now stands (stapled, in Tier B).
+#     The /Applications symlink is the whole user interface of a DMG: it is what
+#     makes "drag it across" a gesture rather than an instruction. Sparkle
+#     ignores symlinks when it extracts an update, so it costs nothing there.
+DMG_ROOT="$DIST/dmg"
+rm -rf "$DMG_ROOT"
+mkdir -p "$DMG_ROOT"
+ditto "$APP" "$DMG_ROOT/$APP_NAME.app"
+ln -s /Applications "$DMG_ROOT/Applications"
+
+echo "==> building $DMG"
+make_dmg
+rm -rf "$DMG_ROOT"
+
+if [[ "$TIER" == "B" ]]; then
+  # Signed because stapling needs a signature to attach the ticket to -- NOT
+  # because an unsigned image fails to mount, which it does not.
+  echo "==> signing $DMG"
+  codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+
+  if [[ "${HAMMERDECK_SKIP_NOTARIZE:-0}" != "1" ]]; then
+    echo "==> notarytool submit (disk image) -- this waits on Apple"
+    if ! xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait; then
+      echo "error: the disk image was not notarized. For the per-issue detail, run:" >&2
+      echo "  xcrun notarytool history ${NOTARY_AUTH[*]}" >&2
+      exit 1
+    fi
+    echo "==> stapling the ticket onto $DMG"
+    xcrun stapler staple "$DMG"
+
+    # `--type open --context context:primary-signature` is the assessment macOS
+    # performs when a person double-clicks a downloaded image; `--type execute`
+    # asks a question about an executable and does not apply to a container.
+    echo "==> spctl assessment (disk image)"
+    spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+  fi
+fi
+
+# The carrier has done its job. Removed rather than left beside the DMG so no
+# publish step, glob or human can pick up the wrong artifact.
+rm -f "$ZIP"
+
+# 7. The provenance record, written LAST -- after the image is built, signed and
+#    stapled, so the digest below is the digest of what ships. Written for
 #    every tier: a Tier A build is not publishable, and saying which commit an
 #    unpublishable build came from is how a local trial stays attributable.
 #
@@ -453,12 +524,12 @@ if [[ "$TIER" == "B" && "${HAMMERDECK_SKIP_NOTARIZE:-0}" != "1" ]]; then NOTARIZ
   echo "feed:       $SPARKLE_FEED_URL"
   echo "min macOS:  $MIN_MACOS"
   echo "built:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  echo "zip:        $(basename "$ZIP")"
-  echo "sha256:     $(shasum -a 256 "$ZIP" | awk '{print $1}')"
-  echo "bytes:      $(stat -f%z "$ZIP")"
+  echo "archive:    $(basename "$DMG")"
+  echo "sha256:     $(shasum -a 256 "$DMG" | awk '{print $1}')"
+  echo "bytes:      $(stat -f%z "$DMG")"
 } > "$PROVENANCE"
 
 echo "==> done (Tier $TIER)"
 echo "    app: $APP"
-echo "    zip: $ZIP"
+echo "    dmg: $DMG"
 echo "    provenance: $PROVENANCE"

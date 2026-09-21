@@ -3,7 +3,12 @@ name: Publish
 # Put a release on hammerdeck.peach-studio.com and into the update feed every
 # installed copy polls. Run BY HAND, after the candidate has been tested:
 #
-#   gh workflow run publish.yml -f tag=v1.2.3
+#   gh workflow run publish.yml -f tag=v1.2.3                  to BETA
+#   gh workflow run publish.yml -f tag=v1.2.3 -f stage=production   to everyone
+#
+# Beta is the default because the ladder only runs one way: a version reaches
+# the default channel by being promoted after it has been on beta, and
+# scripts/appcast.py refuses a promote whose bytes were never advertised there.
 #
 # It builds nothing. It downloads the archive `release.yml` already built,
 # notarized and attached to that tag's GitHub Release, and publishes those exact
@@ -22,6 +27,12 @@ on:
         description: 'Release tag to publish, e.g. v1.2.3'
         required: true
         type: string
+      stage:
+        description: 'beta (default) offers it to subscribers; production promotes it to everyone'
+        required: false
+        default: beta
+        type: choice
+        options: [beta, production]
 
 permissions:
   contents: read   # read the Release asset; this workflow creates nothing
@@ -68,14 +79,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p dist
-          gh release download "$TAG" --pattern 'Hammerdeck-*.zip' --dir dist
+          gh release download "$TAG" --pattern 'Hammerdeck-*.dmg' --dir dist
           ls -l dist
-          shasum -a 256 dist/Hammerdeck-*.zip
+          shasum -a 256 dist/Hammerdeck-*.dmg
 
       - name: Publish site and update feed
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # Through env like TAG, not interpolated into the script body: the
+          # `choice` type constrains it today, but every other input here goes
+          # this way and one exception is how the pattern stops being a pattern.
+          STAGE: ${{ inputs.stage }}
         run: |
           npm install -g firebase-tools
-          scripts/publish-site.sh "${TAG#v}"
+          if [ "$STAGE" = "production" ]; then
+            scripts/publish-site.sh "${TAG#v}" --promote
+          else
+            scripts/publish-site.sh "${TAG#v}"
+          fi

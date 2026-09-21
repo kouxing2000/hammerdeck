@@ -4,7 +4,7 @@
 # hands to installed copies of the app.
 #
 # WHERE it publishes is not an argument: it is read off the `SUFeedURL` baked
-# into the app inside `dist/<name>-<version>.zip`. A release build goes to
+# into the app inside `dist/<name>-<version>.dmg`. A release build goes to
 # hammerdeck.peach-studio.com; a staging build (HAMMERDECK_FEED=staging at
 # package time) goes to the staging site, which is where the update/recovery
 # rehearsal runs. Nothing can send one to the other's feed.
@@ -16,8 +16,13 @@
 # rehearsal needs no tag: it is thrown away after the run, and burning a real
 # version number on practice is worse than having no durable record of it.
 #
-#   scripts/publish-site.sh 0.1.0
+#   scripts/publish-site.sh 0.1.0                publish to the BETA channel
+#   scripts/publish-site.sh 0.1.0 --promote      move it to the default channel
 #   scripts/publish-site.sh 0.1.0 --stage-only   sign + verify, deploy nothing
+#
+# Beta is the default and there is no argument for "straight to everyone": a
+# version reaches the default channel only by being promoted after it has been
+# on beta, which is the whole point of the ladder.
 #
 # `.github/workflows/publish.yml` calls this by hand, against the archive
 # release.yml already built and attached to the GitHub Release -- so the bytes
@@ -92,40 +97,51 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 VERSION="${VERSION#v}"
-ZIP="$DIST/$APP_NAME-$VERSION.zip"
+DMG="$DIST/$APP_NAME-$VERSION.dmg"
 
 # Everything up to the deploy, so what is about to go live can be inspected
 # while it is still only on disk. The signature verification below is the part
 # worth seeing pass before an update feed reaches anyone.
+#
+# RELEASE_STAGE is the ladder, and it only moves one way. A publish is a
+# BETA by default -- there is deliberately no way to spell "straight to
+# everyone", because the point of the ladder is that no bytes reach the default
+# channel that were not offered to beta subscribers first. `--promote` moves a
+# version that is ALREADY on beta into the default channel, and refuses anything
+# else (see the promote gate below).
 STAGE_ONLY=0
-if [[ "${2:-}" == "--stage-only" ]]; then
-  STAGE_ONLY=1
-elif [[ -n "${2:-}" ]]; then
-  echo "error: unknown argument '${2}' (expected --stage-only or nothing)" >&2
-  exit 1
-fi
+RELEASE_STAGE="beta"
+for arg in "${@:2}"; do
+  case "$arg" in
+    --stage-only) STAGE_ONLY=1 ;;
+    --promote)    RELEASE_STAGE="production" ;;
+    *)
+      echo "error: unknown argument '$arg' (expected --promote and/or --stage-only)" >&2
+      exit 1 ;;
+  esac
+done
 
-echo "==> Publishing $APP_NAME $VERSION"
+echo "==> Publishing $APP_NAME $VERSION to the $RELEASE_STAGE channel"
 
 # --- gates -------------------------------------------------------------------
 
 # The ARCHIVE is the only input. `dist/Hammerdeck.app` used to be required here
-# too, and is not: since REL-1 every gate asks the app extracted from the zip, and
-# the publish job downloads that zip from the GitHub Release with no loose build
+# too, and is not: since REL-1 every gate asks the app inside the image, and the
+# publish job downloads that image from the GitHub Release with no loose build
 # anywhere beside it.
-if [[ ! -f "$ZIP" ]]; then
-  echo "error: $ZIP not found -- run scripts/package.sh $VERSION first" >&2
+if [[ ! -f "$DMG" ]]; then
+  echo "error: $DMG not found -- run scripts/package.sh $VERSION first" >&2
   exit 1
 fi
 
 # --- inspect the archive we are actually shipping ----------------------------
 
-# Every gate below asks its question of the app INSIDE the zip, not of
+# Every gate below asks its question of the app INSIDE the image, not of
 # dist/Hammerdeck.app sitting beside it. They are separate objects: package.sh
 # produces both, but nothing downstream re-checks that they still agree, so
 # validating the loose app certified a build no user would ever receive and a
-# stale or hand-dropped zip passed on its neighbour's reputation. The zip is what
-# the appcast points at, so the zip is what has to answer.
+# stale or hand-dropped image passed on its neighbour's reputation. The image is
+# what the appcast points at, so the image is what has to answer.
 VERIFY_DIR="$DIST/.verify.$$"
 # ONE handler, registered once. bash keeps a single trap per signal, so a second
 # `trap ... EXIT` further down REPLACES this rather than adding to it -- and the
@@ -137,26 +153,52 @@ VERIFY_DIR="$DIST/.verify.$$"
 # function's LAST statement trips errexit inside the function, which exits the
 # script 1 on a completely successful run.
 CREDS=""
+MOUNT=""
 cleanup() {
-  rm -rf "$VERIFY_DIR"
+  # CREDENTIALS FIRST. Everything after this can fail -- `rm -rf` on a directory
+  # that still holds a live mount does -- and under `set -e` a failure here ends
+  # the function, so anything below a failing line never runs. The service
+  # account JSON is the one thing that must not be left in /tmp.
   if [[ -n "$CREDS" ]]; then rm -f "$CREDS"; fi
+  # -force because the image has been attached across signing, a download, a
+  # compile and a deploy, which is ample time for Spotlight to hold it open.
+  # A leaked attachment outlives the script; the mountpoint itself cannot
+  # collide, since VERIFY_DIR is PID-suffixed.
+  if [[ -n "$MOUNT" ]]; then hdiutil detach "$MOUNT" -force -quiet 2>/dev/null || true; fi
+  rm -rf "$VERIFY_DIR" || true
 }
 trap cleanup EXIT
 rm -rf "$VERIFY_DIR"
 mkdir -p "$VERIFY_DIR"
-if ! ditto -x -k "$ZIP" "$VERIFY_DIR" 2>/dev/null; then
-  echo "error: $ZIP could not be extracted -- it is not a readable archive." >&2
+# Mounted read-only and out of the way: -nobrowse keeps it off the Finder
+# sidebar and -noautoopen stops a window appearing on the maintainer's desktop
+# mid-publish. The gates below read the app in place; nothing is copied out.
+MOUNT="$VERIFY_DIR/mnt"
+mkdir -p "$MOUNT"
+# Output captured, not silenced: `-quiet` closes stderr as well as stdout, so a
+# failure here would otherwise be asserted as "not a readable disk image" with
+# the actual cause -- a busy mountpoint, no free /dev/disk, an unsupported
+# filesystem -- thrown away.
+if ! hdiutil attach "$DMG" -mountpoint "$MOUNT" -readonly -nobrowse -noautoopen \
+     > "$VERIFY_DIR/hdiutil.log" 2>&1; then
+  echo "error: $DMG could not be mounted." >&2
+  cat "$VERIFY_DIR/hdiutil.log" >&2
+  # NOT cleared: attach can bind the image and still fail to mount it where we
+  # asked, and the cleanup trap is the only thing that will detach it.
   exit 1
 fi
 
-# Exactly one app, at the top level. A zip carrying two (or one nested somewhere
-# unexpected) is not the shape package.sh produces, and guessing which one
-# Sparkle would install is not a judgement this script should make.
-ARCHIVED_APP="$VERIFY_DIR/$APP_NAME.app"
-APP_COUNT="$(find "$VERIFY_DIR" -maxdepth 2 -name '*.app' | wc -l | tr -d ' ')"
+# Exactly one app, at the top level. An image carrying two (or one nested
+# somewhere unexpected) is not the shape package.sh produces, and guessing which
+# one Sparkle would install is not a judgement this script should make.
+#
+# `-maxdepth 1`, not 2: the image holds an /Applications SYMLINK, and a deeper
+# walk would follow it and count every app the maintainer has installed.
+ARCHIVED_APP="$MOUNT/$APP_NAME.app"
+APP_COUNT="$(find "$MOUNT" -maxdepth 1 -name '*.app' | wc -l | tr -d ' ')"
 if [[ ! -d "$ARCHIVED_APP" || "$APP_COUNT" != "1" ]]; then
-  echo "error: expected exactly one $APP_NAME.app in $ZIP, found $APP_COUNT:" >&2
-  find "$VERIFY_DIR" -maxdepth 2 -name '*.app' >&2
+  echo "error: expected exactly one $APP_NAME.app in $DMG, found $APP_COUNT:" >&2
+  find "$MOUNT" -maxdepth 1 -name '*.app' >&2
   exit 1
 fi
 
@@ -164,18 +206,18 @@ ARCHIVED_PLIST="$ARCHIVED_APP/Contents/Info.plist"
 plist_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$ARCHIVED_PLIST" 2>/dev/null || true; }
 
 # The version the archive CLAIMS must be the version the feed advertises -- this
-# is the check that catches a rebuilt-but-not-rezipped release, where the feed
+# is the check that catches a rebuilt-but-not-repackaged release, where the feed
 # offers 0.1.3 and hands the user 0.1.2 which then never updates again.
 ARCHIVED_VERSION="$(plist_value CFBundleShortVersionString)"
 ARCHIVED_BUILD="$(plist_value CFBundleVersion)"
 ARCHIVED_ID="$(plist_value CFBundleIdentifier)"
 if [[ "$ARCHIVED_VERSION" != "$VERSION" || "$ARCHIVED_BUILD" != "$VERSION" ]]; then
-  echo "error: $ZIP contains version $ARCHIVED_VERSION (build $ARCHIVED_BUILD), not $VERSION." >&2
+  echo "error: $DMG contains version $ARCHIVED_VERSION (build $ARCHIVED_BUILD), not $VERSION." >&2
   echo "       Re-run scripts/package.sh $VERSION; the archive is stale." >&2
   exit 1
 fi
 if [[ "$ARCHIVED_ID" != "$BUNDLE_ID" ]]; then
-  echo "error: $ZIP contains bundle id '$ARCHIVED_ID', expected '$BUNDLE_ID'." >&2
+  echo "error: $DMG contains bundle id '$ARCHIVED_ID', expected '$BUNDLE_ID'." >&2
   exit 1
 fi
 echo "    archive contents: $APP_NAME $ARCHIVED_VERSION ($ARCHIVED_ID)"
@@ -201,7 +243,7 @@ case "$ARCHIVED_FEED" in
     CHANNEL="staging"; FIREBASE_SITE="hammerdeck-staging"
     SITE_HOST="https://hammerdeck-staging.web.app" ;;
   *)
-    echo "error: the app inside $ZIP polls a feed this script does not publish:" >&2
+    echo "error: the app inside $DMG polls a feed this script does not publish:" >&2
     echo "       archive's SUFeedURL: ${ARCHIVED_FEED:-<none>}" >&2
     echo "       release: $FEED_RELEASE" >&2
     echo "       staging: $FEED_STAGING" >&2
@@ -209,22 +251,39 @@ case "$ARCHIVED_FEED" in
 esac
 echo "    channel: $CHANNEL -> $SITE_HOST (hosting site '$FIREBASE_SITE')"
 
+# The staging site is NOT on the ladder. Its whole job is to offer an update to
+# an ordinary copy, and an ordinary copy has never opted into beta -- so a
+# rehearsal published to the beta channel is invisible to the one thing it
+# exists to test, and the drill reports "up to date" while proving nothing.
+# Forced here rather than left to the caller: release.yml's staging dispatch
+# passes no flag, and a rehearsal that silently tests nothing is the failure
+# mode this whole file is written against.
+if [[ "$CHANNEL" == "staging" ]]; then
+  if [[ "$RELEASE_STAGE" == "production" ]]; then
+    echo "error: --promote has no meaning on the staging site: there is no ladder" >&2
+    echo "       there, only the single item a rehearsal copy must be offered." >&2
+    exit 1
+  fi
+  RELEASE_STAGE="rehearsal"
+  echo "    stage: rehearsal (staging is a rig, so its one item is unchannelled)"
+fi
+
 # Which SOURCE is in there. A version string is a label anyone can pass to
 # package.sh; it says nothing about the code inside, so two archives claiming
 # 0.1.2 can hold different builds and a test run against one proves nothing
 # about the other. package.sh stamps HDSourceCommit, and the release tag is the
 # only commit this feed is allowed to advertise -- asked of the app inside the
-# zip, like every other gate here.
+# image, like every other gate here.
 ARCHIVED_COMMIT="$(plist_value HDSourceCommit)"
 ARCHIVED_TREE="$(plist_value HDSourceStatus)"
 if [[ -z "$ARCHIVED_COMMIT" || "$ARCHIVED_COMMIT" == "unknown" ]]; then
-  echo "error: the app inside $ZIP names no source commit (HDSourceCommit)." >&2
+  echo "error: the app inside $DMG names no source commit (HDSourceCommit)." >&2
   echo "       It predates provenance stamping, or was built outside a git checkout." >&2
   echo "       Re-run scripts/package.sh $VERSION on the tagged commit." >&2
   exit 1
 fi
 if [[ "$ARCHIVED_TREE" != "clean" ]]; then
-  echo "error: the app inside $ZIP was built from a '$ARCHIVED_TREE' working tree." >&2
+  echo "error: the app inside $DMG was built from a '$ARCHIVED_TREE' working tree." >&2
   echo "       Its contents are not in any commit, so nothing can be re-built or" >&2
   echo "       re-reviewed from the record. Commit, then re-package." >&2
   exit 1
@@ -243,7 +302,7 @@ if [[ "$CHANNEL" == "release" ]]; then
     exit 1
   fi
   if [[ "$ARCHIVED_COMMIT" != "$TAG_COMMIT" ]]; then
-    echo "error: the app inside $ZIP was built from a different commit than v$VERSION." >&2
+    echo "error: the app inside $DMG was built from a different commit than v$VERSION." >&2
     echo "       archive's HDSourceCommit:  $ARCHIVED_COMMIT" >&2
     echo "       v$VERSION points at:       $TAG_COMMIT" >&2
     echo "       Publishing would ship bytes no reviewed commit produced." >&2
@@ -260,13 +319,13 @@ fi
 # open, and the app that would have offered them a working one has already been
 # replaced. Asked of the artifact, never of whether a signing secret was set.
 if ! xcrun stapler validate "$ARCHIVED_APP" > /dev/null 2>&1; then
-  echo "error: the app inside $ZIP carries no notarization ticket." >&2
+  echo "error: the app inside $DMG carries no notarization ticket." >&2
   echo "       Refusing to publish an update feed for an unsigned build -- it would" >&2
   echo "       hand every installed copy an app that will not open." >&2
   exit 1
 fi
 if ! codesign --verify --deep --strict "$ARCHIVED_APP" > /dev/null 2>&1; then
-  echo "error: the app inside $ZIP fails codesign --verify --deep --strict." >&2
+  echo "error: the app inside $DMG fails codesign --verify --deep --strict." >&2
   exit 1
 fi
 echo "    notarization ticket: present; signature intact"
@@ -312,22 +371,19 @@ else
   NOTES_HTML="<p>Staging rehearsal build ${ARCHIVED_COMMIT:0:12}. Not a release.</p>"
   NOTES_SOURCE="the staging placeholder"
 fi
-# Indented here rather than in the generator: the indentation belongs to the XML
-# heredoc below, not to the HTML.
-NOTES_HTML="$(printf '%s\n' "$NOTES_HTML" | sed 's/^/                /')"
 echo "    release notes: $(printf '%s' "$NOTES_HTML" | wc -c | tr -d ' ') bytes from $NOTES_SOURCE"
 
 # --- sign --------------------------------------------------------------------
 
-# Sign the FINAL archive: for a Tier B build package.sh re-zips after stapling,
-# so this is the one carrying the ticket. Signing the pre-staple zip would
-# produce a signature that verifies against a file nobody will ever download.
-ED_SIG="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --ed-key-file - -p "$ZIP")"
+# Sign the FINAL archive: package.sh builds the image from the app only after
+# stapling, so this is the one carrying the ticket. Signing a pre-staple image
+# would produce a signature that verifies against a file nobody will download.
+ED_SIG="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --ed-key-file - -p "$DMG")"
 if [[ -z "$ED_SIG" ]]; then
   echo "error: sign_update produced no signature" >&2
   exit 1
 fi
-LENGTH="$(stat -f%z "$ZIP")"
+LENGTH="$(stat -f%z "$DMG")"
 echo "    signature: ${ED_SIG:0:16}...  length: $LENGTH"
 
 # The one archive value with no comparison behind it: version, bundle id and
@@ -338,55 +394,142 @@ echo "    signature: ${ED_SIG:0:16}...  length: $LENGTH"
 # UNREPLACED tokens, never an empty replacement. So ask explicitly.
 MIN_OS="$(plist_value LSMinimumSystemVersion)"
 if [[ -z "$MIN_OS" ]]; then
-  echo "error: the app inside $ZIP declares no LSMinimumSystemVersion." >&2
+  echo "error: the app inside $DMG declares no LSMinimumSystemVersion." >&2
   echo "       Publishing would advertise an update with no minimum OS." >&2
   exit 1
 fi
 PUB_DATE="$(date '+%a, %d %b %Y %H:%M:%S %z')"
-ZIP_NAME="$APP_NAME-$VERSION.zip"
+DMG_NAME="$APP_NAME-$VERSION.dmg"
 
 # --- stage -------------------------------------------------------------------
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp "$ZIP" "$STAGE/$ZIP_NAME"
+cp "$DMG" "$STAGE/$DMG_NAME"
 
-# The feed carries the NEWEST release only, and that is deliberate. `firebase
-# deploy` replaces site content wholesale, so older archives stop being hosted
-# whatever the feed says -- an entry for one would be an offer to download a
-# 404. Sparkle needs only the newest item to offer an update.
-cat > "$STAGE/appcast.xml" <<XML
-<?xml version="1.0" standalone="yes"?>
-<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-    <channel>
-        <title>$APP_NAME</title>
-        <link>$SITE_HOST/appcast.xml</link>
-        <description>Updates for $APP_NAME</description>
-        <language>en</language>
-        <item>
-            <title>$VERSION</title>
-            <description><![CDATA[
-$NOTES_HTML
-            ]]></description>
-            <pubDate>$PUB_DATE</pubDate>
-            <link>$SITE_HOST/</link>
-            <sparkle:version>$VERSION</sparkle:version>
-            <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>$MIN_OS</sparkle:minimumSystemVersion>
-            <enclosure url="$SITE_HOST/$ZIP_NAME" length="$LENGTH" type="application/octet-stream" sparkle:edSignature="$ED_SIG"/>
-        </item>
-    </channel>
-</rss>
-XML
+# The live feed is INPUT, not just output: a beta publish has to carry the
+# current production item forward, and a promote has to check this version
+# against the beta the feed already advertises. Absent or unreachable comes back
+# empty, which appcast.py reads as "no items" -- correct for a first publish,
+# and refused by the promote gate, which cannot pass without a beta to match.
+# Triaged by HTTP STATUS, not by curl's exit code: a 404 over HTTP/2 exits 56,
+# the same family as a truncated transfer, so the codes cannot separate "there
+# is no feed yet" from "I could not read the feed". Only a real 404 is allowed
+# to mean the former. Getting this wrong is not cosmetic -- a DNS hiccup read as
+# "first publish" drops the production item from a beta publish, and `firebase
+# deploy` then deletes its archive from hosting too.
+#
+# no-cache because the production feed is served `max-age=300`, and a promote
+# run minutes after its beta publish would otherwise read a pre-publish copy
+# and refuse on state that is already stale.
+LIVE_FEED="$VERIFY_DIR/live-appcast.xml"
+FEED_HTTP="$(curl -sS --max-time 30 -H 'Cache-Control: no-cache' \
+  -o "$LIVE_FEED" -w '%{http_code}' "$SITE_HOST/appcast.xml" || echo 000)"
+case "$FEED_HTTP" in
+  200) echo "    live feed: $(grep -c '<item>' "$LIVE_FEED" | tr -d ' ') item(s)" ;;
+  404) : > "$LIVE_FEED"; echo "    live feed: none yet (404)" ;;
+  *)
+    echo "error: could not read the live feed at $SITE_HOST/appcast.xml (HTTP $FEED_HTTP)." >&2
+    echo "       Refusing to rebuild the feed from a guess: treating this as an" >&2
+    echo "       empty feed would drop the current release from both the appcast" >&2
+    echo "       and hosting." >&2
+    exit 1 ;;
+esac
 
-VERSION="$VERSION" ZIP_NAME="$ZIP_NAME" LENGTH="$LENGTH" MIN_OS="$MIN_OS" \
+# `firebase deploy` replaces site content wholesale, so an item kept in the XML
+# whose archive is not re-uploaded becomes an offer to download a 404. Only a
+# beta publish carries one: a promote emits a single item, pointing at the
+# archive staged just above.
+#
+# The download page follows the PRODUCTION item too, not this build: a beta is
+# for a copy that opted in, and publishing one must not change what a stranger
+# who visits the site downloads. On a promote, and on the very first publish
+# when there is no production item yet, the page is this build.
+PAGE_VERSION="$VERSION"
+PAGE_ARCHIVE="$DMG_NAME"
+PAGE_LENGTH="$LENGTH"
+PAGE_MIN_OS="$MIN_OS"
+PAGE_DATE=""
+if [[ "$RELEASE_STAGE" == "beta" ]]; then
+  CARRIED="$("$ROOT/scripts/appcast.py" carried --live "$LIVE_FEED")"
+  if [[ -n "$CARRIED" ]]; then
+    # Every field from the SAME build. Mixing them is how the page ends up
+    # advertising the production version beside the beta's minimum OS, telling
+    # a macOS 13 user not to download a build that runs fine for them.
+    # Read as an array and COUNT, rather than into six named variables. Tab is
+    # IFS whitespace whatever IFS is set to, so a run of them collapses and one
+    # empty field shifts every later one along -- the page would then advertise
+    # a byte count as its version number. The count is what catches that
+    # (measured: an empty field yields 5, not 6); the split alone cannot.
+    IFS=$'\t' read -r -d '' -a CARRIED_FIELDS < <(printf '%s\0' "$CARRIED") || true
+    if [[ "${#CARRIED_FIELDS[@]}" -ne 6 ]]; then
+      echo "error: the production item yielded ${#CARRIED_FIELDS[@]} fields, expected 6." >&2
+      echo "       Refusing to guess which one is the version." >&2
+      exit 1
+    fi
+    PAGE_VERSION="${CARRIED_FIELDS[0]}"
+    PAGE_LENGTH="${CARRIED_FIELDS[1]}"
+    CARRIED_URL="${CARRIED_FIELDS[2]}"
+    PAGE_MIN_OS="${CARRIED_FIELDS[3]}"
+    PAGE_DATE="${CARRIED_FIELDS[4]}"
+    CARRIED_SIG="${CARRIED_FIELDS[5]}"
+    PAGE_ARCHIVE="$(basename "$CARRIED_URL")"
+
+    # The URL is carried into the new feed VERBATIM while the file is uploaded
+    # to the site root, so the two must already agree. If they ever stop
+    # agreeing the feed points at something nobody uploaded.
+    if [[ "$CARRIED_URL" != "$SITE_HOST/$PAGE_ARCHIVE" ]]; then
+      echo "error: the production enclosure is not hosted at this site's root:" >&2
+      echo "       $CARRIED_URL" >&2
+      exit 1
+    fi
+
+    echo "    carrying the production release forward: $PAGE_VERSION ($PAGE_ARCHIVE)"
+    if ! curl -fsS --max-time 300 -o "$STAGE/$PAGE_ARCHIVE" "$CARRIED_URL"; then
+      echo "error: could not re-download the current production archive at" >&2
+      echo "       $CARRIED_URL" >&2
+      echo "       Publishing without it would leave every non-beta copy pointed" >&2
+      echo "       at a 404 for the release they are being offered." >&2
+      exit 1
+    fi
+
+    # The new archive is checked four ways before it is published. This one is
+    # what the ENTIRE non-beta install base downloads, and until now it was
+    # trusted on the strength of a 200. Its length and signature are being
+    # copied forward verbatim, so if hosting has drifted from what the feed
+    # claims, every copy would fail Sparkle's check and be stuck.
+    if [[ "$(stat -f%z "$STAGE/$PAGE_ARCHIVE")" != "$PAGE_LENGTH" ]]; then
+      echo "error: the carried archive is $(stat -f%z "$STAGE/$PAGE_ARCHIVE") bytes," >&2
+      echo "       but the live feed advertises $PAGE_LENGTH." >&2
+      exit 1
+    fi
+    if ! printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify \
+         "$STAGE/$PAGE_ARCHIVE" "$CARRIED_SIG" --ed-key-file - > /dev/null; then
+      echo "error: the carried archive does not match the signature the live feed" >&2
+      echo "       advertises for it. Hosting and the feed have drifted apart." >&2
+      exit 1
+    fi
+    echo "    carried archive verifies against its published signature"
+  fi
+fi
+
+NOTES_FILE="$VERIFY_DIR/notes.html"
+printf '%s\n' "$NOTES_HTML" > "$NOTES_FILE"
+"$ROOT/scripts/appcast.py" build \
+  --stage "$RELEASE_STAGE" --version "$VERSION" --app-name "$APP_NAME" \
+  --site-host "$SITE_HOST" --archive "$DMG_NAME" --length "$LENGTH" \
+  --signature "$ED_SIG" --min-os "$MIN_OS" --notes-file "$NOTES_FILE" \
+  --pub-date "$PUB_DATE" --live "$LIVE_FEED" > "$STAGE/appcast.xml"
+
+VERSION="$PAGE_VERSION" DMG_NAME="$PAGE_ARCHIVE" LENGTH="$PAGE_LENGTH" \
+MIN_OS="$PAGE_MIN_OS" PUB_DATE="$PAGE_DATE" \
 python3 - "$ROOT/site/index.html" "$STAGE/index.html" <<'PY'
 import os, sys, datetime
 src, dst = sys.argv[1], sys.argv[2]
 mb = int(os.environ["LENGTH"]) / (1024 * 1024)
 subs = {
     "{{VERSION}}": os.environ["VERSION"],
-    "{{ZIP}}":     "/" + os.environ["ZIP_NAME"],
+    "{{DMG}}":     "/" + os.environ["DMG_NAME"],
     "{{SIZE}}":    f"{mb:.1f} MB",
     "{{DATE}}":    datetime.date.today().strftime("%B %-d, %Y"),
     "{{MINOS}}":   os.environ["MIN_OS"],
@@ -406,7 +549,7 @@ PY
 # --- verify before deploying -------------------------------------------------
 
 # Round-trip the signature against the staged archive.
-printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify "$STAGE/$ZIP_NAME" "$ED_SIG" --ed-key-file - > /dev/null
+printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify "$STAGE/$DMG_NAME" "$ED_SIG" --ed-key-file - > /dev/null
 echo "    signature verifies against the staged archive"
 
 # ...which on its own proves nothing about the CLIENT. sign_update derives its
@@ -423,7 +566,7 @@ echo "    signature verifies against the staged archive"
 # archive carries the key package.sh believes it stamped.
 ARCHIVED_PUBKEY="$(plist_value SUPublicEDKey)"
 if [[ -z "$ARCHIVED_PUBKEY" ]]; then
-  echo "error: the app inside $ZIP declares no SUPublicEDKey -- it can never accept an update." >&2
+  echo "error: the app inside $DMG declares no SUPublicEDKey -- it can never accept an update." >&2
   exit 1
 fi
 if [[ "$ARCHIVED_PUBKEY" != "$SHIPPED_PUBKEY" ]]; then
@@ -439,14 +582,14 @@ fi
 # confidently false cause pointing at the signing key. Only the word VERIFIED,
 # which nothing but a completed check can print, is taken as a pass -- and the
 # output stays visible so the real reason is on screen when it is something else.
-VERIFY_OUT="$(ED_SIG="$ED_SIG" PUBKEY="$ARCHIVED_PUBKEY" ZIP_PATH="$STAGE/$ZIP_NAME" \
+VERIFY_OUT="$(ED_SIG="$ED_SIG" PUBKEY="$ARCHIVED_PUBKEY" DMG_PATH="$STAGE/$DMG_NAME" \
   swift -e '
 import Foundation
 import CryptoKit
 let env = ProcessInfo.processInfo.environment
 guard let keyData = Data(base64Encoded: env["PUBKEY"]!),
       let sigData = Data(base64Encoded: env["ED_SIG"]!),
-      let payload = FileManager.default.contents(atPath: env["ZIP_PATH"]!),
+      let payload = FileManager.default.contents(atPath: env["DMG_PATH"]!),
       let key = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData) else {
     print("MALFORMED")
     exit(2)

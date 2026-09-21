@@ -303,7 +303,7 @@ jobs:
           # notarization). Upload into the existing release instead.
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "release $TAG exists -- replacing its assets"
-            gh release upload "$TAG" dist/Hammerdeck-*.zip --clobber
+            gh release upload "$TAG" dist/Hammerdeck-*.dmg --clobber
             # The marking has to be re-applied here too: a re-run that degrades to
             # Tier A would otherwise drop an unsigned build into a release still
             # presenting itself as the signed one.
@@ -323,10 +323,10 @@ jobs:
               gh release edit "$TAG" --notes "$NOTES" --prerelease=false
             fi
           elif [ "$TIER" = A ]; then
-            gh release create "$TAG" dist/Hammerdeck-*.zip \
+            gh release create "$TAG" dist/Hammerdeck-*.dmg \
               --title "$TAG" --prerelease --notes "$UNSIGNED_NOTE"
           else
-            gh release create "$TAG" dist/Hammerdeck-*.zip \
+            gh release create "$TAG" dist/Hammerdeck-*.dmg \
               --title "$TAG" --notes "$NOTES"
           fi
 
