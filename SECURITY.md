@@ -71,9 +71,14 @@ set it. It makes exactly **four** kinds of outbound request, all of them
 consequences of something you turned on or did:
 
 1. **Update checks** -- Sparkle polls the appcast at `hammerdeck.peach-studio.com`
-   and downloads a release you approve. Every update is EdDSA-signed against a
-   key baked into the build; a feed that cannot produce a valid signature cannot
-   install anything.
+   and, for a release you approve, downloads the archive from this repository's
+   GitHub Releases (`github.com`, which redirects to
+   `release-assets.githubusercontent.com`). The feed and the archive are on
+   different hosts on purpose, and only the feed is polled unprompted. Every
+   update is EdDSA-signed against a key baked into the build, and the signature
+   is over the archive's bytes rather than over where they came from -- so a
+   download host that served the wrong file cannot install anything, and neither
+   can a feed that cannot produce a valid signature.
 2. **Bing Daily Wallpaper** (feature, off by default) -- fetches the picture of
    the day from `bing.com`. It is the entire point of the feature.
 3. **Text Actions -> AI entries** (feature, off by default, and the AI half stays

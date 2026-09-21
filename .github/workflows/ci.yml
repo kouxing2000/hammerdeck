@@ -57,6 +57,12 @@ jobs:
       - name: Release-notes conversion
         run: scripts/release-notes.py --self-test
 
+      # Same reasoning, and it carries more: the appcast generator owns the
+      # promote gate and the carry-forward, so a regression here publishes a
+      # feed that strands the install base rather than failing a build.
+      - name: Appcast generation and the promote gate
+        run: scripts/appcast.py --self-test
+
       # Package.swift is swift-tools-version 6.0 -> Swift 6 (Xcode 16+). Pick the
       # newest Xcode 16 present so an image-default bump can't silently downgrade us
       # (mirrors release.yml).

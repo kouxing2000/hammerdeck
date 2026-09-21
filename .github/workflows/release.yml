@@ -24,10 +24,13 @@ name: Release
 # and issuer id are identifiers rather than secrets, but they are kept as secrets
 # too so this file names nothing account-specific.
 #
-# Note: the download people are pointed at is the one on hammerdeck.peach-studio.com,
-# NOT the GitHub Release asset. The Release is the durable record of what shipped
-# and the source of the candidate a tester downloads; the site is the distribution
-# channel, and it is what Sparkle's appcast points every installed copy at.
+# Note: the Release asset IS the download. The site serves the page and the
+# appcast; every enclosure and every download button resolves to a Release asset
+# of this repo, so these bytes are what a stranger gets and what Sparkle hands
+# an installed copy. Two consequences worth holding onto: deleting a release or
+# re-drafting it breaks updates for everyone still on that version, and
+# `--clobber`ing an asset the live feed already signed for breaks them just as
+# thoroughly while leaving the release looking intact.
 #
 # This workflow does not touch the production site. `publish.yml` does, by hand,
 # from this release's assets -- so a candidate can be built and tested before
@@ -38,8 +41,13 @@ name: Release
 #
 #   gh workflow run release.yml -f staging_version=9.9.8
 #
-# That path packages with HAMMERDECK_FEED=staging, creates no GitHub Release, and
-# publishes straight to the staging feed. It lives here rather than in a workflow
+# That path packages with HAMMERDECK_FEED=staging and publishes straight to the
+# staging feed. Its archive goes to ONE reusable prerelease, tag
+# `staging-rehearsal` -- not a tag per drill, because a rehearsal version is
+# invented and a real tag for it would be a durable public record of something
+# that was never released. The asset is named `-staging` for the same reason the
+# prerelease body spells it out: the file outlives the page that explained it,
+# and a copy installed from one polls the rig for life. It lives here rather than in a workflow
 # of its own because the eighty lines of certificate import above it are the
 # expensive part, and a rehearsal must be built the way a release is or it
 # rehearses nothing. It cannot reach production users: publish-site.sh derives
@@ -302,8 +310,44 @@ jobs:
           # downstream threw away a completed build (and, now, a completed
           # notarization). Upload into the existing release instead.
           if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "release $TAG exists -- replacing its assets"
-            gh release upload "$TAG" dist/Hammerdeck-*.dmg --clobber
+            # An asset the live feed already signs for must NOT be replaced.
+            # Every enclosure resolves here, so a rebuild of the same commit --
+            # which differs only by notarization timestamps, usually at an
+            # identical size -- leaves the published EdDSA signature matching
+            # nothing. Installed copies then download the update and refuse it,
+            # and the release looks perfectly healthy throughout.
+            #
+            # Scoped to the ASSET. Re-running a tag to correct its notes is a
+            # documented repair and stays available; only the bytes are frozen.
+            # An unreadable feed is not permission: 404 is the "nothing
+            # published yet" case this path exists for, anything else stops.
+            FEED="$(awk -F'"' '/^SPARKLE_FEED_URL_RELEASE=/{print $2; exit}' scripts/package.sh)"
+            LIVE="$RUNNER_TEMP/live-appcast.xml"
+            CODE="$(curl -sS --max-time 30 -H 'Cache-Control: no-cache' \
+              -o "$LIVE" -w '%{http_code}' "$FEED" || echo 000)"
+            case "$CODE" in
+              200)
+                if grep -q "<sparkle:version>${TAG#v}</sparkle:version>" "$LIVE"; then
+                  echo "::warning::${TAG#v} is already on the live feed -- keeping the published asset, updating notes only"
+                  REPLACE_ASSET=0
+                else
+                  echo "live feed does not advertise ${TAG#v} yet -- the asset may be replaced"
+                  REPLACE_ASSET=1
+                fi ;;
+              404)
+                echo "no live feed yet -- the asset may be replaced"
+                REPLACE_ASSET=1 ;;
+              *)
+                echo "error: could not read the live feed at $FEED (HTTP $CODE)." >&2
+                echo "       Refusing to replace a release asset without knowing whether" >&2
+                echo "       the feed already signs for it." >&2
+                exit 1 ;;
+            esac
+
+            if [ "$REPLACE_ASSET" = 1 ]; then
+              echo "release $TAG exists -- replacing its assets"
+              gh release upload "$TAG" dist/Hammerdeck-*.dmg --clobber
+            fi
             # The marking has to be re-applied here too: a re-run that degrades to
             # Tier A would otherwise drop an unsigned build into a release still
             # presenting itself as the signed one.
@@ -330,10 +374,36 @@ jobs:
               --title "$TAG" --notes "$NOTES"
           fi
 
-      # The staging rehearsal's whole output. No GitHub Release, no durable
-      # record, no production surface: publish-site.sh reads the feed URL baked
-      # into the archive and will deploy this to the staging site or refuse.
-      # An unnotarized build is refused there too, which is deliberate -- a
+      # The rig's archive has to be anonymously downloadable before the feed can
+      # advertise it, so it is uploaded BEFORE publish-site.sh, whose last gate
+      # fetches that exact URL with no credentials.
+      #
+      # `gh release upload` names the asset after the file's basename and has no
+      # rename flag, which is why the -staging copy is made here rather than
+      # asked of package.sh -- publish-site.sh still reads the unsuffixed file
+      # for Info.plist, signing and the byte count.
+      - name: Stage the rehearsal archive on its prerelease
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=staging-rehearsal
+          BODY=$'Rehearsal builds for the update drill. **Not releases.**\n\nEvery archive here is wired to the STAGING update feed: a copy installed from one polls the rehearsal rig for the rest of its life and will never be offered a real version. Versions are invented and assets are replaced without notice.\n\nReal downloads are on the Releases page, and on https://hammerdeck.peach-studio.com/.'
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease --notes "$BODY"
+          else
+            gh release create "$TAG" --prerelease \
+              --title "Staging rehearsal (not a release)" --notes "$BODY"
+          fi
+          cp "dist/Hammerdeck-$VERSION.dmg" "dist/Hammerdeck-$VERSION-staging.dmg"
+          gh release upload "$TAG" "dist/Hammerdeck-$VERSION-staging.dmg" --clobber
+          gh release view "$TAG" --json assets \
+            -q '.assets[] | .name + "  " + (.size|tostring) + "B"'
+
+      # The staging rehearsal's whole output. No tag, no durable version record,
+      # no production surface: publish-site.sh reads the feed URL baked into the
+      # archive and will deploy this to the staging site or refuse. An
+      # unnotarized build is refused there too, which is deliberate -- a
       # rehearsal of an update macOS would block teaches the wrong lesson.
       - name: Publish to the staging feed
         if: github.event_name == 'workflow_dispatch'

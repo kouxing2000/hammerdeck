@@ -17,10 +17,11 @@ copy is not subscribed to beta, so a rehearsal published to the beta channel
 would be invisible to the very thing it exists to test. A rehearsal feed is one
 default-channel item and nothing else.
 
-`firebase deploy` replaces site content wholesale, so the production item is not
-merely COPIED FORWARD in the XML -- its archive has to be re-uploaded too, or
-the entry becomes an offer to download a 404. `carried` is what tells the
-publish script which file to fetch.
+Archives are not hosted here. Every enclosure points at a GitHub Release asset,
+which `firebase deploy` cannot touch -- so a production item carried forward
+into a beta feed keeps working without anyone re-uploading anything. `carried`
+reports the live entry so the publish script can re-verify that URL still
+serves the bytes the feed already signed for.
 
 The promote gate lives here rather than in the caller because it is a question
 about the feed's own contents: a version may only enter the default channel if
@@ -31,7 +32,7 @@ over the local file is a byte-identity check that downloads nothing.
 Usage:
   appcast.py carried --live live.xml
   appcast.py build --stage beta|production|rehearsal --version V --site-host URL \\
-      --archive NAME --length N --signature SIG --min-os 13.0 \\
+      --archive-url URL --length N --signature SIG --min-os 13.0 \\
       --notes-file F [--live live.xml] [--pub-date STR]
   appcast.py --self-test
 """
@@ -230,8 +231,10 @@ def build(args) -> str:
 
     fresh = Item(
         version=args.version, notes=notes, pub_date=pub_date,
+        # `link` is the human page and stays on the site; `url` is the archive
+        # and lives on GitHub. They are deliberately different hosts.
         link=f"{args.site_host}/", min_os=args.min_os,
-        url=f"{args.site_host}/{args.archive}",
+        url=args.archive_url,
         length=str(args.length), signature=args.signature,
         channel=BETA if args.stage == "beta" else None,
     )
@@ -250,6 +253,13 @@ def build(args) -> str:
         if current and current.version == args.version:
             die(f"{args.version} is already the production release; publishing it "
                 "to beta would advertise one version in two channels at once.")
+        # The caller may hand back a different URL for the carried entry than
+        # the live feed holds, and only the caller can: it is the one that
+        # downloaded those bytes and checked them against the signature being
+        # copied forward. Length and signature stay as published -- they
+        # describe the bytes, and the bytes did not change.
+        if current is not None and args.carried_url:
+            current.url = args.carried_url
         return render_feed(args.app_name, args.site_host,
                            [fresh] + ([current] if current else []))
 
@@ -318,7 +328,9 @@ class _Args:
     def __init__(self, live_xml="", **kw):
         self.app_name = "Hammerdeck"
         self.site_host = "https://example.test"
-        self.archive = f"Hammerdeck-{kw.get('version', '0')}.dmg"
+        self.archive_url = ("https://github.com/o/r/releases/download/"
+                            f"v{kw.get('version', '0')}/Hammerdeck-{kw.get('version', '0')}.dmg")
+        self.carried_url = None
         self.length = "100"
         self.min_os = "13.0"
         self.pub_date = "Thu, 01 Jan 2026 00:00:00 +0000"
@@ -421,6 +433,34 @@ def self_test() -> None:
        "sparkle:channel" not in build(_Args(stage="rehearsal", version="9.9.8",
                                             signature="S", live_xml=live)))
 
+    # The retarget the publish script performs when it carries an entry whose
+    # URL still points at hosting. Without this the old URL is re-emitted
+    # verbatim and the move never actually happens for the carried release.
+    ok("a carried entry takes the caller's url when one is given",
+       'url="https://github.com/o/r/releases/download/v1.0.0/Hammerdeck-1.0.0.dmg"'
+       in build(_Args(stage="beta", version="2.0.0", signature="S",
+                      live_xml=feed(prod),
+                      carried_url="https://github.com/o/r/releases/download/"
+                                  "v1.0.0/Hammerdeck-1.0.0.dmg")))
+    ok("a carried entry keeps the length and signature the feed published",
+       '<enclosure url="https://github.com/o/r/releases/download/v1.0.0/'
+       'Hammerdeck-1.0.0.dmg" length="100"'
+       in build(_Args(stage="beta", version="2.0.0", signature="S",
+                      live_xml=feed(prod),
+                      carried_url="https://github.com/o/r/releases/download/"
+                                  "v1.0.0/Hammerdeck-1.0.0.dmg")))
+
+    # The enclosure is on a DIFFERENT host from the page, and only the caller
+    # knows which. Derived from --site-host it would silently point every
+    # download back at hosting that no longer carries the file.
+    ok("the enclosure is the url passed in, not one derived from the site host",
+       '<enclosure url="https://github.com/o/r/releases/download/v2.0.0/'
+       'Hammerdeck-2.0.0.dmg"' in build(_Args(stage="rehearsal", version="2.0.0",
+                                              signature="S")))
+    ok("the item's link still points at the page on the site, not at the archive",
+       "<link>https://example.test/</link>"
+       in build(_Args(stage="rehearsal", version="2.0.0", signature="S")))
+
     ok("carried reports the production version, length and url",
        carried(_Args(live_xml=feed(prod))).split("\t")[:3]
        == ["1.0.0", "100", "https://example.test/Hammerdeck-1.0.0.dmg"])
@@ -452,7 +492,8 @@ def main() -> None:
     b.add_argument("--version", required=True)
     b.add_argument("--app-name", default="Hammerdeck")
     b.add_argument("--site-host", required=True)
-    b.add_argument("--archive", required=True)
+    b.add_argument("--archive-url", required=True)
+    b.add_argument("--carried-url")
     b.add_argument("--length", required=True)
     b.add_argument("--signature", required=True)
     b.add_argument("--min-os", required=True)

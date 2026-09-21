@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 #
-# Publish the download page, the update feed, and the release archive Sparkle
-# hands to installed copies of the app.
+# Publish the download page and the update feed installed copies poll.
+#
+# It does NOT publish the archive. Both sites serve HTML and XML only; every
+# enclosure and every download button points at a GitHub Release asset of this
+# repo. So the archive must already be UPLOADED to its Release before this runs
+# -- the last gate before deploy fetches that URL anonymously and refuses if it
+# does not serve the signed bytes. On the release channel `publish.yml` has
+# necessarily satisfied this (it downloads the asset it is publishing); by hand,
+# `gh release upload` first.
 #
 # WHERE it publishes is not an argument: it is read off the `SUFeedURL` baked
 # into the app inside `dist/<name>-<version>.dmg`. A release build goes to
@@ -90,6 +97,20 @@ if [[ -z "$FEED_RELEASE" || -z "$FEED_STAGING" ]]; then
   echo "       which is the check that keeps a rehearsal off the production feed." >&2
   exit 1
 fi
+
+# Where the ARCHIVES live. The sites serve the page and the feed; every enclosure
+# points into this repo's Releases, which `firebase deploy` cannot reach and
+# which costs no Hosting egress.
+#
+# Taken from the environment first so a fork is correct for free: GitHub Actions
+# sets GITHUB_REPOSITORY, and a fork publishing its own feed would otherwise
+# advertise this repo's binaries under its own signature.
+GITHUB_REPO="${GITHUB_REPOSITORY:-kouxing2000/hammerdeck}"
+GITHUB_DOWNLOAD_PREFIX="https://github.com/$GITHUB_REPO/releases/download"
+# The rehearsal rig's archives hang off ONE reusable prerelease rather than a tag
+# per drill: a rehearsal version is invented (9.9.8) and a real tag for it would
+# be a durable public record of something that was never released.
+STAGING_RELEASE_TAG="staging-rehearsal"
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
@@ -398,14 +419,76 @@ if [[ -z "$MIN_OS" ]]; then
   echo "       Publishing would advertise an update with no minimum OS." >&2
   exit 1
 fi
+# --- what a client will actually get -----------------------------------------
+
+# Prove an enclosure URL serves, ANONYMOUSLY, the exact bytes the feed signs for.
+#
+# Anonymous is the point. `gh release download` sends a token and succeeds
+# against a draft release and against a private repo, so a tokenized check would
+# pass while every user's Sparkle got a 404. `-q` and `--no-netrc` stop a
+# ~/.curlrc or a netrc entry from quietly supplying the credentials this check
+# exists to do without.
+#
+# It downloads instead of reading Content-Length, and that is where its value
+# is: re-running a release tag rebuilds and `--clobber`s the asset, and a
+# rebuild of the same commit differs only by notarization timestamps inside an
+# image whose size is quantized -- so the length is very likely UNCHANGED while
+# the signature every installed copy checks no longer matches. Only verifying
+# the signature sees that.
+verify_published_archive() {
+  local url="$1" expect_len="$2" expect_sig="$3" label="$4"
+  local dest="$VERIFY_DIR/published-$(basename "$url")"
+  local code got
+  code="$(curl -q -sSL --no-netrc --max-time 300 -o "$dest" -w '%{http_code}' "$url" || echo 000)"
+  if [[ "$code" != "200" ]]; then
+    echo "error: the $label archive is not anonymously downloadable (HTTP $code):" >&2
+    echo "       $url" >&2
+    echo "       Installed copies fetch this with no credentials. A draft release," >&2
+    echo "       a missing asset or a private repo all look like this, and" >&2
+    echo "       publishing anyway offers everyone a download that fails." >&2
+    return 1
+  fi
+  got="$(stat -f%z "$dest")"
+  if [[ "$got" != "$expect_len" ]]; then
+    echo "error: the $label archive is $got bytes; the feed advertises $expect_len." >&2
+    echo "       $url" >&2
+    return 1
+  fi
+  if ! printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify \
+       "$dest" "$expect_sig" --ed-key-file - > /dev/null; then
+    echo "error: the $label archive does not match the signature published for it." >&2
+    echo "       The bytes on the Release changed after they were signed, so every" >&2
+    echo "       copy offered this update would download it and refuse to install." >&2
+    echo "       $url" >&2
+    return 1
+  fi
+  rm -f "$dest"
+  echo "    $label archive: 200 anonymous, $got bytes, signature verifies"
+}
+
 PUB_DATE="$(date '+%a, %d %b %Y %H:%M:%S %z')"
-DMG_NAME="$APP_NAME-$VERSION.dmg"
+
+# The name the archive carries ON THE RELEASE, which is also the last path
+# component every user sees in their Downloads folder. A rehearsal build says so
+# there: the prerelease page explains what it is, but the file outlives the page
+# it came from, and a copy installed from one polls the rig for life.
+if [[ "$CHANNEL" == "staging" ]]; then
+  DMG_NAME="$APP_NAME-$VERSION-staging.dmg"
+  ARCHIVE_URL="$GITHUB_DOWNLOAD_PREFIX/$STAGING_RELEASE_TAG/$DMG_NAME"
+else
+  DMG_NAME="$APP_NAME-$VERSION.dmg"
+  ARCHIVE_URL="$GITHUB_DOWNLOAD_PREFIX/v$VERSION/$DMG_NAME"
+fi
+echo "    archive url: $ARCHIVE_URL"
 
 # --- stage -------------------------------------------------------------------
+#
+# Only the page and the feed are staged. The archive is NOT copied here: it is
+# already on the Release this URL names, and deploying a second copy would put
+# the two on different hosts with nothing keeping them identical.
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp "$DMG" "$STAGE/$DMG_NAME"
 
 # The live feed is INPUT, not just output: a beta publish has to carry the
 # current production item forward, and a promote has to check this version
@@ -436,10 +519,11 @@ case "$FEED_HTTP" in
     exit 1 ;;
 esac
 
-# `firebase deploy` replaces site content wholesale, so an item kept in the XML
-# whose archive is not re-uploaded becomes an offer to download a 404. Only a
-# beta publish carries one: a promote emits a single item, pointing at the
-# archive staged just above.
+# Only a beta publish carries an item forward: a promote emits a single item,
+# pointing at the archive named above. The carried entry's archive needs no
+# re-upload -- it is on a GitHub Release, which this deploy does not touch --
+# but it is still re-verified below, because "nobody here touched it" is not
+# the same as "nothing touched it".
 #
 # The download page follows the PRODUCTION item too, not this build: a beta is
 # for a copy that opted in, and publishing one must not change what a stranger
@@ -447,6 +531,7 @@ esac
 # when there is no production item yet, the page is this build.
 PAGE_VERSION="$VERSION"
 PAGE_ARCHIVE="$DMG_NAME"
+PAGE_URL="$ARCHIVE_URL"
 PAGE_LENGTH="$LENGTH"
 PAGE_MIN_OS="$MIN_OS"
 PAGE_DATE=""
@@ -475,41 +560,36 @@ if [[ "$RELEASE_STAGE" == "beta" ]]; then
     CARRIED_SIG="${CARRIED_FIELDS[5]}"
     PAGE_ARCHIVE="$(basename "$CARRIED_URL")"
 
-    # The URL is carried into the new feed VERBATIM while the file is uploaded
-    # to the site root, so the two must already agree. If they ever stop
-    # agreeing the feed points at something nobody uploaded.
-    if [[ "$CARRIED_URL" != "$SITE_HOST/$PAGE_ARCHIVE" ]]; then
-      echo "error: the production enclosure is not hosted at this site's root:" >&2
-      echo "       $CARRIED_URL" >&2
-      exit 1
+    # A feed published while the archives were hosted on the site carries a site
+    # URL. Retarget it at the Release for that version -- same filename, same
+    # bytes, and the verification below is what proves the second half rather
+    # than assuming it. Once a publish has run, the live feed already holds the
+    # Release URL and this branch does nothing.
+    if [[ "$CARRIED_URL" == "$SITE_HOST/"* ]]; then
+      CARRIED_URL="$GITHUB_DOWNLOAD_PREFIX/v$PAGE_VERSION/$PAGE_ARCHIVE"
+      echo "    retargeting the carried archive at its Release: $CARRIED_URL"
     fi
+
+    # Anchored PREFIX, never a substring: this value comes out of a document
+    # fetched over the network, and `https://evil.example/?x=github.com/...`
+    # contains every substring a looser test would look for.
+    case "$CARRIED_URL" in
+      "$GITHUB_DOWNLOAD_PREFIX"/*) ;;
+      *)
+        echo "error: the production enclosure is not a Release asset of $GITHUB_REPO:" >&2
+        echo "       $CARRIED_URL" >&2
+        echo "       Refusing to carry a feed entry pointing somewhere this repo" >&2
+        echo "       does not control." >&2
+        exit 1 ;;
+    esac
 
     echo "    carrying the production release forward: $PAGE_VERSION ($PAGE_ARCHIVE)"
-    if ! curl -fsS --max-time 300 -o "$STAGE/$PAGE_ARCHIVE" "$CARRIED_URL"; then
-      echo "error: could not re-download the current production archive at" >&2
-      echo "       $CARRIED_URL" >&2
-      echo "       Publishing without it would leave every non-beta copy pointed" >&2
-      echo "       at a 404 for the release they are being offered." >&2
-      exit 1
-    fi
-
-    # The new archive is checked four ways before it is published. This one is
-    # what the ENTIRE non-beta install base downloads, and until now it was
-    # trusted on the strength of a 200. Its length and signature are being
-    # copied forward verbatim, so if hosting has drifted from what the feed
-    # claims, every copy would fail Sparkle's check and be stuck.
-    if [[ "$(stat -f%z "$STAGE/$PAGE_ARCHIVE")" != "$PAGE_LENGTH" ]]; then
-      echo "error: the carried archive is $(stat -f%z "$STAGE/$PAGE_ARCHIVE") bytes," >&2
-      echo "       but the live feed advertises $PAGE_LENGTH." >&2
-      exit 1
-    fi
-    if ! printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify \
-         "$STAGE/$PAGE_ARCHIVE" "$CARRIED_SIG" --ed-key-file - > /dev/null; then
-      echo "error: the carried archive does not match the signature the live feed" >&2
-      echo "       advertises for it. Hosting and the feed have drifted apart." >&2
-      exit 1
-    fi
-    echo "    carried archive verifies against its published signature"
+    # What the ENTIRE non-beta install base downloads. Its length and signature
+    # are copied into the new feed verbatim, so if the asset has drifted from
+    # what the feed claims, every one of those copies fails Sparkle's check and
+    # is stuck with no way back.
+    verify_published_archive "$CARRIED_URL" "$PAGE_LENGTH" "$CARRIED_SIG" "carried" || exit 1
+    PAGE_URL="$CARRIED_URL"
   fi
 fi
 
@@ -517,11 +597,12 @@ NOTES_FILE="$VERIFY_DIR/notes.html"
 printf '%s\n' "$NOTES_HTML" > "$NOTES_FILE"
 "$ROOT/scripts/appcast.py" build \
   --stage "$RELEASE_STAGE" --version "$VERSION" --app-name "$APP_NAME" \
-  --site-host "$SITE_HOST" --archive "$DMG_NAME" --length "$LENGTH" \
+  --site-host "$SITE_HOST" --archive-url "$ARCHIVE_URL" --length "$LENGTH" \
+  --carried-url "${CARRIED_URL:-}" \
   --signature "$ED_SIG" --min-os "$MIN_OS" --notes-file "$NOTES_FILE" \
   --pub-date "$PUB_DATE" --live "$LIVE_FEED" > "$STAGE/appcast.xml"
 
-VERSION="$PAGE_VERSION" DMG_NAME="$PAGE_ARCHIVE" LENGTH="$PAGE_LENGTH" \
+VERSION="$PAGE_VERSION" DMG_URL="$PAGE_URL" LENGTH="$PAGE_LENGTH" \
 MIN_OS="$PAGE_MIN_OS" PUB_DATE="$PAGE_DATE" \
 python3 - "$ROOT/site/index.html" "$STAGE/index.html" <<'PY'
 import os, sys, datetime
@@ -529,7 +610,9 @@ src, dst = sys.argv[1], sys.argv[2]
 mb = int(os.environ["LENGTH"]) / (1024 * 1024)
 subs = {
     "{{VERSION}}": os.environ["VERSION"],
-    "{{DMG}}":     "/" + os.environ["DMG_NAME"],
+    # An absolute URL off-site, not a site-root path: the page is on hosting
+    # and the archive is on a GitHub Release.
+    "{{DMG}}":     os.environ["DMG_URL"],
     "{{SIZE}}":    f"{mb:.1f} MB",
     "{{DATE}}":    datetime.date.today().strftime("%B %-d, %Y"),
     "{{MINOS}}":   os.environ["MIN_OS"],
@@ -548,9 +631,10 @@ PY
 
 # --- verify before deploying -------------------------------------------------
 
-# Round-trip the signature against the staged archive.
-printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify "$STAGE/$DMG_NAME" "$ED_SIG" --ed-key-file - > /dev/null
-echo "    signature verifies against the staged archive"
+# Round-trip the signature against the local archive -- the same file that was
+# uploaded to the Release, and the one the anonymous check below re-fetches.
+printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify "$DMG" "$ED_SIG" --ed-key-file - > /dev/null
+echo "    signature verifies against the local archive"
 
 # ...which on its own proves nothing about the CLIENT. sign_update derives its
 # verification key from the private key it was just handed, so --verify is
@@ -582,7 +666,7 @@ fi
 # confidently false cause pointing at the signing key. Only the word VERIFIED,
 # which nothing but a completed check can print, is taken as a pass -- and the
 # output stays visible so the real reason is on screen when it is something else.
-VERIFY_OUT="$(ED_SIG="$ED_SIG" PUBKEY="$ARCHIVED_PUBKEY" DMG_PATH="$STAGE/$DMG_NAME" \
+VERIFY_OUT="$(ED_SIG="$ED_SIG" PUBKEY="$ARCHIVED_PUBKEY" DMG_PATH="$DMG" \
   swift -e '
 import Foundation
 import CryptoKit
@@ -621,8 +705,28 @@ if [[ "$STAGE_ONLY" -eq 1 ]]; then
   echo
   echo "==> --stage-only: nothing deployed. Staged in $STAGE:"
   ls -la "$STAGE"
+  echo "    (the enclosure is NOT checked here: --stage-only runs before a"
+  echo "     Release exists, which is most of why anyone uses it)"
   exit 0
 fi
+
+# The last gate, and the only one that asks the question a user's Sparkle asks:
+# does this URL, with no credentials, hand back the bytes this feed signs for.
+# Everything above this line verifies a file on THIS disk. Nothing above it
+# proves the URL about to be published resolves at all -- and it is pure string
+# construction, so a wrong tag or a never-uploaded asset looks identical.
+verify_published_archive "$ARCHIVE_URL" "$LENGTH" "$ED_SIG" "published" || {
+  echo "       Upload it to the Release first:" >&2
+  if [[ "$CHANNEL" == "staging" ]]; then
+    # The asset name is the uploaded file's basename, so the -staging copy is
+    # how the name gets its suffix -- there is no rename flag.
+    echo "         cp \"$DMG\" \"$DIST/$DMG_NAME\"" >&2
+    echo "         gh release upload $STAGING_RELEASE_TAG \"$DIST/$DMG_NAME\" --clobber" >&2
+  else
+    echo "         gh release upload v$VERSION \"$DMG\" --clobber" >&2
+  fi
+  exit 1
+}
 
 # CREDS and the EXIT trap that removes it are set up with the extraction cleanup
 # at the top -- one handler for both, since a second `trap ... EXIT` would replace

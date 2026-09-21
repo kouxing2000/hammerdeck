@@ -135,8 +135,11 @@ conspicuous.
 
 ## Install
 
-**[Download Hammerdeck](https://hammerdeck.peach-studio.com/)** -- universal
-(Apple Silicon and Intel), macOS 13 or later. It is signed with a Developer ID
+**[Download the latest release](https://github.com/kouxing2000/hammerdeck/releases/latest)**
+-- universal (Apple Silicon and Intel), macOS 13 or later. Every build is
+attached to its release here, and
+[hammerdeck.peach-studio.com](https://hammerdeck.peach-studio.com/) points at
+the same file if you would rather have a page than a list. It is signed with a Developer ID
 and notarized by Apple, so there is no "unidentified developer" wall -- macOS
 still asks once whether to open an app downloaded from the internet. Open the
 disk image and drag Hammerdeck to Applications; if you run it from somewhere

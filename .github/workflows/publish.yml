@@ -1,7 +1,9 @@
 name: Publish
 
-# Put a release on hammerdeck.peach-studio.com and into the update feed every
-# installed copy polls. Run BY HAND, after the candidate has been tested:
+# Point hammerdeck.peach-studio.com and the update feed every installed copy
+# polls at a release. The archive itself stays where `release.yml` put it, on
+# this tag's GitHub Release -- the site carries the page and the appcast, and
+# both link there. Run BY HAND, after the candidate has been tested:
 #
 #   gh workflow run publish.yml -f tag=v1.2.3                  to BETA
 #   gh workflow run publish.yml -f tag=v1.2.3 -f stage=production   to everyone
