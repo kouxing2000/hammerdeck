@@ -49,24 +49,35 @@ jobs:
       TAG: ${{ inputs.tag }}
 
     steps:
+      # NOT `ref: inputs.tag`. The tag decides which BYTES ship and what the
+      # notes say; it must not decide which publisher runs. Checked out at the
+      # tag, a fix to publish-site.sh or appcast.py would never reach a release
+      # already cut -- so every past tag would keep publishing with the tooling
+      # of its own day, and the move to GitHub-hosted archives would silently
+      # not apply to v0.2.0.
+      #
+      # Nothing is weakened by this. Every gate downstream interrogates the
+      # ARCHIVE -- its version, bundle id, public key, notarization ticket, and
+      # `HDSourceCommit`, which is compared against what this tag resolves to.
+      # That comparison needs the tag object, not a checkout of it.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
-        with:
-          ref: ${{ inputs.tag }}
 
-      # The release notes live in the tag's ANNOTATION, and the generator refuses
-      # a lightweight tag. Checking out an explicit tag ref should bring the
-      # annotation down intact (unlike a tag-push checkout, which resolves from
-      # github.sha and writes a lightweight tag) -- `cat-file -t` settles it per
-      # run instead of assuming either way, and the fetch is skipped when the
-      # object is already the right type.
-      - name: Ensure the tag object is annotated
+      # The release notes live in the tag's ANNOTATION and the generator refuses
+      # a lightweight tag; the provenance gate needs the same object to resolve
+      # a commit from. A default-branch checkout brings neither, so this fetch
+      # is no longer conditional -- and `cat-file -t` proves what arrived rather
+      # than assuming the fetch produced an annotated tag.
+      - name: Fetch the tag object
         run: |
+          git fetch --force --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
           type="$(git cat-file -t "$TAG" 2>/dev/null || echo missing)"
           echo "tag object type: $type"
           if [ "$type" != tag ]; then
-            git fetch --force --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
-            git cat-file -t "$TAG"
+            echo "error: $TAG is a '$type', not an annotated tag." >&2
+            echo "       Its message is where the release notes come from." >&2
+            exit 1
           fi
+          echo "$TAG -> $(git rev-list -n 1 "$TAG")"
 
       # `sign_update` lives inside the Sparkle SPM artifact bundle, so the
       # publish path needs it on disk. `resolve` is enough and takes seconds --
