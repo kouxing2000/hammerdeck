@@ -504,6 +504,8 @@
   "settings.app": "应用",
   "settings.auto_update": "自动检查更新",
   "settings.auto_update_caption": "在后台查找新版本的 %@，有更新时提示你。每个更新在安装前都会验证签名；替换任何文件前都会先征求你的同意。",
+  "settings.beta_channel": "接收 Beta 版更新",
+  "settings.beta_channel_caption": "每个版本都会先在这里发布，然后才推送给所有人。Beta 版的签名和校验与正式版完全相同，只是经过的实际使用更少——随时关掉即可回到正式版更新。",
   "settings.test_feed": "更新来源是测试源。",
   "settings.test_feed_caption": "此副本检查的是 %@，而不是正式发布源；在切换回来之前，它不会收到正式版本更新。",
   "settings.test_feed_reset": "改用正式发布源",

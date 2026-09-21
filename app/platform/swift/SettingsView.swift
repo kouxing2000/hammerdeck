@@ -336,6 +336,8 @@ private struct GeneralSettingsDetail: View {
     @State private var autoUpdate = Updater.shared.automaticallyChecks
     // Read once into state so clearing the override re-renders the section.
     @State private var testFeedHost = Updater.shared.testFeedHost
+    // Ours, not Sparkle's -- the delegate reads the same key on every check.
+    @State private var receivesBeta = Updater.shared.receivesBeta
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
     @State private var extensionsDir = ExtensionsPreference.dir
@@ -387,6 +389,15 @@ private struct GeneralSettingsDetail: View {
                     Toggle(Strings.t("settings.auto_update", default: "Check for updates automatically"), isOn: $autoUpdate)
                         .onChange(of: autoUpdate) { on in Updater.shared.automaticallyChecks = on }
                     Text(String(format: Strings.t("settings.auto_update_caption", default: "Look for a new %@ in the background and offer it when one appears. Every update is signature-verified before it installs; you are always asked before anything is replaced."), AppInfo.displayName))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // A channel within the same feed, which is why this is safe to
+                    // ship as a switch while the test-feed redirect below is not:
+                    // turning it on ADDS the candidates, and turning it off
+                    // returns to exactly what everyone else is offered.
+                    Toggle(Strings.t("settings.beta_channel", default: "Receive beta updates"), isOn: $receivesBeta)
+                        .onChange(of: receivesBeta) { on in Updater.shared.receivesBeta = on }
+                    Text(Strings.t("settings.beta_channel_caption", default: "Every release is offered here first, before it goes out to everyone. Betas are signed and verified exactly like a release, but they have had less use -- turn this off at any time to go back to the general releases."))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     // Only ever visible on a copy someone pointed at a test feed
@@ -639,6 +650,7 @@ private struct GeneralSettingsDetail: View {
             // every time the pane appears rather than trusting the last write.
             openAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
             loginItemError = nil
+            receivesBeta = Updater.shared.receivesBeta
             appearance = AppearancePreference.mode
             language = LocalePreference.override
             extensionsDir = ExtensionsPreference.dir
