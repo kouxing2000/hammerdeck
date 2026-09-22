@@ -300,8 +300,9 @@ tests too -- which is how the capability and i18n guards see your new feature fo
      would drop the swift too -- list each. Omitting the `i18n` entry leaves exactly
      the warning this step is meant to silence; compare the `usage_stats` /
      `window_deck` / `window_fan` entries already in the file.)
-2. **`scripts/gen-readme-features.py`** -- README's feature catalog is GENERATED from
-   every `feature.json`, and **CI fails if it is stale**. Run it after adding the
+2. **`scripts/gen-readme-features.py`** -- the feature catalog in README.md AND in
+   the download page (`site/index.html`) is GENERATED from every `feature.json`,
+   and **CI fails if either is stale**. Run it after adding the
    feature. (The list used to be hand-written and rotted badly, never once naming
    window_deck.)
 
@@ -366,7 +367,7 @@ via `registry.describe()`.
 luac -p app/features/<id>/lua/init.lua   # syntax (or app/**/*.lua)
 lua test/run.lua                         # fast loop (Homebrew Lua 5.5)
 scripts/test-lua.sh                      # SAME suite on vendored 5.4.7 -- before committing
-scripts/gen-readme-features.py           # regenerate the README catalog (CI gate)
+scripts/gen-readme-features.py           # regenerate the README + site catalog (CI gate)
 swift build                              # must be clean
 scripts/test-swift.sh                    # REQUIRED for every new feature -- see below
 ```

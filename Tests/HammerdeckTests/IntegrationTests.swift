@@ -2331,6 +2331,21 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(unpresented, [],
                        "these capabilities exist in Lua but have no label/glyph/description "
                        + "in capabilityInfo -- they would render as a bare id to the user")
+
+        // The README/site generator keeps its own capability list (it is standalone
+        // Python, so it cannot read either table). Held to the Lua set AND to the
+        // order Settings shows, as a sequence: a capability missing there renders
+        // as its raw id in the public catalog, and one out of order ranks reach
+        // differently on the page than in the app.
+        let genPath = TestHost.repoRoot + "/scripts/gen-readme-features.py"
+        let gen = try String(contentsOfFile: genPath, encoding: .utf8)
+        guard let line = gen.split(separator: "\n").first(where: { $0.hasPrefix("CAPABILITY_ORDER = [") })
+        else { return XCTFail("could not find CAPABILITY_ORDER in \(genPath)") }
+        let genOrder = line.split(separator: "\"").enumerated()
+            .filter { $0.offset % 2 == 1 }.map { String($0.element) }
+        XCTAssertEqual(genOrder, sortedCapabilities(caps),
+                       "CAPABILITY_ORDER (gen-readme-features.py) must list every capability in "
+                       + "manifest.CAPABILITY_METHODS, in sortedCapabilities' order (FeatureChrome.swift)")
     }
 
     /// runJXA must DRAIN stdout concurrently. Reading only after termination
