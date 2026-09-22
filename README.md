@@ -162,9 +162,9 @@ A hammer icon appears in the menubar. Click it to fire any enabled feature's
 actions; **Settings…** opens the config window -- toggles, options, and trigger
 binding for every feature.
 
-**First run starts empty.** Nothing is enabled and no hotkey is taken: a Feature
-Tour previews each one and you add the ones you want. Nothing runs that you did
-not switch on.
+**First run starts with the window suite on** -- the features marked *(on by
+default)* above -- and a short first-run walk that explains the Accessibility ask
+before macOS shows it. Everything else stays off until you switch it on.
 
 ## Bind it to anything
 
