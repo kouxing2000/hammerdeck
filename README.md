@@ -185,6 +185,7 @@ ask only when you first use them:
 
 - **Accessibility** -- to read or move windows, act on the current selection, or press keys on your behalf: Window Snap, Window Grid, Window Mode, Window Deck, Window Fan, Window Rewind, Pointer Follows Moved Window, Window Switcher, Clipboard History, Insert Date/Time, Paste as Plain Text, Text Actions, Break Reminder, Pointer.
 - **Automation** -- features that read browser tabs drive Chrome and Safari through AppleScript, so macOS prompts once per browser: Usage Stats, Tab Switcher, Quick Sites.
+- **Automation (System Events)** -- switching the system between dark and light goes through System Events, so macOS prompts once, the first time a rule does it: the rules engine (Switch to dark, Switch to light, Toggle dark mode).
 
 <!-- PERMISSIONS:END -->
 

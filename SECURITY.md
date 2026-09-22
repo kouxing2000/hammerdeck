@@ -8,6 +8,9 @@ privately via GitHub's [private vulnerability reporting][gh] (the repository's
 
 [gh]: https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability
 
+The same form takes [Code of Conduct](CODE_OF_CONDUCT.md) reports; start the
+title with "Code of Conduct" so it is not triaged as a vulnerability.
+
 I'll acknowledge the report and, once a fix ships, credit you in the release
 notes unless you'd prefer to stay anonymous.
 
@@ -24,6 +27,7 @@ reason). Being blunt about the surface is more useful than a short list:
 |---|---|---|
 | **Accessibility** | reading and moving other apps' windows (AXUIElement); synthesizing keystrokes (paste-as-plain-text, insert date/time, paste from clipboard history, and locking the screen -- which posts the system ctrl-cmd-Q shortcut); and the Caps->Hyper remap, which is an event tap that REWRITES keys | on first use of a feature that needs it |
 | **Automation (per browser)** | listing Chrome/Safari tabs for the tab and site switchers | lazily, the first time a switcher runs |
+| **Automation (System Events)** | the rules engine's dark/light appearance effect -- System Events is the only public way to change the system appearance | the first time a rule fires it |
 | **Login Keychain** | storing a feature's API key (today: OpenAI) | only if you enter one |
 | **Subprocesses** | two different things. The seam spawns a small set of **fixed, named** commands with arguments it builds itself -- sleeping the machine, starting the screensaver, speaking text, running a Shortcut, scripting a browser. Some sit behind a capability; some are reachable only from the rules engine and have no capability of their own. Separately, the `exec` capability runs an **arbitrary** command line, and that one is for user extensions only (`grep -rn 'runCommand(\|runProcessCore(\|runJXA(' app/platform/swift/` enumerates the fixed set -- a list written out here would go stale) | the fixed ones with whatever invokes them; `exec` never for a built-in feature |
 

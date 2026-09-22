@@ -39,6 +39,7 @@ second thing to keep in sync.
 import html
 import json
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -104,6 +105,26 @@ REQUIRES_WORDS = {
         "to read or move windows, act on the current selection, or press keys on your behalf",
     ),
 }
+
+
+# Rules-engine effects that script another app, so macOS asks for Automation the
+# first time a rule fires one: (effect kind in effects.lua, the ctx method that
+# reaches the same seam call, (seam file, the scripting target it must still
+# contain), label, what it covers). Effects are not features,
+# so nothing in feature.json can derive this; the effect's English labels are
+# read from its desc() calls in effects.lua instead, so a renamed or removed
+# effect changes or fails this line rather than leaving it stale.
+EFFECTS_LUA = "app/platform/lua/effects.lua"
+RULES_AUTOMATION = [
+    (
+        "setAppearance",
+        "ctx.setAppearance",
+        ("app/platform/swift/Native+System.swift", 'tell application \\"System Events\\"'),
+        "Automation (System Events)",
+        "switching the system between dark and light goes through System Events, "
+        "so macOS prompts once, the first time a rule does it",
+    ),
+]
 
 
 def die(msg):
@@ -298,9 +319,11 @@ def permissions(features):
     Accessibility comes from each feature's declared `requires`; Automation from
     the `browser` capability, since every browser read drives Chrome/Safari over
     AppleScript. A hand-kept list of names here went stale the way the catalog
-    did, so neither is kept by hand. Scope is FEATURES: a rules-engine effect
-    that scripts another app (setAppearance drives System Events) prompts too,
-    and is not listed here.
+    did, so neither is kept by hand. The rules engine is not a feature, but an
+    effect that scripts another app prompts for Automation too; RULES_AUTOMATION
+    names those, each held to effects.lua so the line dies with the effect rather
+    than outliving it. Scope is Automation only: rules effects that need
+    Accessibility (locking the screen, moving windows) are not listed here.
     """
     ordered = [f for _, items in sections(features) for f in items]
     out = []
@@ -319,6 +342,26 @@ def permissions(features):
             "AppleScript, so macOS prompts once per browser",
             browser,
         ))
+    effects = (ROOT / EFFECTS_LUA).read_text(encoding="utf-8")
+    feature_src = {
+        path: path.read_text(encoding="utf-8")
+        for path in sorted(ROOT.glob("app/features/*/lua/**/*.lua"))
+    }
+    for kind, ctx_method, (seam_file, target), label, covers in RULES_AUTOMATION:
+        if target not in (ROOT / seam_file).read_text(encoding="utf-8"):
+            die(f"{seam_file} no longer contains {target}, so the '{label}' line may be false")
+        if not re.search(rf"^\s*{re.escape(kind)} = \{{", effects, re.MULTILINE):
+            die(f"RULES_AUTOMATION names effect '{kind}', which {EFFECTS_LUA} no longer defines")
+        labels = re.findall(rf'desc\("{re.escape(kind)}\.[^"]+",\s*"([^"]+)"\)', effects)
+        if not labels:
+            die(f"found no desc(\"{kind}.*\", ...) labels in {EFFECTS_LUA} to name the effect by")
+        # The line says only rules prompt. A built-in feature calling the same
+        # ctx method would prompt too, and this line would then understate it.
+        callers = [p.parent.parent.name for p, src in feature_src.items() if f"{ctx_method}(" in src]
+        if callers:
+            die(f"{', '.join(sorted(set(callers)))} call {ctx_method}, which prompts for {label}; "
+                "the permissions line names only the rules engine -- extend it")
+        out.append((label, covers, [f"the rules engine ({', '.join(labels)})"]))
     return out
 
 

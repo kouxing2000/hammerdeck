@@ -81,3 +81,7 @@ though your local `lua` may be newer). Run the relevant tests before you open a 
 
 By contributing, you agree that your contributions are licensed under the
 project's **GPL-3.0** license.
+
+## Code of conduct
+
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
