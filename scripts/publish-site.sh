@@ -23,6 +23,9 @@
 #   scripts/publish-site.sh 0.1.0                publish to the BETA channel
 #   scripts/publish-site.sh 0.1.0 --promote      move it to the default channel
 #   scripts/publish-site.sh 0.1.0 --stage-only   sign + verify, deploy nothing
+#   scripts/publish-site.sh --page-only          redeploy the PAGE only; the live
+#                                                feed is re-served byte-for-byte
+#   scripts/publish-site.sh --page-only --stage-only   ...stage it, deploy nothing
 #
 # Beta is the default and there is no argument for "straight to everyone": a
 # version reaches the default channel only by being promoted after it has been
@@ -46,8 +49,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Hammerdeck"
 FIREBASE_PROJECT="peach-studio"
-# SITE_HOST and the Hosting site are NOT constants here: they are derived below
-# from the feed URL baked into the app inside the archive. See "which feed".
+FIREBASE_SITE="hammerdeck"
+SITE_HOST="https://hammerdeck.peach-studio.com"
 
 DIST="$ROOT/dist"
 STAGE="$DIST/site"
@@ -94,6 +97,14 @@ if [[ -z "$FEED_RELEASE" ]]; then
   echo "       published." >&2
   exit 1
 fi
+# SITE_HOST is where this script READS the live feed and deploys the new one;
+# package.sh's constant is where installed copies POLL. --page-only never sees an
+# archive's SUFeedURL, so this is the only thing tying its SITE_HOST to them.
+if [[ "$FEED_RELEASE" != "$SITE_HOST/appcast.xml" ]]; then
+  echo "error: package.sh's feed ($FEED_RELEASE) is not $SITE_HOST/appcast.xml," >&2
+  echo "       the feed this script reads and deploys." >&2
+  exit 1
+fi
 
 # Where the ARCHIVES live. The sites serve the page and the feed; every enclosure
 # points into this repo's Releases, which `firebase deploy` cannot reach and
@@ -105,14 +116,6 @@ fi
 GITHUB_REPO="${GITHUB_REPOSITORY:-kouxing2000/hammerdeck}"
 GITHUB_DOWNLOAD_PREFIX="https://github.com/$GITHUB_REPO/releases/download"
 
-VERSION="${1:-}"
-if [[ -z "$VERSION" ]]; then
-  echo "usage: scripts/publish-site.sh <version>   (e.g. 0.1.0)" >&2
-  exit 1
-fi
-VERSION="${VERSION#v}"
-DMG="$DIST/$APP_NAME-$VERSION.dmg"
-
 # Everything up to the deploy, so what is about to go live can be inspected
 # while it is still only on disk. The signature verification below is the part
 # worth seeing pass before an update feed reaches anyone.
@@ -123,39 +126,45 @@ DMG="$DIST/$APP_NAME-$VERSION.dmg"
 # channel that were not offered to beta subscribers first. `--promote` moves a
 # version that is ALREADY on beta into the default channel, and refuses anything
 # else (see the promote gate below).
+#
+# --page-only takes no version: it publishes no build, so the page follows the
+# production item the live feed already advertises.
+VERSION=""
 STAGE_ONLY=0
+PAGE_ONLY=0
 RELEASE_STAGE="beta"
-for arg in "${@:2}"; do
+for arg in "$@"; do
   case "$arg" in
     --stage-only) STAGE_ONLY=1 ;;
     --promote)    RELEASE_STAGE="production" ;;
-    *)
-      echo "error: unknown argument '$arg' (expected --promote and/or --stage-only)" >&2
+    --page-only)  PAGE_ONLY=1 ;;
+    -*)
+      echo "error: unknown argument '$arg' (expected --promote, --page-only and/or --stage-only)" >&2
       exit 1 ;;
+    *)
+      if [[ -n "$VERSION" ]]; then
+        echo "error: more than one version given ('$VERSION', '$arg')" >&2
+        exit 1
+      fi
+      VERSION="${arg#v}" ;;
   esac
 done
-
-echo "==> Publishing $APP_NAME $VERSION to the $RELEASE_STAGE channel"
-
-# --- gates -------------------------------------------------------------------
-
-# The ARCHIVE is the only input. `dist/Hammerdeck.app` used to be required here
-# too, and is not: since REL-1 every gate asks the app inside the image, and the
-# publish job downloads that image from the GitHub Release with no loose build
-# anywhere beside it.
-if [[ ! -f "$DMG" ]]; then
-  echo "error: $DMG not found -- run scripts/package.sh $VERSION first" >&2
+if [[ "$PAGE_ONLY" -eq 1 ]]; then
+  if [[ -n "$VERSION" || "$RELEASE_STAGE" != "beta" ]]; then
+    echo "error: --page-only publishes no build; it takes no version and no --promote." >&2
+    exit 1
+  fi
+elif [[ -z "$VERSION" ]]; then
+  echo "usage: scripts/publish-site.sh <version> [--promote] [--stage-only]   (e.g. 0.1.0)" >&2
+  echo "       scripts/publish-site.sh --page-only [--stage-only]" >&2
   exit 1
 fi
+DMG="$DIST/$APP_NAME-$VERSION.dmg"
 
-# --- inspect the archive we are actually shipping ----------------------------
+if [[ "$PAGE_ONLY" -eq 0 ]]; then
+  echo "==> Publishing $APP_NAME $VERSION to the $RELEASE_STAGE channel"
+fi
 
-# Every gate below asks its question of the app INSIDE the image, not of
-# dist/Hammerdeck.app sitting beside it. They are separate objects: package.sh
-# produces both, but nothing downstream re-checks that they still agree, so
-# validating the loose app certified a build no user would ever receive and a
-# stale or hand-dropped image passed on its neighbour's reputation. The image is
-# what the appcast points at, so the image is what has to answer.
 VERIFY_DIR="$DIST/.verify.$$"
 # ONE handler, registered once. bash keeps a single trap per signal, so a second
 # `trap ... EXIT` further down REPLACES this rather than adding to it -- and the
@@ -184,6 +193,310 @@ cleanup() {
 trap cleanup EXIT
 rm -rf "$VERIFY_DIR"
 mkdir -p "$VERIFY_DIR"
+
+# --- shared by a release publish and --page-only ------------------------------
+
+# GET the live feed into $1, echoing the HTTP status. The CALLER triages the
+# status: a release publish treats 404 as "first publish"; --page-only refuses
+# anything but 200, since it has no feed of its own to put in its place.
+fetch_live_feed() {
+  curl -sS --max-time 30 -H 'Cache-Control: no-cache' \
+    -o "$1" -w '%{http_code}' "$SITE_HOST/appcast.xml" || echo 000
+}
+
+# Read the PRODUCTION item out of the live feed at $1 into PAGE_VERSION,
+# PAGE_LENGTH, PAGE_MIN_OS, PAGE_DATE, PAGE_ARCHIVE, CARRIED_URL and
+# CARRIED_SIG. Returns 1 when the feed has no production item. Exits on a
+# malformed item or an enclosure outside this repo's Releases.
+load_production_item() {
+  local carried
+  # Checked by hand: callers test this function with `if`, and bash suspends
+  # errexit for the whole body there -- so a crashing appcast.py would read as
+  # "no production item", and a beta publish would drop it from the feed.
+  if ! carried="$("$ROOT/scripts/appcast.py" carried --live "$1")"; then
+    echo "error: appcast.py could not read the production item out of $1." >&2
+    exit 1
+  fi
+  [[ -n "$carried" ]] || return 1
+  # Every field from the SAME build. Mixing them is how the page ends up
+  # advertising the production version beside the beta's minimum OS, telling
+  # a macOS 13 user not to download a build that runs fine for them.
+  # Read as an array and COUNT, rather than into six named variables. Tab is
+  # IFS whitespace whatever IFS is set to, so a run of them collapses and one
+  # empty field shifts every later one along -- the page would then advertise
+  # a byte count as its version number. The count is what catches that
+  # (measured: an empty field yields 5, not 6); the split alone cannot.
+  local -a fields
+  IFS=$'\t' read -r -d '' -a fields < <(printf '%s\0' "$carried") || true
+  if [[ "${#fields[@]}" -ne 6 ]]; then
+    echo "error: the production item yielded ${#fields[@]} fields, expected 6." >&2
+    echo "       Refusing to guess which one is the version." >&2
+    exit 1
+  fi
+  PAGE_VERSION="${fields[0]}"
+  PAGE_LENGTH="${fields[1]}"
+  CARRIED_URL="${fields[2]}"
+  PAGE_MIN_OS="${fields[3]}"
+  PAGE_DATE="${fields[4]}"
+  CARRIED_SIG="${fields[5]}"
+  PAGE_ARCHIVE="$(basename "$CARRIED_URL")"
+
+  # A feed published while the archives were hosted on the site carries a site
+  # URL. Retarget it at the Release for that version -- same filename, same
+  # bytes, and the caller's download check is what proves the second half
+  # rather than assuming it. Once a publish has run, the live feed already
+  # holds the Release URL and this branch does nothing.
+  if [[ "$CARRIED_URL" == "$SITE_HOST/"* ]]; then
+    CARRIED_URL="$GITHUB_DOWNLOAD_PREFIX/v$PAGE_VERSION/$PAGE_ARCHIVE"
+    echo "    retargeting the production archive at its Release: $CARRIED_URL"
+  fi
+
+  # Anchored PREFIX, never a substring: this value comes out of a document
+  # fetched over the network, and `https://evil.example/?x=github.com/...`
+  # contains every substring a looser test would look for.
+  case "$CARRIED_URL" in
+    "$GITHUB_DOWNLOAD_PREFIX"/*) ;;
+    *)
+      echo "error: the production enclosure is not a Release asset of $GITHUB_REPO:" >&2
+      echo "       $CARRIED_URL" >&2
+      echo "       Refusing to carry a feed entry pointing somewhere this repo" >&2
+      echo "       does not control." >&2
+      exit 1 ;;
+  esac
+  return 0
+}
+
+# Render site/index.html into $STAGE from PAGE_VERSION / PAGE_URL / PAGE_LENGTH
+# / PAGE_MIN_OS / PAGE_DATE, and stage the page's images beside it.
+render_page() {
+VERSION="$PAGE_VERSION" DMG_URL="$PAGE_URL" LENGTH="$PAGE_LENGTH" \
+MIN_OS="$PAGE_MIN_OS" PUB_DATE="$PAGE_DATE" \
+python3 - "$ROOT/site/index.html" "$STAGE/index.html" <<'PY'
+import os, sys
+from email.utils import parsedate_to_datetime
+src, dst = sys.argv[1], sys.argv[2]
+# The date of the BUILD the page offers (its feed pubDate), never the day of
+# this deploy: a page that carries production forward, or a --page-only run,
+# offers a build published earlier.
+try:
+    built = parsedate_to_datetime(os.environ["PUB_DATE"])
+except (TypeError, ValueError):
+    sys.exit(f"error: the page's build has no readable pubDate: {os.environ['PUB_DATE']!r}")
+mb = int(os.environ["LENGTH"]) / (1024 * 1024)
+subs = {
+    "{{VERSION}}": os.environ["VERSION"],
+    # An absolute URL off-site, not a site-root path: the page is on hosting
+    # and the archive is on a GitHub Release.
+    "{{DMG}}":     os.environ["DMG_URL"],
+    "{{SIZE}}":    f"{mb:.1f} MB",
+    "{{DATE}}":    built.strftime("%B %-d, %Y"),
+    "{{MINOS}}":   os.environ["MIN_OS"],
+}
+html = open(src, encoding="utf-8").read()
+for token, value in subs.items():
+    html = html.replace(token, value)
+# A token left behind renders as literal braces on the live page, which looks
+# broken to every visitor. Fail here instead, while it is still a build error.
+leftover = [t for t in subs if t in html] + (["{{"] if "{{" in html else [])
+if leftover:
+    sys.exit(f"error: unrendered token(s) in index.html: {leftover}")
+open(dst, "w", encoding="utf-8").write(html)
+print(f"    page: {subs['{{VERSION}}']}, {subs['{{SIZE}}']}, macOS {subs['{{MINOS}}']}+")
+PY
+# The page's images. site/assets/ is also where README.md points, so the page
+# and the README show the same files. `firebase deploy` replaces the whole site,
+# so anything not staged here is deleted from it.
+cp -R "$ROOT/site/assets" "$STAGE/assets"
+echo "    page assets: $(find "$STAGE/assets" -type f | wc -l | tr -d ' ') file(s)"
+}
+
+# Refuse while a publish.yml run is queued or in flight. --page-only re-serves
+# the live feed; a release publish that lands before this deploy finalizes would
+# be rolled back by it, and the end state (live feed == staged feed) looks
+# exactly like success -- so the only guard is not to overlap at all.
+# Unknown counts as busy: without gh there is no way to tell.
+refuse_if_publish_running() {
+  local status n
+  for status in in_progress queued; do
+    if ! n="$(gh run list --repo "$GITHUB_REPO" --workflow publish.yml \
+                --status "$status" --json databaseId --jq length 2>&1)"; then
+      echo "error: could not ask GitHub whether a publish is running:" >&2
+      echo "       $n" >&2
+      exit 1
+    fi
+    if [[ "$n" != "0" ]]; then
+      echo "error: $n publish.yml run(s) $status on $GITHUB_REPO. Deploying the page" >&2
+      echo "       now could roll back the feed that run publishes. Re-run after it." >&2
+      exit 1
+    fi
+  done
+  echo "    no publish.yml run queued or in progress"
+}
+
+# Checked with the other gates, long before the deploy: a missing CLI should
+# not cost a signed, verified stage first. A --stage-only run never deploys.
+require_firebase() {
+  if [[ "$STAGE_ONLY" -eq 0 ]] && ! command -v firebase > /dev/null 2>&1; then
+    echo "error: the firebase CLI is not on PATH (npm install -g firebase-tools)" >&2
+    exit 1
+  fi
+}
+
+# Deploy $STAGE -- the WHOLE site. `firebase deploy` replaces every file, so
+# whatever is not staged is deleted from the live site: the feed must be in
+# $STAGE even when this run did not change it.
+deploy_site() {
+  # CREDS and the EXIT trap that removes it are set up with the extraction cleanup
+  # at the top -- one handler for both, since a second `trap ... EXIT` would replace
+  # the first rather than join it.
+  if [[ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]]; then
+    CREDS="$(mktemp)"
+    printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$CREDS"
+    export GOOGLE_APPLICATION_CREDENTIALS="$CREDS"
+    echo "    auth: service account"
+  else
+    echo "    auth: local firebase login"
+  fi
+
+  # Named target, never a bare `--only hosting`: firebase.json now declares two
+  # sites, and the unqualified form deploys BOTH -- which would overwrite the live
+  # download page if a second site is ever added back.
+  firebase deploy --only "hosting:$FIREBASE_SITE" --project "$FIREBASE_PROJECT" --non-interactive
+
+  echo
+  echo "==> Live:"
+  echo "    $SITE_HOST/"
+  echo "    $SITE_HOST/appcast.xml"
+}
+
+# --- --page-only -------------------------------------------------------------
+#
+# Redeploys the download page WITHOUT publishing anything to the update feed.
+# The feed cannot simply be left out: `firebase deploy` replaces the whole site,
+# so a stage without appcast.xml deletes the feed every installed copy polls.
+# It is therefore re-served BYTE-FOR-BYTE from the live site, and compared
+# against the live one again immediately before deploying: a release published
+# in between would otherwise be silently rolled back by this run.
+#
+# Needs no archive, no tag and no signing key -- it signs nothing.
+if [[ "$PAGE_ONLY" -eq 1 ]]; then
+  echo "==> Publishing the $APP_NAME download page only (the feed is not changed)"
+  require_firebase
+
+  # The release path renders a tagged, CI-gated checkout; this runs from a
+  # working tree. Publish only what a commit holds -- otherwise the live page
+  # shows content no commit has, and the next release silently reverts it.
+  if ! "$ROOT/scripts/gen-readme-features.py" --check > /dev/null; then
+    echo "error: site/index.html's generated blocks are stale -- run scripts/gen-readme-features.py." >&2
+    exit 1
+  fi
+  if ! git -C "$ROOT" diff --quiet HEAD -- site/ \
+     || [[ -n "$(git -C "$ROOT" ls-files --others --exclude-standard -- site/)" ]]; then
+    echo "error: site/ differs from HEAD (uncommitted or untracked files):" >&2
+    git -C "$ROOT" status --short -- site/ >&2
+    echo "       Commit it first: the page publishes only what a commit holds." >&2
+    exit 1
+  fi
+  echo "    site/: matches HEAD $(git -C "$ROOT" rev-parse --short HEAD), generated blocks in sync"
+
+  LIVE_FEED="$VERIFY_DIR/live-appcast.xml"
+  FEED_HTTP="$(fetch_live_feed "$LIVE_FEED")"
+  if [[ "$FEED_HTTP" != "200" ]]; then
+    echo "error: could not read the live feed at $SITE_HOST/appcast.xml (HTTP $FEED_HTTP)." >&2
+    echo "       --page-only re-serves the live feed unchanged, so it cannot run" >&2
+    echo "       without one: deploying anyway would delete the feed from the site." >&2
+    exit 1
+  fi
+  if ! grep -q '<rss' "$LIVE_FEED"; then
+    echo "error: $SITE_HOST/appcast.xml answered 200 but is not an RSS feed." >&2
+    exit 1
+  fi
+  echo "    live feed: $(grep -c '<item>' "$LIVE_FEED" | tr -d ' ') item(s), $(stat -f%z "$LIVE_FEED") bytes"
+
+  if ! load_production_item "$LIVE_FEED"; then
+    echo "error: the live feed has no production item, so there is no build for" >&2
+    echo "       the page to offer. Promote one first (publish-site.sh <v> --promote)." >&2
+    exit 1
+  fi
+  PAGE_URL="$CARRIED_URL"
+  echo "    page follows production: $PAGE_VERSION ($PAGE_ARCHIVE)"
+
+  # The download button must work. Anonymous for the same reason as
+  # verify_published_archive; LENGTH rather than the signature, because this
+  # mode holds no key -- and it publishes no signature either, so the feed's
+  # signature is not this run's claim to check.
+  DL_DEST="$VERIFY_DIR/page-archive"
+  DL_CODE="$(curl -q -sSL --no-netrc --max-time 300 -o "$DL_DEST" -w '%{http_code}' "$PAGE_URL" || echo 000)"
+  if [[ "$DL_CODE" != "200" ]]; then
+    echo "error: the page's download is not anonymously downloadable (HTTP $DL_CODE):" >&2
+    echo "       $PAGE_URL" >&2
+    exit 1
+  fi
+  DL_LEN="$(stat -f%z "$DL_DEST")"
+  if [[ "$DL_LEN" != "$PAGE_LENGTH" ]]; then
+    echo "error: the page's download is $DL_LEN bytes; the feed advertises $PAGE_LENGTH." >&2
+    echo "       $PAGE_URL" >&2
+    exit 1
+  fi
+  rm -f "$DL_DEST"
+  echo "    download: 200 anonymous, $DL_LEN bytes (matches the feed)"
+
+  rm -rf "$STAGE"
+  mkdir -p "$STAGE"
+  cp "$LIVE_FEED" "$STAGE/appcast.xml"
+  if ! cmp -s "$LIVE_FEED" "$STAGE/appcast.xml"; then
+    echo "error: the staged appcast.xml differs from the live feed it was copied from." >&2
+    exit 1
+  fi
+  render_page
+
+  # Last gate: is the staged feed STILL the live one? Asked right before the
+  # deploy, not only at fetch time, because the gap between the two is where a
+  # concurrent release publish would land -- and this deploy would revert it.
+  refuse_if_publish_running
+  RECHECK="$VERIFY_DIR/live-appcast.recheck.xml"
+  RECHECK_HTTP="$(fetch_live_feed "$RECHECK")"
+  if [[ "$RECHECK_HTTP" != "200" ]]; then
+    echo "error: could not re-read the live feed before deploying (HTTP $RECHECK_HTTP)." >&2
+    exit 1
+  fi
+  if ! cmp -s "$RECHECK" "$STAGE/appcast.xml"; then
+    echo "error: the live feed changed while this ran -- the staged appcast.xml no" >&2
+    echo "       longer matches it. Deploying would roll back whatever was published." >&2
+    echo "       Re-run once the other publish has finished." >&2
+    exit 1
+  fi
+  echo "    staged appcast.xml is byte-identical to the live feed ($(stat -f%z "$STAGE/appcast.xml") bytes)"
+
+  if [[ "$STAGE_ONLY" -eq 1 ]]; then
+    echo
+    echo "==> --stage-only: nothing deployed. Staged in $STAGE:"
+    ls -la "$STAGE"
+    exit 0
+  fi
+  deploy_site
+  exit 0
+fi
+
+# --- gates -------------------------------------------------------------------
+
+# The ARCHIVE is the only input. `dist/Hammerdeck.app` used to be required here
+# too, and is not: since REL-1 every gate asks the app inside the image, and the
+# publish job downloads that image from the GitHub Release with no loose build
+# anywhere beside it.
+if [[ ! -f "$DMG" ]]; then
+  echo "error: $DMG not found -- run scripts/package.sh $VERSION first" >&2
+  exit 1
+fi
+
+# --- inspect the archive we are actually shipping ----------------------------
+
+# Every gate below asks its question of the app INSIDE the image, not of
+# dist/Hammerdeck.app sitting beside it. They are separate objects: package.sh
+# produces both, but nothing downstream re-checks that they still agree, so
+# validating the loose app certified a build no user would ever receive and a
+# stale or hand-dropped image passed on its neighbour's reputation. The image is
+# what the appcast points at, so the image is what has to answer.
 # Mounted read-only and out of the way: -nobrowse keeps it off the Finder
 # sidebar and -noautoopen stops a window appearing on the maintainer's desktop
 # mid-publish. The gates below read the app in place; nothing is copied out.
@@ -255,8 +568,6 @@ if [[ "$ARCHIVED_FEED" != "$FEED_RELEASE" ]]; then
   echo "       expected:            $FEED_RELEASE" >&2
   exit 1
 fi
-FIREBASE_SITE="hammerdeck"
-SITE_HOST="https://hammerdeck.peach-studio.com"
 echo "    feed: $SITE_HOST/appcast.xml (hosting site '$FIREBASE_SITE')"
 
 # Which SOURCE is in there. A version string is a label anyone can pass to
@@ -334,10 +645,7 @@ else
 fi
 echo "    signing key: $KEY_SOURCE"
 
-if [[ "$STAGE_ONLY" -eq 0 ]] && ! command -v firebase > /dev/null 2>&1; then
-  echo "error: the firebase CLI is not on PATH (npm install -g firebase-tools)" >&2
-  exit 1
-fi
+require_firebase
 
 # Read the notes with the other gates, before signing: a bad tag should not cost
 # a signature and a staged archive first. A non-zero exit must abort here --
@@ -453,8 +761,7 @@ mkdir -p "$STAGE"
 # run minutes after its beta publish would otherwise read a pre-publish copy
 # and refuse on state that is already stale.
 LIVE_FEED="$VERIFY_DIR/live-appcast.xml"
-FEED_HTTP="$(curl -sS --max-time 30 -H 'Cache-Control: no-cache' \
-  -o "$LIVE_FEED" -w '%{http_code}' "$SITE_HOST/appcast.xml" || echo 000)"
+FEED_HTTP="$(fetch_live_feed "$LIVE_FEED")"
 case "$FEED_HTTP" in
   200) echo "    live feed: $(grep -c '<item>' "$LIVE_FEED" | tr -d ' ') item(s)" ;;
   404) : > "$LIVE_FEED"; echo "    live feed: none yet (404)" ;;
@@ -481,55 +788,9 @@ PAGE_ARCHIVE="$DMG_NAME"
 PAGE_URL="$ARCHIVE_URL"
 PAGE_LENGTH="$LENGTH"
 PAGE_MIN_OS="$MIN_OS"
-PAGE_DATE=""
+PAGE_DATE="$PUB_DATE"
 if [[ "$RELEASE_STAGE" == "beta" ]]; then
-  CARRIED="$("$ROOT/scripts/appcast.py" carried --live "$LIVE_FEED")"
-  if [[ -n "$CARRIED" ]]; then
-    # Every field from the SAME build. Mixing them is how the page ends up
-    # advertising the production version beside the beta's minimum OS, telling
-    # a macOS 13 user not to download a build that runs fine for them.
-    # Read as an array and COUNT, rather than into six named variables. Tab is
-    # IFS whitespace whatever IFS is set to, so a run of them collapses and one
-    # empty field shifts every later one along -- the page would then advertise
-    # a byte count as its version number. The count is what catches that
-    # (measured: an empty field yields 5, not 6); the split alone cannot.
-    IFS=$'\t' read -r -d '' -a CARRIED_FIELDS < <(printf '%s\0' "$CARRIED") || true
-    if [[ "${#CARRIED_FIELDS[@]}" -ne 6 ]]; then
-      echo "error: the production item yielded ${#CARRIED_FIELDS[@]} fields, expected 6." >&2
-      echo "       Refusing to guess which one is the version." >&2
-      exit 1
-    fi
-    PAGE_VERSION="${CARRIED_FIELDS[0]}"
-    PAGE_LENGTH="${CARRIED_FIELDS[1]}"
-    CARRIED_URL="${CARRIED_FIELDS[2]}"
-    PAGE_MIN_OS="${CARRIED_FIELDS[3]}"
-    PAGE_DATE="${CARRIED_FIELDS[4]}"
-    CARRIED_SIG="${CARRIED_FIELDS[5]}"
-    PAGE_ARCHIVE="$(basename "$CARRIED_URL")"
-
-    # A feed published while the archives were hosted on the site carries a site
-    # URL. Retarget it at the Release for that version -- same filename, same
-    # bytes, and the verification below is what proves the second half rather
-    # than assuming it. Once a publish has run, the live feed already holds the
-    # Release URL and this branch does nothing.
-    if [[ "$CARRIED_URL" == "$SITE_HOST/"* ]]; then
-      CARRIED_URL="$GITHUB_DOWNLOAD_PREFIX/v$PAGE_VERSION/$PAGE_ARCHIVE"
-      echo "    retargeting the carried archive at its Release: $CARRIED_URL"
-    fi
-
-    # Anchored PREFIX, never a substring: this value comes out of a document
-    # fetched over the network, and `https://evil.example/?x=github.com/...`
-    # contains every substring a looser test would look for.
-    case "$CARRIED_URL" in
-      "$GITHUB_DOWNLOAD_PREFIX"/*) ;;
-      *)
-        echo "error: the production enclosure is not a Release asset of $GITHUB_REPO:" >&2
-        echo "       $CARRIED_URL" >&2
-        echo "       Refusing to carry a feed entry pointing somewhere this repo" >&2
-        echo "       does not control." >&2
-        exit 1 ;;
-    esac
-
+  if load_production_item "$LIVE_FEED"; then
     echo "    carrying the production release forward: $PAGE_VERSION ($PAGE_ARCHIVE)"
     # What the ENTIRE non-beta install base downloads. Its length and signature
     # are copied into the new feed verbatim, so if the asset has drifted from
@@ -549,32 +810,7 @@ printf '%s\n' "$NOTES_HTML" > "$NOTES_FILE"
   --signature "$ED_SIG" --min-os "$MIN_OS" --notes-file "$NOTES_FILE" \
   --pub-date "$PUB_DATE" --live "$LIVE_FEED" > "$STAGE/appcast.xml"
 
-VERSION="$PAGE_VERSION" DMG_URL="$PAGE_URL" LENGTH="$PAGE_LENGTH" \
-MIN_OS="$PAGE_MIN_OS" PUB_DATE="$PAGE_DATE" \
-python3 - "$ROOT/site/index.html" "$STAGE/index.html" <<'PY'
-import os, sys, datetime
-src, dst = sys.argv[1], sys.argv[2]
-mb = int(os.environ["LENGTH"]) / (1024 * 1024)
-subs = {
-    "{{VERSION}}": os.environ["VERSION"],
-    # An absolute URL off-site, not a site-root path: the page is on hosting
-    # and the archive is on a GitHub Release.
-    "{{DMG}}":     os.environ["DMG_URL"],
-    "{{SIZE}}":    f"{mb:.1f} MB",
-    "{{DATE}}":    datetime.date.today().strftime("%B %-d, %Y"),
-    "{{MINOS}}":   os.environ["MIN_OS"],
-}
-html = open(src, encoding="utf-8").read()
-for token, value in subs.items():
-    html = html.replace(token, value)
-# A token left behind renders as literal braces on the live page, which looks
-# broken to every visitor. Fail here instead, while it is still a build error.
-leftover = [t for t in subs if t in html] + (["{{"] if "{{" in html else [])
-if leftover:
-    sys.exit(f"error: unrendered token(s) in index.html: {leftover}")
-open(dst, "w", encoding="utf-8").write(html)
-print(f"    page: {subs['{{VERSION}}']}, {subs['{{SIZE}}']}, macOS {subs['{{MINOS}}']}+")
-PY
+render_page
 
 # --- verify before deploying -------------------------------------------------
 
@@ -668,24 +904,4 @@ verify_published_archive "$ARCHIVE_URL" "$LENGTH" "$ED_SIG" "published" || {
   exit 1
 }
 
-# CREDS and the EXIT trap that removes it are set up with the extraction cleanup
-# at the top -- one handler for both, since a second `trap ... EXIT` would replace
-# the first rather than join it.
-if [[ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]]; then
-  CREDS="$(mktemp)"
-  printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$CREDS"
-  export GOOGLE_APPLICATION_CREDENTIALS="$CREDS"
-  echo "    auth: service account"
-else
-  echo "    auth: local firebase login"
-fi
-
-# Named target, never a bare `--only hosting`: firebase.json now declares two
-# sites, and the unqualified form deploys BOTH -- which would overwrite the live
-# download page if a second site is ever added back.
-firebase deploy --only "hosting:$FIREBASE_SITE" --project "$FIREBASE_PROJECT" --non-interactive
-
-echo
-echo "==> Live:"
-echo "    $SITE_HOST/"
-echo "    $SITE_HOST/appcast.xml"
+deploy_site
