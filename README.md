@@ -147,8 +147,15 @@ else it offers to move itself on first launch. That move is not housekeeping:
 macOS runs a downloaded app from a randomised read-only path until it has been
 moved, and an app running from there can never install its own updates.
 
+Or install it with [Homebrew](https://github.com/kouxing2000/homebrew-tap):
+
+```sh
+brew install --cask kouxing2000/tap/hammerdeck
+```
+
 It keeps itself up to date: Hammerdeck checks for new versions and asks you
-before installing any of them.
+before installing any of them -- which is also why `brew upgrade` leaves it
+alone.
 
 Or build it from source:
 
