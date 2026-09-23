@@ -198,7 +198,7 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         let report = NSMenuItem(title: Strings.t("menu.report", default: "Report a Problem…"),
                                 action: #selector(reportProblem), keyEquivalent: "")
         report.target = self
-        report.toolTip = Strings.t("menu.report.tip", default: "Email us with your version, macOS, permissions and enabled features filled in -- the details that make a report reproducible")
+        report.toolTip = Strings.t("menu.report.tip", default: "Email us or open a GitHub issue with your version, macOS, permissions and enabled features filled in -- the details that make a report reproducible")
         moreMenu.addItem(report)
 
         // Only a packaged build can update itself: a dev `swift run` has no
@@ -433,36 +433,131 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         NSWorkspace.shared.open(Native.logsDir)
     }
 
-    /// Open a pre-filled mail with the diagnostics already in the body.
-    ///
-    /// The report also goes to the clipboard: a mailto body is length-limited and
-    /// some mail clients mangle long ones, so the user always has an intact copy
-    /// to paste even if the compose window arrives truncated or empty. Losing the
-    /// details is the exact failure this feature exists to prevent, so it does not
-    /// rely on the mailto surviving.
+    /// "Report a Problem…": the diagnostics, sent the way the user picks.
     @objc func reportProblem() {
-        let body = Diagnostics.report(store)
+        sendReport(crash: nil)
+    }
+
+    /// Build the report and let the user choose where it goes -- or nowhere.
+    ///
+    /// The report also goes to the clipboard FIRST: a mailto body is
+    /// length-limited, some mail clients mangle long ones, and a GitHub URL is
+    /// capped, so the user always has an intact copy to paste even if the compose
+    /// window arrives truncated or empty. Losing the details is the exact failure
+    /// this feature exists to prevent, so it does not rely on either URL surviving.
+    func sendReport(crash: String?) {
+        var body = Diagnostics.report(store)
+        if let crash { body += "\n\nCRASH:\n" + crash }
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(body, forType: .string)
 
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = Strings.t("report.how", default: "How do you want to send the report?")
+        alert.informativeText = Strings.t("report.how.detail",
+            default: "The details are already on your clipboard. Email reaches only us. A GitHub "
+                   + "issue is public -- anyone can read it -- and gets you a reply in the open.")
+        alert.addButton(withTitle: Strings.t("report.email", default: "Email"))
+        alert.addButton(withTitle: Strings.t("report.github", default: "GitHub Issue"))
+        alert.addButton(withTitle: Strings.t("report.cancel", default: "Cancel"))
+        let choice = alert.runModal()
+        let route: String
+        switch choice {
+        case .alertFirstButtonReturn:  route = "email"
+        case .alertSecondButtonReturn: route = "github"
+        default:                       route = "cancelled"
+        }
+        Native.shared.seamLog("report: \(route)\(crash == nil ? "" : " (crash)")")
+
         let subject = "\(AppInfo.displayName) \(AppInfo.version ?? "dev") -- "
+            + (crash == nil ? "" : "crash")
         let intro = Strings.t("report.intro",
                               default: "Describe what you did and what you expected. Technical details "
                               + "below (also copied to your clipboard). The daily log is often the "
                               + "missing piece -- attach it from \"Open Logs\" if you can.")
         let full = intro + "\n\n---\n" + body
+        let url: URL?
+        switch route {
+        case "email":  url = Self.mailURL(subject: subject, body: full)
+        case "github": url = Self.issueURL(title: subject, body: full)
+        default:       url = nil
+        }
+        if let url { NSWorkspace.shared.open(url) }
+    }
 
+    static func mailURL(subject: String, body: String) -> URL? {
         var comps = URLComponents()
         comps.scheme = "mailto"
-        comps.path = Self.feedbackEmail
+        comps.path = feedbackEmail
         comps.queryItems = [
             URLQueryItem(name: "subject", value: subject),
-            URLQueryItem(name: "body", value: full),
+            URLQueryItem(name: "body", value: body),
         ]
-        if let url = comps.url {
-            NSWorkspace.shared.open(url)
+        return comps.url
+    }
+
+    /// A pre-filled new-issue page. GitHub rejects a URL past roughly 8 KB
+    /// ENCODED, and newlines and punctuation triple in size when encoded, so the
+    /// cap is on the final URL, not the body: the body is cut back until the URL
+    /// fits, with a note pointing at the intact copy on the clipboard.
+    static func issueURL(title: String, body: String, maxLength: Int = 7500) -> URL? {
+        let note = "\n\n[... cut to fit the link; the full report is on your clipboard]"
+        var text = body
+        while true {
+            var comps = URLComponents(string: issuesNewURL)!
+            comps.queryItems = [
+                URLQueryItem(name: "labels", value: "bug"),
+                URLQueryItem(name: "title", value: title),
+                URLQueryItem(name: "body", value: text),
+            ]
+            guard let url = comps.url else { return nil }
+            // Already down to the note alone: nothing left to cut, so the title
+            // is what is long -- ship it rather than loop.
+            if url.absoluteString.count <= maxLength || text == note { return url }
+            let keep = max(0, text.count - max(200, text.count / 5))
+            text = keep == 0 ? note : String(body.prefix(keep)) + note
         }
+    }
+
+    private static let issuesNewURL = "https://github.com/kouxing2000/hammerdeck/issues/new"
+
+    /// After launch: if macOS recorded a crash of ours since the last one the
+    /// user was asked about, ask once whether to send it. Either answer marks
+    /// it seen. The first launch only records the watermark -- a crash from
+    /// before this install is not ours to ask about -- and an unbundled
+    /// `swift run` has no bundle id to match, so it never asks.
+    func offerCrashReportIfNeeded(isFirstRun: Bool) {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let defaults = UserDefaults.standard
+        guard let since = defaults.object(forKey: CrashReports.lastSeenKey) as? Date, !isFirstRun else {
+            defaults.set(Date(), forKey: CrashReports.lastSeenKey)
+            Native.shared.seamLog("crash reports: watermark set (first run or first launch with the check)")
+            return
+        }
+        guard let found = CrashReports.pending(in: CrashReports.defaultDirectory,
+                                               processName: ProcessInfo.processInfo.processName,
+                                               bundleID: bundleID, since: since) else { return }
+        defaults.set(found.date, forKey: CrashReports.lastSeenKey)
+        guard let text = try? String(contentsOf: found.url, encoding: .utf8),
+              let summary = CrashReports.summary(text) else {
+            Native.shared.seamLog("crash reports: \(found.url.lastPathComponent) unreadable, not offered")
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = Strings.t("crash.title", default: "Hammerdeck quit unexpectedly last time")
+        alert.informativeText = Strings.t("crash.detail",
+            default: "Sending a report helps us fix it. It holds the app and macOS versions and where "
+                   + "the crash happened -- no documents, window titles or file paths. You choose "
+                   + "how to send it next, and nothing goes anywhere unless you do.")
+        alert.addButton(withTitle: Strings.t("crash.send", default: "Send Report…"))
+        alert.addButton(withTitle: Strings.t("crash.dontSend", default: "Don't Send"))
+        let send = alert.runModal() == .alertFirstButtonReturn
+        Native.shared.seamLog("crash reports: offered \(found.url.lastPathComponent), user chose "
+                              + (send ? "send" : "don't send"))
+        if send { sendReport(crash: summary) }
     }
 
     /// Where problem reports go. Plus-addressed per app, matching the studio

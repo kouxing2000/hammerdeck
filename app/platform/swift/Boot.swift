@@ -513,6 +513,13 @@ public func hammerdeckMain() {
     // build a menu whose Settings row greys itself out until the next runloop.
     MainMenu.install(into: app)
 
+    // After launch settles, so the ask is not racing the first-run Homepage or
+    // feature start-up for the screen. Offer-only: nothing is sent unless the
+    // user picks a route in the dialog that follows.
+    DispatchQueue.main.async {
+        statusBar.offerCrashReportIfNeeded(isFirstRun: isFirstRun)
+    }
+
     // First launch: open the Homepage, not a bare menubar icon. The Dashboard's
     // get-started card carries the golden path from there -- the Accessibility
     // ask with its why, then the demo moment on the user's own windows -- and the
