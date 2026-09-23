@@ -63,6 +63,19 @@ jobs:
       - name: Appcast generation and the promote gate
         run: scripts/appcast.py --self-test
 
+      # The download page's renderer, like the two above, only RUNS on a deploy.
+      # Sample values, the same script publish-site.sh calls; the grep is the
+      # check that does not trust the renderer's own leftover-token guard.
+      - name: Download page renders
+        run: |
+          VERSION=0.0.0 DMG_URL=https://example.invalid/Hammerdeck-0.0.0.dmg \
+          LENGTH=8405877 MIN_OS=13.0 PUB_DATE='Mon, 21 Sep 2026 12:00:00 +0000' \
+            scripts/render-page.py site/index.html "$RUNNER_TEMP/index.html"
+          if grep -n '{{' "$RUNNER_TEMP/index.html"; then
+            echo "::error::unrendered {{ token(s) in the rendered download page"
+            exit 1
+          fi
+
       # Package.swift is swift-tools-version 6.0 -> Swift 6 (Xcode 16+). Pick the
       # newest Xcode 16 present so an image-default bump can't silently downgrade us
       # (mirrors release.yml).

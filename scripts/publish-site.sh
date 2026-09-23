@@ -204,6 +204,36 @@ fetch_live_feed() {
     -o "$1" -w '%{http_code}' "$SITE_HOST/appcast.xml" || echo 000
 }
 
+# Download archive URL $1, ANONYMOUSLY, into $2 and check it is $3 bytes -- what
+# a client that follows the feed or the page's button actually receives. $4
+# labels the errors. Returns 1 on a failed fetch or a length mismatch; the file
+# is left at $2 for the caller to check further (or remove).
+#
+# Anonymous is the point. `gh release download` sends a token and succeeds
+# against a draft release and against a private repo, so a tokenized check would
+# pass while every user's Sparkle got a 404. `-q` and `--no-netrc` stop a
+# ~/.curlrc or a netrc entry from quietly supplying the credentials this check
+# exists to do without.
+fetch_archive() {
+  local url="$1" dest="$2" expect_len="$3" label="$4"
+  local code got
+  code="$(curl -q -sSL --no-netrc --max-time 300 -o "$dest" -w '%{http_code}' "$url" || echo 000)"
+  if [[ "$code" != "200" ]]; then
+    echo "error: the $label archive is not anonymously downloadable (HTTP $code):" >&2
+    echo "       $url" >&2
+    echo "       Installed copies fetch this with no credentials. A draft release," >&2
+    echo "       a missing asset or a private repo all look like this, and" >&2
+    echo "       publishing anyway offers everyone a download that fails." >&2
+    return 1
+  fi
+  got="$(stat -f%z "$dest")"
+  if [[ "$got" != "$expect_len" ]]; then
+    echo "error: the $label archive is $got bytes; the feed advertises $expect_len." >&2
+    echo "       $url" >&2
+    return 1
+  fi
+}
+
 # Read the PRODUCTION item out of the live feed at $1 into PAGE_VERSION,
 # PAGE_LENGTH, PAGE_MIN_OS, PAGE_DATE, PAGE_ARCHIVE, CARRIED_URL and
 # CARRIED_SIG. Returns 1 when the feed has no production item. Exits on a
@@ -271,38 +301,7 @@ load_production_item() {
 render_page() {
 VERSION="$PAGE_VERSION" DMG_URL="$PAGE_URL" LENGTH="$PAGE_LENGTH" \
 MIN_OS="$PAGE_MIN_OS" PUB_DATE="$PAGE_DATE" \
-python3 - "$ROOT/site/index.html" "$STAGE/index.html" <<'PY'
-import os, sys
-from email.utils import parsedate_to_datetime
-src, dst = sys.argv[1], sys.argv[2]
-# The date of the BUILD the page offers (its feed pubDate), never the day of
-# this deploy: a page that carries production forward, or a --page-only run,
-# offers a build published earlier.
-try:
-    built = parsedate_to_datetime(os.environ["PUB_DATE"])
-except (TypeError, ValueError):
-    sys.exit(f"error: the page's build has no readable pubDate: {os.environ['PUB_DATE']!r}")
-mb = int(os.environ["LENGTH"]) / (1024 * 1024)
-subs = {
-    "{{VERSION}}": os.environ["VERSION"],
-    # An absolute URL off-site, not a site-root path: the page is on hosting
-    # and the archive is on a GitHub Release.
-    "{{DMG}}":     os.environ["DMG_URL"],
-    "{{SIZE}}":    f"{mb:.1f} MB",
-    "{{DATE}}":    built.strftime("%B %-d, %Y"),
-    "{{MINOS}}":   os.environ["MIN_OS"],
-}
-html = open(src, encoding="utf-8").read()
-for token, value in subs.items():
-    html = html.replace(token, value)
-# A token left behind renders as literal braces on the live page, which looks
-# broken to every visitor. Fail here instead, while it is still a build error.
-leftover = [t for t in subs if t in html] + (["{{"] if "{{" in html else [])
-if leftover:
-    sys.exit(f"error: unrendered token(s) in index.html: {leftover}")
-open(dst, "w", encoding="utf-8").write(html)
-print(f"    page: {subs['{{VERSION}}']}, {subs['{{SIZE}}']}, macOS {subs['{{MINOS}}']}+")
-PY
+"$ROOT/scripts/render-page.py" "$ROOT/site/index.html" "$STAGE/index.html"
 # The page's images. site/assets/ is also where README.md points, so the page
 # and the README show the same files. `firebase deploy` replaces the whole site,
 # so anything not staged here is deleted from it.
@@ -421,25 +420,13 @@ if [[ "$PAGE_ONLY" -eq 1 ]]; then
   PAGE_URL="$CARRIED_URL"
   echo "    page follows production: $PAGE_VERSION ($PAGE_ARCHIVE)"
 
-  # The download button must work. Anonymous for the same reason as
-  # verify_published_archive; LENGTH rather than the signature, because this
-  # mode holds no key -- and it publishes no signature either, so the feed's
-  # signature is not this run's claim to check.
+  # The download button must work. LENGTH rather than the signature, because
+  # this mode holds no key -- and it publishes no signature either, so the
+  # feed's signature is not this run's claim to check.
   DL_DEST="$VERIFY_DIR/page-archive"
-  DL_CODE="$(curl -q -sSL --no-netrc --max-time 300 -o "$DL_DEST" -w '%{http_code}' "$PAGE_URL" || echo 000)"
-  if [[ "$DL_CODE" != "200" ]]; then
-    echo "error: the page's download is not anonymously downloadable (HTTP $DL_CODE):" >&2
-    echo "       $PAGE_URL" >&2
-    exit 1
-  fi
-  DL_LEN="$(stat -f%z "$DL_DEST")"
-  if [[ "$DL_LEN" != "$PAGE_LENGTH" ]]; then
-    echo "error: the page's download is $DL_LEN bytes; the feed advertises $PAGE_LENGTH." >&2
-    echo "       $PAGE_URL" >&2
-    exit 1
-  fi
+  fetch_archive "$PAGE_URL" "$DL_DEST" "$PAGE_LENGTH" "page's" || exit 1
   rm -f "$DL_DEST"
-  echo "    download: 200 anonymous, $DL_LEN bytes (matches the feed)"
+  echo "    download: 200 anonymous, $PAGE_LENGTH bytes (matches the feed)"
 
   rm -rf "$STAGE"
   mkdir -p "$STAGE"
@@ -683,13 +670,8 @@ if [[ -z "$MIN_OS" ]]; then
 fi
 # --- what a client will actually get -----------------------------------------
 
-# Prove an enclosure URL serves, ANONYMOUSLY, the exact bytes the feed signs for.
-#
-# Anonymous is the point. `gh release download` sends a token and succeeds
-# against a draft release and against a private repo, so a tokenized check would
-# pass while every user's Sparkle got a 404. `-q` and `--no-netrc` stop a
-# ~/.curlrc or a netrc entry from quietly supplying the credentials this check
-# exists to do without.
+# Prove an enclosure URL serves, ANONYMOUSLY, the exact bytes the feed signs for:
+# fetch_archive's download and length, then the signature.
 #
 # It downloads instead of reading Content-Length, and that is where its value
 # is: re-running a release tag rebuilds and `--clobber`s the asset, and a
@@ -700,22 +682,7 @@ fi
 verify_published_archive() {
   local url="$1" expect_len="$2" expect_sig="$3" label="$4"
   local dest="$VERIFY_DIR/published-$(basename "$url")"
-  local code got
-  code="$(curl -q -sSL --no-netrc --max-time 300 -o "$dest" -w '%{http_code}' "$url" || echo 000)"
-  if [[ "$code" != "200" ]]; then
-    echo "error: the $label archive is not anonymously downloadable (HTTP $code):" >&2
-    echo "       $url" >&2
-    echo "       Installed copies fetch this with no credentials. A draft release," >&2
-    echo "       a missing asset or a private repo all look like this, and" >&2
-    echo "       publishing anyway offers everyone a download that fails." >&2
-    return 1
-  fi
-  got="$(stat -f%z "$dest")"
-  if [[ "$got" != "$expect_len" ]]; then
-    echo "error: the $label archive is $got bytes; the feed advertises $expect_len." >&2
-    echo "       $url" >&2
-    return 1
-  fi
+  fetch_archive "$url" "$dest" "$expect_len" "$label" || return 1
   if ! printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --verify \
        "$dest" "$expect_sig" --ed-key-file - > /dev/null; then
     echo "error: the $label archive does not match the signature published for it." >&2
@@ -725,7 +692,7 @@ verify_published_archive() {
     return 1
   fi
   rm -f "$dest"
-  echo "    $label archive: 200 anonymous, $got bytes, signature verifies"
+  echo "    $label archive: 200 anonymous, $expect_len bytes, signature verifies"
 }
 
 PUB_DATE="$(date '+%a, %d %b %Y %H:%M:%S %z')"
