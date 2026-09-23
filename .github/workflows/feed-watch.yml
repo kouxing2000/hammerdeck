@@ -11,6 +11,9 @@ name: Feed watch
 # throughout. The archives live on GitHub Releases, so "nobody deployed
 # anything" is no longer the same as "nothing changed".
 #
+# It also holds the Homebrew cask to the production item: publish.yml's
+# production run bumps it, and this is what notices when that bump failed.
+#
 # ubuntu, not macos: the verification is `openssl pkeyutl -rawin`, which needs
 # OpenSSL 3 and nothing Apple. A scheduled job should be the cheap runner.
 #

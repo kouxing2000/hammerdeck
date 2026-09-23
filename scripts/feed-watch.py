@@ -37,6 +37,7 @@ signs the message rather than a digest of it.
 
 import argparse
 import base64
+import hashlib
 import os
 import re
 import subprocess
@@ -47,6 +48,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from appcast import parse_items  # noqa: E402
+import cask  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE_SH = os.path.join(ROOT, "scripts", "package.sh")
@@ -102,6 +104,7 @@ def check_feed(name: str, feed_url: str, key_pem: str) -> list[str]:
         return [f"{name}: the feed parsed to ZERO items -- {feed_url}"]
 
     print(f"{name}: {len(items)} item(s) on {feed_url}")
+    production = None  # (version, sha256) of the verified default-channel item
     for item in items:
         channel = item.channel or "default"
         label = f"{name} {item.version} ({channel})"
@@ -150,7 +153,34 @@ def check_feed(name: str, feed_url: str, key_pem: str) -> list[str]:
             continue
 
         print(f"  ok  {item.version} ({channel})  {len(payload)} bytes, signature verifies")
+        if not item.channel:
+            production = (item.version, hashlib.sha256(payload).hexdigest())
+
+    if production:
+        failures += check_cask(production)
     return failures
+
+
+def check_cask(production: tuple[str, str]) -> list[str]:
+    """The Homebrew cask must offer the build the default channel offers. Only
+    compared against an item that just verified, so a drift alert never points
+    `brew install` at bytes this run could not vouch for."""
+    try:
+        cask_text = fetch(cask.CASK_RAW_URL).decode("utf-8")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as err:
+        return [f"cask: unreadable at {cask.CASK_RAW_URL} -- {err}"]
+    try:
+        offered = cask.read(cask_text)
+    except ValueError as err:
+        return [f"cask: {err} -- {cask.CASK_RAW_URL}"]
+    if offered != production:
+        return [f"cask: offers {offered[0]} ({offered[1]}), production is "
+                f"{production[0]} ({production[1]})\n"
+                f"    {cask.CASK_RAW_URL}\n"
+                f"    publish.yml's cask job bumps it: re-run that job alone, or "
+                f"run scripts/cask.py bump in a homebrew-tap checkout."]
+    print(f"  ok  cask offers {offered[0]}, the production build")
+    return []
 
 
 def main() -> int:
