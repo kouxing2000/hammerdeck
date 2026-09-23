@@ -126,6 +126,27 @@ RULES_AUTOMATION = [
     ),
 ]
 
+# Rules-engine effects that need Accessibility, so a rule firing one does nothing
+# until it is granted: (effect kind in effects.lua, the adapter call it reaches,
+# (seam file, the AX-dependent code it must still contain), what to call it).
+# Held to effects.lua and the seam the way RULES_AUTOMATION is: a removed effect,
+# a rerouted call or a seam that stops depending on the grant fails the build
+# rather than leaving the permissions line stale. Named by hand rather than from
+# desc(): several of these labels are templates ("Move %1$s to %2$s").
+RULES_ACCESSIBILITY = [
+    ("layout", "adapter.setWindowFrame(",
+     ("app/platform/swift/Native+Windows.swift", "applyFrame(ref.element"), "arranging windows"),
+    ("moveAppToDisplay", "adapter.setWindowFrame(",
+     ("app/platform/swift/Native+Windows.swift", "applyFrame(ref.element"), "moving an app to a display"),
+    ("minimizeApp", "adapter.minimizeApp",
+     ("app/platform/swift/Native+Windows.swift", "guard AXIsProcessTrusted(), let app = runningApp"),
+     "minimizing an app"),
+    ("lockScreen", "adapter.lockScreen(",
+     ("app/platform/swift/Native+Input.swift", 'guard inputTrusted("lock_screen")'), "locking the screen"),
+    ("mediaKey", "adapter.mediaKey(",
+     ("app/platform/swift/Native+Input.swift", 'guard inputTrusted("media_key")'), "media keys"),
+]
+
 
 def die(msg):
     sys.exit(f"gen-readme-features: {msg}")
@@ -322,13 +343,18 @@ def permissions(features):
     did, so neither is kept by hand. The rules engine is not a feature, but an
     effect that scripts another app prompts for Automation too; RULES_AUTOMATION
     names those, each held to effects.lua so the line dies with the effect rather
-    than outliving it. Scope is Automation only: rules effects that need
-    Accessibility (locking the screen, moving windows) are not listed here.
+    than outliving it. Effects that need Accessibility join that line the same
+    way, from RULES_ACCESSIBILITY.
     """
     ordered = [f for _, items in sections(features) for f in items]
+    effects = (ROOT / EFFECTS_LUA).read_text(encoding="utf-8")
     out = []
     for req, (label, covers) in REQUIRES_WORDS.items():
         names = [f["name"] for f in ordered if req in f["requires"]]
+        if req == "accessibility":
+            rules = rules_accessibility(effects)
+            if rules:
+                names.append(f"the rules engine ({', '.join(rules)})")
         if names:
             out.append((label, covers, names))
     unknown = sorted({r for f in ordered for r in f["requires"]} - set(REQUIRES_WORDS))
@@ -342,7 +368,6 @@ def permissions(features):
             "AppleScript, so macOS prompts once per browser",
             browser,
         ))
-    effects = (ROOT / EFFECTS_LUA).read_text(encoding="utf-8")
     feature_src = {
         path: path.read_text(encoding="utf-8")
         for path in sorted(ROOT.glob("app/features/*/lua/**/*.lua"))
@@ -363,6 +388,20 @@ def permissions(features):
                 "the permissions line names only the rules engine -- extend it")
         out.append((label, covers, [f"the rules engine ({', '.join(labels)})"]))
     return out
+
+
+def rules_accessibility(effects):
+    """RULES_ACCESSIBILITY's names, each checked against effects.lua and the seam."""
+    names = []
+    for kind, adapter_call, (seam_file, target), name in RULES_ACCESSIBILITY:
+        if target not in (ROOT / seam_file).read_text(encoding="utf-8"):
+            die(f"{seam_file} no longer contains {target}, so '{name}' may not need Accessibility")
+        if not re.search(rf"^\s*{re.escape(kind)} = ", effects, re.MULTILINE):
+            die(f"RULES_ACCESSIBILITY names effect '{kind}', which {EFFECTS_LUA} no longer defines")
+        if adapter_call not in effects:
+            die(f"{EFFECTS_LUA} no longer calls {adapter_call}, so '{name}' may not need Accessibility")
+        names.append(name)
+    return names
 
 
 def render_permissions_markdown(features):
