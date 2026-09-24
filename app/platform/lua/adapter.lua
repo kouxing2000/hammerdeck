@@ -1020,10 +1020,18 @@ function adapter.activateApp(name)
 end
 
 -- Focus an app by BUNDLE ID, launching it first if it is not running. False
--- only when no installed app has that bundle id. (Unlike activateApp, this
--- launches -- the basis for "open my dictionary app and search".)
-function adapter.launchOrFocusApp(bundleId)
-    return native.launch_or_focus_app(bundleId) == true
+-- when no launchable app has that bundle id. (Unlike activateApp, this
+-- launches -- the basis for "open my dictionary app and search".) The launch
+-- itself is async and macOS can still refuse it: pass `cb` to hear how it
+-- ended -- cb(true), or cb(false, reason) in macOS's own words -- and the
+-- second return is then that one-shot's cancelable handle. With `cb`, an app
+-- macOS has on disk but will not run is attempted (true, then cb(false, why))
+-- rather than answered false, since attempting it is how the reason is learned.
+---@param cb? fun(ok: boolean, reason: string?)
+---@return boolean found, { stop: fun() }? handle
+function adapter.launchOrFocusApp(bundleId, cb)
+    local ok, id = native.launch_or_focus_app(bundleId, cb)
+    return ok == true, id and handleFor(id) or nil
 end
 
 -- Focus the first browser tab whose URL contains `pattern`; open fallbackURL

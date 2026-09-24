@@ -37,22 +37,89 @@ extension Native {
         return 1
     }
 
-    // launch_or_focus_app(bundleId): focus the app, LAUNCHING it first if it is
-    // not running (unlike activate_app, which only focuses a running app). Keyed
-    // by bundle identifier -- stable across languages, and the only id that
-    // resolves to a launchable URL. Returns false only when no installed app
-    // carries that bundle id. The launch is async; callers settle before typing.
+    // launch_or_focus_app(bundleId, cb?) -> ok, id?: focus the app, LAUNCHING it
+    // first if it is not running (unlike activate_app, which only focuses a
+    // running app). Keyed by bundle identifier -- stable across languages.
+    // `ok` is false when the app cannot be launched as far as anyone can tell up
+    // front. The launch itself is async and macOS can still refuse it; the
+    // refusal's reason goes to the daily log always, and to cb(false, reason)
+    // when a callback is passed (cb(true) on success) -- a cancelable one-shot
+    // whose id is the 2nd return.
+    //
+    // WITH a callback, resolution falls back to the same disk scan app_launcher
+    // lists from: LaunchServices answers nil for an app it has registered but
+    // will not run (an Xcode flagged version-too-low for this macOS), and asking
+    // it to open the bundle is the only way to get its reason. WITHOUT one the
+    // caller acts on `ok` alone, and must keep hearing false for such an app --
+    // text_actions would otherwise type a paste + Return into whatever app is
+    // frontmost, and a rule would log a refused launch as fired.
     func launchOrFocusApp(_ L: OpaquePointer?) -> Int32 {
-        guard let bundleId = LuaState.string(L, 1),
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+        guard let bundleId = LuaState.string(L, 1) else {
             lua_pushboolean(L, 0)
             return 1
         }
+        let ref = lua.makeCallbackRef(at: 2, named: "launch_or_focus_app")
+        let onDisk = { Self.scanInstalledApps().first(where: { $0.bundleId == bundleId })
+                           .map { URL(fileURLWithPath: $0.path) } }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+                ?? (ref == LUA_REFNIL ? nil : onDisk()) else {
+            if ref != LUA_REFNIL { lua.releaseRef(ref) }
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let id: Int32? = ref == LUA_REFNIL ? nil : allocOneShot()
+        if let id { armOneShot(id, ref) }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            let reason = error.map { Self.launchFailureReason($0) }
+            if let error {
+                let chain = Self.errorChain(error)
+                    .map { "\($0.domain) \($0.code): \($0.localizedDescription)" }
+                    .joined(separator: " <- ")
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        Native.shared.seamLog("launch \(bundleId) (\(url.path)) failed -- \(chain)")
+                    }
+                }
+            }
+            guard let id else { return }
+            Native.fireOneShot(id, ref) { L in
+                lua_pushboolean(L, reason == nil ? 1 : 0)
+                if let reason { lua_pushstring(L, reason) } else { lua_pushnil(L) }
+                return 2
+            }
+        }
         lua_pushboolean(L, 1)
-        return 1
+        guard let id else { return 1 }
+        lua_pushinteger(L, lua_Integer(id))
+        return 2
+    }
+
+    /// An error followed down its NSUnderlyingError links, outermost first.
+    nonisolated static func errorChain(_ error: Error) -> [NSError] {
+        var chain = [error as NSError]
+        while chain.count < 8,
+              let next = chain[chain.count - 1].userInfo[NSUnderlyingErrorKey] as? NSError {
+            chain.append(next)
+        }
+        return chain
+    }
+
+    /// The user-facing reason a launch failed. NSWorkspace wraps a LaunchServices
+    /// refusal in a generic NSCocoaErrorDomain 256 ("a miscellaneous error
+    /// occurred"), so descend past those wrappers -- and only those: any other
+    /// outer error already says what happened in its own words. LaunchServices'
+    /// OSStatus text is prefixed with its constant ("kLSIncompatibleApplication
+    /// VersionErr: The app is incompatible with the current OS") -- the prefix
+    /// goes, the sentence stays.
+    nonisolated static func launchFailureReason(_ error: Error) -> String {
+        let chain = errorChain(error)
+        let named = chain.first { !($0.domain == NSCocoaErrorDomain && $0.code == 256) }
+        let text = (named ?? chain[chain.count - 1]).localizedDescription
+        guard let prefix = text.range(of: #"^kLS\w+:\s*"#, options: .regularExpression)
+        else { return text }
+        return String(text[prefix.upperBound...])
     }
 
     private func escAppleScript(_ s: String) -> String {

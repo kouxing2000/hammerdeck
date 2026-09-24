@@ -109,13 +109,27 @@ local function openLauncher(ctx)
             searchSubText = true,
             onSelect = function(choice)
                 if not choice or not choice.bundleId then return end  -- Esc / info row
-                if ctx.launchOrFocusApp(choice.bundleId) then
-                    bumpCount(ctx, choice.bundleId)
-                    ctx.log("launch", choice.bundleId)
+                local id, name = choice.bundleId, choice.text
+                -- Found is only "still installed"; the launch lands later, and
+                -- macOS can still refuse it (an Xcode too old for this macOS).
+                -- Frecency counts launches that actually happened.
+                local found = ctx.launchOrFocusApp(id, function(ok, reason)
+                    if ok then
+                        bumpCount(ctx, id)
+                        ctx.log("launched", id)
+                    else
+                        ctx.log("launch refused", id, reason)
+                        ctx.alert(reason
+                            and ctx.t("alert.launchRefused", "Could not launch %1$s: %2$s", name, reason)
+                            or ctx.t("alert.launchFailed", "Could not launch %s", name))
+                    end
+                end)
+                if found then
+                    ctx.log("launch", id)
                 else
                     -- The id stopped resolving (uninstalled since the open).
-                    ctx.log("launch failed, app gone", choice.bundleId)
-                    ctx.alert(ctx.t("alert.launchFailed", "Could not launch %s", choice.text))
+                    ctx.log("launch failed, app gone", id)
+                    ctx.alert(ctx.t("alert.launchFailed", "Could not launch %s", name))
                 end
             end,
         }

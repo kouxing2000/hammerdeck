@@ -801,7 +801,22 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     end
     function ctx.openURL(url)         return adapter.openURL(url) end
     function ctx.activateApp(name)    return adapter.activateApp(name) end
-    function ctx.launchOrFocusApp(id) return adapter.launchOrFocusApp(id) end
+    -- The return is only "is such an app installed"; `cb` hears how the async
+    -- launch ended -- cb(true) or cb(false, reason) -- tracked like every one-shot,
+    -- so a feature disabled mid-launch never hears back.
+    ---@param cb? fun(ok: boolean, reason: string?)
+    ---@return boolean found
+    function ctx.launchOrFocusApp(id, cb)
+        if cb == nil then return (adapter.launchOrFocusApp(id)) end
+        local found = false
+        local h = trackOneShot(function(f)
+            local ok, raw = adapter.launchOrFocusApp(id, f)
+            found = ok
+            return raw or { stop = function() end }
+        end, cb)
+        if not found then h.stop() end   -- nothing in flight: retire the scope entry
+        return found
+    end
     function ctx.focusBrowserTab(pattern, fallbackURL)
         return adapter.focusBrowserTab(pattern, fallbackURL)
     end

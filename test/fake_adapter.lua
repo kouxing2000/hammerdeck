@@ -1157,12 +1157,16 @@ function adapter.activateApp(name)
 end
 
 fake.launchedApps = {}   -- recorded launchOrFocusApp bundle ids
+fake.launchErrors = {}   -- bundleId -> reason: installed, but macOS refuses the launch
 -- Launch-or-focus by bundle id: records and succeeds unless the test marks the
--- id as not-installed via fake.uninstalledApps[bundleId] = true.
-function adapter.launchOrFocusApp(bundleId)
+-- id as not-installed via fake.uninstalledApps[bundleId] = true (sync false), or
+-- as refused via fake.launchErrors[bundleId] = reason (found, then cb(false, reason)).
+function adapter.launchOrFocusApp(bundleId, cb)
     if fake.uninstalledApps and fake.uninstalledApps[bundleId] then return false end
-    fake.launchedApps[#fake.launchedApps + 1] = bundleId
-    return true
+    local reason = fake.launchErrors[bundleId]
+    if not reason then fake.launchedApps[#fake.launchedApps + 1] = bundleId end
+    if not cb then return true end
+    return true, oneShot(function() cb(reason == nil, reason) end)
 end
 
 fake.installedAppsList  = {}   -- the fake "disk": { { name=, bundleId=, path= }, ... }
@@ -1637,6 +1641,7 @@ function fake.reset()
     fake.runningAppInfoList = {}
     fake.installedAppsList  = {}
     fake.uninstalledApps    = {}
+    fake.launchErrors       = {}
     fake.appearance    = "light"
     fake.power         = "ac"
     fake.axTrusted     = true

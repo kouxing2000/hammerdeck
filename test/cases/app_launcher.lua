@@ -2,7 +2,8 @@
 -- launcher (Hyper+A). Enumeration is synchronous (the seam's directory scan),
 -- so every open lists the fake "disk" as it is right now. Covers row shape and
 -- ordering, type-to-filter + launch, frecency (bump on successful launch ONLY),
--- the empty-scan info row, and the uninstalled-since-open alert.
+-- the empty-scan info row, the uninstalled-since-open alert, and a launch macOS
+-- refuses (its reason in the alert; dropped when the feature is disabled first).
 --
 -- Hermetic: registers app_launcher itself; the "disk" is fake.installedAppsList.
 
@@ -56,6 +57,23 @@ return {
         c.userSelect(0)   -- dismiss (Escape)
         fake.uninstalledApps["com.gone"] = nil
 
+        -- installed, but macOS refuses the launch (an Xcode too old for this OS):
+        -- the alert carries macOS's reason, and a launch that never happened
+        -- earns no frecency
+        local refused = "The app is incompatible with the current OS"
+        fake.launchErrors["com.apple.dt.Xcode"] = refused
+        fake.pressHotkey("a", { "cmd", "alt", "ctrl" })
+        c.userType("xcode")
+        c.userSelect(1)
+        ok(fake.alerts[#fake.alerts] == "Could not launch Xcode: " .. refused,
+            "a refused launch alerts with macOS's own reason")
+        ok(#fake.launchedApps == 1, "the refused launch recorded nothing")
+        fake.pressHotkey("a", { "cmd", "alt", "ctrl" })
+        ok(c.choices[2].text == "Ghost" and c.choices[4].text == "Xcode",
+            "no frecency bump on a refused launch (a bump would lift Xcode to 2nd)")
+        c.userSelect(0)
+        fake.launchErrors["com.apple.dt.Xcode"] = nil
+
         -- aliases: an app's short names ride the subText -- the only field besides
         -- the title the panel filter reads, so searchable and visible are the same
         -- thing here.
@@ -107,7 +125,22 @@ return {
             "an empty scan shows a single info row")
         c.userSelect(0)
 
+        -- disabled while a refused launch is in flight: its answer is dropped, and
+        -- the one-shot leaves no handle behind
+        fake.installedAppsList = {
+            { name = "Xcode", bundleId = "com.apple.dt.Xcode", path = "/Applications/Xcode.app" },
+        }
+        fake.launchErrors["com.apple.dt.Xcode"] = refused
+        fake.deferAsync = true
+        fake.pressHotkey("a", { "cmd", "alt", "ctrl" })
+        c.userSelect(1)
+        ok(#fake.pendingAsync == 1, "the launch answer is in flight")
+        local alertsBefore = #fake.alerts
         registry.setEnabled("app_launcher", false)
+        fake.deferAsync = false
+        fake.deliverAsync()
+        ok(#fake.alerts == alertsBefore, "a launch answer landing after disable is dropped")
+        fake.launchErrors["com.apple.dt.Xcode"] = nil
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
             "clean after app_launcher test")
     end,
