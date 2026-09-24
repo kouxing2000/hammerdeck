@@ -241,6 +241,14 @@ final class SettingsStore: ObservableObject {
         callValue("platform.rules", "sentenceJSON", [.string(json)]) ?? ""
     }
 
+    /// The risk class of an in-progress rule spec (JSON) -- "lockout" |
+    /// "destructive" | "exec" -- or nil for an ordinary rule. Judged by the engine,
+    /// since some kinds are risky only for some contents (a chain, a non-web URL).
+    func ruleRisk(_ json: String) -> String? {
+        let r: String = callValue("platform.rules", "riskJSON", [.string(json)]) ?? ""
+        return r.isEmpty ? nil : r
+    }
+
     /// The dropdown source for the Add-rule form (signals, candidates, events, effects).
     func ruleFormOptions() -> RuleFormOptions {
         guard let dict: [String: Any] = callValue("platform.rules", "formOptions") else {

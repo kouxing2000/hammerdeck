@@ -42,6 +42,11 @@ struct EffectKindSpec {
     let build: (RuleFormModel) -> [String: Any]?
     /// Stored effect dict -> the form's fields.
     let load: ([String: Any], inout RuleFormModel) -> Void
+    /// How many token pills the kind's parameters render after its verb pill in
+    /// the rule sentence (RulesView.effectTokens) -- the form's auto-advance walks
+    /// them in order. 0 for a kind edited in a block below the row (layout, chain)
+    /// or with no parameters at all.
+    var paramPills: Int = 1
 }
 
 @MainActor
@@ -88,7 +93,8 @@ enum EffectKinds {
             load: { d, m in
                 m.placements = ((d["placements"] as? [Any]) ?? [])
                     .compactMap { $0 as? [String: Any] }.map(Placement.init(from:))
-            }),
+            },
+            paramPills: 0),
 
         EffectKindSpec(
             kind: "runShortcut", verbSuffix: "runShortcut", verbDefault: "run Shortcut",
@@ -98,6 +104,17 @@ enum EffectKinds {
                 return ["kind": "runShortcut", "name": n]
             },
             load: { d, m in m.shortcutName = d["name"] as? String ?? "" }),
+
+        EffectKindSpec(
+            kind: "runCommand", verbSuffix: "runCommand", verbDefault: "run command",
+            build: { m in
+                // Trimmed at the ends only: the command's own spacing and newlines are
+                // shell syntax.
+                let c = m.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !c.isEmpty else { return nil }
+                return ["kind": "runCommand", "command": c]
+            },
+            load: { d, m in m.commandText = d["command"] as? String ?? "" }),
 
         EffectKindSpec(
             kind: "openURL", verbSuffix: "open", verbDefault: "open",
@@ -154,7 +171,8 @@ enum EffectKinds {
                 m.moveApp = d["app"] as? String ?? ""
                 m.moveAppBundleId = d["appBundleId"] as? String ?? ""
                 m.moveDisplay = d["display"] as? String ?? ""
-            }),
+            },
+            paramPills: 2),
 
         EffectKindSpec(
             kind: "launchApp", verbSuffix: "launchApp", verbDefault: "open",
@@ -196,7 +214,8 @@ enum EffectKinds {
             load: { _, _ in
                 // Chain rows are rebuilt by the view (chainStep(from:) filters to the
                 // kinds the form can edit); a chain of un-editable kinds opens in JSON.
-            }),
+            },
+            paramPills: 0),
     ] + atomKinds
 
     /// Parameterless system atoms: identical in every respect but their name and
@@ -209,7 +228,8 @@ enum EffectKinds {
     ].map { kind, key, def in
         EffectKindSpec(kind: kind, verbSuffix: key, verbDefault: def,
                        build: { _ in ["kind": kind] },
-                       load: { _, _ in })
+                       load: { _, _ in },
+                       paramPills: 0)
     } + appTargetKinds.sorted().map { kind in
         // minimize / hide / quit: same shape, different verb.
         let (key, def): (String, String) = {
@@ -270,6 +290,9 @@ enum EffectKinds {
         case "runShortcut":
             let v = t(s.shortcutName)
             return v.isEmpty ? nil : ["kind": "runShortcut", "name": v]
+        case "runCommand":
+            let v = s.command.trimmingCharacters(in: .whitespacesAndNewlines)
+            return v.isEmpty ? nil : ["kind": "runCommand", "command": v]
         case "openURL":
             let v = t(s.url)
             return v.isEmpty ? nil : ["kind": "openURL", "url": v]

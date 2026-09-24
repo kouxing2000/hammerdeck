@@ -214,6 +214,7 @@ final class RuleFormModelTests: XCTestCase {
         let cases: [[String: Any]] = [
             ["kind": "notify", "title": "T", "text": "B", "channel": "system"],
             ["kind": "runShortcut", "name": "My Shortcut"],
+            ["kind": "runCommand", "command": "brew update && say done"],
             ["kind": "openURL", "url": "https://example.com"],
             ["kind": "speak", "text": "hello"],
             ["kind": "solidWallpaper", "color": "#123456", "display": "all"],
@@ -273,5 +274,77 @@ final class RuleFormModelTests: XCTestCase {
             XCTAssertEqual(m.effectComplete, spec.build(m) != nil,
                            "\(spec.kind): canSubmit and buildSpec disagree on an empty form")
         }
+    }
+
+    // MARK: Auto-advance -- which pill a pick in the rule sentence opens next
+
+    /// Signals with and without an entity (`provides`), since that flips whether the
+    /// value pill reads before or after the becomes/leaves pill.
+    private func walkModel(_ effectId: String, trigger: String = "state:frontmostApp") -> RuleFormModel {
+        var m = RuleFormModel()
+        m.opts = RuleFormOptions([
+            "effects": [
+                ["kind": "notify", "label": "Notify"],
+                ["kind": "runCommand", "label": "Run a shell command"],
+                ["kind": "moveAppToDisplay", "label": "Move an app to a display"],
+                ["kind": "lockScreen", "label": "Lock the screen"],
+            ],
+            "signalMeta": [
+                "frontmostApp": ["label": "frontmost app", "bundleIdMatch": true, "provides": "app"],
+                "powerSource": ["label": "power source", "bundleIdMatch": false],
+            ],
+        ])
+        m.effectId = effectId
+        m.triggerType = trigger
+        return m
+    }
+
+    func testPillOrderFollowsTheSentence() {
+        XCTAssertEqual(walkModel("notify").pillOrder,
+                       [.trigger, .transition, .effectKind, .effectParam(0)],
+                       "an entity signal reads '<app> <becomes>', then the action and its field")
+        XCTAssertEqual(walkModel("notify", trigger: "state:powerSource").pillOrder,
+                       [.transition, .trigger, .effectKind, .effectParam(0)],
+                       "a property signal reads 'the power source <becomes> <value>'")
+        XCTAssertEqual(walkModel("moveAppToDisplay", trigger: "event").pillOrder,
+                       [.trigger, .effectKind, .effectParam(0), .effectParam(1)],
+                       "an event has no becomes/leaves; move-to-display has two fields")
+        XCTAssertEqual(walkModel("lockScreen", trigger: "schedule").pillOrder,
+                       [.trigger, .effectKind], "a parameterless action ends at its verb pill")
+    }
+
+    func testANewRuleWalksEveryPillIncludingDefaults() {
+        var m = walkModel("notify")
+        m.stateValue = "Safari"
+        m.notifyTitle = "Hammerdeck"          // a default, not the user's choice
+        XCTAssertEqual(m.nextPill(after: .trigger, set: [.trigger]), .transition)
+        XCTAssertEqual(m.nextPill(after: .transition, set: [.trigger, .transition]), .effectKind,
+                       "the defaulted action type is still offered")
+        XCTAssertEqual(m.nextPill(after: .effectKind, set: [.trigger, .transition, .effectKind]),
+                       .effectParam(0))
+        XCTAssertNil(m.nextPill(after: .effectParam(0), set: PillSlot.all),
+                     "the last pill closes -- nothing opens Save")
+    }
+
+    func testAnEditedRuleOnlyChainsIntoAFieldItNeeds() {
+        var m = walkModel("runCommand")
+        m.stateValue = "Safari"
+        m.commandText = "say hi"
+        XCTAssertNil(m.nextPill(after: .trigger, set: PillSlot.all),
+                     "a loaded rule is all set: a pick just closes its pill")
+        // Switching the action type un-sets its field pills (the view does that on a
+        // pick in the verb pill), so the new field opens.
+        let afterKindSwitch = PillSlot.all.subtracting([.effectParam(0), .effectParam(1)])
+        XCTAssertEqual(m.nextPill(after: .effectKind, set: afterKindSwitch), .effectParam(0))
+        // An empty field opens even when it counts as set -- the form can empty one itself.
+        m.commandText = ""
+        XCTAssertEqual(m.nextPill(after: .effectKind, set: PillSlot.all), .effectParam(0),
+                       "an incomplete field is offered even when marked set")
+    }
+
+    func testTheWalkNeverGoesBackwards() {
+        let m = walkModel("lockScreen")      // stateValue left empty: the trigger is incomplete
+        XCTAssertNil(m.nextPill(after: .effectKind, set: []),
+                     "an incomplete trigger BEHIND the pick is not reopened")
     }
 }

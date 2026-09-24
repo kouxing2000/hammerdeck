@@ -388,6 +388,11 @@ struct RuleInfo: Identifiable {
     let lastFired: Date?
     let lastFiredTest: Bool
     let lastFiredOk: Bool
+    // The effect's risk class (effects.risk: "lockout" | "destructive" | "exec"),
+    // nil for an ordinary rule. A risky rule is badged, and the breaker can
+    // switch it off -- autoDisabledReason (localized) says so while it is off.
+    let risk: String?
+    let autoDisabledReason: String
 
     init?(_ dict: [String: Any]) {
         guard let id = dict["id"] as? String else { return nil }
@@ -407,6 +412,8 @@ struct RuleInfo: Identifiable {
         else { self.lastFired = nil }
         self.lastFiredTest = dict.bool("lastFiredTest")
         self.lastFiredOk = dict.bool("lastFiredOk", true)
+        self.risk = dict.strOpt("risk")
+        self.autoDisabledReason = dict.str("autoDisabledReason")
     }
 }
 
@@ -416,6 +423,7 @@ struct RuleEffectOption: Identifiable, Hashable {
     let label: String
     let feature: String?
     let action: String?
+    let risk: String?            // effects.risk for a fixed kind; nil for an ordinary one
     var id: String { kind == "command" ? "command:\(feature ?? "").\(action ?? "")" : kind }
 
     init?(_ dict: [String: Any]) {
@@ -424,6 +432,7 @@ struct RuleEffectOption: Identifiable, Hashable {
         self.label = dict.str("label", kind)
         self.feature = dict.strOpt("feature")
         self.action = dict.strOpt("action")
+        self.risk = dict.strOpt("risk")
     }
 }
 
@@ -482,6 +491,7 @@ struct RuleFormOptions {
     let signalMeta: [String: SignalMeta]
     let events: [String]
     let effects: [RuleEffectOption]
+    let breakerNote: String             // the breaker's rule, localized, with the live limit
     let layoutDisplays: [String]        // currently-connected display names
     let layoutPositions: [LayoutPosition]
 
@@ -500,6 +510,7 @@ struct RuleFormOptions {
         self.events = dict.strArray("events")
         self.effects = (dict["effects"] as? [Any])?
             .compactMap { $0 as? [String: Any] }.compactMap(RuleEffectOption.init) ?? []
+        self.breakerNote = dict.str("breakerNote")
         self.layoutDisplays = dict.strArray("layoutDisplays")
         self.layoutPositions = (dict["layoutPositions"] as? [Any])?
             .compactMap { $0 as? [String: Any] }

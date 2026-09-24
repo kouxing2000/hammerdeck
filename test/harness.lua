@@ -82,6 +82,7 @@ M.t = t
 --- teardown then decrements it NEGATIVE (a mis-attributed tripwire failure).
 function M.freshWorld()
     registry.reset()   -- platform teardown, phase 1: unbind features through stop()
+    rules.setPaused(false) -- safe mode is session-wide and survives load(): clear it
     rules.load({})     -- platform teardown, phase 1: stop every live rule
     fake.resetWorld()  -- THEN wipe the fake to pristine (zeroes liveHandles + registries)
     pinClock()         -- re-pin the deterministic clock resetWorld cleared

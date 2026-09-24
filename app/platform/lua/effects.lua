@@ -10,6 +10,7 @@
 --   notify       -- show a notification:   { kind="notify", title=<str>, text=<str?> }
 --   layout       -- arrange windows:       { kind="layout", placements={ {app,titlePattern?,screen,pos}, ... } }
 --   runShortcut  -- run a macOS Shortcut:  { kind="runShortcut", name=<str> }  (the escape hatch)
+--   runCommand   -- run a shell command:    { kind="runCommand", command=<str> }  (zsh -lc, fire-and-forget)
 --   openURL      -- open a url / app:       { kind="openURL", url=<str> }
 --   lockScreen   -- lock the screen:        { kind="lockScreen" }
 --   startScreensaver -- start the screensaver: { kind="startScreensaver" }
@@ -33,9 +34,17 @@
 --                     display=<name|"@trigger:display"> }
 --
 -- `scene` arrives in a later milestone. dispatch / validate / describe /
--- requiresContext / catalog are GENERIC over the EFFECT_KINDS descriptor table
--- below, so adding a kind is genuinely additive (open/closed): one table entry
--- (plus a CATALOG_ORDER slot if it's a curated atom), no function to edit.
+-- requiresContext / risk / catalog are GENERIC over the EFFECT_KINDS descriptor
+-- table below, so adding a kind is genuinely additive (open/closed): one table
+-- entry (plus a CATALOG_ORDER slot if it's a curated atom), no function to edit.
+--
+-- RISK: a kind that can take the Mac away from its user when a rule is set up
+-- wrong declares `risk` -- "lockout" (the user cannot get back in while it keeps
+-- firing), "destructive" (irreversible), "exec" (an arbitrary command, so every
+-- class at once). It is a label the rules engine ACTS on, not decoration: a risky
+-- rule that fires too often is switched off (rules.lua's breaker), a lockout
+-- effect is refused on the trigger that would re-fire it, and the Settings form
+-- badges it. An ordinary kind declares nothing.
 
 local registry = require("platform.registry")
 local adapter  = require("platform.adapter")
@@ -393,6 +402,72 @@ end
 -- kind is, so a context-free kind can't be silently forgotten in a shared chain.
 local EFFECT_KINDS
 
+-- `s` on one line and at most `n` characters, so a multi-line command or a long
+-- stderr reads as one row in the list, the sentence and the log. Counted in UTF-8
+-- characters, so a cut never lands inside one; bytes only for invalid UTF-8.
+local function clip(s, n)
+    s = s:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+    local len = utf8.len(s)
+    if not len then
+        if #s <= n then return s end
+        return s:sub(1, n - 3) .. "..."
+    end
+    if len <= n then return s end
+    return s:sub(1, utf8.offset(s, n - 2) - 1) .. "..."
+end
+
+-- Severity order of the risk classes, for a node holding several (a chain): the
+-- most severe one names it. `lockout` ranks first because it is the class the
+-- save-time refusal and the user's own fear key on -- a chain that runs a command
+-- and then locks the screen must still read as a lockout.
+local RISK_RANK = { destructive = 1, exec = 2, lockout = 3 }
+
+-- The URL schemes that only SHOW something: a page, a mail draft. Any other
+-- scheme hands the URL to whatever app claims it, which can act on it --
+-- shortcuts://run-shortcut runs a Shortcut, file:// on a .command runs a script,
+-- facetime:// places a call -- so it carries runCommand's risk.
+local WEB_SCHEMES = { http = true, https = true, mailto = true }
+
+-- openURL's risk, by the URL's scheme. A string with no scheme opens nothing (the
+-- seam builds it with URL(string:), and NSWorkspace needs a scheme to act), so it
+-- is ordinary.
+---@param node table an openURL effect node
+---@return string|nil
+local function urlRisk(node)
+    local scheme = type(node.url) == "string" and node.url:match("^%s*(%a[%w+.-]*):") or nil
+    if not scheme or WEB_SCHEMES[scheme:lower()] then return nil end
+    return "exec"
+end
+
+-- Run a `runCommand` effect: the user's command line through `zsh -l`, so the
+-- PATH ~/.zprofile sets (Homebrew) resolves -- a Finder-launched app otherwise
+-- has only /usr/bin:/bin:/usr/sbin:/sbin. Fire-and-forget, like runShortcut: the
+-- effect contract is synchronous, and the seam hands EVERY outcome back later on
+-- the main queue (Native.fireOneShot), a failed launch included -- so the effect
+-- reports success for having started it, with no note (a note reads as a PARTIAL
+-- success), and the exit status reaches the daily log, not the rule's row. The
+-- handle is deliberately dropped: stop() would KILL the child, and nothing here
+-- owns its lifetime once launched.
+---@param command string
+---@return boolean ok
+local function runCommand(command)
+    adapter.run("/bin/zsh", { "-lc", command }, function(status, _, stderr)
+        local what = "runCommand '" .. clip(command, 80) .. "'"
+        if status == nil then
+            adapter.log(what .. " could not start /bin/zsh")
+        elseif status < 0 then
+            adapter.log(what .. " killed by signal " .. -status
+                .. " (it outran the seam's time limit, or something outside Hammerdeck killed it)")
+        elseif status == 0 then
+            adapter.log(what .. " exited 0")
+        else
+            local tail = clip(tostring(stderr or ""), 200)
+            adapter.log(what .. " exited " .. status .. (tail ~= "" and (": " .. tail) or ""))
+        end
+    end)
+    return true
+end
+
 -- minimize / hide / quit share validate (one app param), run (appAction with a
 -- different adapter call + verb), describe (only the verb differs), and context-
 -- freeness -- so build the three entries from one factory.
@@ -514,7 +589,23 @@ EFFECT_KINDS = {
         end,
         describe = function(node) return desc("runShortcut", 'Run Shortcut "%s"', tostring(node.name or "")) end,
         contextFree = true,
+        -- A Shortcut can run a shell script, lock the screen or shut the Mac down:
+        -- the same reach as runCommand, one app removed.
+        risk = "exec",
         label = "Run a Shortcut",
+    },
+    runCommand = {
+        validate = function(node)
+            assert(type(node.command) == "string" and node.command:find("%S") ~= nil,
+                "runCommand effect needs a command")
+        end,
+        run = function(node) return runCommand(node.command) end,
+        describe = function(node)
+            return desc("runCommand", 'Run "%s"', clip(tostring(node.command or ""), 40))
+        end,
+        contextFree = true,
+        risk = "exec",
+        label = "Run a shell command",
     },
     openURL = {
         validate = function(node)
@@ -527,6 +618,7 @@ EFFECT_KINDS = {
         end,
         describe = function(node) return desc("openURL", "Open %s", tostring(node.url or "")) end,
         contextFree = true,
+        risk = urlRisk,
         label = "Open a URL",
     },
     solidWallpaper = {
@@ -658,6 +750,7 @@ EFFECT_KINDS = {
         end,
         describe = function() return desc("lockScreen", "Lock the screen") end,
         contextFree = true,
+        risk = "lockout",
         label = "Lock the screen",
     },
     startScreensaver = {
@@ -667,6 +760,9 @@ EFFECT_KINDS = {
         end,
         describe = function() return desc("startScreensaver", "Start the screensaver") end,
         contextFree = true,
+        -- A lockout only when the screensaver asks for a password, which Lua
+        -- cannot see -- so it is treated as the worse case.
+        risk = "lockout",
         label = "Start the screensaver",
     },
     emptyTrash = {
@@ -684,6 +780,7 @@ EFFECT_KINDS = {
         end,
         describe = function() return desc("emptyTrash", "Empty the Trash") end,
         contextFree = true,
+        risk = "destructive",
         label = "Empty the Trash",
     },
     eject = {
@@ -812,6 +909,18 @@ EFFECT_KINDS = {
                 { one = "%1$d step: %2$s", other = "%1$d steps: %2$s" }, nil,
                 n, table.concat(parts, i18n.t("rules.word.stepArrow", " -> ")))
         end,
+        -- A chain carries the most severe risk among its steps (RISK_RANK): a
+        -- chain that locks the screen is a lockout rule whatever else it does,
+        -- wherever the lock sits in it.
+        risk = function(node)
+            if type(node.effects) ~= "table" then return nil end
+            local worst
+            for _, step in ipairs(node.effects) do
+                local r = effects.risk(step)
+                if r and (not worst or RISK_RANK[r] > RISK_RANK[worst]) then worst = r end
+            end
+            return worst
+        end,
         -- A chain is context-free only if EVERY step is -- so a chain on an automated
         -- trigger is allowed iff none of its steps needs live context.
         requiresContext = function(node)
@@ -827,7 +936,7 @@ EFFECT_KINDS = {
 -- The "Do"-dropdown ORDER (a Lua map is unordered, so the curated atom sequence
 -- lives here). `command` is appended per-action by catalog(), not listed here.
 local CATALOG_ORDER = {
-    "notify", "layout", "runShortcut", "openURL", "lockScreen", "startScreensaver",
+    "notify", "layout", "runShortcut", "runCommand", "openURL", "lockScreen", "startScreensaver",
     "speak", "emptyTrash", "eject", "setAppearance", "volume", "mediaKey",
     "solidWallpaper", "setWallpaperImage",
     "moveAppToDisplay", "launchApp", "minimizeApp", "hideApp", "quitApp", "chain",
@@ -891,6 +1000,19 @@ function effects.dispatch(node, context)
     return res, reason
 end
 
+--- The risk class of an effect node -- "lockout" | "destructive" | "exec" -- or
+--- nil for an ordinary one (see RISK in the header). A kind declares `risk` as a
+--- string, or as a function of the node when it depends on its contents (chain).
+---@param node table|nil an effect node
+---@return string|nil
+function effects.risk(node)
+    if type(node) ~= "table" then return nil end
+    local spec = EFFECT_KINDS[node.kind]
+    if not spec then return nil end
+    if type(spec.risk) == "function" then return spec.risk(node) end
+    return spec.risk
+end
+
 --- A short human label for an effect node (the rules-list "→ ..." column).
 --- `opts.pronoun` renders a from-trigger param as "it" instead of "the triggering
 --- <field>" -- used by the read-back SENTENCE, where the trigger value earlier in
@@ -926,7 +1048,10 @@ function effects.catalog(automatedOnly)
             "effect kind '" .. kind .. "' is in CATALOG_ORDER but declares no label")
         -- The dropdown label, localized here at the single point the catalog is built.
         out[#out + 1] = { kind = kind,
-                          label = i18n.t("rules.effectKind." .. kind, spec.label) }
+                          label = i18n.t("rules.effectKind." .. kind, spec.label),
+                          -- a string or nil; chain's function form has no node here,
+                          -- and the form badges the chain's steps instead.
+                          risk = type(spec.risk) == "string" and spec.risk or nil }
     end
     for _, a in ipairs(registry.enabledActions()) do
         if (not automatedOnly) or a.automatable then

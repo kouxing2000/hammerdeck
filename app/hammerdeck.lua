@@ -80,6 +80,9 @@ registry.startAll()
 local rules = require("platform.rules")
 local okRules, errRules = pcall(function()
     rules.loadFromSettings()
+    -- Safe mode: Option held at launch loads the rules but binds none (see
+    -- rules.setPaused) -- the way back in when a rule makes the Mac unusable.
+    if adapter.isModifierHeld("alt") then rules.enterSafeMode() end
     rules.startAll()
 end)
 if not okRules then adapter.log("rules engine boot FAILED: " .. tostring(errRules)) end

@@ -376,6 +376,7 @@ return {
                 notify        = { kind = "notify", title = "T" },
                 layout        = { kind = "layout", placements = { { app = "A", screen = "S", pos = "left" } } },
                 runShortcut   = { kind = "runShortcut", name = "S" },
+                runCommand    = { kind = "runCommand", command = "echo hi" },
                 openURL       = { kind = "openURL", url = "https://x.dev" },
                 lockScreen    = { kind = "lockScreen" },
                 startScreensaver = { kind = "startScreensaver" },

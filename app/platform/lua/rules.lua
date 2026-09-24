@@ -58,6 +58,25 @@ local lastFire = {}
 local fireFailures = {}   -- id -> consecutive real-fire failure count
 local FAIL_ALERT_AFTER = 3
 
+-- The BREAKER: a RISKY rule (effects.risk -- lock, screensaver, empty Trash, run a
+-- command) whose trigger fires BREAKER_LIMIT times within BREAKER_WINDOW seconds
+-- is switched off, and the fire that crosses the line never runs its effect. The
+-- case it exists for is the misconfigured rule that takes the Mac away -- "lock
+-- when the screen unlocks" re-locks on every unlock, and with Hammerdeck a login
+-- item a restart does not escape it. Scoped to risky rules because an ordinary
+-- one legitimately fires this often: frontmostApp is push-backed, so "when Slack
+-- loses focus, minimize it" fires on every app switch. Only AUTOMATED fires count
+-- (state / event / schedule): a Test click or a hotkey press is the user acting,
+-- and a person pressing a key is the rate limiter, not a loop. The window is sized
+-- for the human-paced loop (each re-lock waits for an unlock), not a machine-speed one.
+local BREAKER_LIMIT  = 5
+local BREAKER_WINDOW = 120   -- seconds
+local recentFires = {}       -- id -> ascending epoch seconds of recent real fires
+
+-- Forward-declared: the breaker's trip persists from inside fire(), which is
+-- defined above the mutation helpers.
+local save
+
 local RULES_SETTING = "hammerdeck.rules"
 
 local function isEnabled(spec) return spec.enabled ~= false end
@@ -200,12 +219,25 @@ function rules.validate(spec)
     if spec.name ~= nil then
         assert(type(spec.name) == "string", "rule '" .. spec.id .. "' name must be a string")
     end
+    if spec.autoDisabledAt ~= nil then
+        assert(type(spec.autoDisabledAt) == "number",
+            "rule '" .. spec.id .. "' autoDisabledAt must be a number (epoch seconds)")
+    end
     triggers.validate(spec.on)
     if spec.on.type == "state" then
         assert(signals.exists(spec.on.signal),
             "rule '" .. spec.id .. "': unknown signal '" .. tostring(spec.on.signal) .. "'")
     end
     effects.validate(spec.effect)
+    -- The one trigger a lockout effect re-fires by itself: every unlock locks
+    -- again. Refused at save, before the breaker has to catch it at runtime.
+    -- `wake` stays allowed -- locking does not sleep the system, so "lock when the
+    -- Mac wakes" cannot loop, and it is a real security rule.
+    if spec.on.type == "event" and spec.on.event == "screenUnlock"
+        and effects.risk(spec.effect) == "lockout" then
+        error("rule '" .. spec.id .. "': locking the screen when it unlocks would lock "
+            .. "you out -- it re-locks on every unlock. Pick a different trigger.")
+    end
     if triggers.isAutomated(spec.on) and effects.requiresContext(spec.effect) then
         error("rule '" .. spec.id .. "': an automated trigger (" .. spec.on.type
             .. ") cannot run a context-dependent effect -- its action is not automatable. "
@@ -231,6 +263,7 @@ function rules.load(list)
     specs = {}
     parked = {}
     lastFire = {}      -- a fresh boot/reload starts the fire history clean
+    recentFires = {}   -- ...and the breaker's window
     fireFailures = {}  -- ...and the failure streaks
     for _, spec in ipairs(list or {}) do
         local ok, err = pcall(loadOne, spec)
@@ -306,7 +339,84 @@ local function ruleLabel(spec, id)
     return "Rule '" .. tostring(id) .. "'"
 end
 
+-- The breaker's sentence, localized where it is shown -- the spec stores only
+-- WHEN it tripped, so a language switch re-renders it rather than showing the
+-- language that was active at the time.
+local function autoDisabledReason()
+    return i18n.format("rules.autoDisabled",
+        "Turned off automatically: it fired %1$d times within %2$d minutes",
+        BREAKER_LIMIT, BREAKER_WINDOW // 60)
+end
+
+-- Record one REAL fire of a risky rule and say whether it crosses the breaker's
+-- line. Returns true when this fire is the BREAKER_LIMIT-th inside the window.
+---@param id string
+---@param now integer epoch seconds
+---@return boolean tripped
+local function breakerCounts(id, now)
+    local kept = {}
+    for _, t in ipairs(recentFires[id] or {}) do
+        if now - t < BREAKER_WINDOW then kept[#kept + 1] = t end
+    end
+    kept[#kept + 1] = now
+    recentFires[id] = kept
+    return #kept >= BREAKER_LIMIT
+end
+
+-- The rule as the Rules list names it -- its label, else its plain-English
+-- sentence, else the id -- bare, for a localized template to place.
+local function ruleDisplayName(spec, id)
+    if type(spec.name) == "string" and spec.name ~= "" then return spec.name end
+    local okSent, sent = pcall(rules.sentence, spec)
+    if okSent and type(sent) == "string" and sent ~= "" then return sent end
+    return tostring(id)
+end
+
+-- Tell the user something the engine decided on its own. Notification Center,
+-- not the 2s toast adapter.alert shows: a trip usually lands while the screen is
+-- locked (that is the loop it stops), and NC is the channel that shows on the lock
+-- screen and keeps history. Falls back to the toast where NC is unavailable (a dev
+-- `swift run` has no app bundle), exactly as the notify effect does.
+---@param title string
+---@param body string
+local function tell(title, body)
+    local okN, delivered = pcall(adapter.systemNotify, title, body)
+    if not (okN and delivered) then adapter.alert(title .. "\n\n" .. body) end
+end
+
+-- Switch a rule off because the breaker tripped: persisted (enabled=false plus
+-- WHEN), so it stays off across a relaunch -- the loop it stops would otherwise
+-- come straight back at login. Only THIS rule's binding is stopped, and
+-- synchronously: we are inside its own trigger callback, and stopping one
+-- subscription there is safe on every trigger path, where a full restart() would
+-- add subscribers to the very table the signal is iterating.
+---@param id string
+---@param spec table
+---@param risk string
+local function trip(id, spec, risk)
+    spec.enabled = false
+    spec.autoDisabledAt = adapter.now()
+    recentFires[id] = nil
+    save()
+    if live[id] then live[id].stop(); live[id] = nil end
+    adapter.log("rule '" .. id .. "' TURNED OFF by the breaker: " .. BREAKER_LIMIT
+        .. " fires within " .. BREAKER_WINDOW .. "s on a " .. risk
+        .. " effect -- this fire's effect was not run")
+    tell(i18n.format("rules.autoDisabledTitle", '"%s" was turned off', ruleDisplayName(spec, id)),
+        i18n.format("rules.autoDisabledBody",
+            "It fired %1$d times within %2$d minutes, so Hammerdeck turned it off in case "
+                .. "it is stuck in a loop. Turn it back on in Settings > Rules once it's fixed.",
+            BREAKER_LIMIT, BREAKER_WINDOW // 60))
+end
+
 local function fire(id, spec, via)
+    if via == nil and triggers.isAutomated(spec.on) then
+        local risk = effects.risk(spec.effect)
+        if risk and breakerCounts(id, adapter.now()) then
+            trip(id, spec, risk)
+            return false, autoDisabledReason()
+        end
+    end
     local ok, note = effects.dispatch(spec.effect, triggerContext(spec))
     -- Stamp the fire history (the list's "fired/not-fired" status). A real trigger
     -- fire has no `via`; the Test button passes "test" so the UI can distinguish.
@@ -379,9 +489,38 @@ local function bindOne(id, spec)
     return triggers.bind(spec.on, function() fire(id, spec) end, "rule:" .. id)
 end
 
+-- SAFE MODE: holding Option while Hammerdeck launches pauses the engine for the
+-- session. Rules still load (Settings lists them, and edits persist) but none is
+-- bound -- including by the restart() every edit runs, so switching off one bad
+-- rule cannot re-arm the others. The escape hatch for a loop the breaker does not
+-- catch; it lasts until Hammerdeck restarts (a Reload stays paused).
+local paused = false
+
+--- Pause (or resume) the whole engine; pausing unbinds every live rule.
+---@param on boolean
+function rules.setPaused(on)
+    paused = (on == true)
+    if paused then rules.stopAll() end
+end
+
+---@return boolean
+function rules.isPaused() return paused end
+
+--- Safe mode at launch (Option held): pause, and say so where it will be seen.
+function rules.enterSafeMode()
+    rules.setPaused(true)
+    tell(i18n.t("rules.safeModeTitle", "Safe mode: rules paused"),
+        i18n.t("rules.safeModeBody", "Option was held at launch, so no rules run until "
+            .. "Hammerdeck restarts. Fix or turn off the rule in Settings > Rules."))
+end
+
 --- Bind every ENABLED rule that is not already live. A bind throw is quarantined
---- per-rule, not fatal to the rest.
+--- per-rule, not fatal to the rest. A no-op while paused (safe mode).
 function rules.startAll()
+    if paused then
+        adapter.log("rules: safe mode -- " .. rules.count() .. " rule(s) loaded, none bound")
+        return
+    end
     for id, spec in pairs(specs) do
         if isEnabled(spec) and not live[id] then
             local ok, handle = pcall(bindOne, id, spec)
@@ -405,7 +544,7 @@ end
 
 -- Persist the current set (id-sorted) to the settings store, and re-bind. A full
 -- rebuild on each mutation (the set is small) avoids partial-state bugs.
-local function save()
+function save()
     -- Persist the live rules AND the parked ones (verbatim), so a mutation never
     -- drops a rule that's merely unavailable this boot.
     local all = rules.all()
@@ -480,6 +619,7 @@ end
 function rules.remove(id)
     lastFire[id] = nil      -- drop its fire history too
     fireFailures[id] = nil  -- ...and its failure streak
+    recentFires[id] = nil   -- ...and its breaker window
     -- No address branch is needed here: an address is not a key in `specs`, so it
     -- falls through to the parked lookup below, which resolves it. That is the
     -- whole repair -- before, the greyed row was addressed by the id it SHARED,
@@ -504,6 +644,9 @@ function rules.setEnabled(id, on)
     local spec = specs[id]
     if not spec then return false, "no such rule: " .. tostring(id) end
     spec.enabled = (on == true)
+    -- Turning a rule back on is the user overruling the breaker: the reason goes,
+    -- and the window starts empty rather than one fire short of tripping again.
+    if spec.enabled then spec.autoDisabledAt = nil; recentFires[id] = nil end
     save(); restart()
     return true
 end
@@ -542,11 +685,24 @@ function rules.update(id, spec)
         pi = addr
     end
     spec.id = id
+    -- The form sends no `enabled` -- the list's toggle owns it -- so keep a rule
+    -- that is OFF off: saving an edit must not switch it back on, least of all one
+    -- the breaker turned off, which stays off until the user turns it on. The JSON
+    -- editor sends the field, and what it sends is honored.
+    local prev = specs[id] or (pi and parked[pi].spec) or nil
+    if spec.enabled == nil and type(prev) == "table" and prev.enabled == false then
+        spec.enabled = false
+        spec.autoDisabledAt = prev.autoDisabledAt
+    end
     local okV, err = pcall(rules.validate, spec)
     if not okV then return false, tostring(err) end
     if pi then table.remove(parked, pi) end   -- the edit fixed it: un-park into the live set
     lastFire[id] = nil                         -- behavior changed: the old fire no longer applies
     fireFailures[id] = nil                      -- ...so does its failure streak
+    recentFires[id] = nil                       -- ...and its breaker window
+    -- The reason only describes an OFF rule; the JSON editor round-trips it, so a
+    -- rule saved as enabled must not carry a stale one.
+    if isEnabled(spec) then spec.autoDisabledAt = nil end
     specs[id] = spec
     save(); restart()
     return true
@@ -648,7 +804,12 @@ function rules.describe()
             -- a "from the trigger" effect reacts to its trigger, so it can't be
             -- fired in isolation -- the host hides the Test button for it.
             contextBound = effects.usesTriggerContext(spec.effect),
+            -- nil for an ordinary rule; the host badges a risky one.
+            risk        = effects.risk(spec.effect),
         }
+        if not isEnabled(spec) and spec.autoDisabledAt then
+            row.autoDisabledReason = autoDisabledReason()
+        end
         -- Fire status (this session): present only once the rule has fired.
         local lf = lastFire[spec.id]
         if lf then
@@ -810,6 +971,20 @@ function rules.sentenceJSON(str)
     return ok and s or ""
 end
 
+--- The risk class of an in-progress rule spec (JSON) -- effects.risk of its
+--- effect, or "" for an ordinary or unreadable one. The form's risky warning and
+--- save confirm ask this rather than re-deriving it, so a kind whose risk depends
+--- on its contents (a chain, openURL's scheme) is judged by the one rule the
+--- engine applies.
+---@param str string
+---@return string
+function rules.riskJSON(str)
+    local data = json.decode(tostring(str))
+    if type(data) ~= "table" then return "" end
+    local ok, r = pcall(effects.risk, data.effect)
+    return (ok and r) or ""
+end
+
 --- Everything the Add-rule form needs to populate its dropdowns, in one call:
 --- the supported trigger types, the state signals + their candidate values, the
 --- system events, and the selectable effects. Effects are the CONTEXT-FREE set
@@ -847,6 +1022,11 @@ function rules.formOptions()
         signalMeta       = json.asObject(meta),
         events           = { "wake", "sleep", "screenLock", "screenUnlock", "screenChanged" },
         effects          = effects.catalog(true),
+        -- The breaker's rule in one localized sentence, so the form's risky-effect
+        -- warning quotes the live limit instead of a copy of it.
+        breakerNote      = i18n.format("rules.breakerNote",
+            "If it fires %1$d times within %2$d minutes, Hammerdeck turns it off.",
+            BREAKER_LIMIT, BREAKER_WINDOW // 60),
         layoutDisplays   = json.asArray(displays),
         layoutPositions  = positions,
     }

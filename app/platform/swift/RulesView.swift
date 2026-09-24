@@ -174,6 +174,9 @@ private struct RulePageRow: View {
     // rule that never fired (a quiet off rule isn't a problem worth flagging).
     private var fireStatus: (text: String, color: Color)? {
         if rule.unavailable { return nil }
+        // Switched off by the breaker: say so in place of the fire status, which
+        // would otherwise read as an ordinary quiet rule.
+        if !rule.enabled && !rule.autoDisabledReason.isEmpty { return (rule.autoDisabledReason, .orange) }
         if let at = rule.lastFired {
             let verb = rule.lastFiredTest ? Strings.t("rules.verbTested", default: "tested")
                                           : Strings.t("rules.verbFired", default: "fired")
@@ -198,6 +201,10 @@ private struct RulePageRow: View {
             if rule.unavailable {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange).help(rule.unavailableReason)
+            } else if rule.risk != nil {
+                Image(systemName: "exclamationmark.shield")
+                    .foregroundStyle(.orange)
+                    .help(Strings.t("rules.riskyHelp", default: "Risky rule -- Hammerdeck turns it off if it fires too often"))
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(primary).font(.callout).lineLimit(1)
@@ -313,7 +320,12 @@ private struct RulePageRow: View {
         let (ok, message) = store.fireRule(rule.id)
         // Three outcomes: clean fire (green check), partial fire (orange triangle
         // + the note: "moved 1/2 -- no window for: Mail"), failure (red x + reason).
-        if ok && message.isEmpty {
+        if ok && message.isEmpty && (rule.effect["kind"] as? String) == "runCommand" {
+            // The command was started, not finished: "Fired" would read as "it worked",
+            // and its exit code only ever reaches the log.
+            testResult = TestResult(icon: "checkmark.circle.fill", color: .green,
+                                    message: Strings.t("rules.startedMessage", default: "Started -- its exit code goes to the log (Open Logs in the menu bar)"))
+        } else if ok && message.isEmpty {
             testResult = TestResult(icon: "checkmark.circle.fill", color: .green, message: Strings.t("rules.firedMessage", default: "Fired"))
         } else if ok {
             testResult = TestResult(icon: "exclamationmark.triangle.fill", color: .orange, message: message)
@@ -375,13 +387,15 @@ private struct TokenPill<Popover: View>: View {
     var muted: Bool = false
     var anaphor: Bool = false
     var help: String = ""
+    // Owned by the form, not the pill: the form decides which ONE popover is open,
+    // which is what lets a pick in one pill open the next (AddRuleForm.advance).
+    let isOpen: Binding<Bool>
     @ViewBuilder let popover: () -> Popover
-    @State private var showing = false
 
     private var tint: Color { anaphor ? .purple : .accentColor }
 
     var body: some View {
-        Button { showing = true } label: {
+        Button { isOpen.wrappedValue = true } label: {
             HStack(spacing: 3) {
                 Text(text)
                     .foregroundStyle(muted ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint))
@@ -396,11 +410,12 @@ private struct TokenPill<Popover: View>: View {
         }
         .buttonStyle(.plain)
         .help(help)
-        .popover(isPresented: $showing, arrowEdge: .bottom) {
+        .popover(isPresented: isOpen, arrowEdge: .bottom) {
             popover().padding(14)
         }
     }
 }
+
 
 /// One step of a `chain` effect in the form editor -- one of the simple
 /// context-free atoms. A chain step that's a layout or command is authored in
@@ -412,6 +427,7 @@ struct ChainStep: Identifiable {
     var notifyText: String = ""
     var notifyChannel: String = "system"
     var shortcutName: String = ""
+    var command: String = ""
     var url: String = ""
     var speakText: String = ""
 }
@@ -419,13 +435,14 @@ private let chainStepKinds: [(id: String, label: String)] = [
     ("notify", Strings.t("rules.chainKindNotify", default: "Notify")),
     ("speak", Strings.t("rules.chainKindSpeak", default: "Speak text aloud")),
     ("runShortcut", Strings.t("rules.chainKindRunShortcut", default: "Run a Shortcut")),
+    ("runCommand", Strings.t("rules.chainKindRunCommand", default: "Run a shell command")),
     ("openURL", Strings.t("rules.chainKindOpenURL", default: "Open a URL")),
     ("lockScreen", Strings.t("rules.chainKindLockScreen", default: "Lock the screen")),
     ("startScreensaver", Strings.t("rules.chainKindScreensaver", default: "Start the screensaver")),
     ("emptyTrash", Strings.t("rules.chainKindEmptyTrash", default: "Empty the Trash")),
     ("eject", Strings.t("rules.chainKindEject", default: "Eject external disks")),
 ]
-private let chainStepSimpleKinds: Set<String> = ["notify", "speak", "runShortcut", "openURL", "lockScreen", "startScreensaver", "emptyTrash", "eject"]
+private let chainStepSimpleKinds: Set<String> = ["notify", "speak", "runShortcut", "runCommand", "openURL", "lockScreen", "startScreensaver", "emptyTrash", "eject"]
 
 private struct AddRuleForm: View {
     @ObservedObject var store: SettingsStore
@@ -456,6 +473,7 @@ private struct AddRuleForm: View {
     @State private var placements: [Placement] = []   // the layout effect's rows
     @State private var chainSteps: [ChainStep] = []   // the chain effect's ordered steps
     @State private var shortcutName = ""              // runShortcut
+    @State private var commandText = ""               // runCommand
     @State private var openURLValue = ""              // openURL
     @State private var speakText = ""                 // speak
     @State private var wallpaperImage = ""             // setWallpaperImage: image file path
@@ -490,6 +508,12 @@ private struct AddRuleForm: View {
     // -- the signal matches on THAT (stable across locale/rename), the name only as a
     // free-text fallback. Empty for a typed name or a non-app signal.
     @State private var showFrontmostPicker = false
+    // The ONE open token popover (nil = none), and the pills the user has set this
+    // session. A pick calls advance(from:), which opens the next pill in reading
+    // order that is unset or incomplete -- so a new rule is filled left to right,
+    // and an edit only chains into the field an action-type switch just emptied.
+    @State private var openPill: PillSlot?
+    @State private var setPills: Set<PillSlot> = []
     @State private var stateValueBundleId = ""
     // The "New rule" landing: a recipe gallery (kills the blank canvas), shown only
     // in add mode. Picking a recipe pre-fills the form below; "Build your own" clears it.
@@ -500,11 +524,67 @@ private struct AddRuleForm: View {
     @State private var jsonText = ""
     @State private var jsonSeed = ""            // what jsonText was seeded with (dirty check)
     @State private var confirmLeaveJSON = false
+    // Raised by Add/Save when the form's effect is risky and the user has not yet
+    // accepted a risky rule here (see needsRiskConfirm).
+    @State private var confirmRiskySave = false
     // The loaded rule's spec as the FORM would build it -- the baseline for the
     // form's dirty check (Save is disabled in edit mode until something changes).
     @State private var loadedFormJSON = ""
 
     private var isEditing: Bool { editing != nil }
+
+    // A pill's isPresented. Closing one by clicking away counts as having set it:
+    // the user looked and left it as it was.
+    private func pill(_ slot: PillSlot) -> Binding<Bool> {
+        Binding(get: { openPill == slot },
+                set: { open in
+                    if open { openPill = slot }
+                    else if openPill == slot { openPill = nil; setPills.insert(slot) }
+                })
+    }
+
+    // A pick in `slot` finished it: open the next pill that is unset or incomplete
+    // (RuleFormModel.nextPill), or close. Also closes the app list nested inside the
+    // trigger popover, whose own binding would otherwise stay true and pop it on the
+    // next open.
+    private func advance(from slot: PillSlot) {
+        setPills.insert(slot)
+        showFrontmostPicker = false
+        openPill = formModel.nextPill(after: slot, set: setPills)
+    }
+
+    // The form's effect risk, judged by the engine on the spec the form would save
+    // (a chain, or openURL's scheme, is risky only for some contents). Until the
+    // form is complete enough to build, the picked kind's catalog risk stands in,
+    // so the warning shows as soon as a risky kind is chosen. nil = ordinary.
+    private var formRisk: String? {
+        guard let spec = buildSpec(),
+              let data = try? JSONSerialization.data(withJSONObject: spec),
+              let json = String(data: data, encoding: .utf8) else { return selectedEffect?.risk }
+        return store.ruleRisk(json)
+    }
+
+    // What THIS action can do, one sentence per risk class (effects.lua RISK). A
+    // shared sentence would tell an empty-the-Trash rule it can lock you out: a
+    // warning that names the wrong danger teaches the user to skip warnings.
+    private func riskSentence(_ risk: String?) -> String {
+        switch risk {
+        case "lockout":
+            return Strings.t("rules.risk.lockout", default: "Risky: set up wrong, this can keep locking you out of your Mac.")
+        case "destructive":
+            return Strings.t("rules.risk.destructive", default: "Risky: this deletes files for good -- they can't be recovered.")
+        default:   // "exec": a command, a Shortcut, or an app scheme
+            return Strings.t("rules.risk.exec", default: "Risky: this hands control to a command, Shortcut or app that can change anything on your Mac.")
+        }
+    }
+
+    // Confirm once per risky rule: on Add, and on an edit that MAKES a rule risky --
+    // not on every rename of one the user already accepted. The JSON editor skips
+    // it (its author is reading the spec); the engine's save-time refusal and the
+    // breaker bind both paths alike.
+    private var needsRiskConfirm: Bool {
+        !advanced && formRisk != nil && (editing?.risk == nil)
+    }
 
     var body: some View {
         Section(isEditing ? Strings.t("rules.editRule", default: "Edit rule") : Strings.t("rules.addRuleSection", default: "Add a rule")) {
@@ -586,6 +666,14 @@ private struct AddRuleForm: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Its own line, not an else-branch: a risky effect is worth saying even
+            // when a footgun warning above is also showing.
+            if let risk = formRisk {
+                Label(riskSentence(risk) + " " + opts.breakerNote,
+                      systemImage: "exclamationmark.shield")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             }   // end of the Form-mode (!advanced) fields
 
             // The error + Save/Cancel belong to the editor, not the gallery (whose
@@ -602,7 +690,8 @@ private struct AddRuleForm: View {
                         Button(Strings.t("rules.cancel", default: "Cancel")) { editing = nil }   // onChange resets the form
                     }
                     Button(isEditing ? Strings.t("rules.saveChanges", default: "Save changes") : Strings.t("rules.addRule", default: "Add rule")) {
-                        advanced ? submitJSON() : submit()
+                        if needsRiskConfirm { confirmRiskySave = true }
+                        else { advanced ? submitJSON() : submit() }
                     }
                     // Editing: also require an actual change, so "Save changes" isn't
                     // offered for a no-op. Adding: canSubmit alone governs.
@@ -619,6 +708,14 @@ private struct AddRuleForm: View {
             Button(Strings.t("rules.keepEditingJSON", default: "Keep editing JSON"), role: .cancel) {}
         } message: {
             Text(Strings.t("rules.switchToFormMsg", default: "Switching to the form discards the changes you made in the JSON editor."))
+        }
+        .confirmationDialog(Strings.t("rules.riskyConfirmTitle", default: "Save a risky rule?"),
+                            isPresented: $confirmRiskySave, titleVisibility: .visible) {
+            Button(Strings.t("rules.riskyConfirmSave", default: "Save rule")) { submit() }
+            Button(Strings.t("rules.cancel", default: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(riskSentence(formRisk) + " " + opts.breakerNote + " "
+                 + Strings.t("rules.safeModeHint", default: "Hold Option while Hammerdeck launches to start with every rule paused."))
         }
         // Entering JSON mode seeds the editor with the rule's current spec and
         // records that seed (so the toggle binding can tell if it was edited).
@@ -662,12 +759,30 @@ private struct AddRuleForm: View {
                     moveDisplay = (triggerProvides == "display") ? Self.triggerSentinel("display") : (opts.layoutDisplays.first ?? "")
                 }
             }
+            // Last, so the seeded values count. Only a pick in the verb pill advances
+            // -- a load or a recipe changes effectId with no pill open -- and only
+            // that pick un-sets the parameter pills, which now belong to a new kind.
+            if openPill == .effectKind {
+                setPills.subtract([.effectParam(0), .effectParam(1)])
+                advance(from: .effectKind)
+            }
         }
         // If the trigger stops providing the entity a "from the trigger" param
         // needs, that param becomes unresolvable -- fall back to a valid literal so
         // the saved spec stays sound (applies in edit mode too).
         .onChange(of: triggerType) { _ in demoteOrphanedTriggerParams() }
-        .onChange(of: transition) { _ in demoteOrphanedTriggerParams() }
+        .onChange(of: transition) { _ in
+            demoteOrphanedTriggerParams()
+            if openPill == .transition { advance(from: .transition) }
+        }
+        // One-choice pickers inside a pill: the pick finishes that pill.
+        .onChange(of: eventName) { _ in
+            if openPill == .trigger && triggerType == "event" { advance(from: .trigger) }
+        }
+        .onChange(of: appearanceMode) { _ in if openPill == .effectParam(0) { advance(from: .effectParam(0)) } }
+        .onChange(of: volumeOp) { _ in if openPill == .effectParam(0) { advance(from: .effectParam(0)) } }
+        .onChange(of: mediaKeyName) { _ in if openPill == .effectParam(0) { advance(from: .effectParam(0)) } }
+        .onChange(of: moveDisplay) { _ in if openPill == .effectParam(1) { advance(from: .effectParam(1)) } }
         // Off for the whole form (inline fields AND popover content inherit it) so
         // a macOS autocorrect/autofill can't silently land in an identifier field
         // (an app name, URL, or a notify title -- the "android studio"-in-description
@@ -785,6 +900,10 @@ private struct AddRuleForm: View {
                 case "runShortcut":
                     TextField(Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"),
                               text: $chainSteps[i].shortcutName)
+                case "runCommand":
+                    TextField(Strings.t("rules.commandField", default: "Shell command (runs in zsh, like Terminal)"),
+                              text: $chainSteps[i].command)
+                        .font(.system(.body, design: .monospaced))
                 case "openURL":
                     TextField(Strings.t("rules.openURLFieldShort", default: "URL (https://… or an app scheme)"), text: $chainSteps[i].url)
                 default:
@@ -865,7 +984,7 @@ private struct AddRuleForm: View {
             }
         } else if triggerType == "event" {
             sentenceWord(Strings.t("rules.lead.on", default: "on"))
-            TokenPill(text: eventName, help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches")) { triggerPopover }
+            TokenPill(text: eventName, help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches"), isOpen: pill(.trigger)) { triggerPopover }
         } else {                          // schedule
             schedulePill
         }
@@ -877,21 +996,21 @@ private struct AddRuleForm: View {
     private var triggerValuePill: some View {
         TokenPill(text: stateValue.isEmpty ? valueTokenPlaceholder : stateValue,
                   muted: stateValue.isEmpty,
-                  help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches")) { triggerPopover }
+                  help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches"), isOpen: pill(.trigger)) { triggerPopover }
     }
 
     private var verbPill: some View {
         let verb = (transition == "becomes")
             ? (meta?.enterVerb ?? Strings.t("rules.becomes", default: "becomes"))
             : (meta?.leaveVerb ?? Strings.t("rules.leaves", default: "leaves"))
-        return TokenPill(text: verb, help: Strings.t("rules.tokenVerbHelp", default: "When it fires")) { verbPopover }
+        return TokenPill(text: verb, help: Strings.t("rules.tokenVerbHelp", default: "When it fires"), isOpen: pill(.transition)) { verbPopover }
     }
 
     private var schedulePill: some View {
         let label = scheduleMode == "everyMin"
             ? String(format: Strings.t("rules.token.everyMin", default: "%d minutes"), everyMin)
             : String(format: Strings.t("rules.token.dailyAt", default: "day at %@"), atTime)
-        return TokenPill(text: label, help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches")) { triggerPopover }
+        return TokenPill(text: label, help: Strings.t("rules.tokenTriggerHelp", default: "What this rule watches"), isOpen: pill(.trigger)) { triggerPopover }
     }
 
     @ViewBuilder private var effectTokens: some View {
@@ -901,54 +1020,58 @@ private struct AddRuleForm: View {
         case "notify":
             TokenPill(text: notifyTitle.isEmpty ? Strings.t("rules.token.aTitle", default: "a title")
                                                 : "\u{201C}\(notifyTitle)\u{201D}",
-                      muted: notifyTitle.isEmpty) { notifyPopover }
+                      muted: notifyTitle.isEmpty, isOpen: pill(.effectParam(0))) { notifyPopover }
         case "runShortcut":
             TokenPill(text: shortcutName.isEmpty ? Strings.t("rules.token.aShortcut", default: "a Shortcut")
                                                  : "\u{201C}\(shortcutName)\u{201D}",
-                      muted: shortcutName.isEmpty) { fieldPopover($shortcutName, Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"), hint: Strings.t("rules.runShortcutHint", default: "Runs a macOS Shortcut -- the escape hatch to Focus/DND, volume, HomeKit, and anything Shortcuts can do.")) }
+                      muted: shortcutName.isEmpty, isOpen: pill(.effectParam(0))) { fieldPopover($shortcutName, Strings.t("rules.shortcutNameField", default: "Shortcut name (exactly as in the Shortcuts app)"), hint: Strings.t("rules.runShortcutHint", default: "Runs a macOS Shortcut -- the escape hatch to Focus/DND, volume, HomeKit, and anything Shortcuts can do.")) }
+        case "runCommand":
+            TokenPill(text: commandText.isEmpty ? Strings.t("rules.token.aCommand", default: "a command")
+                                                : "\u{201C}\(commandText)\u{201D}",
+                      muted: commandText.isEmpty, isOpen: pill(.effectParam(0))) { commandPopover }
         case "openURL":
             TokenPill(text: openURLValue.isEmpty ? Strings.t("rules.token.aURL", default: "a URL") : openURLValue,
-                      muted: openURLValue.isEmpty) { fieldPopover($openURLValue, Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)")) }
+                      muted: openURLValue.isEmpty, isOpen: pill(.effectParam(0))) { fieldPopover($openURLValue, Strings.t("rules.openURLField", default: "URL (https://… , or an app scheme like raycast://…)")) }
         case "speak":
             TokenPill(text: speakText.isEmpty ? Strings.t("rules.token.aLine", default: "a line")
                                               : "\u{201C}\(speakText)\u{201D}",
-                      muted: speakText.isEmpty) { fieldPopover($speakText, Strings.t("rules.speakField", default: "Text to speak aloud")) }
+                      muted: speakText.isEmpty, isOpen: pill(.effectParam(0))) { fieldPopover($speakText, Strings.t("rules.speakField", default: "Text to speak aloud")) }
         case "solidWallpaper":
-            TokenPill(text: wallpaperSummary, anaphor: solidDisplay.hasPrefix("@trigger:")) { solidWallpaperEditor.frame(minWidth: 280) }
+            TokenPill(text: wallpaperSummary, anaphor: solidDisplay.hasPrefix("@trigger:"), isOpen: pill(.effectParam(0))) { solidWallpaperEditor.frame(minWidth: 280) }
         case "setWallpaperImage":
             TokenPill(text: imageWallpaperSummary, muted: wallpaperImage.isEmpty,
-                      anaphor: solidDisplay.hasPrefix("@trigger:")) { imageWallpaperEditor.frame(minWidth: 320) }
+                      anaphor: solidDisplay.hasPrefix("@trigger:"), isOpen: pill(.effectParam(0))) { imageWallpaperEditor.frame(minWidth: 320) }
         case "moveAppToDisplay":
             if moveApp.hasPrefix("@trigger:") {
-                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp) { moveAppEditor.frame(minWidth: 280) }
+                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp, isOpen: pill(.effectParam(0))) { moveAppEditor.frame(minWidth: 280) }
             } else {
                 TokenPill(text: moveApp.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : moveApp,
-                          muted: moveApp.isEmpty) { moveAppEditor.frame(minWidth: 280) }
+                          muted: moveApp.isEmpty, isOpen: pill(.effectParam(0))) { moveAppEditor.frame(minWidth: 280) }
             }
             sentenceWord(Strings.t("rules.lead.to", default: "to"))
             if moveDisplay.hasPrefix("@trigger:") {
-                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp) { moveDisplayEditor.frame(minWidth: 280) }
+                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp, isOpen: pill(.effectParam(1))) { moveDisplayEditor.frame(minWidth: 280) }
             } else {
                 TokenPill(text: moveDisplay.isEmpty ? Strings.t("rules.token.aDisplay", default: "a display") : moveDisplay,
-                          muted: moveDisplay.isEmpty) { moveDisplayEditor.frame(minWidth: 280) }
+                          muted: moveDisplay.isEmpty, isOpen: pill(.effectParam(1))) { moveDisplayEditor.frame(minWidth: 280) }
             }
         case "minimizeApp", "hideApp", "quitApp":
             if minimizeAppName.hasPrefix("@trigger:") {
-                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp) { minimizeAppEditor.frame(minWidth: 300) }
+                TokenPill(text: Strings.t("rules.token.it", default: "it"), anaphor: true, help: itHelp, isOpen: pill(.effectParam(0))) { minimizeAppEditor.frame(minWidth: 300) }
             } else {
                 TokenPill(text: minimizeAppName.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : minimizeAppName,
-                          muted: minimizeAppName.isEmpty) { minimizeAppEditor.frame(minWidth: 300) }
+                          muted: minimizeAppName.isEmpty, isOpen: pill(.effectParam(0))) { minimizeAppEditor.frame(minWidth: 300) }
             }
         case "launchApp":
             // No "@trigger:" form -- launch always targets a literal installed app.
             TokenPill(text: launchAppName.isEmpty ? Strings.t("rules.token.anApp", default: "an app") : launchAppName,
-                      muted: launchAppName.isEmpty) { launchAppEditor.frame(minWidth: 300) }
+                      muted: launchAppName.isEmpty, isOpen: pill(.effectParam(0))) { launchAppEditor.frame(minWidth: 300) }
         case "setAppearance":
-            TokenPill(text: appearanceModeLabel(appearanceMode)) { appearanceEditor.frame(minWidth: 200) }
+            TokenPill(text: appearanceModeLabel(appearanceMode), isOpen: pill(.effectParam(0))) { appearanceEditor.frame(minWidth: 200) }
         case "volume":
-            TokenPill(text: volumeOpLabel(volumeOp)) { volumeEditor.frame(minWidth: 200) }
+            TokenPill(text: volumeOpLabel(volumeOp), isOpen: pill(.effectParam(0))) { volumeEditor.frame(minWidth: 200) }
         case "mediaKey":
-            TokenPill(text: mediaKeyLabel(mediaKeyName)) { mediaKeyEditor.frame(minWidth: 200) }
+            TokenPill(text: mediaKeyLabel(mediaKeyName), isOpen: pill(.effectParam(0))) { mediaKeyEditor.frame(minWidth: 200) }
         case "layout", "chain":
             // "stem + block": the effect-verb pill ("arrange windows" / "do several
             // things") is the stem; the existing layoutEditor/chainEditor block
@@ -961,7 +1084,7 @@ private struct AddRuleForm: View {
 
     private var effectVerbPill: some View {
         TokenPill(text: effectVerbLabel(selectedEffect?.kind),
-                  help: Strings.t("rules.tokenEffectHelp", default: "What to do when it fires")) { effectVerbPopover }
+                  help: Strings.t("rules.tokenEffectHelp", default: "What to do when it fires"), isOpen: pill(.effectKind)) { effectVerbPopover }
     }
 
     // --- token popovers (reuse the old field clusters) -------------------------
@@ -982,6 +1105,7 @@ private struct AddRuleForm: View {
                     TextField(valuePlaceholder, text: Binding(
                         get: { stateValue },
                         set: { stateValue = $0; stateValueBundleId = "" }))
+                        .onSubmit { advance(from: .trigger) }
                     if signalUsesBundleId {
                         // An app-identity value (frontmost / running app): pick from ALL
                         // installed apps (searchable), not just running ones -- so a rule can
@@ -996,12 +1120,15 @@ private struct AddRuleForm: View {
                                     name: $stateValue, bundleId: $stateValueBundleId,
                                     sentinel: "", triggerProvidesApp: false, fromTriggerLabel: "",
                                     warning: nil,
-                                    hint: Strings.t("rules.frontmostPickHint", default: "Pick any installed app -- it needn't be running now."))
+                                    hint: Strings.t("rules.frontmostPickHint", default: "Pick any installed app -- it needn't be running now."),
+                                    onChosen: { advance(from: .trigger) })
                                     .frame(width: 300).padding(12)
                             }
                     } else if !candidates.isEmpty {
                         Menu {
-                            ForEach(candidates, id: \.self) { c in Button(c) { stateValue = c; stateValueBundleId = "" } }
+                            ForEach(candidates, id: \.self) { c in
+                                Button(c) { stateValue = c; stateValueBundleId = ""; advance(from: .trigger) }
+                            }
                         } label: { Image(systemName: "list.bullet") }
                         .menuStyle(.borderlessButton).frame(width: 32)
                         .help(Strings.t("rules.pickSuggested", default: "Pick a suggested value"))
@@ -1052,7 +1179,10 @@ private struct AddRuleForm: View {
     }
 
     private func transitionRow(_ edge: String, _ verb: String, _ when: String?) -> some View {
-        Button { transition = edge } label: {
+        // Re-picking the current edge changes nothing, so the onChange(transition)
+        // hook never fires; advance here instead, or a new rule's walk stalls on
+        // its default "becomes".
+        Button { if transition == edge { advance(from: .transition) } else { transition = edge } } label: {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.tint)
                     .opacity(transition == edge ? 1 : 0)
@@ -1072,8 +1202,13 @@ private struct AddRuleForm: View {
     }
 
     @ViewBuilder private var effectVerbPopover: some View {
-        Picker(Strings.t("rules.do", default: "Do"), selection: $effectId) {
-            ForEach(opts.effects) { Text($0.label).tag($0.id) }
+        // Re-picking the current kind advances directly (onChange(effectId) covers a
+        // real change) -- the default "notify" is a pick a new rule often wants.
+        Picker(Strings.t("rules.do", default: "Do"), selection: Binding(
+            get: { effectId },
+            set: { new in if new == effectId { advance(from: .effectKind) } else { effectId = new } })) {
+            // A risky kind is marked in the list itself, before it is picked.
+            ForEach(opts.effects) { Text($0.risk == nil ? $0.label : "\($0.label)  \u{26A0}\u{FE0E}").tag($0.id) }
         }
         .pickerStyle(.inline).labelsHidden().frame(minWidth: 240)
     }
@@ -1081,7 +1216,9 @@ private struct AddRuleForm: View {
     @ViewBuilder private var notifyPopover: some View {
         VStack(alignment: .leading, spacing: 8) {
             TextField(Strings.t("rules.notifyTitleField", default: "Notification title"), text: $notifyTitle)
+                .onSubmit { advance(from: .effectParam(0)) }
             TextField(Strings.t("rules.notifyTextField", default: "Notification text (optional)"), text: $notifyText)
+                .onSubmit { advance(from: .effectParam(0)) }
             Picker(Strings.t("rules.showAs", default: "Show as"), selection: $notifyChannel) {
                 Text(Strings.t("rules.systemNotification", default: "System notification")).tag("system")
                 Text(Strings.t("rules.inAppBanner", default: "In-app banner")).tag("app")
@@ -1097,11 +1234,30 @@ private struct AddRuleForm: View {
         .frame(minWidth: 300)
     }
 
+    // The command field: monospaced and multi-line, since a command is shell
+    // syntax the user may paste whole, and the hint carries the two limits that
+    // are not obvious (the PATH it runs with, the 60s cap) and where the result goes.
+    @ViewBuilder private var commandPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(Strings.t("rules.commandField", default: "Shell command (runs in zsh, like Terminal)"),
+                      text: $commandText, axis: .vertical)
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(1...6)
+                .onSubmit { advance(from: .effectParam(0)) }
+            Text(Strings.t("rules.runCommandHint", default: "Runs in zsh with your login PATH, so Homebrew tools work. It must finish within 60 seconds. Its exit code goes to the log (Open Logs in the menu bar), not to the rule's status. The command itself is logged too, so keep passwords out of it."))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(minWidth: 340)
+    }
+
     // A one-field text popover (runShortcut name / openURL url), with an optional
     // discoverability hint beneath (e.g. "what is a Shortcut effect for").
     @ViewBuilder private func fieldPopover(_ text: Binding<String>, _ placeholder: String, hint: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Every fieldPopover is an action's one parameter, so Return finishes it.
             TextField(placeholder, text: text)
+                .onSubmit { advance(from: .effectParam(0)) }
             if let hint {
                 Text(hint).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1307,6 +1463,7 @@ private struct AddRuleForm: View {
     // stateValue blank for them to fill; the rest are complete and read immediately.
     private func applyRecipe(_ id: String) {
         resetForm()
+        setPills = PillSlot.all   // a recipe is a filled-in rule to tweak, like an edit
         switch id {
         case "whiten_eink":
             triggerType = "state:displaysPresent"; transition = "becomes"
@@ -1474,7 +1631,8 @@ private struct AddRuleForm: View {
             warning: (minimizeAppName.hasPrefix("@trigger:") && signal == "frontmostApp" && transition == "becomes")
                 ? Strings.t("rules.minimizeBecomesWarning", default: "This acts on the app the moment it gains focus -- you'd never keep it open. Switch the transition to \"loses focus\" to act when you click away.")
                 : nil,
-            hint: Strings.t("rules.minimizeAppHint", default: "Targets the app's front window. Pair with \"Frontmost app loses focus\" to act the moment you click away."))
+            hint: Strings.t("rules.minimizeAppHint", default: "Targets the app's front window. Pair with \"Frontmost app loses focus\" to act the moment you click away."),
+            onChosen: { advance(from: .effectParam(0)) })
     }
 
     // moveAppToDisplay's app chooser (same installed-apps picker + the from-trigger
@@ -1486,7 +1644,8 @@ private struct AddRuleForm: View {
             triggerProvidesApp: triggerProvides == "app",
             fromTriggerLabel: triggerOptionLabel("app"),
             warning: nil,
-            hint: Strings.t("rules.moveAppHint", default: "Moves the app's windows to the chosen display."))
+            hint: Strings.t("rules.moveAppHint", default: "Moves the app's windows to the chosen display."),
+            onChosen: { advance(from: .effectParam(0)) })
     }
 
     // launchApp's app chooser. Pick any INSTALLED app to open -- its bundle id is the
@@ -1502,7 +1661,8 @@ private struct AddRuleForm: View {
             warning: (!launchAppName.isEmpty && launchAppBundleId.isEmpty)
                 ? Strings.t("rules.launchAppNeedsBundleId", default: "Pick an app from the list -- a typed name alone can't open an app.")
                 : nil,
-            hint: Strings.t("rules.launchAppHint", default: "Opens (launches) the app when the rule fires -- e.g. open Slack every day at 9am."))
+            hint: Strings.t("rules.launchAppHint", default: "Opens (launches) the app when the rule fires -- e.g. open Slack every day at 9am."),
+            onChosen: { advance(from: .effectParam(0)) })
     }
 
     @ViewBuilder private var moveDisplayEditor: some View {
@@ -1578,6 +1738,7 @@ private struct AddRuleForm: View {
         s.notifyText = d["text"] as? String ?? ""
         s.notifyChannel = d["channel"] as? String ?? "app"
         s.shortcutName = d["name"] as? String ?? ""
+        s.command = d["command"] as? String ?? ""
         s.url = d["url"] as? String ?? ""
         s.speakText = d["text"] as? String ?? ""
         return s
@@ -1719,6 +1880,8 @@ private struct AddRuleForm: View {
 
     /// Reset every field to add-mode defaults.
     private func resetForm() {
+        openPill = nil       // a popover must not outlive the rule it was opened on
+        setPills = []        // a new rule: nothing set yet, so a pick walks the sentence
         // Default to the app signal (not whichever sorts first), so a fresh rule
         // starts on the familiar "frontmost app" case.
         let defSig = opts.signals.contains("frontmostApp") ? "frontmostApp" : (opts.signals.first ?? "frontmostApp")
@@ -1738,6 +1901,7 @@ private struct AddRuleForm: View {
         placements = []
         chainSteps = []
         shortcutName = ""
+        commandText = ""
         openURLValue = ""
         speakText = ""
         wallpaperImage = ""
@@ -1759,6 +1923,10 @@ private struct AddRuleForm: View {
 
     /// Reverse of buildSpec: seed the form fields from an existing rule's spec.
     private func loadForEdit(_ rule: RuleInfo) {
+        // Cleared FIRST: the onChange hooks this load triggers advance only for an
+        // open pill, so none can chain on the rule being loaded.
+        openPill = nil
+        setPills = PillSlot.all   // a saved rule is set; a pick just closes its pill
         formError = nil
         advanced = false   // selecting a rule starts in the guided form
         jsonText = ""
@@ -1798,6 +1966,7 @@ private struct AddRuleForm: View {
         // rule (e.g. layout placements) can't bleed into one of a different kind --
         // the onChange(of: effectId) seeder only fills an EMPTY placement list.
         placements = []; chainSteps = []; shortcutName = ""; openURLValue = ""; speakText = ""
+        commandText = ""
         wallpaperImage = ""; solidColor = "#FFFFFF"; solidDisplay = ""; minimizeAppName = ""
         moveApp = ""; moveDisplay = ""
         minimizeAppBundleId = ""; moveAppBundleId = ""
@@ -1942,6 +2111,7 @@ private struct AddRuleForm: View {
         m.notifyTitle = notifyTitle; m.notifyText = notifyText; m.notifyChannel = notifyChannel
         m.placements = placements; m.chainSteps = chainSteps
         m.shortcutName = shortcutName; m.openURLValue = openURLValue; m.speakText = speakText
+        m.commandText = commandText
         m.wallpaperImage = wallpaperImage; m.solidColor = solidColor; m.solidDisplay = solidDisplay
         m.minimizeAppName = minimizeAppName; m.minimizeAppBundleId = minimizeAppBundleId
         m.moveApp = moveApp; m.moveAppBundleId = moveAppBundleId; m.moveDisplay = moveDisplay
@@ -1960,6 +2130,7 @@ private struct AddRuleForm: View {
         notifyTitle = m.notifyTitle; notifyText = m.notifyText; notifyChannel = m.notifyChannel
         placements = m.placements
         shortcutName = m.shortcutName; openURLValue = m.openURLValue; speakText = m.speakText
+        commandText = m.commandText
         wallpaperImage = m.wallpaperImage; solidColor = m.solidColor; solidDisplay = m.solidDisplay
         minimizeAppName = m.minimizeAppName; minimizeAppBundleId = m.minimizeAppBundleId
         moveApp = m.moveApp; moveAppBundleId = m.moveAppBundleId; moveDisplay = m.moveDisplay
@@ -1984,19 +2155,20 @@ private struct AppTargetChooser: View {
     let fromTriggerLabel: String
     let warning: String?             // shown in place of the hint when non-nil
     let hint: String
+    var onChosen: () -> Void = {}    // after ANY pick (list, from-trigger, typed name)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if triggerProvidesApp {
                 row(label: fromTriggerLabel, selected: name == sentinel) {
-                    name = sentinel; bundleId = ""
+                    name = sentinel; bundleId = ""; onChosen()
                 }
                 Divider()
             }
             InstalledAppPicker(
                 selectedBundleId: bundleId,
-                onPick: { pickedName, pickedId in name = pickedName; bundleId = pickedId },
-                onUseTypedName: { typed in name = typed; bundleId = "" })
+                onPick: { pickedName, pickedId in name = pickedName; bundleId = pickedId; onChosen() },
+                onUseTypedName: { typed in name = typed; bundleId = ""; onChosen() })
 
             Text(warning ?? hint)
                 .font(.caption)

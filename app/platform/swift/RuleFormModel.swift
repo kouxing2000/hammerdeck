@@ -11,6 +11,16 @@ import Foundation
 // now (a follow-up can move them onto this same model). The trivial trigger/
 // effect helpers are re-derived here to keep `buildSpec` self-contained; the
 // view keeps its own copies for UI show/hide (they're one-liners).
+/// One token pill's place in the rule sentence. The trigger is one slot whatever
+/// its shape (value, event or schedule pill -- they share one popover); the action
+/// is its verb pill plus up to two parameter pills (EffectKindSpec.paramPills).
+enum PillSlot: Hashable {
+    case trigger, transition, effectKind, effectParam(Int)
+
+    /// Every slot a rule can have -- "all set" for a loaded rule or a recipe.
+    static let all: Set<PillSlot> = [.trigger, .transition, .effectKind, .effectParam(0), .effectParam(1)]
+}
+
 struct RuleFormModel {
     // MARK: Form data (mirrors AddRuleForm's @State fields buildSpec reads)
     var name = ""
@@ -30,6 +40,7 @@ struct RuleFormModel {
     var placements: [Placement] = []
     var chainSteps: [ChainStep] = []
     var shortcutName = ""
+    var commandText = ""
     var openURLValue = ""
     var speakText = ""
     var wallpaperImage = ""
@@ -66,6 +77,51 @@ struct RuleFormModel {
         guard let eff = selectedEffect else { return false }
         guard let spec = EffectKinds.spec(for: eff.kind) else { return true }  // command
         return spec.build(self) != nil
+    }
+
+    // MARK: Auto-advance -- which token pill a pick opens next
+
+    /// The sentence's pills in reading order. Mirrors the view's triggerTokens (an
+    /// entity signal reads "<value> <verb>", a property signal "the <label> <verb>
+    /// <value>") and effectTokens (the verb pill, then the kind's parameter pills).
+    @MainActor
+    var pillOrder: [PillSlot] {
+        var order: [PillSlot] = []
+        if isStateTrigger {
+            order += meta?.provides != nil ? [.trigger, .transition] : [.transition, .trigger]
+        } else {
+            order.append(.trigger)
+        }
+        order.append(.effectKind)
+        let params = EffectKinds.spec(for: selectedEffect?.kind)?.paramPills ?? 0
+        order += (0..<params).map { .effectParam($0) }
+        return order
+    }
+
+    /// Still needs filling, whether or not the user has been there: a state trigger
+    /// with no value, or an action whose table row cannot build yet. Catches a field
+    /// the form empties by itself (the view's demoteOrphanedTriggerParams), which a
+    /// record of set pills alone would skip.
+    @MainActor
+    func isIncomplete(_ slot: PillSlot) -> Bool {
+        switch slot {
+        case .trigger:
+            return isStateTrigger && stateValue.trimmingCharacters(in: .whitespaces).isEmpty
+        case .effectParam:
+            return EffectKinds.spec(for: selectedEffect?.kind)?.build(self) == nil
+        case .transition, .effectKind:
+            return false
+        }
+    }
+
+    /// The pill a pick in `slot` hands on to: the first one after it in reading
+    /// order that the user has not set (`set`) or that is incomplete; nil = close.
+    /// Forward only, so it never reopens a pill behind the one just finished.
+    @MainActor
+    func nextPill(after slot: PillSlot, set: Set<PillSlot>) -> PillSlot? {
+        let order = pillOrder
+        guard let i = order.firstIndex(of: slot) else { return nil }
+        return order[(i + 1)...].first { !set.contains($0) || isIncomplete($0) }
     }
 
     // MARK: Serialize the form into the engine's rule spec (nil = too incomplete)
