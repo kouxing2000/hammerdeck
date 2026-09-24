@@ -15,6 +15,10 @@ private final class PowerNotifyBox {
 
 // Holds whichever link of a daily timer chain is currently armed, so one stable
 // resource id keeps cancelling the right timer as the chain re-arms itself.
+// Main-actor bound, which is what makes it Sendable: the timer's @Sendable block
+// captures it to re-arm the chain, and its mutable `timer` is only ever touched
+// on the main actor.
+@MainActor
 private final class DailyTimerBox {
     var timer: Timer?
 }

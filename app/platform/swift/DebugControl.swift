@@ -37,6 +37,10 @@ import Foundation
 enum DebugControl {
 #if DEBUG
     private static var timer: Timer?
+    /// The state the channel evals into. Read from inside the timer's main-actor
+    /// block rather than captured: the Timer block is @Sendable, and LuaState is
+    /// not, so a capture would need an unchecked escape hatch.
+    private static var evalState: LuaState?
 
     /// Deep-link into the SwiftUI Settings window, which the Lua eval channel
     /// can't reach (it's host UI, not the platform). Set by Boot; invoked when a
@@ -60,6 +64,7 @@ enum DebugControl {
         let resPath = (dir as NSString).appendingPathComponent("result.txt")
         try? fm.removeItem(atPath: cmdPath)   // drop a command stranded by a crash
         print("[hammerdeck] debug control listening at \(dir)")
+        evalState = lua
 
         // .common mode, NOT the default `scheduledTimer` registration. A timer
         // scheduled the usual way lands in .default only, so it STOPS FIRING
@@ -74,6 +79,7 @@ enum DebugControl {
         // post-mortem.
         let t = Timer(timeInterval: 0.2, repeats: true) { _ in
             MainActor.assumeIsolated {
+                let fm = FileManager.default
                 guard fm.fileExists(atPath: cmdPath),
                       let code = try? String(contentsOfFile: cmdPath, encoding: .utf8)
                 else { return }
@@ -109,12 +115,14 @@ enum DebugControl {
                         .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
                     DebugControl.openHome?(dest.isEmpty ? nil : dest)
                     out = "opened home\(dest.isEmpty ? "" : ":" + dest)"
-                } else {
+                } else if let state = DebugControl.evalState {
                     do {
-                        out = DebugControl.render(try lua.eval(code))
+                        out = DebugControl.render(try state.eval(code))
                     } catch {
                         out = "ERROR: \(error)"
                     }
+                } else {
+                    out = "ERROR: debug control has no Lua state"
                 }
                 // Atomic write: the waiter never sees a partial result.
                 try? out.write(toFile: resPath, atomically: true, encoding: .utf8)

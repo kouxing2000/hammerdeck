@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import Combine
 
 // The rich Usage Report -- a feature-contributed NATIVE Homepage page (declared
 // by usage_stats' manifest `page`, registered in FeaturePageRegistry). It reads

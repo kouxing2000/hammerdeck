@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 // The Homepage: the "cool home" shell. A single window with a sidebar that
 // routes to the landing Dashboard and docks the already-shipped lenses

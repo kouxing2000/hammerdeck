@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 // The Automation Timeline: the TIME-dimension sibling of the Shortcut Map. The
 // Shortcut Map answers "what does each KEY do"; this answers "what fires WHEN".

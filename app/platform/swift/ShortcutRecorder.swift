@@ -28,8 +28,8 @@ enum ShortcutCapture {
     /// (user clicked away without pressing a key) -- otherwise the hotkeys would
     /// stay suspended while they're in another app.
     @MainActor
-    static func begin(onKey: @escaping (Set<String>, String) -> Void,
-                      onCancel: @escaping () -> Void) -> Any? {
+    static func begin(onKey: @escaping @MainActor (Set<String>, String) -> Void,
+                      onCancel: @escaping @MainActor () -> Void) -> Any? {
         HotkeyCenter.shared.suspend()
         let token = CaptureToken()
         token.eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { ev in
