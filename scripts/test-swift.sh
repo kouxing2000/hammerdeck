@@ -39,7 +39,7 @@ LOG="$LOG_DIR/swift-test.log"
 # products that a dev run just built (lib/sdk-link-flags.sh says why they exist).
 # shellcheck source=lib/sdk-link-flags.sh
 source scripts/lib/sdk-link-flags.sh || exit 1   # no -e here; a silent miss relinks mis-stamped
-swift test "${SWIFT_SDK_LINK_FLAGS[@]}" "$@" > "$LOG" 2>&1
+swift test ${SWIFT_SDK_LINK_FLAGS[@]+"${SWIFT_SDK_LINK_FLAGS[@]}"} "$@" > "$LOG" 2>&1
 status=$?
 
 # The failing-case lines XCTest emits. Printed BEFORE the summary so the thing

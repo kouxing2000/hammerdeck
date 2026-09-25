@@ -158,13 +158,13 @@ if [[ "${HAMMERDECK_SKIP_TESTS:-0}" == "1" ]]; then
   echo "==> WARNING: skipping the test gate (HAMMERDECK_SKIP_TESTS=1)"
 else
   echo "==> swift test (pre-package gate)"
-  swift test "${SWIFT_SDK_LINK_FLAGS[@]}"
+  swift test ${SWIFT_SDK_LINK_FLAGS[@]+"${SWIFT_SDK_LINK_FLAGS[@]}"}
 fi
 
 # 2. Release build. Universal by default: Hammerdeck's floor is macOS 13, which
 #    still runs on Intel, and an arm64-only bundle downloaded onto an Intel Mac
 #    fails to launch with nothing on screen that explains why.
-BUILD_FLAGS=(-c release "${SWIFT_SDK_LINK_FLAGS[@]}")
+BUILD_FLAGS=(-c release ${SWIFT_SDK_LINK_FLAGS[@]+"${SWIFT_SDK_LINK_FLAGS[@]}"})
 if [[ "${HAMMERDECK_UNIVERSAL:-1}" == "1" ]]; then
   BUILD_FLAGS+=(--arch arm64 --arch x86_64)
   echo "==> swift build -c release (universal: arm64 + x86_64)"

@@ -29,10 +29,20 @@ HD_MACOS_SDK="$(xcrun --sdk macosx --show-sdk-version)" || {
   echo "error: xcrun could not report the macOS SDK version" >&2
   return 1 2>/dev/null || exit 1
 }
-SWIFT_SDK_LINK_FLAGS=(
-  -Xlinker -platform_version -Xlinker macos
-  -Xlinker "$HD_MIN_MACOS" -Xlinker "$HD_MACOS_SDK"
-)
+# Only from Xcode 27 (SDK 27) on. Xcode 26's Swift Build records the real SDK
+# already, and it hands -Xlinker values to clang bare, so the same flags there
+# fail the universal link with "clang: error: unknown argument:
+# '-platform_version'". hd_check_binary_sdk checks every toolchain's output either
+# way. The array can be EMPTY: expand it as
+# ${SWIFT_SDK_LINK_FLAGS[@]+"${SWIFT_SDK_LINK_FLAGS[@]}"}, since bash 3.2 (macOS's
+# /bin/bash) calls an empty array unbound under `set -u`.
+SWIFT_SDK_LINK_FLAGS=()
+if (( ${HD_MACOS_SDK%%.*} >= 27 )); then
+  SWIFT_SDK_LINK_FLAGS=(
+    -Xlinker -platform_version -Xlinker macos
+    -Xlinker "$HD_MIN_MACOS" -Xlinker "$HD_MACOS_SDK"
+  )
+fi
 
 # "13" and "13.0" are the same version; vtool prints one, xcrun the other.
 hd_norm_version() { local v="$1"; while [[ "$v" == *.0 ]]; do v="${v%.0}"; done; echo "$v"; }

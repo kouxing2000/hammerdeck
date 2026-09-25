@@ -81,7 +81,7 @@ cmd_start() {
     # Links with the real SDK recorded -- lib/sdk-link-flags.sh says why.
     # shellcheck source=lib/sdk-link-flags.sh
     source "$REPO/scripts/lib/sdk-link-flags.sh"
-    ( cd "$REPO" && swift build "${SWIFT_SDK_LINK_FLAGS[@]}" )   # fail here => we never launch
+    ( cd "$REPO" && swift build ${SWIFT_SDK_LINK_FLAGS[@]+"${SWIFT_SDK_LINK_FLAGS[@]}"} )   # fail here => we never launch
 
     local bin; bin="$(bin_path)"
     if [[ ! -x "$bin" ]]; then
