@@ -139,6 +139,11 @@ child is bounded by a timeout, output is captured up to a per-stream ceiling
 (both in `Native+Process.swift`), and disabling the feature TERMINATES the child,
 not just its callback.
 
+The child also runs WITHOUT Hammerdeck's macOS privacy permissions: it is its own
+process as far as macOS is concerned, so a folder behind Full Disk Access reads
+as "Operation not permitted", and a command that controls other apps needs its
+own permission rather than borrowing Hammerdeck's.
+
 The child starts with stdin on `/dev/null` and its working directory at `/` —
 both fixed, so your extension behaves the same however the host was launched.
 There is no way to feed it input: pass what it needs as arguments, or write a

@@ -63,6 +63,11 @@ final class TestHost {
         lua = LuaState()
         Native.shared.attach(lua)
         Native.shared.installBindings()
+        // run_process launches its command through Hammerdeck's own binary
+        // (DisclaimedExec); under `swift test` the running executable is the XCTest
+        // runner, so point it at the Hammerdeck binary built beside this test bundle.
+        Native.trampolineOverride = Bundle(for: TestHost.self).bundleURL
+            .deletingLastPathComponent().appendingPathComponent("Hammerdeck").path
         try! bootLua(lua, luaDir: TestHost.repoRoot + "/app")
         store = SettingsStore(lua: lua)
     }
@@ -2569,13 +2574,20 @@ final class IntegrationTests: XCTestCase {
                 (1, true, "launch-and-forget: nothing consumes hidutil's output or exit "
                  + "status, and the OFF call runs from willTerminate -- it restores the "
                  + "user's Caps key, so the child must OUTLIVE the host"),
+            "app/platform/swift/DisclaimedExec.swift":
+                (1, false, "exec-in-place trampoline: it REPLACES its own process "
+                 + "(POSIX_SPAWN_SETEXEC) inside a child runProcessCore already launched, "
+                 + "drains and pinned, so there is nothing to drain or pin twice"),
         ]
 
         // `Process(` / `Process.init(` rather than one literal spelling: a guard that
         // only sees `= Process()` is a style check on a spelling, not a class guard,
         // and `Process.init()` walks straight past it. `ProcessInfo(`, `ProcessStream(`
         // and `runProcessCore(` do not match -- none has `(` right after `Process`.
-        let spawn = try NSRegularExpression(pattern: #"\bProcess\s*(?:\.init)?\s*\("#)
+        // `posix_spawn(` too: it starts a process with no `Process` in sight
+        // (`posix_spawnattr_*` does not match -- `attr` follows, not `(`).
+        let spawn = try NSRegularExpression(
+            pattern: #"\bProcess\s*(?:\.init)?\s*\(|\bposix_spawn\s*\("#)
 
         // Both source trees, not just `app/` -- `Sources/Hammerdeck` is a thin launcher
         // today, and "thin today" is not a property a guard should assume.

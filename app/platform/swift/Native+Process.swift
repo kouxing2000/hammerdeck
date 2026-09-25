@@ -360,6 +360,20 @@ extension Native {
     /// command write to a file.
     static let runProcessOutputCap = 1 << 20   // 1 MiB
 
+    /// Set by the test host: under `swift test` the running executable is the XCTest
+    /// runner, which has no trampoline mode, so the tests point this at the built
+    /// Hammerdeck binary.
+    static var trampolineOverride: String?
+
+    /// The executable `run_process` launches as the DisclaimedExec trampoline:
+    /// Hammerdeck's own binary -- Contents/MacOS in the app, .build/<config> in a
+    /// dev run. nil when it cannot be found, and then the command is not run.
+    static var trampolinePath: String? {
+        let path = trampolineOverride ?? Bundle.main.executableURL?.path
+        guard let path, FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return path
+    }
+
     /// `run_process(path, args, cb)` -> resource id. The one native call behind
     /// the `exec` capability; `cb(status, stdout, stderr)`.
     ///
@@ -375,6 +389,11 @@ extension Native {
     /// TERMINATES the child rather than only dropping the callback. `exec` is the
     /// tier where that matters most -- an abandoned `rsync` or `git push` goes on
     /// changing the machine after the user turned the feature off.
+    ///
+    /// The command runs WITHOUT Hammerdeck's privacy grants: it is launched through
+    /// the DisclaimedExec trampoline (DisclaimedExec.swift says why), which fails
+    /// closed. Both callers -- the runCommand rule effect and an extension's
+    /// `ctx.run` -- run arbitrary commands, which is what makes inheriting unsafe.
     func runProcess(_ L: OpaquePointer?) -> Int32 {
         guard let path = LuaState.string(L, 1), path.hasPrefix("/") else {
             return luaError(L, "run_process: an ABSOLUTE executable path is required "
@@ -398,6 +417,12 @@ extension Native {
                 args.append(s)
             }
         }
+        // Resolved before the callback is pinned, so the refusal leaves nothing behind.
+        guard let trampoline = Native.trampolinePath else {
+            return luaError(L, "run_process: Hammerdeck's own executable could not be "
+                             + "found, so the command was not run -- it would otherwise "
+                             + "inherit Hammerdeck's permissions")
+        }
         let ref = lua.makeRef(at: 3)
         let id = allocOneShot()
         // Full argv, because "which command actually ran" is the entire reason this
@@ -405,13 +430,31 @@ extension Native {
         // so the authoring guide tells extension authors not to pass secrets as
         // arguments.
         seamLog("run: \(path)\(args.isEmpty ? "" : " " + args.joined(separator: " "))")
-        let terminate = runProcessCore(executable: path, args: args,
+        let terminate = runProcessCore(executable: trampoline,
+                                       args: [DisclaimedExec.flag, path] + args,
                                        timeout: Native.runProcessTimeoutSeconds,
                                        label: "run",
                                        stdoutCap: Native.runProcessOutputCap,
                                        stderrCap: Native.runProcessOutputCap) { status, out, err in
+            // The trampoline could not start the command (no such program, or the
+            // disclaim refused): that is the contract's nil, not an exit code the
+            // command chose -- and the reason goes to the daily log, since a caller
+            // that only checks the status would otherwise leave no trace of it.
+            let notLaunched = status == 127
+                && err.starts(with: Data(DisclaimedExec.failurePrefix.utf8))
+            if notLaunched {
+                let why = String(decoding: err, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { Native.shared.seamLog("run: \(why)") }
+                }
+            }
             Native.fireOneShot(id, ref) { L in
-                if let status { lua_pushinteger(L, lua_Integer(status)) } else { lua_pushnil(L) }
+                if let status, !notLaunched {
+                    lua_pushinteger(L, lua_Integer(status))
+                } else {
+                    lua_pushnil(L)
+                }
                 // RAW BYTES. Lua strings are 8-bit clean, and command output is
                 // routinely not: `find -print0` / `git -z` are NUL-separated, and
                 // lua_pushstring stops at the first one -- a silently short result

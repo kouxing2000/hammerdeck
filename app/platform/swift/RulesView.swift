@@ -1244,7 +1244,7 @@ private struct AddRuleForm: View {
                 .font(.system(.body, design: .monospaced))
                 .lineLimit(1...6)
                 .onSubmit { advance(from: .effectParam(0)) }
-            Text(Strings.t("rules.runCommandHint", default: "Runs in zsh with your login PATH, so Homebrew tools work. It must finish within 60 seconds. Its exit code goes to the log (Open Logs in the menu bar), not to the rule's status. The command itself is logged too, so keep passwords out of it."))
+            Text(Strings.t("rules.runCommandHint", default: "Runs in zsh with your login PATH, so Homebrew tools work, but without Hammerdeck's permissions: protected folders are off-limits, and a command that controls other apps needs its own permission. It must finish within 60 seconds. Its exit code goes to the log (Open Logs in the menu bar), not to the rule's status. The command itself is logged too, so keep passwords out of it."))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

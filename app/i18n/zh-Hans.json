@@ -308,7 +308,7 @@
   "rules.removeWindow": "移除此窗口",
   "rules.runShortcutHint": "运行一个 macOS 快捷指令 -- 通往专注/勿扰，音量，HomeKit 以及快捷指令能做的一切的捷径。",
   "rules.commandField": "Shell 命令（在 zsh 中运行，和终端一样）",
-  "rules.runCommandHint": "在 zsh 中用你的登录 PATH 运行，所以 Homebrew 工具可以直接用。必须在 60 秒内结束。退出码写进日志（菜单栏里的「打开日志」），不会显示在规则状态里。命令本身也会写进日志，所以不要在里面放密码。",
+  "rules.runCommandHint": "在 zsh 中用你的登录 PATH 运行，所以 Homebrew 工具可以直接用，但它不带 Hammerdeck 的系统权限：受保护的文件夹读不到，控制其他应用的命令需要单独授权。必须在 60 秒内结束。退出码写进日志（菜单栏里的「打开日志」），不会显示在规则状态里。命令本身也会写进日志，所以不要在里面放密码。",
   "rules.saveChanges": "保存修改",
   "rules.schedule": "计划",
   "rules.sectionCount": "规则 (%d)",

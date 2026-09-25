@@ -229,7 +229,16 @@ onto `platform.windows`, which the `window_*` features ride.
   first-party feature that declares or reaches it. A child process can do
   anything the user can, so `exec` is effectively every tier at once; a catalog
   feature that needs OS surface grows it in the seam, where the call is one
-  reviewed named thing. Two consequences of the tier existing at all: the
+  reviewed named thing. What it canNOT do is borrow Hammerdeck's macOS privacy
+  grants: `run_process` launches every command (`ctx.run` and the runCommand
+  rule effect alike) through the `DisclaimedExec` trampoline, which makes it its
+  own responsible process and fails closed -- anything that can write
+  Hammerdeck's settings could otherwise plant a command that inherits Full Disk
+  Access. It does not cover code that runs INSIDE Hammerdeck: an extension's
+  `files` reads use Hammerdeck's grants, and writing `hammerdeck.extensionsDir`
+  alone gets one loaded -- its top-level code runs at load, enabled or not. Only
+  protecting the settings that grant code would close that; it is deliberately
+  not built. Two consequences of the tier existing at all: the
   embedded state replaces `os.execute` / `io.popen` with raising stubs naming
   `ctx.run` (`LuaState.installSubprocessStubs`); and `capscan.RAW_REACH` covers
   the stdlib calls that reach the OS around ctx, in **two kinds** whose verdicts
