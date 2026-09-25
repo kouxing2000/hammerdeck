@@ -881,6 +881,7 @@ local function controllerFor(ctx)
 
     function st.enter()
         if not ctx.axTrusted() then
+            ctx.log("fan: not entered -- no Accessibility permission")
             ctx.axPrompt()
             ctx.alert(ctx.t("fan.axRequired",
                 "%1$s needs the Accessibility permission -- grant %2$s in System Settings, then try again",
@@ -888,7 +889,10 @@ local function controllerFor(ctx)
             return
         end
         local screen = W.focusedScreen(ctx)
-        if not screen then return end
+        if not screen then
+            ctx.log("fan: not entered -- no screen to fan")
+            return
+        end
 
         -- One mode per screen. Another mode holding this screen has ALREADY moved
         -- these windows, so capturing originals now would record ITS arrangement as
@@ -910,8 +914,17 @@ local function controllerFor(ctx)
         -- Read focus BEFORE anything moves: a self-activating app fronting itself
         -- mid-pass must not change who we hand focus back to.
         local fwid = ctx.window.focusedWid()
-        local wins = fannable(screen)
+        local listed = ctx.window.list()
+        local wins = fannable(screen, listed)
         if #wins == 0 then
+            -- The alert is a 2-second toast; this line is the only record. The
+            -- listing's own count and the apps it dropped tell "nothing here" from
+            -- "the listing came back short", which look the same on screen.
+            local dropped = ctx.window.droppedApps()
+            ctx.log("fan: not entered -- no fannable windows on '" .. tostring(screen.name)
+                .. "' (" .. #listed .. " listed across all screens"
+                .. (#dropped > 0 and ("; apps that did not answer: "
+                .. table.concat(dropped, ", ")) or "") .. ")")
             ctx.alert(ctx.t("fan.none", "No windows to fan on this screen"))
             return st.abandon()
         end

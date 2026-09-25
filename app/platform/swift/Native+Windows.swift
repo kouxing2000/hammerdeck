@@ -28,6 +28,15 @@ func axStableWindowID(_ element: AXUIElement) -> CGWindowID {
     return wid
 }
 
+/// The running application that owns `pid`. `NSRunningApplication(processIdentifier:)`
+/// alone is not enough: it can answer nil for EVERY app at once, for one call, while
+/// `NSWorkspace.shared.runningApplications` still lists them all (measured in a VM:
+/// 7 of 219 window listings), so a caller that gives up on nil loses real apps.
+func runningApplication(pid: pid_t) -> NSRunningApplication? {
+    NSRunningApplication(processIdentifier: pid)
+        ?? NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }
+}
+
 extension Native {
     // MARK: - AX messaging timeout
 
@@ -210,7 +219,8 @@ extension Native {
         // Z-ordered (front to back) on-screen normal-layer windows.
         let cgList = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                  kCGNullWindowID) as? [[String: Any]]) ?? []
-        struct CGRow { let pid: pid_t; let wid: CGWindowID; let bounds: CGRect; let z: Int }
+        struct CGRow { let pid: pid_t; let wid: CGWindowID; let bounds: CGRect; let z: Int
+                       let owner: String }
         var cgRows: [CGRow] = []
         for w in cgList {
             guard (w[kCGWindowLayer as String] as? Int) == 0,
@@ -219,7 +229,8 @@ extension Native {
                   let bDict = w[kCGWindowBounds as String] as? [String: Any],
                   let bounds = CGRect(dictionaryRepresentation: bDict as CFDictionary)
             else { continue }
-            cgRows.append(CGRow(pid: pid_t(pid), wid: wid, bounds: bounds, z: cgRows.count))
+            cgRows.append(CGRow(pid: pid_t(pid), wid: wid, bounds: bounds, z: cgRows.count,
+                                owner: (w[kCGWindowOwnerName as String] as? String) ?? "?"))
         }
 
         struct Row {
@@ -234,11 +245,25 @@ extension Native {
         let namedScreens: [(rect: CGRect, name: String)] = screens.count > 1
             ? screens.map { (axRect($0.frame), $0.localizedName) } : []
         var seenPids = Set<pid_t>()
+        // One read per listing, looked up per pid below.
+        let appsByPid = Dictionary(NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) },
+                                   uniquingKeysWith: { first, _ in first })
         for pid in cgRows.map(\.pid) where !seenPids.contains(pid) {
             seenPids.insert(pid)
-            guard let runApp = NSRunningApplication(processIdentifier: pid) else { continue }
-            let appName = runApp.localizedName ?? "?"
-            let bundleID = runApp.bundleIdentifier ?? ""
+            // Identity from the listing's own snapshot of NSWorkspace, never a bare
+            // NSRunningApplication(processIdentifier:) -- see runningApplication(pid:).
+            // An app with no record still has its windows listed: AX needs only the
+            // pid, and skipping the app would empty the listing whenever the lookup
+            // fails.
+            let runApp = appsByPid[pid] ?? NSRunningApplication(processIdentifier: pid)
+            let appName = runApp?.localizedName
+                ?? cgRows.first { $0.pid == pid }?.owner ?? "?"
+            let bundleID = runApp?.bundleIdentifier ?? ""
+            if runApp == nil {
+                seamLogThrottled("appmeta:\(appName)",
+                                 "list_windows: no running-app record for pid \(pid) ('\(appName)') "
+                                 + "-- its windows are listed without a bundle id")
+            }
 
             var winsRef: CFTypeRef?
             let winsErr = AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid),
@@ -824,7 +849,7 @@ extension Native {
             // across apps from our non-active accessory context.
             AXUIElementPerformAction(win, kAXRaiseAction as CFString)
             AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
-            NSRunningApplication(processIdentifier: pid)?.activate()
+            runningApplication(pid: pid)?.activate()
         }
         lua_pushboolean(L, 1)
         return 1
@@ -1026,7 +1051,7 @@ final class FrameObserverSet {
     private func fire(_ element: AXUIElement) {
         var pid: pid_t = 0
         AXUIElementGetPid(element, &pid)
-        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        let bundleID = runningApplication(pid: pid)?.bundleIdentifier ?? ""
         var titleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleRef)
         let title = (titleRef as? String) ?? ""

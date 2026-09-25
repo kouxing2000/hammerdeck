@@ -810,7 +810,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         if token.hasPrefix("appiconpid:") {
             // Fallback for processes without a registered .app bundle (e.g. swift run).
             guard let pid = Int32(token.dropFirst("appiconpid:".count)) else { return nil }
-            return NSRunningApplication(processIdentifier: pid_t(pid))?.icon
+            return runningApplication(pid: pid_t(pid))?.icon
         }
         if token.hasPrefix("file:") {
             // An image on disk (e.g. a cached favicon); nil when missing.

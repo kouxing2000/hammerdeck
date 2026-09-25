@@ -80,7 +80,7 @@ extension Native {
                 return named
             }
             let pid = pid_t(truncatingIfNeeded: pidKey.intValue)
-            if let app = NSRunningApplication(processIdentifier: pid),
+            if let app = runningApplication(pid: pid),
                let name = app.localizedName {
                 return name
             }

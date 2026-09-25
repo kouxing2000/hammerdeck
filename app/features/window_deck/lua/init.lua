@@ -740,6 +740,7 @@ local function controllerFor(ctx)
     function st.enter()
         if st.active or st.picking then return end
         if not ctx.axTrusted() then
+            ctx.log("not entered -- no Accessibility permission")
             ctx.axPrompt()
             ctx.alert(
                 ctx.t("alert.axRequired",
@@ -748,7 +749,10 @@ local function controllerFor(ctx)
             return
         end
         local screens = ctx.screen.frames()
-        if not screens or #screens == 0 then return end
+        if not screens or #screens == 0 then
+            ctx.log("not entered -- no screens")
+            return
+        end
         st.picking = true
         if #screens < 2 then
             st.pickWindows(screens[1])
@@ -897,12 +901,17 @@ local function controllerFor(ctx)
     function st.restoreLastOn(restore)
         st.picking = false
         local last = readLastDeck()
-        if not last then return st.releaseScreen() end
+        if not last then
+            ctx.log("restore refused -- no saved deck")
+            return st.releaseScreen()
+        end
         local screen = restore.screen
         -- match against ALL on-screen windows (uncapped) so a member past the
         -- top-9 in MRU order isn't wrongly seen as closed (see groupWindows).
         local matched = identity.matchMembers(last.members, groupWindows(screen, math.huge))
         if #matched < 2 then
+            ctx.log("restore refused -- " .. #matched .. " of the last deck's "
+                .. #last.members .. " windows are open on this screen")
             ctx.alert(ctx.t("alert.restoreGone",
                 "The last deck's windows are no longer open on this screen."))
             return st.releaseScreen()
@@ -925,6 +934,13 @@ local function controllerFor(ctx)
         local wins = groupWindows(screen)
         if #wins < 2 then
             st.picking = false
+            -- A 2-second toast is the only other trace. Name the apps the listing
+            -- dropped: "too few windows" and "no app answered" look the same.
+            local dropped = ctx.window.droppedApps()
+            ctx.log("not entered -- " .. #wins .. " deckable window(s) on '"
+                .. tostring(screen.name) .. "'" .. (#dropped > 0
+                and (" (apps that did not answer: " .. table.concat(dropped, ", ") .. ")")
+                or ""))
             ctx.alert(ctx.t("alert.needTwo",
                 "Window Deck needs at least two windows on this screen."))
             return st.releaseScreen()
@@ -962,6 +978,7 @@ local function controllerFor(ctx)
                 -- Persist the picker's Hero switch (on() below reads it back).
                 if heroOn ~= nil then saveHeroMode(heroOn) end
                 if #kept < 2 then
+                    ctx.log("not entered -- " .. #kept .. " window(s) kept in the picker")
                     ctx.alert(ctx.t("alert.needTwo",
                         "Window Deck needs at least two windows on this screen."))
                     return st.releaseScreen()
@@ -989,6 +1006,7 @@ local function controllerFor(ctx)
             end
         end
         if #wins < 2 then
+            ctx.log("not entered -- only " .. #wins .. " of the picked windows are listed on this screen")
             ctx.alert(ctx.t("alert.needTwo",
                 "Window Deck needs at least two windows on this screen."))
             return st.releaseScreen()
@@ -1714,7 +1732,12 @@ local function controllerFor(ctx)
     end
 
     function st.toggle()
-        if st.active then st.exitDeck() elseif not st.picking then st.enter() end
+        if st.active then st.exitDeck()
+        elseif st.picking then
+            -- The picker is up (or a latch outlived it, which reads to the user as
+            -- a shortcut that stopped working): say which.
+            ctx.log("toggle ignored -- a picker is already open")
+        else st.enter() end
     end
 
     -- Called from stop(ctx) on disable: restore if a deck is still live.
