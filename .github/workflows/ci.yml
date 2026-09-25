@@ -118,3 +118,27 @@ jobs:
         run: |
           source scripts/lib/sdk-link-flags.sh
           HAMMERDECK_UI_TESTS=1 swift test "${SWIFT_SDK_LINK_FLAGS[@]}"
+
+  # The build a release makes, on every push to master: the newest Xcode on the
+  # image (release.yml's own selection script) and package.sh's UNIVERSAL release
+  # build -- the test gate under that toolchain, both architecture slices, the
+  # SDK-stamp check, the bundle and the disk image. The `test` job above builds
+  # single-architecture on Xcode 16, a different toolchain AND a different build
+  # engine (SwiftPM sends a multi-architecture build through Swift Build), so a
+  # change that breaks only the shipped build passes it and fails at the tag.
+  # Without the signing secrets package.sh signs ad-hoc (Tier A): signing and
+  # notarization are still checked only by a real release.
+  #
+  # master only, so a branch keeps its quick gate; a manual dispatch runs it on
+  # any ref, e.g. before tagging from one.
+  release-build:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+
+      - name: Select the release Xcode
+        run: scripts/select-release-xcode.sh
+
+      - name: Universal release build (package.sh, ad-hoc signed)
+        run: scripts/package.sh 0.0.0

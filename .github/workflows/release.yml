@@ -96,31 +96,10 @@ jobs:
           echo "--- notes for $TAG ---"
           scripts/release-notes.py "$TAG"
 
-      # Package.swift is swift-tools-version 6.0, so the toolchain must be Swift 6+.
-      # Select the newest Xcode on the image and then ASSERT the Swift version,
-      # rather than pinning a version series: pinning breaks silently the day the
-      # image stops shipping that series, and the real requirement is the compiler
-      # version, not the Xcode number.
+      # The newest Xcode on the image, Swift 6+ asserted. One script, shared with
+      # ci.yml's release-build job, so that job builds with this exact toolchain.
       - name: Select Xcode and assert Swift 6+
-        run: |
-          latest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
-          if [ -n "$latest" ]; then
-            sudo xcode-select -s "$latest"
-          fi
-          swift --version
-          # No pipe into an early-exiting filter. No step here sets `shell:`, so
-          # GitHub runs the implicit `bash -e {0}` and pipefail is OFF -- but the
-          # `if [ -n "$latest" ]` fallback above depends on that, and adding an
-          # explicit `shell: bash` later would turn pipefail ON and make a missing
-          # /Applications/Xcode_*.app abort the step before the guard can run.
-          # Keeping the pipeline out of these two lines makes that irrelevant either way.
-          ver="$(swift -version 2>&1)"
-          major="$(printf '%s\n' "$ver" | sed -n 's/.*Swift version \([0-9][0-9]*\).*/\1/p' | tail -1)"
-          if [ "${major:-0}" -lt 6 ]; then
-            echo "error: Package.swift needs Swift 6+, toolchain reports major version '${major:-unknown}'" >&2
-            exit 1
-          fi
-          echo "Swift major version $major -- ok"
+        run: scripts/select-release-xcode.sh
 
       # Hand-rolled rather than `apple-actions/import-codesign-certs`, which does
       # the same job in ~5 lines. Two reasons it is worth the extra length here:
