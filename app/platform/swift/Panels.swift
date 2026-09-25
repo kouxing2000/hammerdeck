@@ -120,6 +120,46 @@ final class VibrancyHUDPanel: FloatingPanel {
     }
 }
 
+/// The size factor for the window-mode panels (Window Grid / Window Mode HUD,
+/// the Deck and Fan widgets, the Deck's display + window pickers): they scale
+/// with the SHORTER SIDE of the screen they are presented on -- `max(1,
+/// min(width, height) / 600)` in points, so a 900pt-tall laptop is 1.5, 1080 is
+/// 1.8 and 1440 is 2.4, and a screen shorter than 600pt keeps the base size. On
+/// a landscape display that side is the height, so an ultrawide's extra width
+/// does not inflate a panel; on a portrait one it is the width, which is what
+/// keeps a panel from growing wider than the screen it sits on.
+///
+/// Callers multiply their EXPLICIT sizes by it (fonts, cells, insets, radii).
+/// Never apply it as a bounds/layer transform instead -- that upscales an
+/// already-rasterized layer and blurs text on Retina.
+@MainActor
+enum HUDScale {
+    nonisolated static let referenceSide: CGFloat = 600
+
+    nonisolated static func factor(forSize size: CGSize) -> CGFloat {
+        max(1.0, min(size.width, size.height) / referenceSide)
+    }
+
+    /// nil (no screen resolved) is 1.0 -- the unscaled size.
+    static func factor(for screen: NSScreen?) -> CGFloat {
+        guard let screen else { return 1.0 }
+        return factor(forSize: screen.frame.size)
+    }
+
+    /// The screen an AppKit-coordinate rect sits on, judged by its center -- for
+    /// panels that are handed a screen RECT (frame or visibleFrame) over the seam
+    /// rather than an NSScreen.
+    static func screen(containing rect: NSRect) -> NSScreen? {
+        let c = NSPoint(x: rect.midX, y: rect.midY)
+        return NSScreen.screens.first { $0.frame.contains(c) }
+    }
+
+    /// Shorthand: the factor of the screen holding `rect`, else of the main screen.
+    static func factor(forRect rect: NSRect?) -> CGFloat {
+        factor(for: rect.flatMap(screen(containing:)) ?? NSScreen.main)
+    }
+}
+
 extension NSColor {
     /// A two-form color, for a DESIGN color with no semantic equivalent (a card
     /// fill, a chart accent). For anything the system already names -- label,
@@ -224,8 +264,12 @@ final class TintedView: NSView {
 /// read in both light and dark -- a different style, not this one.)
 @MainActor
 enum KeyCap {
+    /// `scale` (a HUDScale factor) sizes the cap's own chrome -- corner radius
+    /// and the glyph's side padding; the caller scales `fontSize` / `height` /
+    /// `fixedWidth` itself.
     static func make(_ glyph: String, fontSize: CGFloat, height: CGFloat,
-                     fixedWidth: CGFloat? = nil, tint: NSColor? = nil) -> NSView {
+                     fixedWidth: CGFloat? = nil, tint: NSColor? = nil,
+                     scale: CGFloat = 1) -> NSView {
         let base = tint ?? .white
         let label = NSTextField(labelWithString: glyph)
         label.font = .monospacedSystemFont(ofSize: fontSize, weight: .semibold)
@@ -236,7 +280,7 @@ enum KeyCap {
 
         let cap = NSView()
         cap.wantsLayer = true
-        cap.layer?.cornerRadius = 5
+        cap.layer?.cornerRadius = 5 * scale
         cap.layer?.borderWidth = 1
         // Resolve the (dynamic, catalog) system colors against the HUD's forced
         // dark appearance, not the ambient drawing appearance -- `.cgColor` is a
@@ -263,10 +307,10 @@ enum KeyCap {
             let pin = cap.widthAnchor.constraint(equalToConstant: fw)
             pin.priority = .defaultHigh
             pin.isActive = true
-            cap.widthAnchor.constraint(greaterThanOrEqualTo: label.widthAnchor, constant: 14).isActive = true
+            cap.widthAnchor.constraint(greaterThanOrEqualTo: label.widthAnchor, constant: 14 * scale).isActive = true
         } else {
             cap.widthAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
-            let fit = cap.widthAnchor.constraint(equalTo: label.widthAnchor, constant: 14)
+            let fit = cap.widthAnchor.constraint(equalTo: label.widthAnchor, constant: 14 * scale)
             fit.priority = .defaultHigh
             fit.isActive = true
         }

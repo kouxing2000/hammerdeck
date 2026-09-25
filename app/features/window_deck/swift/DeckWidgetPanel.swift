@@ -39,6 +39,9 @@ final class DeckWidgetPanel {
     private var gridCols = 2
     private var onSwitch: (Int) -> Void = { _ in }
     private var heroIndex = 0   // last lit cell, so a rebuild can re-light it
+    /// HUDScale factor of the deck's screen, fixed at show: every explicit size
+    /// below (fonts, cells, insets, buttons) is multiplied by it.
+    private let s: CGFloat
 
     init(title: String, hint: String, displayName: String, switchHint: String,
          heroLabel: String, exitLabel: String, rearrangeLabel: String,
@@ -50,11 +53,13 @@ final class DeckWidgetPanel {
         self.onMove = onMove
         self.onReorder = onReorder
         self.clamp = screen
-        rearrangeButton = RearrangeButtonView(label: rearrangeLabel)
+        let s = HUDScale.factor(forRect: screen)
+        self.s = s
+        rearrangeButton = RearrangeButtonView(label: rearrangeLabel, scale: s)
         rearrangeButton.onClick = onRearrange
         card = DraggableCardView()
         panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 92),
+            contentRect: NSRect(x: 0, y: 0, width: 300 * s, height: 92 * s),
             level: .statusBar,
             collectionBehavior: [.fullScreenAuxiliary],
             keyable: false, mouseTransparent: false, hasShadow: true)
@@ -62,7 +67,7 @@ final class DeckWidgetPanel {
         panel.isOpaque = false
 
         card.wantsLayer = true
-        card.layer?.cornerRadius = 14
+        card.layer?.cornerRadius = 14 * s
         card.layer?.masksToBounds = true
         card.layer?.backgroundColor =
             NSColor(srgbRed: 0.106, green: 0.106, blue: 0.14, alpha: 0.96).cgColor
@@ -76,21 +81,21 @@ final class DeckWidgetPanel {
         bar.translatesAutoresizingMaskIntoConstraints = false
 
         // --- Top row: glyph + title + name .... spacer .... Exit -------------
-        let glyph = GridGlyphView(color: accent)
+        let glyph = GridGlyphView(color: accent, scale: s)
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 17, weight: .bold)
+        titleLabel.font = .systemFont(ofSize: 17 * s, weight: .bold)
         titleLabel.textColor = .white
         var titleGroup: [NSView] = [glyph, titleLabel]
         if !displayName.isEmpty {
             let nameLabel = NSTextField(labelWithString: "· " + displayName)
-            nameLabel.font = .systemFont(ofSize: 13, weight: .regular)
+            nameLabel.font = .systemFont(ofSize: 13 * s, weight: .regular)
             nameLabel.textColor = NSColor.white.withAlphaComponent(0.5)
             titleGroup.append(nameLabel)
         }
         let titleStack = NSStackView(views: titleGroup)
         titleStack.orientation = .horizontal
         titleStack.alignment = .centerY
-        titleStack.spacing = 9
+        titleStack.spacing = 9 * s
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
@@ -98,31 +103,31 @@ final class DeckWidgetPanel {
 
         // Hero toggle: label + a switch. Off = pure grid tiler.
         let heroLabelField = NSTextField(labelWithString: heroLabel)
-        heroLabelField.font = .systemFont(ofSize: 13, weight: .semibold)
+        heroLabelField.font = .systemFont(ofSize: 13 * s, weight: .semibold)
         heroLabelField.textColor = .white
-        let heroToggle = ToggleView(on: heroOn)
+        let heroToggle = ToggleView(on: heroOn, scale: s)
         heroToggle.onToggle = onToggleHero
         let heroGroup = NSStackView(views: [heroLabelField, heroToggle])
         heroGroup.orientation = .horizontal
         heroGroup.alignment = .centerY
-        heroGroup.spacing = 7
+        heroGroup.spacing = 7 * s
 
-        let exit = ExitButtonView(accent: accent, label: exitLabel)
+        let exit = ExitButtonView(accent: accent, label: exitLabel, scale: s)
         exit.onClick = onExit
 
         let topRow = NSStackView(views: [titleStack, spacer, heroGroup, exit])
         topRow.orientation = .horizontal
         topRow.alignment = .centerY
-        topRow.spacing = 14
+        topRow.spacing = 14 * s
 
         // --- Bottom row: mini-map + hint -------------------------------------
         self.gridCols = max(1, gridCols)
         self.onSwitch = onSwitch
-        let map = Self.buildMiniMap(gridCols: gridCols, colors: cellColors,
+        let map = Self.buildMiniMap(gridCols: gridCols, colors: cellColors, scale: s,
                                     onSwitch: onSwitch, into: &cells)
         mapView = map
         hintLabel.stringValue = switchHint
-        hintLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        hintLabel.font = .systemFont(ofSize: 12 * s, weight: .regular)
         hintLabel.textColor = NSColor.white.withAlphaComponent(0.5)
         let bottomSpacer = NSView()
         bottomSpacer.setContentHuggingPriority(.init(1), for: .horizontal)
@@ -130,12 +135,12 @@ final class DeckWidgetPanel {
         bottomRow = NSStackView(views: [map, hintLabel, bottomSpacer, rearrangeButton])
         bottomRow.orientation = .horizontal
         bottomRow.alignment = .centerY
-        bottomRow.spacing = 14
+        bottomRow.spacing = 14 * s
 
         let vstack = NSStackView(views: [topRow, bottomRow])
         vstack.orientation = .vertical
         vstack.alignment = .leading
-        vstack.spacing = 10
+        vstack.spacing = 10 * s
         vstack.translatesAutoresizingMaskIntoConstraints = false
 
         card.addSubview(bar)
@@ -144,11 +149,11 @@ final class DeckWidgetPanel {
             bar.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             bar.topAnchor.constraint(equalTo: card.topAnchor),
             bar.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            bar.widthAnchor.constraint(equalToConstant: 5),
-            vstack.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 14),
-            vstack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            vstack.topAnchor.constraint(equalTo: card.topAnchor, constant: 11),
-            vstack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+            bar.widthAnchor.constraint(equalToConstant: 5 * s),
+            vstack.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 14 * s),
+            vstack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14 * s),
+            vstack.topAnchor.constraint(equalTo: card.topAnchor, constant: 11 * s),
+            vstack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12 * s),
             // Both rows fill the card width so the Exit / Rearrange buttons hug
             // the right edge regardless of which row is naturally wider.
             topRow.widthAnchor.constraint(equalTo: vstack.widthAnchor),
@@ -256,30 +261,30 @@ final class DeckWidgetPanel {
     }
 
     /// Build a `gridCols`-wide, row-major grid of numbered/colored cells.
-    private static func buildMiniMap(gridCols: Int, colors: [String],
+    private static func buildMiniMap(gridCols: Int, colors: [String], scale s: CGFloat,
                                      onSwitch: @escaping (Int) -> Void,
                                      into cells: inout [MiniCellView]) -> NSView {
         let cols = max(1, gridCols)
         var rows: [NSStackView] = []
         var row: [NSView] = []
         for (i, hex) in colors.enumerated() {
-            let cell = MiniCellView(number: i + 1, index: i + 1, colorHex: hex)
+            let cell = MiniCellView(number: i + 1, index: i + 1, colorHex: hex, scale: s)
             cell.onClick = { onSwitch(i + 1) }   // 1-based, matches Lua order
             cells.append(cell)
             row.append(cell)
             if row.count == cols {
-                let hs = NSStackView(views: row); hs.orientation = .horizontal; hs.spacing = 4
+                let hs = NSStackView(views: row); hs.orientation = .horizontal; hs.spacing = 4 * s
                 rows.append(hs); row = []
             }
         }
         if !row.isEmpty {
-            let hs = NSStackView(views: row); hs.orientation = .horizontal; hs.spacing = 4
+            let hs = NSStackView(views: row); hs.orientation = .horizontal; hs.spacing = 4 * s
             rows.append(hs)
         }
         let grid = NSStackView(views: rows)
         grid.orientation = .vertical
         grid.alignment = .leading
-        grid.spacing = 4
+        grid.spacing = 4 * s
         return grid
     }
 
@@ -327,7 +332,7 @@ final class DeckWidgetPanel {
         bottomRow.removeArrangedSubview(mapView)
         mapView.removeFromSuperview()
         cells.removeAll()
-        let map = Self.buildMiniMap(gridCols: cols, colors: colors,
+        let map = Self.buildMiniMap(gridCols: cols, colors: colors, scale: s,
                                     onSwitch: onSwitch, into: &cells)
         bottomRow.insertArrangedSubview(map, at: 0)
         mapView = map
@@ -415,23 +420,25 @@ private final class MiniCellView: NSView {
     private var hero = false
     private(set) var isDead = false
     private var dashLayer: CAShapeLayer?   // the dead cell's dashed outline
+    private let scale: CGFloat
 
-    init(number: Int, index: Int, colorHex: String) {
+    init(number: Int, index: Int, colorHex: String, scale: CGFloat) {
         self.index = index
+        self.scale = scale
         color = NSColor(hexRGB: colorHex) ?? .controlAccentColor
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 5
+        layer?.cornerRadius = 5 * scale
         layer?.borderWidth = 1
         translatesAutoresizingMaskIntoConstraints = false
         label.stringValue = String(number)
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = .systemFont(ofSize: 13 * scale, weight: .semibold)
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 38),
-            heightAnchor.constraint(equalToConstant: 26),
+            widthAnchor.constraint(equalToConstant: 38 * scale),
+            heightAnchor.constraint(equalToConstant: 26 * scale),
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -464,7 +471,7 @@ private final class MiniCellView: NSView {
             s.fillColor = nil
             s.strokeColor = color.withAlphaComponent(0.35).cgColor
             s.lineWidth = 1
-            s.lineDashPattern = [3, 2]
+            s.lineDashPattern = [NSNumber(value: Double(3 * scale)), NSNumber(value: Double(2 * scale))]
             // Retina + no implicit animation, matching OutlinePanel's dashed
             // ghost: a manually added sublayer defaults to 1x (blurry dashes) and
             // has implicit actions ON, which would animate the outline in from
@@ -495,7 +502,7 @@ private final class MiniCellView: NSView {
         s.contentsScale = window?.backingScaleFactor ?? s.contentsScale
         s.frame = bounds
         s.path = CGPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-                        cornerWidth: 5, cornerHeight: 5, transform: nil)
+                        cornerWidth: 5 * scale, cornerHeight: 5 * scale, transform: nil)
         CATransaction.commit()
     }
 
@@ -561,18 +568,22 @@ private final class MiniCellView: NSView {
 /// A 2x2 grid of small rounded squares -- the deck's mark.
 private final class GridGlyphView: NSView {
     private let color: NSColor
-    init(color: NSColor) { self.color = color; super.init(frame: .zero); translatesAutoresizingMaskIntoConstraints = false }
+    private let scale: CGFloat
+    init(color: NSColor, scale: CGFloat) {
+        self.color = color; self.scale = scale
+        super.init(frame: .zero); translatesAutoresizingMaskIntoConstraints = false
+    }
     required init?(coder: NSCoder) { fatalError() }
-    override var intrinsicContentSize: NSSize { NSSize(width: 17, height: 17) }
+    override var intrinsicContentSize: NSSize { NSSize(width: 17 * scale, height: 17 * scale) }
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.setFillColor(color.cgColor)
-        let s: CGFloat = 7, gap: CGFloat = 3
+        let s: CGFloat = 7 * scale, gap: CGFloat = 3 * scale
         for i in 0..<2 {
             for j in 0..<2 {
                 let r = CGRect(x: CGFloat(j) * (s + gap), y: CGFloat(i) * (s + gap),
                                width: s, height: s)
-                ctx.addPath(CGPath(roundedRect: r, cornerWidth: 1.6, cornerHeight: 1.6, transform: nil))
+                ctx.addPath(CGPath(roundedRect: r, cornerWidth: 1.6 * scale, cornerHeight: 1.6 * scale, transform: nil))
             }
         }
         ctx.fillPath()
@@ -584,28 +595,28 @@ private final class ExitButtonView: NSView {
     var onClick: (() -> Void)?
     private var pressed = false
 
-    init(accent: NSColor, label labelText: String) {
+    init(accent: NSColor, label labelText: String, scale: CGFloat) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 8 * scale
         layer?.backgroundColor = accent.withAlphaComponent(0.92).cgColor
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
         translatesAutoresizingMaskIntoConstraints = false
-        let cap = KeyCapView(text: "⌥esc")
+        let cap = KeyCapView(text: "⌥esc", scale: scale)
         let label = NSTextField(labelWithString: labelText)
-        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        label.font = .systemFont(ofSize: 14 * scale, weight: .semibold)
         label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(cap)
         addSubview(label)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 30),
-            cap.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            heightAnchor.constraint(equalToConstant: 30 * scale),
+            cap.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8 * scale),
             cap.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: cap.trailingAnchor, constant: 8),
+            label.leadingAnchor.constraint(equalTo: cap.trailingAnchor, constant: 8 * scale),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 11),
+            trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 11 * scale),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -626,29 +637,29 @@ private final class RearrangeButtonView: NSView {
     private var pressed = false
     private var enabled = false
 
-    init(label labelText: String) {
+    init(label labelText: String, scale: CGFloat) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 8 * scale
         layer?.backgroundColor = NSColor(srgbRed: 0.30, green: 0.55, blue: 0.96, alpha: 0.9).cgColor
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
         translatesAutoresizingMaskIntoConstraints = false
-        let glyph = GridGlyphView(color: .white)
+        let glyph = GridGlyphView(color: .white, scale: scale)
         glyph.translatesAutoresizingMaskIntoConstraints = false
         let label = NSTextField(labelWithString: labelText)
-        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        label.font = .systemFont(ofSize: 14 * scale, weight: .semibold)
         label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glyph)
         addSubview(label)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 30),
-            glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 11),
+            heightAnchor.constraint(equalToConstant: 30 * scale),
+            glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 11 * scale),
             glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8),
+            label.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8 * scale),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 11),
+            trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 11 * scale),
         ])
         setEnabled(false)
     }
@@ -673,31 +684,33 @@ private final class ToggleView: NSView {
     private let knob = CALayer()
     private let onColor = NSColor(srgbRed: 0.18, green: 0.75, blue: 0.40, alpha: 1)
     private let offColor = NSColor(white: 0.35, alpha: 1)
+    private let scale: CGFloat
 
-    init(on: Bool) {
+    init(on: Bool, scale: CGFloat) {
         isOn = on
+        self.scale = scale
         super.init(frame: .zero)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
-        layer?.cornerRadius = 11
-        knob.cornerRadius = 9
+        layer?.cornerRadius = 11 * scale
+        knob.cornerRadius = 9 * scale
         knob.backgroundColor = NSColor.white.cgColor
         layer?.addSublayer(knob)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 38),
-            heightAnchor.constraint(equalToConstant: 22),
+            widthAnchor.constraint(equalToConstant: 38 * scale),
+            heightAnchor.constraint(equalToConstant: 22 * scale),
         ])
         apply()
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var intrinsicContentSize: NSSize { NSSize(width: 38, height: 22) }
+    override var intrinsicContentSize: NSSize { NSSize(width: 38 * scale, height: 22 * scale) }
     override func layout() { super.layout(); apply() }
 
     private func apply() {
         layer?.backgroundColor = (isOn ? onColor : offColor).cgColor
-        let d: CGFloat = 18
-        knob.frame = CGRect(x: isOn ? bounds.width - d - 2 : 2, y: 2, width: d, height: d)
+        let d: CGFloat = 18 * scale, m: CGFloat = 2 * scale
+        knob.frame = CGRect(x: isOn ? bounds.width - d - m : m, y: m, width: d, height: d)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -712,24 +725,24 @@ private final class ToggleView: NSView {
 
 /// A faint rounded key-cap chip (e.g. "⌥esc").
 private final class KeyCapView: NSView {
-    init(text: String) {
+    init(text: String, scale: CGFloat) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 5
+        layer?.cornerRadius = 5 * scale
         layer?.backgroundColor = NSColor.white.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.white.withAlphaComponent(0.3).cgColor
         translatesAutoresizingMaskIntoConstraints = false
         let l = NSTextField(labelWithString: text)
-        l.font = .systemFont(ofSize: 12, weight: .medium)
+        l.font = .systemFont(ofSize: 12 * scale, weight: .medium)
         l.textColor = .white
         l.translatesAutoresizingMaskIntoConstraints = false
         addSubview(l)
         NSLayoutConstraint.activate([
             l.centerXAnchor.constraint(equalTo: centerXAnchor),
             l.centerYAnchor.constraint(equalTo: centerYAnchor),
-            widthAnchor.constraint(equalTo: l.widthAnchor, constant: 14),
-            heightAnchor.constraint(equalToConstant: 21),
+            widthAnchor.constraint(equalTo: l.widthAnchor, constant: 14 * scale),
+            heightAnchor.constraint(equalToConstant: 21 * scale),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }

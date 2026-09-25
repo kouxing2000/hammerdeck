@@ -60,6 +60,12 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
     private var keyMonitor: Any?
     private var isClosing = false
 
+    /// HUDScale factor of the screen the picker is shown on -- resolved in
+    /// `show(on:)`, before `applyScale()` + `layout()` size anything from it.
+    private var s: CGFloat = 1
+    private let content = NSVisualEffectView()
+
+    // Unscaled design sizes; every use multiplies by `s`.
     private static let width: CGFloat = 520
     private static let mapHeight: CGFloat = 214
     private static let edgeInset: CGFloat = 20
@@ -97,20 +103,16 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
         super.init()
         panel.hidesOnDeactivate = false
 
-        let content = NSVisualEffectView()
         content.material = .menu
         content.state = .active
         content.wantsLayer = true
-        content.layer?.cornerRadius = 12
         content.layer?.masksToBounds = true
 
-        titleLabel.font = .systemFont(ofSize: 16, weight: .bold)
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.stringValue = title
         content.addSubview(titleLabel)
 
-        promptLabel.font = .systemFont(ofSize: 12)
         promptLabel.textColor = .secondaryLabelColor
         promptLabel.lineBreakMode = .byWordWrapping
         promptLabel.maximumNumberOfLines = 2
@@ -121,7 +123,6 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
         mapView.onClickDisplay = { [weak self] idx in self?.toggle(idx) }
         content.addSubview(mapView)
 
-        hintLabel.font = .systemFont(ofSize: 11.5)
         hintLabel.textColor = .tertiaryLabelColor
         hintLabel.lineBreakMode = .byTruncatingTail
         hintLabel.stringValue = selectCount == 1
@@ -154,7 +155,28 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
 
         panel.contentView = content
         panel.delegate = self
+        applyScale()
         refreshConfirmTitle()
+    }
+
+    /// Every font / radius / control size that depends on `s`. Re-run by `show`
+    /// once the target screen (and so the factor) is known.
+    private func applyScale() {
+        content.layer?.cornerRadius = 12 * s
+        titleLabel.font = .systemFont(ofSize: 16 * s, weight: .bold)
+        promptLabel.font = .systemFont(ofSize: 12 * s)
+        hintLabel.font = .systemFont(ofSize: 11.5 * s)
+        // A `.rounded` push button draws its bezel at its control size's FIXED
+        // height (28pt at `.large`), whatever its frame, so past ~1.8x the label
+        // outgrows it. A scaled panel uses `.flexiblePush`, whose bezel fills the
+        // frame the layout sizes by the factor; the base size keeps `.rounded`.
+        let size: NSControl.ControlSize = s >= 1.3 ? .large : .regular
+        for b in [extraButton, cancelButton, confirmButton] {
+            b.bezelStyle = size == .large ? .flexiblePush : .rounded
+            b.controlSize = size
+            b.font = .systemFont(ofSize: 13 * s)
+        }
+        mapView.scale = s
     }
 
     // MARK: public API
@@ -165,8 +187,12 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
     /// the main screen.
     func show(on screen: NSRect? = nil) {
         isClosing = false
+        let target = screen ?? NSScreen.main?.visibleFrame
+        s = HUDScale.factor(forRect: target)
+        applyScale()
+        refreshConfirmTitle()
         layout()
-        if let target = screen ?? NSScreen.main?.visibleFrame {
+        if let target {
             var f = panel.frame
             f.origin.x = target.midX - f.width / 2
             f.origin.y = target.midY - f.height / 2 + 40
@@ -222,7 +248,7 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
         }
         confirmButton.attributedTitle = NSAttributedString(string: "\u{23CE}  \(label)", attributes: [
             .foregroundColor: NSColor.white,
-            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: 13 * s, weight: .semibold),
         ])
         confirmButton.isEnabled = selected.count == selectCount
         layoutFooter()
@@ -276,13 +302,14 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
     // MARK: layout
 
     private func layout() {
-        let W = DisplayPickerPanel.width
-        let E = DisplayPickerPanel.edgeInset
-        let topPad: CGFloat = 16, bottomPad: CGFloat = 14
-        let titleH: CGFloat = 22, promptH: CGFloat = 34, footerH: CGFloat = 30
+        let W = DisplayPickerPanel.width * s
+        let E = DisplayPickerPanel.edgeInset * s
+        let mapH = DisplayPickerPanel.mapHeight * s
+        let topPad: CGFloat = 16 * s, bottomPad: CGFloat = 14 * s
+        let titleH: CGFloat = 22 * s, promptH: CGFloat = 34 * s, footerH: CGFloat = 30 * s
 
-        let total = topPad + titleH + 4 + promptH + 12
-            + DisplayPickerPanel.mapHeight + 14 + footerH + bottomPad
+        let total = topPad + titleH + 4 * s + promptH + 12 * s
+            + mapH + 14 * s + footerH + bottomPad
 
         var f = panel.frame
         let topEdge = f.maxY
@@ -293,39 +320,39 @@ final class DisplayPickerPanel: NSObject, NSWindowDelegate {
 
         var y = total - topPad
         titleLabel.frame = NSRect(x: E, y: y - titleH, width: W - 2 * E, height: titleH)
-        y -= titleH + 4
+        y -= titleH + 4 * s
         promptLabel.frame = NSRect(x: E, y: y - promptH, width: W - 2 * E, height: promptH)
-        y -= promptH + 12
-        mapView.frame = NSRect(x: E, y: y - DisplayPickerPanel.mapHeight,
-                               width: W - 2 * E, height: DisplayPickerPanel.mapHeight)
+        y -= promptH + 12 * s
+        mapView.frame = NSRect(x: E, y: y - mapH, width: W - 2 * E, height: mapH)
         mapView.needsDisplay = true
         layoutFooter()
     }
 
     private func layoutFooter() {
-        let W = DisplayPickerPanel.width
-        let E = DisplayPickerPanel.edgeInset
-        let bh: CGFloat = 30
-        let by = DisplayPickerPanel.footerBottomPad
+        let W = DisplayPickerPanel.width * s
+        let E = DisplayPickerPanel.edgeInset * s
+        let bh: CGFloat = 30 * s
+        let by = DisplayPickerPanel.footerBottomPad * s
 
         confirmButton.sizeToFit()
-        let sw = max(120, confirmButton.frame.width + 22)
+        let sw = max(120 * s, confirmButton.frame.width + 22 * s)
         confirmButton.frame = NSRect(x: W - E - sw, y: by, width: sw, height: bh)
 
         cancelButton.sizeToFit()
-        let cw = max(78, cancelButton.frame.width + 16)
-        let cancelX = W - E - sw - 10 - cw
+        let cw = max(78 * s, cancelButton.frame.width + 16 * s)
+        let cancelX = W - E - sw - 10 * s - cw
         cancelButton.frame = NSRect(x: cancelX, y: by, width: cw, height: bh)
 
         // Left slot: the optional extra-action button, else the keyboard hint.
         // Both are clamped to end before Cancel so they can never overlap it.
-        let leftAvail = max(0, cancelX - E - 10)
+        let leftAvail = max(0, cancelX - E - 10 * s)
         if hasExtra {
             extraButton.sizeToFit()
-            let ew = min(leftAvail, max(120, extraButton.frame.width + 20))
+            let ew = min(leftAvail, max(120 * s, extraButton.frame.width + 20 * s))
             extraButton.frame = NSRect(x: E, y: by, width: ew, height: bh)
         } else {
-            hintLabel.frame = NSRect(x: E, y: by + (bh - 15) / 2, width: leftAvail, height: 15)
+            let hh: CGFloat = 15 * s
+            hintLabel.frame = NSRect(x: E, y: by + (bh - hh) / 2, width: leftAvail, height: hh)
         }
     }
 }
@@ -341,6 +368,11 @@ final class DisplayMapView: NSView {
     private let entries: [DisplayEntry]
     var selected: [Int] = []
     var onClickDisplay: ((Int) -> Void)?
+    /// HUDScale factor: sizes the labels, insets, radii and check disc drawn
+    /// inside each display (the rects themselves already fill the view).
+    var scale: CGFloat = 1 {
+        didSet { layer?.cornerRadius = 8 * scale; computeRects(); needsDisplay = true }
+    }
 
     private var drawnRects: [CGRect] = []   // view-space, index-aligned to entries
 
@@ -348,7 +380,7 @@ final class DisplayMapView: NSView {
         self.entries = entries
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 8 * scale
         layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.05).cgColor
     }
 
@@ -364,7 +396,7 @@ final class DisplayMapView: NSView {
         for e in entries { bbox = bbox.union(e.frame) }
         guard bbox.width > 0, bbox.height > 0 else { return }
 
-        let pad: CGFloat = 18
+        let pad: CGFloat = 18 * scale
         let availW = bounds.width - 2 * pad
         let availH = bounds.height - 2 * pad
         let scale = min(availW / bbox.width, availH / bbox.height)
@@ -405,15 +437,15 @@ final class DisplayMapView: NSView {
             let b = CGPoint(x: drawnRects[selected[1]].midX, y: drawnRects[selected[1]].midY)
             let line = NSBezierPath()
             line.move(to: a); line.line(to: b)
-            line.lineWidth = 2
-            line.setLineDash([5, 4], count: 2, phase: 0)
+            line.lineWidth = 2 * scale
+            line.setLineDash([5 * scale, 4 * scale], count: 2, phase: 0)
             green.withAlphaComponent(0.85).setStroke()
             line.stroke()
         }
 
         for (i, r) in drawnRects.enumerated() {
-            let rect = r.insetBy(dx: 3, dy: 3)
-            let path = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
+            let rect = r.insetBy(dx: 3 * scale, dy: 3 * scale)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 7 * scale, yRadius: 7 * scale)
             let isSelected = selected.contains(i)
 
             NSGraphicsContext.current?.saveGraphicsState()
@@ -422,7 +454,7 @@ final class DisplayMapView: NSView {
             if isSelected { green.withAlphaComponent(0.28).setFill(); rect.fill() }
             NSGraphicsContext.current?.restoreGraphicsState()
 
-            path.lineWidth = isSelected ? 3 : 1.5
+            path.lineWidth = (isSelected ? 3 : 1.5) * scale
             (isSelected ? green : NSColor.black.withAlphaComponent(0.22)).setStroke()
             path.stroke()
 
@@ -434,46 +466,48 @@ final class DisplayMapView: NSView {
     /// Name / window-count / resolution, centered -- no corner pill to collide
     /// with (the overlap bug). Clipped to the display rect on very small maps.
     private func drawLabel(_ e: DisplayEntry, in rect: CGRect) {
-        let box = rect.insetBy(dx: 5, dy: 5)
-        guard box.width > 24 else { return }
+        let k = scale
+        let box = rect.insetBy(dx: 5 * k, dy: 5 * k)
+        guard box.width > 24 * k else { return }
         let para = NSMutableParagraphStyle()
         para.alignment = .center
         para.lineBreakMode = .byTruncatingTail
 
         let name = e.name.isEmpty ? "Display" : e.name
-        (name as NSString).draw(in: CGRect(x: box.minX, y: box.midY + 6, width: box.width, height: 16),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+        (name as NSString).draw(in: CGRect(x: box.minX, y: box.midY + 6 * k, width: box.width, height: 16 * k),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 12 * k, weight: .semibold),
                              .foregroundColor: NSColor.white, .paragraphStyle: para])
 
         if e.windows >= 0 {
             let n = e.windows
             let text = n == 1 ? "1 window" : "\(n) windows"
-            (text as NSString).draw(in: CGRect(x: box.minX, y: box.midY - 8, width: box.width, height: 14),
-                withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            (text as NSString).draw(in: CGRect(x: box.minX, y: box.midY - 8 * k, width: box.width, height: 14 * k),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 11 * k, weight: .medium),
                                  .foregroundColor: NSColor(white: 1, alpha: 0.95), .paragraphStyle: para])
         }
 
         let res = "\(Int(e.frame.width.rounded())) \u{00D7} \(Int(e.frame.height.rounded()))"
-        (res as NSString).draw(in: CGRect(x: box.minX, y: box.midY - 22, width: box.width, height: 12),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 9.5),
+        (res as NSString).draw(in: CGRect(x: box.minX, y: box.midY - 22 * k, width: box.width, height: 12 * k),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 9.5 * k),
                              .foregroundColor: NSColor(white: 1, alpha: 0.8), .paragraphStyle: para])
     }
 
     /// A small green check disc in the top-right corner -- clear of the centered
     /// label, so it never overlaps the name.
     private func drawCheck(in rect: CGRect, color: NSColor) {
-        guard rect.width > 46, rect.height > 40 else { return }
-        let d: CGFloat = 17
-        let c = CGRect(x: rect.maxX - d - 5, y: rect.maxY - d - 5, width: d, height: d)
+        let k = scale
+        guard rect.width > 46 * k, rect.height > 40 * k else { return }
+        let d: CGFloat = 17 * k
+        let c = CGRect(x: rect.maxX - d - 5 * k, y: rect.maxY - d - 5 * k, width: d, height: d)
         let disc = NSBezierPath(ovalIn: c)
         color.setFill(); disc.fill()
         NSColor.white.withAlphaComponent(0.9).setStroke()
         disc.lineWidth = 1; disc.stroke()
         let check = NSBezierPath()
-        check.move(to: CGPoint(x: c.minX + 4.5, y: c.midY + 0.2))
-        check.line(to: CGPoint(x: c.midX - 0.8, y: c.minY + 5))
-        check.line(to: CGPoint(x: c.maxX - 4, y: c.maxY - 5))
-        check.lineWidth = 1.8
+        check.move(to: CGPoint(x: c.minX + 4.5 * k, y: c.midY + 0.2 * k))
+        check.line(to: CGPoint(x: c.midX - 0.8 * k, y: c.minY + 5 * k))
+        check.line(to: CGPoint(x: c.maxX - 4 * k, y: c.maxY - 5 * k))
+        check.lineWidth = 1.8 * k
         check.lineCapStyle = .round
         check.lineJoinStyle = .round
         NSColor.white.setStroke(); check.stroke()
@@ -483,7 +517,7 @@ final class DisplayMapView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        for (i, r) in drawnRects.enumerated() where r.insetBy(dx: 3, dy: 3).contains(p) {
+        for (i, r) in drawnRects.enumerated() where r.insetBy(dx: 3 * scale, dy: 3 * scale).contains(p) {
             onClickDisplay?(i)
             return
         }

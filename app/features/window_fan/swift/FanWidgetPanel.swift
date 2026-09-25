@@ -80,6 +80,11 @@ final class FanWidgetPanel {
     /// pin the size: it would silently end the auto fit with nothing to show for it.
     private var resizeMoved = false
     private var clamp: NSRect
+    /// HUDScale factor of the fan's screen, fixed at show. It sizes the CONTENT
+    /// (fonts, rows, insets), the auto-fit width and the size floors; it never
+    /// multiplies `userSize`, so a card the user dragged keeps the size they gave
+    /// it unless that is below the (scaled) floor.
+    private let s: CGFloat
 
     init(title: String, count: String,
          rows: [Row], topLeft: CGPoint, screen: NSRect,
@@ -92,10 +97,12 @@ final class FanWidgetPanel {
         self.onSwitch = onSwitch
         self.userSize = size
         self.clamp = screen
+        let s = HUDScale.factor(forRect: screen)
+        self.s = s
 
         card = DraggableCardView()
         panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: 240 * s, height: 120 * s),
             level: .statusBar,
             collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary],
             keyable: false, mouseTransparent: false, hasShadow: true)
@@ -111,7 +118,7 @@ final class FanWidgetPanel {
         panel.allowsToolTipsWhenApplicationIsInactive = true
 
         card.wantsLayer = true
-        card.layer?.cornerRadius = 14
+        card.layer?.cornerRadius = 14 * s
         card.layer?.masksToBounds = true
         card.layer?.backgroundColor =
             NSColor(srgbRed: 0.106, green: 0.106, blue: 0.14, alpha: 0.97).cgColor
@@ -120,24 +127,24 @@ final class FanWidgetPanel {
 
         // --- Header: title + count .... Exit -----------------------------------
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 14, weight: .bold)
+        titleLabel.font = .systemFont(ofSize: 14 * s, weight: .bold)
         titleLabel.textColor = .white
-        countLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        countLabel.font = .systemFont(ofSize: 12 * s, weight: .regular)
         countLabel.textColor = NSColor.white.withAlphaComponent(0.5)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         spacer.translatesAutoresizingMaskIntoConstraints = false
-        let close = CloseButtonView()
+        let close = CloseButtonView(scale: s)
         close.onClick = onExit
         let header = NSStackView(views: [titleLabel, countLabel, spacer, close])
         header.orientation = .horizontal
         header.alignment = .centerY
-        header.spacing = 7
+        header.spacing = 7 * s
 
         // --- Row list (inside a scroll view; see `scroll`) ----------------------
         list.orientation = .vertical
         list.alignment = .leading
-        list.spacing = 3
+        list.spacing = 3 * s
         list.translatesAutoresizingMaskIntoConstraints = false
 
         scroll.documentView = list
@@ -151,18 +158,18 @@ final class FanWidgetPanel {
         let vstack = NSStackView(views: [header, scroll])
         vstack.orientation = .vertical
         vstack.alignment = .leading
-        vstack.spacing = 8
+        vstack.spacing = 8 * s
         vstack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(vstack)
         // Sized in setRows to the content height, capped so the card always fits the
         // screen. Placeholder value only.
         scrollHeight = scroll.heightAnchor.constraint(equalToConstant: 100)
-        contentWidth = vstack.widthAnchor.constraint(equalToConstant: Self.defaultContentWidth)
+        contentWidth = vstack.widthAnchor.constraint(equalToConstant: Self.defaultContentWidth * s)
         NSLayoutConstraint.activate([
-            vstack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            vstack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -11),
-            vstack.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
-            vstack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -11),
+            vstack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12 * s),
+            vstack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -11 * s),
+            vstack.topAnchor.constraint(equalTo: card.topAnchor, constant: 10 * s),
+            vstack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -11 * s),
             header.widthAnchor.constraint(equalTo: vstack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: vstack.widthAnchor),
             scrollHeight,
@@ -188,7 +195,7 @@ final class FanWidgetPanel {
         // of winning that contest is that the corner 14pt of the LAST row switches no
         // window, and with legacy scrollers the very bottom of the scroller track is
         // unreachable: both are a few points at the one spot a resize is reached for.
-        let grip = ResizeGripView()
+        let grip = ResizeGripView(scale: s)
         grip.toolTip = resizeTip.isEmpty ? nil : resizeTip
         grip.onBegin = { [weak self] in self?.beginResize() }
         grip.onDrag = { [weak self] in self?.dragResize() }
@@ -196,8 +203,8 @@ final class FanWidgetPanel {
         grip.onReset = { [weak self] in self?.resetSize() }
         card.addSubview(grip)
         NSLayoutConstraint.activate([
-            grip.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
-            grip.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -4),
+            grip.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4 * s),
+            grip.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -4 * s),
         ])
 
         panel.contentView = card
@@ -209,10 +216,12 @@ final class FanWidgetPanel {
         panel.orderFrontRegardless()
     }
 
-    /// The content column's width before the user has resized anything.
+    /// The content column's width before the user has resized anything, at
+    /// HUDScale 1 (the panel multiplies it by its screen's factor).
     static let defaultContentWidth: CGFloat = 320
     /// Below this the card stops being a list of window titles and starts being a
-    /// column of ellipses, so the grip refuses to go further.
+    /// column of ellipses, so the grip refuses to go further. Both floors are at
+    /// HUDScale 1: the clamps below take the factor, since the rows they protect grow.
     static let minCardWidth: CGFloat = 240
     /// A list too short to show one row is useless.
     static let minListHeight: CGFloat = 80
@@ -228,8 +237,8 @@ final class FanWidgetPanel {
     /// constant. NOTE the floor: on a very short display the floor wins and the card
     /// may exceed the screen, because a list too small to show one row is useless.
     static func listHeight(content: CGFloat, screenHeight: CGFloat,
-                           chrome: CGFloat) -> CGFloat {
-        min(content, max(minListHeight, screenHeight - chrome - screenMargin))
+                           chrome: CGFloat, scale: CGFloat = 1) -> CGFloat {
+        min(content, max(minListHeight * scale, screenHeight - chrome - screenMargin))
     }
 
     /// The same bound, applied to a height the USER dragged to rather than one the
@@ -240,16 +249,18 @@ final class FanWidgetPanel {
     /// The floor matters twice here: a drag can ask for a NEGATIVE height (pull the
     /// grip up past the header), which `listHeight` would pass straight through.
     static func userListHeight(requested: CGFloat, screenHeight: CGFloat,
-                               chrome: CGFloat) -> CGFloat {
-        max(minListHeight, listHeight(content: requested, screenHeight: screenHeight,
-                                      chrome: chrome))
+                               chrome: CGFloat, scale: CGFloat = 1) -> CGFloat {
+        max(minListHeight * scale, listHeight(content: requested, screenHeight: screenHeight,
+                                              chrome: chrome, scale: scale))
     }
 
     /// The card's outer width for a dragged `requested`: at least a readable minimum,
     /// at most the screen less the same margin the height uses. Pure, for the same
     /// reason as the two above -- the clamps are the part worth testing.
-    static func cardWidth(requested: CGFloat, screenWidth: CGFloat) -> CGFloat {
-        min(max(requested, minCardWidth), max(minCardWidth, screenWidth - screenMargin))
+    static func cardWidth(requested: CGFloat, screenWidth: CGFloat,
+                          scale: CGFloat = 1) -> CGFloat {
+        let floor = minCardWidth * scale
+        return min(max(requested, floor), max(floor, screenWidth - screenMargin))
     }
 
     /// Rebuild the row list (called whenever the fan's membership or focus changes)
@@ -263,7 +274,7 @@ final class FanWidgetPanel {
         let wasScrolledTo = scroll.contentView.bounds.origin
         for v in list.arrangedSubviews { list.removeArrangedSubview(v); v.removeFromSuperview() }
         for (i, r) in rows.enumerated() {
-            let row = RowView(index: i + 1, row: r)
+            let row = RowView(index: i + 1, row: r, scale: s)
             row.onClick = { [weak self] in self?.onSwitch(i + 1) }
             list.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
@@ -299,19 +310,20 @@ final class FanWidgetPanel {
     private func applySize() {
         let chromeH = chromeHeight ?? 0
         if let u = userSize {
-            contentWidth.constant = Self.cardWidth(requested: u.width, screenWidth: clamp.width)
+            contentWidth.constant = Self.cardWidth(requested: u.width, screenWidth: clamp.width,
+                                                   scale: s)
                 - (chromeWidth ?? 0)
             scrollHeight.constant = Self.userListHeight(requested: u.height - chromeH,
                                                         screenHeight: clamp.height,
-                                                        chrome: chromeH)
+                                                        chrome: chromeH, scale: s)
         } else {
             // Only this branch reads the list's own fit, so only this branch pays for
             // laying the whole row list out -- a resize drag runs applySize per tick.
             list.layoutSubtreeIfNeeded()
-            contentWidth.constant = Self.defaultContentWidth
+            contentWidth.constant = Self.defaultContentWidth * s
             scrollHeight.constant = Self.listHeight(content: list.fittingSize.height,
                                                     screenHeight: clamp.height,
-                                                    chrome: chromeH)
+                                                    chrome: chromeH, scale: s)
         }
     }
 
@@ -462,23 +474,23 @@ private final class RowView: NSView {
     var onClick: (() -> Void)?
     private let focused: Bool
 
-    init(index: Int, row: FanWidgetPanel.Row) {
+    init(index: Int, row: FanWidgetPanel.Row, scale s: CGFloat) {
         self.focused = row.focused
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 7
+        layer?.cornerRadius = 7 * s
         if row.focused {
             layer?.backgroundColor = NSColor.white.withAlphaComponent(0.12).cgColor
         }
         translatesAutoresizingMaskIntoConstraints = false
 
-        let swatch = EdgeSwatchView(colorHex: row.color, side: row.side)
+        let swatch = EdgeSwatchView(colorHex: row.color, side: row.side, scale: s)
         let icon = NSImageView()
         icon.image = AppCatalog.icon(forBundleId: row.bundleID)
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
         let title = NSTextField(labelWithString: row.title.isEmpty ? "—" : row.title)
-        title.font = .systemFont(ofSize: 13, weight: row.focused ? .semibold : .regular)
+        title.font = .systemFont(ofSize: 13 * s, weight: row.focused ? .semibold : .regular)
         title.textColor = row.focused ? .white : NSColor.white.withAlphaComponent(0.88)
         title.lineBreakMode = .byTruncatingTail
         title.setContentCompressionResistancePriority(.init(1), for: .horizontal)
@@ -486,16 +498,16 @@ private final class RowView: NSView {
         let hs = NSStackView(views: [swatch, icon, title])
         hs.orientation = .horizontal
         hs.alignment = .centerY
-        hs.spacing = 9
+        hs.spacing = 9 * s
         hs.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hs)
         NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: 20),
-            icon.heightAnchor.constraint(equalToConstant: 20),
-            hs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            hs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            hs.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            hs.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            icon.widthAnchor.constraint(equalToConstant: 20 * s),
+            icon.heightAnchor.constraint(equalToConstant: 20 * s),
+            hs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6 * s),
+            hs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6 * s),
+            hs.topAnchor.constraint(equalTo: topAnchor, constant: 4 * s),
+            hs.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4 * s),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -516,41 +528,44 @@ private final class RowView: NSView {
 private final class EdgeSwatchView: NSView {
     private let color: NSColor
     private let side: String
+    private let scale: CGFloat
 
-    init(colorHex: String, side: String) {
+    init(colorHex: String, side: String, scale: CGFloat) {
         self.color = NSColor(hexRGB: colorHex) ?? .controlAccentColor
         self.side = side
+        self.scale = scale
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 26),
-            heightAnchor.constraint(equalToConstant: 20),
+            widthAnchor.constraint(equalToConstant: 26 * scale),
+            heightAnchor.constraint(equalToConstant: 20 * scale),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let body = bounds.insetBy(dx: 1.5, dy: 1.5)
+        let k = scale
+        let body = bounds.insetBy(dx: 1.5 * k, dy: 1.5 * k)
         // LABEL MODE sends an empty side: no window was moved, so no edge is
         // guaranteed exposed and drawing an edge glyph would point the user at a
         // strip that is not there. A plain filled chip carries the identity (the
         // colour matching the on-screen border) and claims nothing about position.
         if side.isEmpty {
             ctx.setFillColor(color.cgColor)
-            ctx.addPath(CGPath(roundedRect: body.insetBy(dx: 4, dy: 3),
-                               cornerWidth: 3, cornerHeight: 3, transform: nil))
+            ctx.addPath(CGPath(roundedRect: body.insetBy(dx: 4 * k, dy: 3 * k),
+                               cornerWidth: 3 * k, cornerHeight: 3 * k, transform: nil))
             ctx.fillPath()
             return
         }
         // Window body: faint rounded outline.
         ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.35).cgColor)
         ctx.setLineWidth(1)
-        ctx.addPath(CGPath(roundedRect: body, cornerWidth: 3, cornerHeight: 3, transform: nil))
+        ctx.addPath(CGPath(roundedRect: body, cornerWidth: 3 * k, cornerHeight: 3 * k, transform: nil))
         ctx.strokePath()
         // Exposed edge: a thick colored bar hugging the given side.
         ctx.setFillColor(color.cgColor)
-        let t: CGFloat = 4
+        let t: CGFloat = 4 * k
         let bar: CGRect
         switch side {
         case "T": bar = CGRect(x: body.minX, y: body.maxY - t, width: body.width, height: t)
@@ -558,7 +573,7 @@ private final class EdgeSwatchView: NSView {
         case "L": bar = CGRect(x: body.minX, y: body.minY, width: t, height: body.height)
         default:  bar = CGRect(x: body.maxX - t, y: body.minY, width: t, height: body.height) // "R"
         }
-        ctx.addPath(CGPath(roundedRect: bar, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil))
+        ctx.addPath(CGPath(roundedRect: bar, cornerWidth: 1.5 * k, cornerHeight: 1.5 * k, transform: nil))
         ctx.fillPath()
     }
 }
@@ -576,13 +591,15 @@ private final class ResizeGripView: NSView {
     var onDrag: (() -> Void)?
     var onEnd: (() -> Void)?
     var onReset: (() -> Void)?
+    private let scale: CGFloat
 
-    init() {
+    init(scale: CGFloat) {
+        self.scale = scale
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 14),
-            heightAnchor.constraint(equalToConstant: 14),
+            widthAnchor.constraint(equalToConstant: 14 * scale),
+            heightAnchor.constraint(equalToConstant: 14 * scale),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -632,9 +649,9 @@ private final class ResizeGripView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.4).cgColor)
-        ctx.setLineWidth(1.4)
+        ctx.setLineWidth(1.4 * scale)
         ctx.setLineCap(.round)
-        for len in [4.0, 8.0, 12.0] as [CGFloat] {
+        for len in [4.0 * scale, 8.0 * scale, 12.0 * scale] as [CGFloat] {
             ctx.move(to: CGPoint(x: bounds.maxX - len, y: bounds.minY + 1))
             ctx.addLine(to: CGPoint(x: bounds.maxX - 1, y: bounds.minY + len))
         }
@@ -647,20 +664,20 @@ private final class CloseButtonView: NSView {
     var onClick: (() -> Void)?
     private var pressed = false
 
-    init() {
+    init(scale: CGFloat) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = 10 * scale
         layer?.backgroundColor = NSColor.white.withAlphaComponent(0.1).cgColor
         translatesAutoresizingMaskIntoConstraints = false
         let x = NSTextField(labelWithString: "\u{2715}")
-        x.font = .systemFont(ofSize: 12, weight: .semibold)
+        x.font = .systemFont(ofSize: 12 * scale, weight: .semibold)
         x.textColor = NSColor.white.withAlphaComponent(0.75)
         x.translatesAutoresizingMaskIntoConstraints = false
         addSubview(x)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 20),
-            heightAnchor.constraint(equalToConstant: 20),
+            widthAnchor.constraint(equalToConstant: 20 * scale),
+            heightAnchor.constraint(equalToConstant: 20 * scale),
             x.centerXAnchor.constraint(equalTo: centerXAnchor),
             x.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])

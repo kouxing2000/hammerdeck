@@ -84,6 +84,9 @@ final class WindowModeHUDPanel {
     private let hud = VibrancyHUDPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240))
     private var cols = 3
     private var rows = 3
+    /// HUDScale factor of the screen the card is presented on (VibrancyHUDPanel
+    /// presents on NSScreen.main), re-read on every render.
+    private var s: CGFloat = 1
 
     init(spec: Spec) {
         render(spec, cols: spec.cols, rows: spec.rows)
@@ -96,12 +99,14 @@ final class WindowModeHUDPanel {
     private func render(_ spec: Spec, cols: Int, rows: Int) {
         self.cols = cols
         self.rows = rows
+        s = HUDScale.factor(for: NSScreen.main)
+        hud.effect.layer?.cornerRadius = 16 * s
 
         let stack = hud.stack
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         stack.alignment = .centerX
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 12, right: 18)
+        stack.spacing = 10 * s
+        stack.edgeInsets = NSEdgeInsets(top: 14 * s, left: 18 * s, bottom: 12 * s, right: 18 * s)
 
         stack.addArrangedSubview(titleLabel(spec.title))
         stack.addArrangedSubview(diagramView(spec.cells))
@@ -109,7 +114,7 @@ final class WindowModeHUDPanel {
         if !spec.groups.isEmpty { stack.addArrangedSubview(legendView(spec.groups)) }
         if let footer = spec.footer { stack.addArrangedSubview(captionLabel(footer)) }
 
-        hud.present(minWidth: 300)
+        hud.present(minWidth: 300 * s)
     }
 
     /// Re-render the SAME live panel from a fresh spec (window_grid's mid-mode
@@ -125,20 +130,20 @@ final class WindowModeHUDPanel {
 
     private func titleLabel(_ s: String) -> NSTextField {
         let f = NSTextField(labelWithString: s.uppercased())
-        f.font = .systemFont(ofSize: 11, weight: .semibold)
+        f.font = .systemFont(ofSize: 11 * self.s, weight: .semibold)
         f.textColor = .secondaryLabelColor
         f.alignment = .center
         // Letterspaced caps read as a HUD title, not a sentence.
         f.attributedStringValue = NSAttributedString(string: s.uppercased(), attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: 11 * self.s, weight: .semibold),
             .foregroundColor: NSColor.secondaryLabelColor,
-            .kern: 1.8])
+            .kern: 1.8 * self.s])
         return f
     }
 
     private func captionLabel(_ s: String) -> NSTextField {
         let f = NSTextField(labelWithString: s)
-        f.font = .systemFont(ofSize: 10)
+        f.font = .systemFont(ofSize: 10 * self.s)
         f.textColor = .tertiaryLabelColor
         f.alignment = .center
         return f
@@ -147,15 +152,15 @@ final class WindowModeHUDPanel {
     /// The spatial grid map (cols x rows): a bordered "screen" with each cell's
     /// key-cap(s) centered where they snap.
     private func diagramView(_ cells: [Cell]) -> NSView {
-        let cellW: CGFloat = 72, cellH: CGFloat = 42
-        let pad: CGFloat = 6
+        let cellW: CGFloat = 72 * s, cellH: CGFloat = 42 * s
+        let pad: CGFloat = 6 * s
         let w = cellW * CGFloat(cols) + pad * 2
         let h = cellH * CGFloat(rows) + pad * 2
 
         let board = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
         board.wantsLayer = true
         board.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.04).cgColor
-        board.layer?.cornerRadius = 8
+        board.layer?.cornerRadius = 8 * s
         board.layer?.borderWidth = 1
         board.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
         board.translatesAutoresizingMaskIntoConstraints = false
@@ -191,13 +196,13 @@ final class WindowModeHUDPanel {
         let tint: NSColor? = c.state == "corner" ? .controlAccentColor : nil
         let caps = NSStackView(views: c.keys.map { keyCap($0, tint: tint) })
         caps.orientation = .horizontal
-        caps.spacing = 4
+        caps.spacing = 4 * s
         let content: NSView
         if let label = c.label {
             let v = NSStackView(views: [caps, captionLabel(label)])
             v.orientation = .vertical
             v.alignment = .centerX
-            v.spacing = 2
+            v.spacing = 2 * s
             content = v
         } else {
             content = caps
@@ -211,7 +216,7 @@ final class WindowModeHUDPanel {
     /// and the digit tucked in the corner. Corner-A gets the strongest border.
     /// `pv` is a unit rect (fractions of the grid); AppKit's y grows up, so flip.
     private func previewThumb(_ c: Cell, _ pv: CGRect) -> NSView {
-        let sw: CGFloat = 46, sh: CGFloat = 30
+        let sw: CGFloat = 46 * s, sh: CGFloat = 30 * s
         let isCorner = c.state == "corner"
         let screen = NSView()
         screen.wantsLayer = true
@@ -221,36 +226,37 @@ final class WindowModeHUDPanel {
         (NSAppearance(named: .vibrantDark) ?? NSAppearance.currentDrawing())
             .performAsCurrentDrawingAppearance {
                 screen.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
-                screen.layer?.cornerRadius = 3
+                screen.layer?.cornerRadius = 3 * s
                 screen.layer?.borderWidth = isCorner ? 1.5 : 1
                 screen.layer?.borderColor = NSColor.controlAccentColor
                     .withAlphaComponent(isCorner ? 0.95 : 0.5).cgColor
                 let win = CALayer()
                 let wx = pv.origin.x * sw
                 let wy = (1 - pv.origin.y - pv.height) * sh          // flip to y-up
-                win.frame = CGRect(x: wx + 1.5, y: wy + 1.5,
-                                   width: max(2, pv.width * sw - 3),
-                                   height: max(2, pv.height * sh - 3))
+                let inset = 1.5 * s
+                win.frame = CGRect(x: wx + inset, y: wy + inset,
+                                   width: max(2 * s, pv.width * sw - 2 * inset),
+                                   height: max(2 * s, pv.height * sh - 2 * inset))
                 win.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.85).cgColor
-                win.cornerRadius = 1.5
+                win.cornerRadius = 1.5 * s
                 screen.layer?.addSublayer(win)
             }
         let num = NSTextField(labelWithString: c.keys.first ?? "")
-        num.font = .monospacedSystemFont(ofSize: 8, weight: .bold)
+        num.font = .monospacedSystemFont(ofSize: 8 * s, weight: .bold)
         num.textColor = .white
         num.translatesAutoresizingMaskIntoConstraints = false
         screen.addSubview(num)
         NSLayoutConstraint.activate([
             screen.widthAnchor.constraint(equalToConstant: sw),
             screen.heightAnchor.constraint(equalToConstant: sh),
-            num.trailingAnchor.constraint(equalTo: screen.trailingAnchor, constant: -2),
+            num.trailingAnchor.constraint(equalTo: screen.trailingAnchor, constant: -2 * s),
             num.topAnchor.constraint(equalTo: screen.topAnchor, constant: 0),
         ])
         // diagramView positions each cell by frame (setFrameSize(fittingSize) +
         // setFrameOrigin), which only STICKS for a translates=true child. `screen`
         // is Auto-Layout-sized (translates=false), so wrap it in a stack -- exactly
         // how the key-cap path wraps its constraint-sized caps -- to stay
-        // frame-positionable while reporting a 46x30 fittingSize. Without this the
+        // frame-positionable while reporting its (scaled) 46x30 fittingSize. Without this the
         // thumbnails collapse to the board origin instead of landing in their cells.
         return NSStackView(views: [screen])
     }
@@ -260,33 +266,35 @@ final class WindowModeHUDPanel {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 6 * s
         for g in groups { stack.addArrangedSubview(legendRow(g)) }
         return stack
     }
 
     private func legendRow(_ g: Group) -> NSView {
         let label = NSTextField(labelWithString: g.label)
-        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.font = .systemFont(ofSize: 11 * s, weight: .medium)
         label.textColor = .secondaryLabelColor
         label.alignment = .right
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: 86).isActive = true
+        label.widthAnchor.constraint(equalToConstant: 86 * s).isActive = true
 
         let caps = NSStackView(views: g.keys.map { keyCap($0, fontSize: 11) })
         caps.orientation = .horizontal
-        caps.spacing = 4
+        caps.spacing = 4 * s
 
         let row = NSStackView(views: [label, caps])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 10
+        row.spacing = 10 * s
         return row
     }
 
     /// A boxed key-cap: the glyph in a faint rounded rect, like a keyboard key.
     /// `tint` (window_grid's corner) accents the cap; nil stays neutral.
+    /// `fontSize` is the unscaled design size; the HUDScale factor is applied here.
     private func keyCap(_ raw: String, fontSize: CGFloat = 13, tint: NSColor? = nil) -> NSView {
-        KeyCap.make(KeyGlyphs.glyph(raw), fontSize: fontSize, height: fontSize + 11, tint: tint)
+        KeyCap.make(KeyGlyphs.glyph(raw), fontSize: fontSize * s, height: (fontSize + 11) * s,
+                    tint: tint, scale: s)
     }
 }
