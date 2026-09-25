@@ -52,7 +52,6 @@ APP_NAME="Hammerdeck"
 # public download has shipped under it, so changing it orphans the settings of
 # every installed copy. Treat it like the Sparkle feed URL below: not movable.
 BUNDLE_ID="${HAMMERDECK_BUNDLE_ID:-com.peach-studio.hammerdeck}"
-MIN_MACOS="13.0"   # must match Package.swift `platforms: [.macOS(.v13)]`
 
 NOTARY_PROFILE="${HAMMERDECK_NOTARY_PROFILE:-hammerdeck-notary}"
 
@@ -149,17 +148,23 @@ fi
 #    feature-page roster<->feature.json consistency check, and every other
 #    integration test, actually blocks a bad build from being packaged). The UI
 #    tests that synthesize keystrokes stay skipped (HAMMERDECK_UI_TESTS unset).
+# Link flags that make the binary record the SDK it was built against
+# (lib/sdk-link-flags.sh says why); step 2's check refuses a build without it.
+# shellcheck source=lib/sdk-link-flags.sh
+source "$ROOT/scripts/lib/sdk-link-flags.sh"
+MIN_MACOS="$HD_MIN_MACOS"   # LSMinimumSystemVersion: Package.swift's floor, read live
+
 if [[ "${HAMMERDECK_SKIP_TESTS:-0}" == "1" ]]; then
   echo "==> WARNING: skipping the test gate (HAMMERDECK_SKIP_TESTS=1)"
 else
   echo "==> swift test (pre-package gate)"
-  swift test
+  swift test "${SWIFT_SDK_LINK_FLAGS[@]}"
 fi
 
 # 2. Release build. Universal by default: Hammerdeck's floor is macOS 13, which
 #    still runs on Intel, and an arm64-only bundle downloaded onto an Intel Mac
 #    fails to launch with nothing on screen that explains why.
-BUILD_FLAGS=(-c release)
+BUILD_FLAGS=(-c release "${SWIFT_SDK_LINK_FLAGS[@]}")
 if [[ "${HAMMERDECK_UNIVERSAL:-1}" == "1" ]]; then
   BUILD_FLAGS+=(--arch arm64 --arch x86_64)
   echo "==> swift build -c release (universal: arm64 + x86_64)"
@@ -169,6 +174,11 @@ fi
 swift build "${BUILD_FLAGS[@]}"
 BIN="$(swift build "${BUILD_FLAGS[@]}" --show-bin-path)/$APP_NAME"
 [[ -x "$BIN" ]] || { echo "error: build did not produce $BIN" >&2; exit 1; }
+# Every slice must record the real SDK before anything is signed: a mis-stamped
+# app runs SDK-gated AppKit/SwiftUI behaviour in its old form, and nothing else
+# in the release path would notice.
+echo "==> checking the recorded SDK (minos $HD_MIN_MACOS / sdk $HD_MACOS_SDK)"
+hd_check_binary_sdk "$BIN" || { echo "error: refusing to package a mis-stamped binary" >&2; exit 1; }
 
 # 3. Assemble the .app tree.
 echo "==> assembling $APP"

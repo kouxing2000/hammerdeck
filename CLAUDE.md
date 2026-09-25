@@ -342,20 +342,26 @@ onto `platform.windows`, which the `window_*` features ride.
 ## Build / run
 
 ```bash
-swift build       # compiles CLua + HammerdeckKit + the launcher
-swift run         # boots the platform in the native host (the real app)
+scripts/app.sh start   # builds CLua + HammerdeckKit + the launcher, then boots the real app detached
 lua test/run.lua     # headless platform + feature tests (fake adapter, Homebrew Lua -- fast inner loop)
 scripts/test-lua.sh  # SAME suite on the vendored 5.4.7 (exact embedded engine) -- run before committing Lua / in CI
-scripts/test-swift.sh  # `swift test` to a log, then the FAILING CASE NAMES -- prefer this
-swift test           # integration tests on the REAL bridge (see below -- NOT only for Swift changes)
+scripts/test-swift.sh  # `swift test` on the REAL bridge, to a log, then the FAILING CASE NAMES (see below -- NOT only for Swift changes)
 ```
+
+**Build through the scripts, not bare `swift build` / `swift run`.** SwiftPM's
+default engine (Swift Build, from Xcode 27) records the deployment target as the
+linked SDK version, and AppKit/SwiftUI pick SDK-gated behaviour from it -- an
+oversized, never-shrinking popover is how it shows. `scripts/lib/sdk-link-flags.sh`
+holds the linker flags that restore the real SDK; app.sh, test-swift.sh,
+package.sh and CI all source it, and package.sh refuses to sign a binary whose
+slices do not record it. A bare `swift build` still links mis-stamped.
 
 **`swift test` is not only for Swift/seam changes -- a pure-Lua feature can turn
 it red.** Two integration tests read the LIVE on-disk catalog rather than any
 Swift you edited: `testEveryGalleryFeatureHasAPreview` (a feature with no
 `FeatureArchetype` case and no `previewExempt` entry) and
 `testFeaturePageRosterMatchesDeclarations` (a `page` in feature.json with no
-registered provider, or the reverse). CI runs it bare on every push, so run it
+registered provider, or the reverse). CI runs it on every push, so run it
 for any new or renamed feature too, not just seam work.
 
 Use `scripts/test-swift.sh` rather than piping `swift test` into a filter. A
@@ -381,14 +387,14 @@ actively watching without a heads-up.
 system keystrokes, or touch the login Keychain are SKIPPED (all gated behind the
 `requireUITests()` opt-in) -- otherwise they flash dialogs, type into whatever
 app the user has focused, or pop a Keychain prompt. Run the full set ONLY when
-the user is away from the keyboard: `HAMMERDECK_UI_TESTS=1 swift test` (the
+the user is away from the keyboard: `HAMMERDECK_UI_TESTS=1 scripts/test-swift.sh` (the
 CGEvent-synthesis ones additionally need Accessibility on the terminal). Some of
 those also carry a capability gate (Accessibility trust, an unlocked session, a
 Chrome profile) and skip-not-fail when the environment can't support them, so
 the exact skip count varies by machine -- that's adaptive, not flaky. All other
 integration tests run anywhere.
 
-Smoke test without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 swift run`.
+Smoke test without grabbing hotkeys: `HAMMERDECK_NO_FIRSTRUN=1 scripts/app.sh start`.
 Settings live in the `Hammerdeck` defaults domain (`defaults read Hammerdeck`;
 `defaults delete Hammerdeck` resets to first-run).
 

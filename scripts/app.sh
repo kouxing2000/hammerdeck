@@ -78,13 +78,20 @@ cmd_start() {
     fi
 
     echo "building..."
-    ( cd "$REPO" && swift build )   # fail here => we never launch
+    # Links with the real SDK recorded -- lib/sdk-link-flags.sh says why.
+    # shellcheck source=lib/sdk-link-flags.sh
+    source "$REPO/scripts/lib/sdk-link-flags.sh"
+    ( cd "$REPO" && swift build "${SWIFT_SDK_LINK_FLAGS[@]}" )   # fail here => we never launch
 
     local bin; bin="$(bin_path)"
     if [[ ! -x "$bin" ]]; then
         echo "ERROR: built binary not found at $bin" >&2
         return 1
     fi
+    # A warning, not a refusal: the dev app still runs, just with SDK-gated
+    # AppKit/SwiftUI behaviour in its old form (oversized popovers, among others).
+    hd_check_binary_sdk "$bin" \
+        || echo "WARN: the dev build is mis-stamped -- expect old-SDK UI behaviour" >&2
 
     sign_dev "$bin"   # stable signature so Keychain "Always Allow" sticks
 

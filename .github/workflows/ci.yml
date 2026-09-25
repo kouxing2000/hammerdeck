@@ -103,12 +103,18 @@ jobs:
 
       # Real-bridge integration tests. The 8 gated UI tests auto-skip here
       # (HAMMERDECK_UI_TESTS unset), so this is the reliable per-commit gate.
+      # Same link flags as the dev and release builds (scripts/lib/sdk-link-flags.sh
+      # says why), so CI links the way a shipped binary does.
       - name: Swift integration tests
-        run: swift test
+        run: |
+          source scripts/lib/sdk-link-flags.sh
+          swift test "${SWIFT_SDK_LINK_FLAGS[@]}"
 
       # Manual, best-effort: exercise the panel + Keychain UI tests on CI so they
       # stop rotting. CGEvent/keystroke tests still skip (no Accessibility trust).
       - name: Gated UI tests (manual dispatch)
         if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
-        run: HAMMERDECK_UI_TESTS=1 swift test
+        run: |
+          source scripts/lib/sdk-link-flags.sh
+          HAMMERDECK_UI_TESTS=1 swift test "${SWIFT_SDK_LINK_FLAGS[@]}"

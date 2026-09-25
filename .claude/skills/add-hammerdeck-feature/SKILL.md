@@ -373,7 +373,7 @@ scripts/test-swift.sh                    # REQUIRED for every new feature -- see
 ```
 
 **`scripts/test-swift.sh` is not optional for a new feature**, even when you touched no
-Swift. CI runs bare `swift test` on every push, and two of its integration tests read the
+Swift. CI runs `swift test` on every push, and two of its integration tests read the
 live on-disk catalog, so a pure-Lua feature can turn them red:
 `testEveryGalleryFeatureHasAPreview` (Step 9 -- the step most easily missed, and the one
 these tests exist to catch) and `testFeaturePageRosterMatchesDeclarations` (a `page` in
