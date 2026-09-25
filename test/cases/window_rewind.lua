@@ -158,6 +158,108 @@ return {
                 "undo restores a window whose before-frame sat over the Dock (W-16)")
         end
 
+        -- (f) A window that REFUSES the move back is not "nothing to undo". The undo
+        -- stays pending (single-step history would otherwise have consumed the only
+        -- way back), the user is told -- by an alert, which no preference turns
+        -- off -- and a second press retries.
+        do
+            fake.clockOffset = fake.clockOffset + 2       -- a fresh group
+            fake.screenList = { { x = 0, y = 0, w = 1000, h = 800 } }
+            fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+            fake.focusedWid = 111
+            fake.windows = { { id = 11, wid = 111, x = 100, y = 100, w = 400, h = 300 } }
+            fake.pressHotkey("left", AC)
+            fake.windows = { { id = 11, wid = 111, x = 0, y = 0, w = 500, h = 800,
+                               appName = "Weather" } }
+            fake.failWindowFrameIds[11] = true
+            local alerts = #fake.alerts
+            fake.pressHotkey("z", AC)
+            ok(fake.windows[1].x == 0, "precondition: the refused restore left the window where it was")
+            ok(#fake.alerts == alerts + 1
+                and fake.alerts[#fake.alerts]:find("Couldn't move 1 window back", 1, true),
+                "a refused restore is announced with an alert, not \"Nothing to undo\"")
+            local logged = false
+            for _, l in ipairs(fake.logs) do
+                if l:find("(Weather) refused the restore frame", 1, true) then logged = true end
+            end
+            ok(logged, "the refusal is logged with the window's app")
+
+            fake.failWindowFrameIds[11] = nil
+            fake.windowFrameSets = {}
+            fake.pressHotkey("z", AC)
+            ok(#fake.windowFrameSets == 1
+                and fake.windows[1].x == 100 and fake.windows[1].y == 100
+                and fake.windows[1].w == 400 and fake.windows[1].h == 300,
+                "the kept undo succeeds on a second press")
+        end
+
+        -- (f2) PARTLY refused: one window comes back, one does not. Only the refused
+        -- one stays pending -- retrying must not move the restored one again, and
+        -- the pointer (restored with the first) must not jump a second time.
+        do
+            fake.clockOffset = fake.clockOffset + 2
+            fake.screenList = {
+                { x = 0,    y = 0, w = 1000, h = 800 },
+                { x = 1000, y = 0, w = 2000, h = 1200 },
+            }
+            fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+            fake.windows = {
+                { id = 11, wid = 111, x = 100,  y = 100, w = 400, h = 300 },
+                { id = 12, wid = 222, x = 1200, y = 150, w = 600, h = 450 },
+            }
+            fake.mousePos = { x = 150, y = 200 }
+            assert(registry.runAction("window_snap", "swap_screens"))
+            fake.failWindowFrameIds[12] = true
+            local alerts = #fake.alerts
+            fake.windowFrameSets = {}
+            assert(registry.runAction("window_rewind", "undo"))
+            ok(#fake.windowFrameSets == 1 and fake.windowFrameSets[1].id == 11,
+                "precondition: one window restored, the other refused")
+            ok(#fake.alerts == alerts + 1
+                and fake.alerts[#fake.alerts]:find("Couldn't move 1 window back", 1, true),
+                "a partly refused undo still announces the refusal")
+
+            fake.failWindowFrameIds[12] = nil
+            fake.windowFrameSets = {}
+            fake.mousePos = { x = 999, y = 999 }
+            assert(registry.runAction("window_rewind", "undo"))
+            ok(#fake.windowFrameSets == 1 and fake.windowFrameSets[1].id == 12
+                and fake.windows[2].x == 1200 and fake.windows[2].y == 150,
+                "the retry restores only the refused window")
+            ok(fake.mousePos.x == 999 and fake.mousePos.y == 999,
+                "the retry does not move the pointer a second time")
+        end
+
+        -- (g) Window Grid moves the window on the FIRST cell key and again on the
+        -- second, further apart than the grouping gap. It holds them as one step,
+        -- so undo returns the window to where it was before Grid -- not to the
+        -- first cell, which is where two separate groups would leave it.
+        do
+            registry.register(require("features.window_grid"))
+            registry.setEnabled("window_grid", true)
+            fake.clockOffset = fake.clockOffset + 2       -- a fresh group
+            fake.screenList = { { x = 0, y = 0, w = 1200, h = 900 } }
+            fake.focusedWindow = { x = 100, y = 100, w = 400, h = 300, screenIndex = 1 }
+            fake.focusedWid = 111
+            fake.windows = { { id = 11, wid = 111, x = 100, y = 100, w = 400, h = 300 } }
+            fake.pressHotkey("9", AC)                     -- 3x3 grid
+            fake.pressHotkey("5", {})                     -- arm: the window moves to cell 5
+            ok(fake.focusedWindow.x == 400 and fake.focusedWindow.y == 300,
+                "precondition: the first cell key already placed the window")
+            fake.clockOffset = fake.clockOffset + 2       -- the second key lands seconds later
+            fake.pressHotkey("9", {})                     -- extend 5 -> 9
+            ok(fake.focusedWindow.w == 800 and fake.focusedWindow.h == 600,
+                "precondition: the extend filled cells 5..9")
+            fake.windows = { { id = 11, wid = 111, x = 400, y = 300, w = 800, h = 600 } }
+            fake.windowFrameSets = {}
+            assert(registry.runAction("window_rewind", "undo"))
+            ok(#fake.windowFrameSets == 1
+                and fake.windows[1].x == 100 and fake.windows[1].y == 100
+                and fake.windows[1].w == 400 and fake.windows[1].h == 300,
+                "undo after a Grid placement restores the pre-Grid frame, not the first cell")
+            registry.setEnabled("window_grid", false)
+        end
+
         fake.focusedWid = nil
         registry.setEnabled("window_snap", false)
         registry.setEnabled("window_rewind", false)

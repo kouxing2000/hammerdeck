@@ -600,10 +600,19 @@ extension Native {
         guard let pv = AXValueCreate(.cgPoint, &pos), let sv = AXValueCreate(.cgSize, &size) else {
             return false
         }
+        let sizeErr = AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+        let posErr = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv)
         AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
-        let ok = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv) == .success
-        AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
-        return ok
+        // The caller only hears false, and "refused" has several causes -- a timeout
+        // (-25204), an invalid element (-25202), an app that rejects the write. The
+        // codes are the difference. A size error alone is routine (fixed-size windows
+        // such as Calculator refuse it) and is not a failure.
+        if posErr != .success {
+            seamLogThrottled("applyFrame:\(posErr.rawValue)",
+                             "set frame refused: position AXError \(posErr.rawValue), "
+                             + "size AXError \(sizeErr.rawValue), target \(Int(x)),\(Int(y)) \(Int(w))x\(Int(h))")
+        }
+        return posErr == .success
     }
 
     // set_focused_window_frame(x, y, w, h) -> bool

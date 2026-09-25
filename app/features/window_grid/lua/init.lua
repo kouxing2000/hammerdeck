@@ -147,7 +147,7 @@ end
 -- replaces the first instead of stacking.
 ---@param ctx Ctx
 local function controllerFor(ctx)
-    local st = { modal = nil, armA = nil, idleTimer = nil }
+    local st = { modal = nil, armA = nil, idleTimer = nil, undoHold = nil }
 
     -- The 1-based cell number of a 0-based cell (for logs/flash).
     local function numOf(cols, cell) return cell.y * cols + cell.x + 1 end
@@ -183,6 +183,13 @@ local function controllerFor(ctx)
         -- Place the single cell `b`, arm it as corner-A, re-render the HUD to
         -- highlight it + dim the now-invalid cells, and reset the idle timer.
         local function armAt(b)
+            -- The first cell key already moves the window and the second moves it
+            -- again, seconds apart. Held as one undo step, Window Rewind puts the
+            -- window back where it was before Grid, not on the first cell. Taken
+            -- here, at the first placement, so the hold spans only the placement
+            -- (bounded by the idle timer) -- never a HUD left open while other
+            -- features move windows -- and only once the modal exists to release it.
+            if not st.undoHold then st.undoHold = ctx.window.holdUndoGroup() end
             if not placeSpan(ctx, cols, rows, b) then
                 -- Nothing was placed: the window vanished mid-mode, or it was
                 -- fullscreen and placeSpan has just taken it out. Either way there is
@@ -244,10 +251,11 @@ local function controllerFor(ctx)
             stickyExceptKey = false,
             onExit   = function()
                 if st.idleTimer then st.idleTimer.stop() end
+                if st.undoHold then st.undoHold.stop() end
                 if not committed then                       -- bare Escape / re-entry
                     ctx.log("grid dismiss cell", st.armA and numOf(cols, st.armA))
                 end
-                st.idleTimer, st.armA, st.modal = nil, nil, nil
+                st.idleTimer, st.armA, st.modal, st.undoHold = nil, nil, nil, nil
             end,
         })
     end

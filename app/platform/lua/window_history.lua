@@ -53,6 +53,10 @@ local GAP = 0.4
 
 local enabled     = false
 local restoring   = false   -- re-entrancy guard: undo's own restores must not record
+-- Open holds (holdGroup). While any is open, writes join the current group
+-- whatever the gap, and the first write after a hold opens starts a new one.
+local holds       = 0
+local freshGroup  = false
 ---@type { frames: table<integer, {x:number,y:number,w:number,h:number}>, order: integer[], mouse: {x:number,y:number}? }?
 local group       = nil      -- the current (accumulating) undo group, or nil when idle
 local lastWriteAt = 0        -- adapter.now() of the last recorded write
@@ -72,6 +76,25 @@ end
 function M.clear()
     group, lastList, lastWriteAt = nil, nil, 0
     restoring = false   -- also release the undo guard, so a disable/enable recovers
+end
+
+--- Keep every write from now until the returned handle stops in ONE undo group,
+--- however far apart they land. For an action that moves a window in steps:
+--- Window Grid places it on the first cell key and again on the second, seconds
+--- apart, and as two groups an undo would put the window back on the first cell
+--- rather than where it was before. The group still starts fresh at the first
+--- write, so an earlier, unrelated change is never folded into it.
+---@return { stop: fun() }
+function M.holdGroup()
+    holds = holds + 1
+    freshGroup = true
+    local open = true
+    return { stop = function()
+        if open then
+            open = false
+            holds = math.max(0, holds - 1)
+        end
+    end }
 end
 
 --- Cache the caller's OWN list() snapshot so recordById can resolve a moved
@@ -94,7 +117,8 @@ end
 -- can restore the pointer (a focused move carries it via pointer-follow).
 ---@param now number
 local function beginGroupIfNeeded(now)
-    if group == nil or (now - lastWriteAt) > GAP then
+    if group == nil or freshGroup or (holds == 0 and (now - lastWriteAt) > GAP) then
+        freshGroup = false
         local mp = adapter.mousePosition()
         group = { frames = {}, order = {}, mouse = mp and { x = mp.x, y = mp.y } or nil }
     end
@@ -149,9 +173,16 @@ end
 --- change is recorded. Windows that have since closed, or whose original screen is
 --- gone, are skipped -- each skip with a log line saying which and why, since the
 --- only other symptom is a restored count smaller than the user expected.
+---
+--- A window can also REFUSE the move back (its app does not take the AX write).
+--- The refused windows stay pending as the group, so the same undo can be
+--- retried for them: consuming it would leave those windows with no way back.
+--- The pointer is restored with the first successful restore only, so a retry
+--- does not yank it a second time.
 ---@return integer restored  how many windows were moved back
+---@return integer refused   how many were still there and refused the move back
 function M.undoLast()
-    if not group or #group.order == 0 then return 0 end
+    if not group or #group.order == 0 then return 0, 0 end
     restoring = true
     local g = group
     group, lastWriteAt = nil, 0          -- consume up-front (single-step)
@@ -159,43 +190,51 @@ function M.undoLast()
     -- `restoring` stuck true -- that would silently, permanently stop all
     -- recording (every record path early-returns on `restoring`), and clear()
     -- is the only reset, so without this an app restart would be the only cure.
-    local ok, restored = pcall(function()
+    local ok, restored, refused, kept = pcall(function()
         -- Safe to list here: undo runs at rest, no batch caller mid-loop over ids.
         local rows = adapter.listWindows()
-        local widToId = {}
+        local byWid = {}
         for _, r in ipairs(rows) do
-            if r.wid then widToId[r.wid] = r.id end
+            if r.wid then byWid[r.wid] = r end
         end
         local screens = adapter.screenFrames()
-        local n = 0
+        local n, nRefused, kept = 0, 0, { frames = {}, order = {} }
         for _, wid in ipairs(g.order) do
-            local id, before = widToId[wid], g.frames[wid]
+            local row, before = byWid[wid], g.frames[wid]
             -- Membership goes through the shared predicate, never a local copy:
             -- a window whose original display was unplugged can't be sensibly
             -- restored, but one parked over the Dock or the menu bar IS on its
             -- display and must come back. Those two cases are told apart by which
             -- rect the test uses, which is why this asks W rather than deciding.
-            if not (id and before) then
+            if not (row and before) then
                 adapter.log("undoLast: wid " .. tostring(wid)
                     .. " no longer resolves to a live window -- skipped")
             elseif not W.screenOfFrame(screens, before) then
                 adapter.log("undoLast: wid " .. tostring(wid)
                     .. "'s before-frame centre is on no connected display -- skipped")
-            elseif adapter.setWindowFrame(id, before) then
+            elseif adapter.setWindowFrame(row.id, before) then
                 n = n + 1
             else
-                adapter.log("undoLast: wid " .. tostring(wid)
-                    .. " refused the restore frame -- skipped")
+                nRefused = nRefused + 1
+                kept.frames[wid] = before
+                kept.order[#kept.order + 1] = wid
+                adapter.log("undoLast: wid " .. tostring(wid) .. " ("
+                    .. tostring(row.appName) .. ") refused the restore frame")
             end
         end
         -- Only rewind the pointer if we actually moved something back (no spurious
         -- jump when every target had vanished).
         if n > 0 and g.mouse then adapter.setMousePosition(g.mouse.x, g.mouse.y) end
-        return n
+        kept.mouse = (n == 0) and g.mouse or nil
+        return n, nRefused, kept
     end)
     restoring = false                    -- released on both success and error
     if not ok then error(restored, 0) end   -- re-surface so the registry logs it
-    return restored
+    if refused > 0 and group == nil then
+        group = kept
+        adapter.log("undoLast: " .. refused .. " window(s) refused -- kept for a retry")
+    end
+    return restored, refused
 end
 
 return M

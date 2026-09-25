@@ -497,9 +497,18 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.window.focusedWid() return adapter.focusedWindowWid() end
     -- Undo the most-recent window LAYOUT change (single-step): restore every window
     -- a snap / screen-swap / deck move just repositioned, and the pointer with them.
-    -- Returns the count restored (0 = nothing to undo). Powers window_rewind.
-    ---@return integer restored windows (0 = nothing to undo)
+    -- Returns the count restored and the count that REFUSED the move back; 0, 0 is
+    -- nothing to undo. When every window refused, the undo stays pending, so the
+    -- same call can be retried. Powers window_rewind.
+    ---@return integer restored windows moved back
+    ---@return integer refused windows still open that did not take the move back
     function ctx.window.undoLast() return window_ops.undoLast() end
+    -- Keep every window move from now until the handle stops in ONE undo step --
+    -- for an action that places a window in several steps (Window Grid moves it on
+    -- each cell key), so undo puts it back where it was before the action rather
+    -- than one step earlier. Scope-tracked: disabling the feature releases it.
+    ---@return Handle
+    function ctx.window.holdUndoGroup() return track(window_ops.holdUndoGroup()) end
     -- Turn window-layout history recording on/off. window_rewind's start/stop calls
     -- this so the recording cost is paid only while that feature is enabled.
     function ctx.window.enableHistory(on) window_ops.setHistoryEnabled(on) end

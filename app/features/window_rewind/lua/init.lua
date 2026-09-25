@@ -17,12 +17,26 @@ local HYPER = { "cmd", "alt", "ctrl" }
 --- Restore the most recent layout change and report what happened.
 ---@param ctx Ctx
 local function undo(ctx)
-    local n = ctx.window.undoLast()
+    local n, refused = ctx.window.undoLast()
+    refused = refused or 0
     if n > 0 then
         ctx.confirmAction(
             ctx.plural("flash.restored", n,
                 { one = "Restored %d window", other = "Restored %d windows" }, n))
-        ctx.log("window_rewind: undo -- restored " .. n .. " window(s)")
+    end
+    if refused > 0 then
+        -- An alert, not a confirmation: confirmAction is off unless the user opted
+        -- into shortcut confirmations, and a window left stranded must be said
+        -- whatever that preference is. The undo stays pending for these windows,
+        -- so saying so is what makes the retry discoverable.
+        ctx.alert(
+            ctx.plural("alert.refused", refused,
+                { one = "Couldn't move %d window back -- press again to retry",
+                  other = "Couldn't move %d windows back -- press again to retry" }, refused))
+    end
+    if n > 0 or refused > 0 then
+        ctx.log("window_rewind: undo -- restored " .. n .. " window(s)"
+            .. (refused > 0 and (", " .. refused .. " refused and kept for a retry") or ""))
     else
         ctx.confirmAction(ctx.t("flash.nothing", "Nothing to undo"))
         ctx.log("window_rewind: undo -- nothing to undo")

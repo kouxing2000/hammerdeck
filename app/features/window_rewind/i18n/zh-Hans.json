@@ -6,5 +6,6 @@
   "action.undo.mnemonic": "Hyper+Z — Z 是通用的撤销键",
 
   "flash.restored": "已恢复 %d 个窗口",
-  "flash.nothing": "没有可撤销的变更"
+  "flash.nothing": "没有可撤销的变更",
+  "alert.refused": "有 %d 个窗口没能移回原位，再按一次重试"
 }

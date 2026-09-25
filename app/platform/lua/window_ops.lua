@@ -107,9 +107,15 @@ function M.setFrameFor(id, f, norecord)
 end
 
 --- Restore the most-recent window layout change (single-step). Returns the count
---- of windows moved back.
+--- of windows moved back, and the count that refused the move back.
 ---@return integer restored
+---@return integer refused
 function M.undoLast() return history.undoLast() end
+
+--- Keep a multi-step placement in ONE undo group until the handle stops (see
+--- window_history.holdGroup).
+---@return { stop: fun() }
+function M.holdUndoGroup() return history.holdGroup() end
 
 --- Turn window-layout history recording on/off (window_rewind toggles this).
 ---@param on boolean
