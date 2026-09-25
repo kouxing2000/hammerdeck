@@ -97,6 +97,10 @@
     display: block; width: 100%; height: auto;
     border-radius: .7rem; border: 1px solid var(--line); box-shadow: var(--shadow);
   }
+  video.demo { display: block; width: 100%; height: auto; border-radius: 10px; }
+  .clips { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; width: min(64rem, calc(100vw - 2rem)); position: relative; left: 50%; transform: translateX(-50%); }
+  .clips figure { margin: 0; }
+  @media (max-width: 44rem) { .clips { grid-template-columns: 1fr; } }
   figcaption { color: var(--muted); font-size: .9rem; text-align: center; margin: .9rem auto 0; max-width: 40rem; }
 
   section { margin-top: 4.5rem; }
@@ -179,9 +183,12 @@
     <p class="install-note">Or with Homebrew: <code>brew install --cask kouxing2000/tap/hammerdeck</code></p>
   </header>
 
-  <!-- HERO SLOT: the replug demo (a display connects, the windows rearrange
-       themselves) goes here as the first image on the page, above the beats.
-       Until it exists, the Feature Gallery walk below is the lead visual. -->
+  <figure class="wide">
+    <video class="demo" src="assets/demo-hero.mp4" width="1600" height="864" autoplay loop muted playsinline
+           aria-label="Two displays. One key throws Safari from the laptop to the external display and back. The external display is unplugged and every window piles onto the laptop; it is plugged back in and a rule puts all four windows back in place"></video>
+    <figcaption>One key throws a window to the other display and back. Unplug the monitor and
+    everything piles onto the laptop; plug it back in and the layout rebuilds itself.</figcaption>
+  </figure>
 
   <section class="beats" aria-label="Why Hammerdeck">
     <div class="beat">
@@ -238,6 +245,32 @@
       Hammerspoon &mdash; except you never write Lua. Every feature is a switch, some
       options, and a trigger picker.
     </p>
+  </section>
+
+  <section id="see">
+    <h2>See it on an ultrawide</h2>
+    <div class="clips">
+      <figure>
+        <video class="demo" src="assets/demo-deck.mp4" width="1600" height="918" autoplay loop muted playsinline
+               aria-label="Window Deck: one key tiles eight windows across an ultrawide; focusing Chess, then Weather, makes each the large centered hero; the same key puts every window back"></video>
+        <figcaption><strong>Window Deck</strong> &mdash; one key tiles every window; focus one and it takes the stage.</figcaption>
+      </figure>
+      <figure>
+        <video class="demo" src="assets/demo-grid.mp4" width="1600" height="918" autoplay loop muted playsinline
+               aria-label="Window Grid: cells 1 then 4 put Safari in the left third, 2 then 3 put Calendar across the top right, 5 then 6 put Weather below it; one key then undoes the last move"></video>
+        <figcaption><strong>Window Grid</strong> &mdash; name two corners, the window fills them. One key undoes it.</figcaption>
+      </figure>
+      <figure>
+        <video class="demo" src="assets/demo-fan.mp4" width="1600" height="918" autoplay loop muted playsinline
+               aria-label="Window Fan: one key fans five windows against the screen edges so each keeps a visible edge; picking Chess, then Calendar, switches to each; the same key restores the layout"></video>
+        <figcaption><strong>Window Fan</strong> &mdash; every window keeps an edge you can reach.</figcaption>
+      </figure>
+      <figure>
+        <video class="demo" src="assets/demo-mode.mp4" width="1600" height="918" autoplay loop muted playsinline
+               aria-label="Window Mode: one key enters a keyboard layer; single keys snap Safari to a half, a corner, the centre, shrink it, fill the screen and undo; Escape leaves"></video>
+        <figcaption><strong>Window Mode</strong> &mdash; halves, corners, centre and size, a key each.</figcaption>
+      </figure>
+    </div>
   </section>
 
   <section class="catalog" id="features">

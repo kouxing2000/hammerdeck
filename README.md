@@ -2,6 +2,10 @@
 
 **Big screens, many screens, no dragging.**
 
+<p align="center">
+  <img src="site/assets/demo-hero.gif" alt="Two displays. One key throws Safari from the laptop to the external display and back. The external display is unplugged and every window piles onto the laptop; it is plugged back in and a rule puts all four windows back in place" width="900">
+</p>
+
 macOS tiles in halves and quarters. That is the right answer on a laptop and the
 wrong one on a 49-inch ultrawide -- and across two or three displays there is no
 keyboard shortcut at all, at any macOS version, to send a window to the other
@@ -33,6 +37,19 @@ subscription.
 
 <p align="center"><em>Every feature is a card. Hover it to see what it does, flip the switch to
 turn it on, and the badge shows the shortcut it is bound to.</em></p>
+
+## See it on an ultrawide
+
+<table>
+  <tr>
+    <td width="50%"><img src="site/assets/demo-deck.gif" alt="Window Deck: one key tiles eight windows across an ultrawide; focusing Chess, then Weather, makes each the large centered hero; the same key puts every window back"><br><b>Window Deck</b> -- one key tiles every window; focus one and it takes the stage.</td>
+    <td width="50%"><img src="site/assets/demo-grid.gif" alt="Window Grid: cells 1 then 4 put Safari in the left third, 2 then 3 put Calendar across the top right, 5 then 6 put Weather below it; one key then undoes the last move"><br><b>Window Grid</b> -- name two corners, the window fills them. One key undoes it.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="site/assets/demo-fan.gif" alt="Window Fan: one key fans five windows against the screen edges so each keeps a visible edge; picking Chess, then Calendar, switches to each; the same key restores the layout"><br><b>Window Fan</b> -- every window keeps an edge you can reach.</td>
+    <td width="50%"><img src="site/assets/demo-mode.gif" alt="Window Mode: one key enters a keyboard layer; single keys snap Safari to a half, a corner, the centre, shrink it, fill the screen and undo; Escape leaves"><br><b>Window Mode</b> -- halves, corners, centre and size, a key each.</td>
+  </tr>
+</table>
 
 ## Features
 
