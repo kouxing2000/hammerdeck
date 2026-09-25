@@ -164,6 +164,13 @@ final class IntegrationTests: XCTestCase {
                        "diagnostics leaked the home directory (embeds the username):\n\(report)")
     }
 
+    /// The crash offer builds the report at launch from a store no view has
+    /// refreshed yet; it must still count the catalog, not report "0 of 0".
+    func testDiagnosticsReportCountsFeaturesFromAnUnrefreshedStore() {
+        let report = Diagnostics.report(SettingsStore(lua: host.lua))
+        XCTAssertFalse(report.contains("enabled of 0"), report)
+    }
+
     /// The locale seam: adapter.locale() (Lua) returns the SAME resolved code as
     /// the Swift LocaleResolver -- the single authority both layers read -- and is
     /// never empty, so i18n catalog lookups never key off "".

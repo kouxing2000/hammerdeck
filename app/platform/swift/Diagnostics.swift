@@ -39,6 +39,9 @@ enum Diagnostics {
         out.append("accessibility: \(store.accessibilityTrusted() ? "granted" : "NOT GRANTED")")
         out.append("updater: \(Updater.shared.isAvailable ? "active" : "unavailable (no feed)")")
 
+        // The store fills its catalog only when a view asks. The crash offer
+        // builds this report at launch, before any has, and would read none.
+        store.refresh()
         let feats = store.features
         let on = feats.filter(\.enabled)
         out.append("features: \(on.count) enabled of \(feats.count)")
