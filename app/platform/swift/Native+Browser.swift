@@ -169,16 +169,17 @@ extension Native {
     }
 
     // Run a curated focus-or-open AppleScript ending in `return found`. Returns
-    // the boolean, or nil on a script error (browser missing / Automation
-    // denied) -- callers degrade nil to "not found".
+    // the boolean, or nil on a script error or timeout (browser missing /
+    // Automation denied / too slow). focus_browser_tab and focus_safari_tab hand
+    // nil to Lua as-is; open_site_app treats it as "not found" and launches.
     //
     // Deliberately NOT liveness-gated (`requiring:` unset): these scripts open a
     // site, so launching a cold browser IS the requested behavior.
     //
     // 8s, not longer: this blocks the main thread, and the incident it guards
     // against was 25s -- a 20s beachball would be barely an improvement. 8s
-    // covers a warm browser's tab scan comfortably; a cold browser degrades to
-    // "not found" (the caller's existing nil path) instead of freezing the app.
+    // covers a warm browser's tab scan comfortably; a cold browser comes back
+    // nil (see above) instead of freezing the app.
     //
     // UNVERIFIED EDGE, do not assume otherwise: `with timeout` is confirmed to
     // bound an Apple Event SEND, but it was NOT confirmed to bound the LAUNCH
@@ -229,22 +230,30 @@ extension Native {
         return runFoundScript(script, "Safari")
     }
 
-    // focus_browser_tab(pattern, fallbackURL) -> found. Brings the first
+    // focus_browser_tab(pattern, fallbackURL) -> found | nil. Brings the first
     // Chrome tab whose URL contains `pattern` to front; opens fallbackURL in a
     // new tab when absent (the donor config's locate-a-site flow, parameterized).
+    // nil = the script failed or timed out (Chrome missing, Automation denied,
+    // too slow). The fallback open lives INSIDE that script, so a failed one
+    // opened nothing; a timed-out one may still open late, since `with timeout`
+    // stops the wait, not the browser. Either way a false here would claim
+    // "opened a new tab" that nobody saw happen.
     // First use triggers the macOS Automation permission prompt
     // ("control Google Chrome").
     func focusBrowserTab(_ L: OpaquePointer?) -> Int32 {
         guard let pattern = LuaState.string(L, 1), let fallback = LuaState.string(L, 2) else {
             return luaError(L, "focus_browser_tab: pattern and fallbackURL required")
         }
-        // nil (script error) degrades to "not found" -- the caller logged why.
-        let found = chromeFocusTab(matching: pattern, openFallback: fallback) ?? false
-        lua_pushboolean(L, found ? 1 : 0)
+        pushFound(L, chromeFocusTab(matching: pattern, openFallback: fallback))
         return 1
     }
 
-    // focus_safari_tab(pattern, fallbackURL) -> found. The Safari counterpart of
+    // true / false / nil for a focus-or-open script's Bool? result.
+    private func pushFound(_ L: OpaquePointer?, _ found: Bool?) {
+        if let found { lua_pushboolean(L, found ? 1 : 0) } else { lua_pushnil(L) }
+    }
+
+    // focus_safari_tab(pattern, fallbackURL) -> found | nil. The Safari counterpart of
     // focus_browser_tab, so a Safari-routed Quick Site focuses its open tab
     // instead of always opening a new one. First use triggers the Automation
     // prompt ("control Safari").
@@ -252,8 +261,7 @@ extension Native {
         guard let pattern = LuaState.string(L, 1), let fallback = LuaState.string(L, 2) else {
             return luaError(L, "focus_safari_tab: pattern and fallbackURL required")
         }
-        let found = safariFocusTab(matching: pattern, openFallback: fallback) ?? false
-        lua_pushboolean(L, found ? 1 : 0)
+        pushFound(L, safariFocusTab(matching: pattern, openFallback: fallback))
         return 1
     }
 

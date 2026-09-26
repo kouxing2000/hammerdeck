@@ -1035,16 +1035,25 @@ function adapter.launchOrFocusApp(bundleId, cb)
 end
 
 -- Focus the first browser tab whose URL contains `pattern`; open fallbackURL
--- in a new tab when absent. Returns whether an existing tab was found.
+-- in a new tab when absent. Returns true when an existing tab was found, false
+-- when fallbackURL was opened, and nil when the script failed or timed out
+-- (Chrome missing, Automation denied, too slow). The fallback runs inside that
+-- script, so a failed one opened nothing and a timed-out one is unconfirmed.
 -- (Curated browser automation -- the AppleScript template lives in the seam.)
+---@return boolean?
 function adapter.focusBrowserTab(pattern, fallbackURL)
-    return native.focus_browser_tab(pattern, fallbackURL) == true
+    local found = native.focus_browser_tab(pattern, fallbackURL)
+    if found == nil then return nil end
+    return found == true
 end
 
 -- Safari counterpart of focusBrowserTab (focus the first Safari tab whose URL
--- contains `pattern`, else open fallbackURL). Returns whether a tab was found.
+-- contains `pattern`, else open fallbackURL). Same true / false / nil contract.
+---@return boolean?
 function adapter.focusSafariTab(pattern, fallbackURL)
-    return native.focus_safari_tab(pattern, fallbackURL) == true
+    local found = native.focus_safari_tab(pattern, fallbackURL)
+    if found == nil then return nil end
+    return found == true
 end
 
 -- The bundle id of the browser macOS would use for an https URL right now (the

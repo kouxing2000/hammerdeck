@@ -272,14 +272,22 @@ local function jump(ctx, site)
 
     if isChrome and not hasProfile and not site.app then
         local found = ctx.focusBrowserTab(pattern, site.url)
-        ctx.log(found and ("focused " .. pattern) or ("opened " .. site.url))
+        if found == nil then
+            ctx.log("couldn't open " .. site.url .. " -- the Chrome script failed or timed out (Automation denied?)")
+        else
+            ctx.log(found and ("focused " .. pattern) or ("opened " .. site.url))
+        end
     elseif isChrome and not hasProfile and site.app then
         local found = ctx.openSiteApp(pattern, site.url)
         ctx.log(found and ("focused app window " .. pattern)
             or ("opened app window " .. site.url))
     elseif isSafari and not site.app then
         local found = ctx.focusSafariTab(pattern, site.url)
-        ctx.log(found and ("focused Safari " .. pattern) or ("opened Safari " .. site.url))
+        if found == nil then
+            ctx.log("couldn't open " .. site.url .. " -- the Safari script failed or timed out (Automation denied?)")
+        else
+            ctx.log(found and ("focused Safari " .. pattern) or ("opened Safari " .. site.url))
+        end
     else
         ctx.openSite(browser or "", site.profile or "", site.app == true, site.url)
         ctx.log(("opened %s [%s]%s%s"):format(site.url, browser or "default",

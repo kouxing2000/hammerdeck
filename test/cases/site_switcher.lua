@@ -64,6 +64,24 @@ return {
         ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://www.example.com/",
             "no match opens the fallback URL")
 
+        -- a failed Chrome script (Automation denied) opened nothing, so the log
+        -- must say so rather than "opened <url>"
+        local function logged(needle)
+            for _, line in ipairs(fake.logs) do
+                if line:find(needle, 1, true) then return true end
+            end
+            return false
+        end
+        fake.logs = {}
+        fake.browserScriptFails = true
+        local opensBefore = #fake.openedNewTabs
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        ok(#fake.openedNewTabs == opensBefore
+            and logged("couldn't open https://www.example.com/ -- the Chrome script failed")
+            and not logged("opened https://www.example.com/"),
+            "a failed Chrome script logs that nothing opened, not 'opened <url>'")
+        fake.browserScriptFails = false
+
         -- a scheme-less entry is normalized to https:// so it actually navigates
         -- (the "opened bing.com" dead-tab bug)
         fake.settings["hammerdeck.opt.site_switcher.sites"] = "bing.com"
@@ -173,6 +191,13 @@ return {
         fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
         ok(fake.openedNewTabs[#fake.openedNewTabs] == "https://news.ycombinator.com",
             "a Safari-routed site with no open tab opens it")
+        fake.logs = {}
+        fake.browserScriptFails = true
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        ok(logged("couldn't open https://news.ycombinator.com -- the Safari script failed")
+            and not logged("opened Safari"),
+            "a failed Safari script logs that nothing opened, not 'opened Safari <url>'")
+        fake.browserScriptFails = false
 
         -- PRIVATE WINDOWS: a site marked incognito always OPENS a fresh private
         -- window and NEVER focuses an existing tab -- the seam refuses to look inside

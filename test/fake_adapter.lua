@@ -1180,8 +1180,12 @@ end
 fake.browserTabs   = {}   -- url strings (the fake browser's open tabs)
 fake.focusedTabs   = {}   -- recorded focused tab urls
 fake.openedNewTabs = {}   -- recorded fallback opens
+-- Make focusBrowserTab / focusSafariTab answer nil, the way the seam does when
+-- the script itself fails (Automation denied): nothing focused, nothing opened.
+fake.browserScriptFails = false
 
 function adapter.focusBrowserTab(pattern, fallbackURL)
+    if fake.browserScriptFails then return nil end
     for _, url in ipairs(fake.browserTabs) do
         if url:find(pattern, 1, true) then
             fake.focusedTabs[#fake.focusedTabs + 1] = url
@@ -1230,6 +1234,7 @@ end
 -- Safari focus-or-open mirrors focusBrowserTab (same recorders) -- the routing
 -- test distinguishes it from openSite by asserting siteOpens stays empty.
 function adapter.focusSafariTab(pattern, fallbackURL)
+    if fake.browserScriptFails then return nil end
     for _, url in ipairs(fake.browserTabs) do
         if url:find(pattern, 1, true) then
             fake.focusedTabs[#fake.focusedTabs + 1] = url
@@ -1686,6 +1691,7 @@ function fake.reset()
     fake.appWindows    = {}
     fake.siteOpens     = {}
     fake.refuseSiteOpen = false
+    fake.browserScriptFails = false
     fake.minimized     = {}
     fake.hidden        = {}
     fake.quit          = {}
