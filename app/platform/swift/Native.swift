@@ -321,9 +321,10 @@ final class Native {
         let now = Date()
         let day = Native.dailyLogName(for: now)
         // Keyed on the DAY alone, never on `logHandle == nil`. A failed open
-        // leaves the handle nil, so the nil test re-entered this branch for every
-        // later line -- a createDirectory plus a full-directory pruneOldLogs scan
-        // per log line, on a path features call freely. One attempt per day.
+        // leaves the handle nil, so a nil test would re-enter this branch for
+        // every later line -- a createDirectory plus a full-directory
+        // pruneOldLogs scan per log line, on a path features call freely. One
+        // attempt per day.
         // Every FileHandle call here is the THROWING Swift form. The bridged ObjC
         // family -- closeFile / seekToEndOfFile / write(_:) -- raises
         // NSFileHandleOperationException, which Swift cannot catch, so a full
@@ -336,23 +337,23 @@ final class Native {
             try? FileManager.default.createDirectory(at: Native.logsDir,
                                                      withIntermediateDirectories: true)
             let path = Native.logsDir.appendingPathComponent(day).path
-            if !FileManager.default.fileExists(atPath: path) {
-                FileManager.default.createFile(atPath: path, contents: nil)
-            }
-            logHandle = FileHandle(forWritingAtPath: path)
-            _ = try? logHandle?.seekToEnd()
+            // O_APPEND: the kernel puts every write at the file's CURRENT end.
+            // Another process writes this same file too (a dev build next to an
+            // installed one, `swift test` next to the running app), so a handle
+            // that remembered its own offset would overwrite that process's
+            // lines. O_CREAT makes the day's file on its first line.
+            let fd = Darwin.open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+            let openError = fd < 0 ? String(cString: strerror(errno)) : ""
+            logHandle = fd >= 0 ? FileHandle(fileDescriptor: fd, closeOnDealloc: true) : nil
             logDay = day
-            // One attempt per day, keyed on the DAY alone: keyed on
-            // `logHandle == nil` a failed open re-entered this branch for every
-            // later line, costing a createDirectory plus a full-directory
-            // pruneOldLogs scan each time. The cost is that today's file then
-            // stays dead until midnight, so SAY SO on the way past -- an empty
-            // daily log otherwise reads as "the automation never fired", which
-            // sends the next investigation down the wrong path entirely.
+            // The cost of one attempt per day is that today's file then stays
+            // dead until midnight, so SAY SO on the way past -- an empty daily
+            // log otherwise reads as "the automation never fired", which sends
+            // the next investigation down the wrong path entirely.
             if logHandle == nil {
-                NSLog("[hammerdeck] daily log unavailable at %@ -- "
+                NSLog("[hammerdeck] daily log unavailable at %@ (%@) -- "
                       + "this day's file stays empty until midnight; stdout still has everything",
-                      path)
+                      path, openError)
             }
             Native.pruneOldLogs()   // retention rides the day rollover
         }

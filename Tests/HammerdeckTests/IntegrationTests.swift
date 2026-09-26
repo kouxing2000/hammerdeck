@@ -3335,6 +3335,36 @@ final class IntegrationTests: XCTestCase {
                        "read_log and retention must see the file being written as the newest")
     }
 
+    /// Two processes write the same day's file (a dev build next to an
+    /// installed one, `swift test` next to the running app). Each line must land
+    /// at the file's CURRENT end, never at an offset this process remembered,
+    /// or it overwrites whatever the other process appended since.
+    func testLogLineAppendsAfterAnotherWritersLine() throws {
+        let tag = UUID().uuidString
+        eval("require('platform.adapter').log('append probe A \(tag)'); return true")
+        let path = Native.logsDir.appendingPathComponent(Native.dailyLogName()).path
+
+        // Another writer's line, through its own append-mode descriptor.
+        let fd = open(path, O_WRONLY | O_APPEND)
+        XCTAssertGreaterThanOrEqual(fd, 0, "the daily file exists after line A")
+        let other = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        let marker = "append probe marker \(tag) from another writer\n"
+        try other.write(contentsOf: Data(marker.utf8))
+        try other.close()
+
+        // Longer than the marker, so writing it at a stale offset covers the marker.
+        let lineB = "append probe B \(tag) -- written after the line of the other writer"
+        eval("require('platform.adapter').log('\(lineB)'); return true")
+
+        // Decoded leniently: the real daily log may already hold a byte sequence
+        // cut mid-character by another writer, and that must not fail this test.
+        let content = String(decoding: try Data(contentsOf: URL(fileURLWithPath: path)),
+                             as: UTF8.self)
+        XCTAssertTrue(content.contains("append probe A \(tag)"), "line A is intact")
+        XCTAssertTrue(content.contains(marker), "the other writer's line is intact")
+        XCTAssertTrue(content.contains(lineB + "\n"), "line B is intact")
+    }
+
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)
 
     func testGlobalHotkeySynthesis() throws {
