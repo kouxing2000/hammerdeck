@@ -397,31 +397,37 @@ final class McpServerTests: XCTestCase {
         XCTAssertNotNil(json["result"])
     }
 
-    // Any other `*.log` in the logs folder (a leftover boot-failure.log is the one
-    // seen live) sorts past every `yyyy-MM-dd.log`, because letters sort after
-    // digits. A suffix match serves that stale file as today's log and lets
-    // retention count it as the newest day.
-    func testReadLogAndRetentionIgnoreNonDailyLogFiles() throws {
+    // Every file here sorts wrong BY NAME: boot-failure.log past every date
+    // (letters sort after digits), the Buddhist-calendar 2569 name past every
+    // Gregorian one, the Arabic-Indic name past every ASCII one. Daily logs are
+    // ordered by when they were written, and non-daily files are left out.
+    func testReadLogAndRetentionOrderDailyLogsByWriteTime() throws {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory
             .appendingPathComponent("hd-logs-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: dir) }
-        func write(_ name: String, _ text: String) throws {
-            try text.write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        let now = Date()
+        func write(_ name: String, _ text: String, daysAgo: Double) throws {
+            let url = dir.appendingPathComponent(name)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.modificationDate: now.addingTimeInterval(-daysAgo * 86_400)],
+                                 ofItemAtPath: url.path)
         }
-        try write("2026-09-25.log", "yesterday line")
-        try write("2026-09-26.log", "today line")
-        try write("boot-failure.log", "stale boot failure")
+        try write("٢٠٢٦-٠٩-٢٣.log", "before a switch to ASCII digits", daysAgo: 4)
+        try write("2569-09-24.log", "before a switch off the Buddhist calendar", daysAgo: 3)
+        try write("2026-09-25.log", "yesterday line", daysAgo: 1)
+        try write("2026-09-26.log", "today line", daysAgo: 0)
+        try write("boot-failure.log", "not a daily log, however recent", daysAgo: -1)
 
         let text = McpServer.tailOfNewestLog(lines: 10, in: dir) ?? ""
         XCTAssertTrue(text.hasPrefix("[2026-09-26.log]"), "read_log picked: \(text.prefix(40))")
         XCTAssertTrue(text.contains("today line"))
 
-        Native.pruneOldLogs(keep: 1, in: dir)
+        Native.pruneOldLogs(keep: 2, in: dir)
         let left = Set(try fm.contentsOfDirectory(atPath: dir.path))
-        XCTAssertEqual(left, ["2026-09-26.log", "boot-failure.log"],
-                       "retention keeps the newest DAY and leaves other files alone")
+        XCTAssertEqual(left, ["2026-09-25.log", "2026-09-26.log", "boot-failure.log"],
+                       "retention keeps the two most recently written days, whatever their names")
     }
 
     func testUnknownMethodAndUnknownResource() {

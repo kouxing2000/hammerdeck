@@ -3321,17 +3321,18 @@ final class IntegrationTests: XCTestCase {
     }
 
     // Retention is covered on a temp folder by
-    // McpServerTests.testReadLogAndRetentionIgnoreNonDailyLogFiles; against the
+    // McpServerTests.testReadLogAndRetentionOrderDailyLogsByWriteTime; against the
     // real logs folder it could only fail on a machine that already holds 14 days.
     func testLogLineReachesDailyFile() {
         // Always-on file logging: a ctx.log line lands in today's file.
         eval("require('platform.adapter').log('integration log probe'); return true")
-        let day = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
-            .string(from: Date())
-        let todayLog = Native.logsDir.appendingPathComponent(day + ".log").path
+        let todayLog = Native.logsDir.appendingPathComponent(Native.dailyLogName()).path
         let content = (try? String(contentsOfFile: todayLog, encoding: .utf8)) ?? ""
         XCTAssertTrue(content.contains("integration log probe"),
                       "log lines must reach the daily file, not just stdout")
+        // The writer's name must be one the readers accept, as their newest.
+        XCTAssertEqual(Native.dailyLogNames().last, Native.dailyLogName(),
+                       "read_log and retention must see the file being written as the newest")
     }
 
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)

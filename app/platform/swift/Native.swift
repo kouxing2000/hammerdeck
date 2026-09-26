@@ -319,7 +319,7 @@ final class Native {
 
     func appendLogLine(_ msg: String) {
         let now = Date()
-        let day = Native.dayFormatter.string(from: now)
+        let day = Native.dailyLogName(for: now)
         // Keyed on the DAY alone, never on `logHandle == nil`. A failed open
         // leaves the handle nil, so the nil test re-entered this branch for every
         // later line -- a createDirectory plus a full-directory pruneOldLogs scan
@@ -335,7 +335,7 @@ final class Native {
             logHandle = nil
             try? FileManager.default.createDirectory(at: Native.logsDir,
                                                      withIntermediateDirectories: true)
-            let path = Native.logsDir.appendingPathComponent(day + ".log").path
+            let path = Native.logsDir.appendingPathComponent(day).path
             if !FileManager.default.fileExists(atPath: path) {
                 FileManager.default.createFile(atPath: path, contents: nil)
             }
@@ -370,18 +370,36 @@ final class Native {
         }
     }
 
-    /// The `yyyy-MM-dd.log` files in `dir`, oldest first. Name order is date
-    /// order ONLY for these: any other `*.log` in the folder sorts past every
-    /// date, so a bare suffix match would serve it as "today's" log to read_log
-    /// and let it hold one of the retention slots forever.
+    /// The daily log files in `dir` -- `<year>-<month>-<day>.log`, in whatever
+    /// calendar and digits the user's locale wrote them -- oldest first by
+    /// MODIFICATION time, never by name. Name order is not date order: the
+    /// names follow the user's calendar, so a Buddhist-calendar `2569-...` sorts
+    /// past every Gregorian `2026-...`, and a calendar switch leaves the old
+    /// files sorting above or below the new ones. By name, read_log would serve
+    /// a stale file and retention would delete the one being written. The file
+    /// Hammerdeck is writing is the one modified last; an old log someone edits
+    /// or touches wins only until the next line lands. Other `*.log` files are
+    /// not daily logs and are left out.
     nonisolated static func dailyLogNames(in dir: URL = logsDir) -> [String] {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        return names.filter {
+        let fm = FileManager.default
+        let names = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).filter {
             $0.range(of: #"^\d{4}-\d{2}-\d{2}\.log$"#, options: .regularExpression) != nil
-        }.sorted()
+        }
+        let dated = names.map { name -> (name: String, modified: Date) in
+            let attrs = try? fm.attributesOfItem(atPath: dir.appendingPathComponent(name).path)
+            return (name, attrs?[.modificationDate] as? Date ?? .distantPast)
+        }
+        return dated.sorted {
+            $0.modified != $1.modified ? $0.modified < $1.modified : $0.name < $1.name
+        }.map(\.name)
     }
 
-    private static let dayFormatter: DateFormatter = {
+    /// The daily log file name for `date`, e.g. `2026-09-26.log`.
+    nonisolated static func dailyLogName(for date: Date = Date()) -> String {
+        dayFormatter.string(from: date) + ".log"
+    }
+
+    nonisolated private static let dayFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
     }()
     private static let timeFormatter: DateFormatter = {
