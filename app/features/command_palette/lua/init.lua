@@ -103,7 +103,7 @@ local function openPalette(ctx)
         st.chooser = ctx.chooser {
             searchSubText = true,        -- also match the feature name in the subtitle
             onSelect = function(choice)
-                if not choice or not choice.id then return end   -- Escape / info row
+                if not choice then return end   -- Escape
                 bumpCount(ctx, choice.id, choice.actionId)        -- frecency
                 -- Run AFTER the panel has yielded the key window, so commands
                 -- that open their OWN chooser (window_switcher, tab_switcher)

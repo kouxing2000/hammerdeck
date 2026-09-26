@@ -286,16 +286,21 @@ return {
         fake.settings[ROOTS_KEY] = nil
         end
 
-        -- Return picks the highlighted row without checking `valid`, so the
-        -- Scanning row can reach onSelect. It must do nothing, quietly.
+        -- Picking the Scanning row (Return, or h.select on its row number)
+        -- delivers nothing: onSelect never sees an info row, so the example
+        -- carries no guard for one. The panel stays open for the real list.
         do
         fake.deferAsync = true
         local c = fire()
-        local opens = 0
+        local opens, selects = 0, 0
         for _, r in ipairs(fake.runs) do if r.path == OPEN then opens = opens + 1 end end
+        local onSelect = c.opts.onSelect
+        c.opts.onSelect = function(...) selects = selects + 1; return onSelect(...) end
         local okSel, err = pcall(c.userSelect, 1)
-        ok(okSel, "Return on the Scanning row does not raise -- " .. tostring(err))
-        ok(logsMention("chose an info row"), "it is logged as an info row, nothing to open")
+        c.opts.onSelect = onSelect
+        ok(okSel, "picking the Scanning row does not raise -- " .. tostring(err))
+        ok(selects == 0, "onSelect is not called for the Scanning row (" .. selects .. " calls)")
+        ok(c.visible, "the panel stays open")
         local after = 0
         for _, r in ipairs(fake.runs) do if r.path == OPEN then after = after + 1 end end
         ok(after == opens, "and nothing is opened")

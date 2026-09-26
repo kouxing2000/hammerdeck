@@ -327,8 +327,11 @@ function adapter.chooser(opts)
     function h.select(n)
         -- Mirror the native chooser: selecting fires onSelect then onHide; the
         -- row indexes the VISIBLE list, delivering that filtered row's choice
-        -- (out-of-range n delivers nil, as the panel's finish(nil) does).
+        -- (out-of-range n delivers nil, as the panel's finish(nil) does). An
+        -- in-range info row (valid == false) is a no-op: nothing is delivered
+        -- and the panel stays open.
         local v = visible()
+        if v[n] and v[n].valid == false then return end
         c.visible = false
         if opts.onSelect then opts.onSelect(v[n]) end
         if opts.onHide then opts.onHide() end

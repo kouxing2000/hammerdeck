@@ -350,11 +350,10 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
     }
 
-    /// Fire the n-th visible row (1-based). No-op when there is no such row, or
-    /// when that row is an info row (valid=false) -- matching click/keyboard,
-    /// which also refuse to select info rows.
+    /// Fire the n-th visible row (1-based). No-op when there is no such row
+    /// (select would dismiss the panel); finish refuses an info row.
     private func quickPick(_ n: Int) {
-        guard n >= 1, n <= filtered.count, entries[filtered[n - 1]].valid else { return }
+        guard n >= 1, n <= filtered.count else { return }
         select(n)
     }
 
@@ -389,7 +388,11 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         tableView.scrollRowToVisible(n - 1)
     }
 
-    /// Programmatically pick row n (1-based, filtered list) as the user would.
+    /// Pick row n (1-based, filtered list) as the user would: Return and Lua's
+    /// h.select both land here. Out of range dismisses (finish(nil)) -- the
+    /// release-to-pick poll and askChoice's dismiss call select(0) to cancel.
+    /// An info row (valid=false) is refused by finish: nothing is delivered and
+    /// the panel stays open.
     func select(_ n: Int) {
         guard n >= 1, n <= filtered.count else { return finish(nil) }
         finish(filtered[n - 1] + 1)
@@ -403,8 +406,17 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     // MARK: internals
 
+    /// The one place a row is delivered, so the info-row refusal lives here:
+    /// an info row (valid=false) is a no-op -- nothing reaches onSelect and the
+    /// panel stays open -- whichever path (Return, click, quick key, Lua's
+    /// h.select) asked for it.
     private func finish(_ originalIndex: Int?) {
         guard !isClosing else { return }   // ignore re-entry from the orderOut->resignKey cascade
+        if let i = originalIndex, !entries[i - 1].valid {
+            Native.shared.seamLogThrottled("chooser-info-row",
+                                           "chooser: refused a pick on an info row")
+            return
+        }
         isClosing = true
         removeQuickKeys()
         if panel.isVisible { panel.orderOut(nil) }
@@ -425,9 +437,14 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         finish(nil)
     }
 
+    /// Highlight the first valid visible row, or clear the highlight when there
+    /// is none. Whether reloadData drops the old selection is AppKit's call, so
+    /// the panel clears it itself rather than leave it on an info row.
     private func selectFirstValid() {
         if let i = filtered.firstIndex(where: { entries[$0].valid }) {
             setSelectedRow(i + 1)
+        } else {
+            tableView.deselectAll(nil)
         }
     }
 
@@ -754,7 +771,7 @@ final class ChooserPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
 
     @objc private func rowClicked() {
         let row = tableView.clickedRow
-        guard row >= 0, entries[filtered[row]].valid else { return }
+        guard row >= 0 else { return }
         finish(filtered[row] + 1)
     }
 

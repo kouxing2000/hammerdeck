@@ -108,7 +108,7 @@ local function openLauncher(ctx)
             -- aliases -- the panel filter reads no other field.
             searchSubText = true,
             onSelect = function(choice)
-                if not choice or not choice.bundleId then return end  -- Esc / info row
+                if not choice then return end  -- Esc
                 local id, name = choice.bundleId, choice.text
                 -- Found is only "still installed"; the launch lands later, and
                 -- macOS can still refuse it (an Xcode too old for this macOS).

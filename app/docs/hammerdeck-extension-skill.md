@@ -235,7 +235,7 @@ run = function(ctx)
     s.panel = s.panel or ctx.chooser({
         searchSubText = true,              -- the search also matches subText
         onSelect = function(row)           -- your row table, or nil if dismissed
-            if not (row and row.path) then return end   -- dismissed, or an info row
+            if not row then return end     -- dismissed
             ctx.log("picked", row.path)
         end,
     })
@@ -267,10 +267,10 @@ end
 - A row is a table `{ text, subText?, image?, valid? }`, with `text`/`subText`
   as STRINGS (a number renders blank; `tostring` it). Every entry must be a
   table: anything else is skipped on the native side and shifts the rows
-  `onSelect` hands back. `valid = false` makes an info row the arrow keys and
-  the mouse skip — but when NO row is valid (a lone "Scanning…" row), Return
-  can still hand it to `onSelect`, so check your own fields (`row.path`)
-  before acting on a row.
+  `onSelect` hands back. `valid = false` makes an info row nobody can pick:
+  the arrow keys and the mouse skip it, and Return and the ⌘-number quick keys
+  do nothing on it, so `onSelect` never receives one (as long as every entry
+  is a table — the shift above can hand back the wrong row).
   `image` takes a token from `ctx.appIcon(bundleID)`. Your own fields (`path`
   above) come back untouched in `onSelect`.
 - Picking a row or dismissing the panel (Esc, clicking away) HIDES it by itself,

@@ -114,16 +114,11 @@ local function openRepo(ctx, row)
     end
 end
 
--- The chooser has already hidden itself by the time onSelect runs. Return picks
--- the highlighted row without checking `valid`, so an info row (the Scanning
--- row, or a message when no repository is listed) can arrive here.
+-- The chooser has already hidden itself by the time onSelect runs. `row` is nil
+-- when the panel was dismissed; an info row (valid = false) never arrives here.
 local function onSelect(ctx, row)
     if type(row) ~= "table" then
         ctx.log("dismissed; nothing chosen")
-        return
-    end
-    if not row.path then
-        ctx.log("chose an info row; nothing to open")
         return
     end
     ctx.log("chosen " .. row.path)
