@@ -1418,11 +1418,14 @@ function adapter.downloadFile(url, path, cb)
 end
 
 fake.runs        = {}   -- recorded { path=, args= }
-fake.runResults  = {}   -- path -> { status=, stdout=, stderr= }; missing -> (0, "", "")
+fake.runResults  = {}   -- path -> { status=, stdout=, stderr= }, or fun(args) -> that
+                        -- (one program run with different argv, e.g. per folder);
+                        -- missing -> (0, "", "")
 
 function adapter.run(path, args, cb)
     fake.runs[#fake.runs + 1] = { path = path, args = args or {} }
     local r = fake.runResults[path]
+    if type(r) == "function" then r = r(args or {}) end
     return oneShot(function()
         if r then cb(r.status, r.stdout or "", r.stderr or "") else cb(0, "", "") end
     end)

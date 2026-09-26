@@ -212,6 +212,13 @@ enforces that) — they grow OS surface in the Swift seam instead.
 ## The ctx pieces most extensions need
 
 `list_api` names every member; these are the ones whose SHAPE it cannot show.
+For all of them working together in one real extension — a picker of Git
+repositories that scans with `find` through `ctx.run` — see
+`examples/extensions/repo_picker` in the Hammerdeck repository
+(https://github.com/kouxing2000/hammerdeck), which the test suite loads and
+drives. The snippet below fills the picker from `ctx.run` only because that is
+what the example does; any async source works, and a picker needs `exec` only
+if it really runs a program.
 
 **A searchable picker** — `ctx.chooser(opts)` returns a handle you fill and show.
 Handle methods are called with a DOT (`h.setChoices(rows)`). A colon call raises
@@ -228,23 +235,42 @@ run = function(ctx)
     s.panel = s.panel or ctx.chooser({
         searchSubText = true,              -- the search also matches subText
         onSelect = function(row)           -- your row table, or nil if dismissed
-            if not row then return end
+            if not (row and row.path) then return end   -- dismissed, or an info row
             ctx.log("picked", row.path)
         end,
     })
     s.panel.setPlaceholder(ctx.t("placeholder", "Search…"))
-    s.panel.setChoices({
-        { text = "hammerdeck", subText = "~/code", path = "/Users/you/code/hammerdeck" },
-        { text = ctx.t("scanning", "Scanning…"), valid = false },
-    })
+    s.panel.setQuery(nil)                  -- the panel keeps the last query otherwise
+    s.panel.setChoices({ { text = ctx.t("scanning", "Scanning…"), valid = false } })
     s.panel.show()
+    ctx.run("/usr/bin/find", { "-H", "/Users/you/code", "-maxdepth", "3",  -- needs `exec`
+                               "-type", "d", "-name", ".git", "-prune", "-print" },
+        function(code, out, err)
+            -- find exits 1 for one unreadable subfolder too, so fail only when
+            -- nothing came back -- and then say why, not leave an empty panel
+            if code ~= 0 and out == "" then
+                s.panel.setChoices({ { text = ctx.t("failed", "Scan failed"),
+                                       subText = err ~= "" and err or tostring(code),
+                                       valid = false } })
+                return
+            end
+            local rows = {}
+            for line in out:gmatch("[^\n]+") do
+                local repo = line:gsub("/%.git$", "")
+                rows[#rows + 1] = { text = repo:match("[^/]+$"), subText = repo, path = repo }
+            end
+            s.panel.setChoices(rows)
+        end)
 end
 ```
 
 - A row is a table `{ text, subText?, image?, valid? }`, with `text`/`subText`
   as STRINGS (a number renders blank; `tostring` it). Every entry must be a
   table: anything else is skipped on the native side and shifts the rows
-  `onSelect` hands back. `valid = false` makes an info row nobody can pick.
+  `onSelect` hands back. `valid = false` makes an info row the arrow keys and
+  the mouse skip — but when NO row is valid (a lone "Scanning…" row), Return
+  can still hand it to `onSelect`, so check your own fields (`row.path`)
+  before acting on a row.
   `image` takes a token from `ctx.appIcon(bundleID)`. Your own fields (`path`
   above) come back untouched in `onSelect`.
 - Picking a row or dismissing the panel (Esc, clicking away) HIDES it by itself,
@@ -253,8 +279,11 @@ end
   neither, so do not keep state that only `onSelect(nil)` clears. The handle
   stays usable: `show()` it again next time.
 - `setChoices` on an open panel replaces its rows live, re-applying the typed
-  query and moving the selection to the first valid row. So show a cached or
-  placeholder list at once and fill in the real one from an async callback.
+  query and moving the selection to the first valid row. So open with an
+  unselectable placeholder row (`valid = false`) and fill in the real list from
+  your async callback. Opening with a saved list instead and replacing it when
+  fresh data lands moves the highlight under a user who is already pressing
+  arrow keys, and Return then picks the wrong row.
 - Also on the handle: `hide`, `isVisible`, `setTitle(text, sfSymbol?, badge?)`
   (all strings; a numeric badge disappears), `setQuery`, `getQuery`, `stop`. For
   a one-shot question, `ctx.askChoice` and `ctx.askText` are simpler.
@@ -265,7 +294,8 @@ or string; a table RAISES, and `nil` DELETES the key. Numbers come back as float
 (`3` reads back as `3.0`, and prints that way). Store a table as JSON through
 `local json = require("platform.json")` — but `json.encode` and `json.decode`
 return `nil, err` instead of raising, and a nil passed on to `setState` deletes
-what you had. Write `local s = assert(json.encode(t))`.
+what you had. Check for the nil: when `json.encode` fails, skip the write and
+`ctx.log` the error.
 
 **Per-enable memo** — `ctx.perEnable(factory)` runs `factory(ctx)` once per
 enable and returns that same value on every later call, until the feature is

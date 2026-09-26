@@ -119,7 +119,10 @@ Settings > General at a folder and every `<id>/lua/init.lua` inside it loads
 next to the built-ins, with the same manifest contract, the same scoped API,
 the same capability gate, and the same quarantine (a broken one shows as a red
 row, it never takes the app down). Reload picks up your edits without a
-relaunch.
+relaunch. [`examples/extensions/repo_picker`](examples/extensions/repo_picker)
+is a complete one to start from -- a searchable list of the Git repositories
+under your folders that opens the one you pick in your editor -- and the test
+suite loads and drives it, so it cannot quietly fall behind the API.
 
 Writing one need not be a solo job. Switch on **agent access** in
 Settings > General and Hammerdeck serves a local, token-guarded

@@ -1,0 +1,8 @@
+{
+  "name": "Git Repo Picker",
+  "version": "1.0.0",
+  "description": "Pick a Git repository found under your folders and open it in your editor.",
+  "category": "switching",
+  "context": "anywhere",
+  "capabilities": ["exec", "files"]
+}

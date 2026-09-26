@@ -43,6 +43,20 @@ for d in app/features/*/; do
             > ".luals-stubs/$mod.lua"
     done
 done
+# The worked examples require their siblings as extensions.<id>.*, which the
+# loader maps onto examples/extensions/<id>/lua/ only at run time.
+for d in examples/extensions/*/; do
+    id="$(basename "$d")"
+    [ -f "${d}lua/init.lua" ] || continue
+    for f in "${d}"lua/*.lua; do
+        name="$(basename "$f" .lua)"
+        mod="extensions.$id"
+        src="examples.extensions.$id.lua.$name"
+        [ "$name" != "init" ] && mod="$mod.$name"
+        printf -- '---@meta %s\nreturn require("%s")\n' "$mod" "$src" \
+            > ".luals-stubs/$mod.lua"
+    done
+done
 
 # Gate on the exit code (0 = clean, 1 = problems -- the stable contract),
 # not on grepping the English summary line, which a reword/locale could break.
