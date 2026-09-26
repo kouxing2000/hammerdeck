@@ -312,7 +312,9 @@ extension Native {
             WindowPickerEntry(text: d["text"] as? String ?? "",
                               subText: d["subText"] as? String,
                               iconToken: d["image"] as? String,
-                              color: d["color"] as? String ?? "")
+                              color: d["color"] as? String ?? "",
+                              group: d["group"] as? String,
+                              checked: d["checked"] as? Bool ?? true)
         }
         let panel = WindowPickerPanel(title: title, entries: entries, minPick: minPick,
                                       palette: palette, heroLabel: heroLabel, heroOn: heroOn) { picked, colors, hero in

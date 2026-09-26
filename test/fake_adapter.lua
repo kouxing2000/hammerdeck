@@ -413,8 +413,10 @@ fake.displayPickers = {}  -- see adapter.pickDisplays
 
 -- One-shot multi-select picker (Window Deck's entry). Records the items + min +
 -- palette, and exposes drivers: confirm(indices|nil) keeps those 1-based rows
--- (nil = all, the pre-checked default), refusing below `min` like the real
--- panel's Enter guard; cancel() dismisses (onChoose(nil)); recolor(i, hex)
+-- (nil = EVERY row, i.e. "the user checked them all" -- NOT the default state,
+-- which starts unchecked above the deck's precheck limit), refusing below `min`
+-- like the real panel's Enter guard. A group's Deck button is confirm(<that
+-- group's indices>): the grouping itself lives only in the real panel; cancel() dismisses (onChoose(nil)); recolor(i, hex)
 -- recolors row i as a dot-click would (kept items carry the updated color).
 function adapter.askWindows(opts)
     local d = {

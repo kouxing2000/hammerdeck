@@ -218,7 +218,43 @@ return {
         ok(fake.liveScrim() == nil and registry.liveHandleCount() == 1,
             "cancelling leaves no deck and drops the picker handle")
 
+        -- grouping + precheck: rows carry their app's bundle id as the picker's group
+        -- key (none for a bundle-less window); up to 6 windows open all checked,
+        -- more open with none checked.
+        fake.windows = quadWindows()
+        fake.pressHotkey("k", HYP)
+        do
+            local p = fake.openWindowPicker()
+            local allOn = true
+            for _, it in ipairs(p.items) do allOn = allOn and it.checked == true end
+            ok(allOn, "4 windows: every row starts checked")
+            ok(p.items[1].group == "com.br", "a row's group key is its app's bundle id")
+            p.cancel()
+        end
+        fake.windows = quadWindows()
+        for i = 1, 3 do
+            fake.windows[#fake.windows + 1] = { id = 70 + i, title = "More " .. i, appName = "AppBR",
+                bundleID = "com.br", x = 200 + 40 * i, y = 300, w = 300, h = 200 }
+        end
+        fake.windows[#fake.windows].bundleID = ""
+        fake.pressHotkey("k", HYP)
+        do
+            local p = fake.openWindowPicker()
+            local anyOn, brRows, bare = false, 0, nil
+            for _, it in ipairs(p.items) do
+                anyOn = anyOn or it.checked ~= false
+                if it.group == "com.br" then brRows = brRows + 1 end
+                if it.text == "More 3" then bare = it end
+            end
+            ok(#p.items == 7 and not anyOn, "7 windows: no row starts checked")
+            ok(brRows == 3, "same-app windows share one group key")
+            ok(bare ~= nil and bare.group == nil, "a bundle-less window gets no group key")
+            p.cancel()
+        end
+        ok(registry.liveHandleCount() == 1, "clean after the grouping test")
+
         -- min-guard: confirming with fewer than two checked is refused (panel stays)
+        fake.windows = quadWindows()
         fake.pressHotkey("k", HYP)
         do
             local p = fake.openWindowPicker()

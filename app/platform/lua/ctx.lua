@@ -359,8 +359,9 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ---@param opts { title: string?, infos: string[]?, actions: (ChoiceAction|string)[], onChoose: fun(choiceId: string|integer|nil, label: string?) }
     ---@return Handle handle -- also carries dismiss()
     function ctx.askChoice(opts) return track(adapter.askChoice(opts)) end
-    -- One-shot multi-select picker (all pre-checked; uncheck to exclude). The
-    -- one-shot frees itself on completion, so a well-behaved caller stops the
+    -- One-shot multi-select picker (rows optionally grouped under a header with a
+    -- whole-group Deck button; see adapter.askWindows). The one-shot frees itself
+    -- on completion, so a well-behaved caller stops the
     -- returned handle in its onChoose to drop it from the scope immediately.
     function ctx.askWindows(opts) return track(adapter.askWindows(opts)) end
     function ctx.askText(opts)   return track(adapter.askText(opts)) end

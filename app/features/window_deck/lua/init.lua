@@ -19,8 +19,10 @@
 --
 -- Entering runs a PICK FLOW first (v1.1): on a multi-monitor setup, choose a
 -- screen (ctx.askChoice), then a multi-select of that screen's windows
--- (ctx.askWindows -- all pre-checked, uncheck to leave one out), then commit to
--- the grid. Exiting stays instant (no picker on the way out).
+-- (ctx.askWindows), then commit to the grid. The picker groups rows by app, each
+-- group with a Deck button that decks just that app (cmd+return for the focused
+-- row's app); up to PRECHECK_MAX windows open all checked, more open with none.
+-- Exiting stays instant (no picker on the way out).
 --
 -- A FRESH pick records its membership as the "last deck" (store.saveLastDeck --
 -- {bundleID, title, wid} per window + the screen name). When one is available,
@@ -91,6 +93,11 @@ local atFrame, frameFar = identity.atFrame, identity.frameFar
 local onScreen = W.onScreen
 local occludedMembers = identity.occludedMembers
 local PALETTE = colors.PALETTE
+
+-- Above this many windows the picker opens with NONE checked: "deck all of these"
+-- stops being the likely intent, and each app group's own Deck button is the
+-- one-click path instead.
+local PRECHECK_MAX = 6
 
 -- Ring-flight duration (seconds): how long a border ring flies between a grid
 -- slot and the hero rect. The real window's AX move is dispatched at flight
@@ -728,8 +735,8 @@ local function controllerFor(ctx)
 
     -- Idle -> pick -> Grid. Per the "picker on every toggle" decision, entering
     -- always runs the pick flow first: choose a screen (multi-monitor only), then
-    -- a multi-select of that screen's windows (all pre-checked, uncheck to leave
-    -- out), then commit to the flat GRID (overview first, no hero). Exiting stays
+    -- a multi-select of that screen's windows (grouped by app; see pickWindowsOn),
+    -- then commit to the flat GRID (overview first, no hero). Exiting stays
     -- instant -- no picker on the way out. `picking` guards a re-trigger while a
     -- panel is open (the toggle hotkey stays live).
     --
@@ -924,8 +931,9 @@ local function controllerFor(ctx)
         st.commit(screen, chosen, true)
     end
 
-    -- Show the multi-select of a screen's deckable windows (all pre-checked;
-    -- uncheck to exclude). Confirm needs >= 2 checked (the panel enforces it too).
+    -- Show the multi-select of a screen's deckable windows, grouped by app (all
+    -- checked up to PRECHECK_MAX, none above). Confirm needs >= 2 checked (the
+    -- panel enforces it too); a group's Deck button returns that whole app.
     function st.pickWindows(screen)
         withScreen(screen, function() st.pickWindowsOn(screen) end)
     end
@@ -947,6 +955,7 @@ local function controllerFor(ctx)
         end
         local items = {}
         local cellColors = colors.assign(wins, readColors())   -- previewed as clickable dots in the picker
+        local precheck = #wins <= PRECHECK_MAX
         for i, w in ipairs(wins) do
             local title = (w.title and #w.title > 0) and w.title
                 or (w.appName or ctx.t("pick.untitled", "Untitled window"))
@@ -954,8 +963,14 @@ local function controllerFor(ctx)
                 key = keyOf(w), text = title, subText = w.appName,
                 image = w.icon or ctx.appIcon(w.bundleID),
                 color = cellColors[i],
+                -- the picker groups rows by app under a header with a Deck button;
+                -- a bundle-less window has no reliable app identity, so it stays a plain row
+                group = (w.bundleID and w.bundleID ~= "") and w.bundleID or nil,
+                checked = precheck,
             }
         end
+        ctx.log("picker:", #wins, "window(s) on '" .. tostring(screen.name) .. "',",
+            precheck and "all checked" or ("none checked (> " .. PRECHECK_MAX .. ")"))
         local h
         h = ctx.askWindows {
             title   = ctx.t("pick.windows", "Deck which windows?"),

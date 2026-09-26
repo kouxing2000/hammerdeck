@@ -286,19 +286,26 @@ function adapter.askChoice(opts)
     }
 end
 
--- A one-shot MULTI-SELECT picker: a titled, checkboxed list, every row
--- pre-checked; the user unchecks the ones to leave out, then confirms. opts:
+-- A one-shot MULTI-SELECT picker: a titled, checkboxed list; the user checks
+-- the rows to keep, then confirms. opts:
 --   title   = header text
 --   items   = { { text=, subText=, image=<icon token>, color=<"#RRGGBB">,
---                 <caller payload...> }, ... } -- color (optional) previews the
---               window's border color as a trailing dot the user can CLICK to
---               recolor (cycles `palette`)
+--                 group=<key>, checked=<bool>, <caller payload...> }, ... }
+--               color (optional) previews the window's border color as a
+--               trailing dot the user can CLICK to recolor (cycles `palette`).
+--               group (optional): rows sharing a key are listed together under a
+--               header (its first row's image + subText) carrying a group
+--               checkbox and a "Deck N" button that returns THAT WHOLE GROUP at
+--               once, whatever is checked; a key with one row stays a plain row.
+--               checked (default true) is the row's initial state.
 --   min     = minimum rows that must stay checked to confirm (default 1)
 --   palette = { "#RRGGBB", ... } cycle order for recoloring (empty/nil = no dots)
---   onChoose(kept|nil)  -- kept = array of the CHECKED item tables (the caller's
---                          payload intact, `color` updated to the user's pick);
+--   onChoose(kept|nil)  -- kept = array of the CHECKED item tables, or of one
+--                          whole group when its Deck button was pressed (the
+--                          caller's payload intact, `color` updated to the
+--                          user's pick);
 --                          nil = cancelled / clicked away
--- The bridge passes CHECKED row INDICES + per-row colors; the items table stays
+-- The bridge passes the chosen row INDICES + per-row colors; the items table stays
 -- Lua-side (same split as adapter.chooser). The dialog frees itself after
 -- completion.
 function adapter.askWindows(opts)
@@ -306,7 +313,8 @@ function adapter.askWindows(opts)
     local display = {}
     for i, it in ipairs(items) do
         display[i] = { text = it.text or "", subText = it.subText,
-                       image = it.image, color = it.color }
+                       image = it.image, color = it.color,
+                       group = it.group, checked = it.checked ~= false }
     end
     local function onPick(indices, colors, heroOn)
         if not opts.onChoose then return end
