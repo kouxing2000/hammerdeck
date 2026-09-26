@@ -332,9 +332,9 @@ func makeDockIcon() -> NSImage {
 /// The failure goes to the ordinary daily log, not a file of its own: `seamLog` is
 /// live by now (`Native.shared.attach` + `installBindings` run before `bootLua`,
 /// and the log writer only touches files), it is the log "Open Logs" opens and a
-/// bug report attaches, and `pruneOldLogs` keeps the newest 14 entries sorted by
-/// NAME -- so a differently-named file would sort past every `YYYY-MM-DD.log`,
-/// never be pruned, and permanently spend one of those slots.
+/// bug report attaches, and `Native.dailyLogNames` -- what read_log and retention
+/// both go through -- sees only `YYYY-MM-DD.log`, so a differently-named file
+/// would never be served by read_log and never be pruned.
 @MainActor
 private func presentBootFailure(_ error: Error) {
     // Leave the machine as we found it. CapsHyperPreference.apply() runs well

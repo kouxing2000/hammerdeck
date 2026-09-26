@@ -397,6 +397,33 @@ final class McpServerTests: XCTestCase {
         XCTAssertNotNil(json["result"])
     }
 
+    // Any other `*.log` in the logs folder (a leftover boot-failure.log is the one
+    // seen live) sorts past every `yyyy-MM-dd.log`, because letters sort after
+    // digits. A suffix match serves that stale file as today's log and lets
+    // retention count it as the newest day.
+    func testReadLogAndRetentionIgnoreNonDailyLogFiles() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory
+            .appendingPathComponent("hd-logs-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        func write(_ name: String, _ text: String) throws {
+            try text.write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        try write("2026-09-25.log", "yesterday line")
+        try write("2026-09-26.log", "today line")
+        try write("boot-failure.log", "stale boot failure")
+
+        let text = McpServer.tailOfNewestLog(lines: 10, in: dir) ?? ""
+        XCTAssertTrue(text.hasPrefix("[2026-09-26.log]"), "read_log picked: \(text.prefix(40))")
+        XCTAssertTrue(text.contains("today line"))
+
+        Native.pruneOldLogs(keep: 1, in: dir)
+        let left = Set(try fm.contentsOfDirectory(atPath: dir.path))
+        XCTAssertEqual(left, ["2026-09-26.log", "boot-failure.log"],
+                       "retention keeps the newest DAY and leaves other files alone")
+    }
+
     func testUnknownMethodAndUnknownResource() {
         let (_, unknown) = rpc("no/such/method")
         XCTAssertEqual(((unknown["error"] as? [String: Any])?["code"] as? Int), -32601)

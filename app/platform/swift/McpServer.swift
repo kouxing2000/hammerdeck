@@ -571,11 +571,8 @@ final class McpServer: ObservableObject {
         return text
     }
 
-    private nonisolated static func tailOfNewestLog(lines: Int) -> String? {
-        let dir = Native.logsDir
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return nil }
-        // Filename order IS date order (yyyy-MM-dd.log), so the max is today.
-        guard let newest = names.filter({ $0.hasSuffix(".log") }).sorted().last else { return nil }
+    nonisolated static func tailOfNewestLog(lines: Int, in dir: URL = Native.logsDir) -> String? {
+        guard let newest = Native.dailyLogNames(in: dir).last else { return nil }
         guard let text = try? String(contentsOf: dir.appendingPathComponent(newest), encoding: .utf8) else { return nil }
         let all = text.split(separator: "\n", omittingEmptySubsequences: false)
         return "[\(newest)]\n" + all.suffix(lines).joined(separator: "\n")

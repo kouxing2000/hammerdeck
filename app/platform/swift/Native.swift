@@ -362,14 +362,23 @@ final class Native {
 
     /// Keep the newest `keep` daily log files; logging is always-on (clues
     /// must exist BEFORE a bug is noticed), so retention is what bounds it.
-    nonisolated static func pruneOldLogs(keep: Int = 14) {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(atPath: logsDir.path) else { return }
-        let logs = files.filter { $0.hasSuffix(".log") }.sorted()   // name order = date order
+    nonisolated static func pruneOldLogs(keep: Int = 14, in dir: URL = logsDir) {
+        let logs = dailyLogNames(in: dir)
         guard logs.count > keep else { return }
         for f in logs.prefix(logs.count - keep) {
-            try? fm.removeItem(at: logsDir.appendingPathComponent(f))
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(f))
         }
+    }
+
+    /// The `yyyy-MM-dd.log` files in `dir`, oldest first. Name order is date
+    /// order ONLY for these: any other `*.log` in the folder sorts past every
+    /// date, so a bare suffix match would serve it as "today's" log to read_log
+    /// and let it hold one of the retention slots forever.
+    nonisolated static func dailyLogNames(in dir: URL = logsDir) -> [String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return names.filter {
+            $0.range(of: #"^\d{4}-\d{2}-\d{2}\.log$"#, options: .regularExpression) != nil
+        }.sorted()
     }
 
     private static let dayFormatter: DateFormatter = {

@@ -40,6 +40,7 @@ Hard rules, enforced at load time:
 return {
     api = 1,                      -- required: the ctx contract version
     id  = "my_feature",           -- required: == folder name
+    name = "My Feature",          -- required here OR in feature.json, or the load is refused
 
     -- EITHER the single-action sugar:
     defaultTrigger = { type = "hotkey", mods = { "cmd", "alt" }, key = "k" },
@@ -80,6 +81,18 @@ Notes:
   `secret` (login Keychain; never declare a plaintext `default`). The Settings
   form is GENERATED from this list — no UI code exists or is needed.
 - Read options with `ctx.opt("greeting")`; secrets with `ctx.secret(key)`.
+- An option may also carry a `hint` (one line of help under the field).
+- The manifest's own strings are translated from `i18n/<locale>.json` too, by
+  fixed keys: `name`, `description`, `action.<id>.label` (the single-action
+  sugar's id is `main`), `option.<key>.label`, `option.<key>.hint`, and
+  `option.<key>.values.<value>` (read only when the enum declares `labels`).
+  Keys you pass to `ctx.t` share that file and are scoped to your feature. Make
+  them UNDOTTED (`scanning`, `openFailed`): a dotted key your catalog lacks falls
+  back to Hammerdeck's own shared catalog, so in another language it can come
+  back as some unrelated built-in string.
+- Only the languages Hammerdeck itself is translated into are ever selected (the
+  `zh-Hans.json` above is one); a catalog for any other locale is never read,
+  and English is always your inline source strings, never an `en.json`.
 
 ## feature.json (optional, but recommended)
 
@@ -134,10 +147,15 @@ answers `fatal: not a git repository` no matter where you launched Hammerdeck.
 
 `path` must be ABSOLUTE and `args` is an argv array — passing a string raises.
 There is no shell, so nothing expands `~`, `*`, `|` or `$VAR`: build the
-arguments, do not build a command line. Async, like every other one-shot; the
-child is bounded by a timeout, output is captured up to a per-stream ceiling
-(both in `Native+Process.swift`), and disabling the feature TERMINATES the child,
-not just its callback.
+arguments, do not build a command line. Async, like every other one-shot, and
+disabling the feature TERMINATES the child, not just its callback. The child is
+bounded by a timeout (you see it as a negative `code`, below) and its output is
+captured up to a per-stream ceiling. A cut is NOT visible in the callback: the
+strings simply end. The daily log may say `output hit the capture ceiling and was
+truncated`, but that line is throttled, shared by every `ctx.run` caller, and
+names no feature, so it is a hint rather than a signal you can rely on. If your
+command can print a lot, bound it in its arguments (a `-maxdepth`, a result
+limit) rather than trusting the whole of `out`.
 
 The child also runs WITHOUT Hammerdeck's macOS privacy permissions: it is its own
 process as far as macOS is concerned, so a folder behind Full Disk Access reads
@@ -163,8 +181,10 @@ background part running. If your command must be stoppable, do not background
 inside it.
 
 `code` is the exit status, nil if the program could not be launched at all, or
-NEGATIVE if the child was killed by signal `-code` — the timeout or a teardown
-cut it short, as opposed to the command choosing to exit with that number.
+NEGATIVE if the child was killed by signal `-code` — the timeout, or a signal
+from outside — as opposed to the command choosing to exit with that number. A
+teardown (disable, reload) never reaches your callback at all: it is dropped
+along with the child.
 
 Every launch writes the executable and its full argument list to the daily log —
 that record is the reason this tier goes through the seam at all. **Do not pass
@@ -189,6 +209,79 @@ whatever the person running Hammerdeck can. Reach for a narrower capability when
 one fits. First-party catalog features may not declare it at all (a build guard
 enforces that) — they grow OS surface in the Swift seam instead.
 
+## The ctx pieces most extensions need
+
+`list_api` names every member; these are the ones whose SHAPE it cannot show.
+
+**A searchable picker** — `ctx.chooser(opts)` returns a handle you fill and show.
+Handle methods are called with a DOT (`h.setChoices(rows)`). A colon call raises
+nothing and hands the handle in as the argument: `h:setChoices(rows)` shows an
+EMPTY panel, and `h:setPlaceholder(...)` a blank one.
+
+```lua
+local function state(ctx)                  -- see perEnable below
+    return ctx.perEnable(function() return {} end)
+end
+
+run = function(ctx)
+    local s = state(ctx)
+    s.panel = s.panel or ctx.chooser({
+        searchSubText = true,              -- the search also matches subText
+        onSelect = function(row)           -- your row table, or nil if dismissed
+            if not row then return end
+            ctx.log("picked", row.path)
+        end,
+    })
+    s.panel.setPlaceholder(ctx.t("placeholder", "Search…"))
+    s.panel.setChoices({
+        { text = "hammerdeck", subText = "~/code", path = "/Users/you/code/hammerdeck" },
+        { text = ctx.t("scanning", "Scanning…"), valid = false },
+    })
+    s.panel.show()
+end
+```
+
+- A row is a table `{ text, subText?, image?, valid? }`, with `text`/`subText`
+  as STRINGS (a number renders blank; `tostring` it). Every entry must be a
+  table: anything else is skipped on the native side and shifts the rows
+  `onSelect` hands back. `valid = false` makes an info row nobody can pick.
+  `image` takes a token from `ctx.appIcon(bundleID)`. Your own fields (`path`
+  above) come back untouched in `onSelect`.
+- Picking a row or dismissing the panel (Esc, clicking away) HIDES it by itself,
+  then calls `onSelect(row)` or `onSelect(nil)`, then the optional `onHide()`.
+  Your own `h.hide()` fires only `onHide`, and a disable or reload fires
+  neither, so do not keep state that only `onSelect(nil)` clears. The handle
+  stays usable: `show()` it again next time.
+- `setChoices` on an open panel replaces its rows live, re-applying the typed
+  query and moving the selection to the first valid row. So show a cached or
+  placeholder list at once and fill in the real one from an async callback.
+- Also on the handle: `hide`, `isVisible`, `setTitle(text, sfSymbol?, badge?)`
+  (all strings; a numeric badge disappears), `setQuery`, `getQuery`, `stop`. For
+  a one-shot question, `ctx.askChoice` and `ctx.askText` are simpler.
+
+**Persisted state** — `ctx.getState(key, default)` / `ctx.setState(key, value)`
+survive restarts and are private to your feature. Values must be boolean, number
+or string; a table RAISES, and `nil` DELETES the key. Numbers come back as floats
+(`3` reads back as `3.0`, and prints that way). Store a table as JSON through
+`local json = require("platform.json")` — but `json.encode` and `json.decode`
+return `nil, err` instead of raising, and a nil passed on to `setState` deletes
+what you had. Write `local s = assert(json.encode(t))`.
+
+**Per-enable memo** — `ctx.perEnable(factory)` runs `factory(ctx)` once per
+enable and returns that same value on every later call, until the feature is
+disabled or reloaded (every `reload` in the authoring loop starts it fresh).
+There is ONE memo per feature: a second call with a different factory still gets
+the first one's value. Keep everything that lives for the enable (a panel handle,
+an in-flight flag) in the one table it returns.
+
+**Plurals** — `ctx.plural(key, count, { one = "%s repo", other = "%s repos" },
+count)`: `count` picks the form, and is passed AGAIN as the format argument to
+be printed. In English `one`/`other` follow the count; every other language
+always takes `other`, so a plural you leave untranslated reads "1 repos" there.
+In `i18n/<locale>.json` a plural is an object,
+`"key": { "one": "…", "other": "…" }`, or a plain string for a language with one
+form.
+
 ## Rules that bite
 
 - **Never touch `native.*`, `platform.adapter`, or the stateful platform
@@ -202,7 +295,7 @@ enforces that) — they grow OS surface in the Swift seam instead.
   have).
 - **Localization**: user-visible strings go through `ctx.t(key, "English
   source", ...)` / `ctx.plural(...)`, with translations in
-  `i18n/<locale>.json` (flat key -> string). A template with **2+ slots must
+  `i18n/<locale>.json` (flat key -> string, or -> a plural object as above). A template with **2+ slots must
   number them** (`%1$s`, `%2$s`) in the English source AND the translation —
   Lua's own `string.format` cannot reorder and would crash on `%2$s`; only the
   i18n layer handles it. Never `string.format` over a translated template.
@@ -230,6 +323,11 @@ has already done step 0.)
    nothing you can test at runtime tells you the difference, and an invented
    member is only discovered on whichever branch reaches it. An extension
    receives exactly the surface a built-in with the same declarations does.
+   It answers only for a feature that LOADED, so start with a stub —
+   `lua/init.lua` returning `api`, `id`, `name` and a no-op `action`, plus a
+   feature.json with the capabilities you expect — then `reload` and call it.
+   A feature whose load failed also answers `no such feature`: read `reload`'s
+   failures first.
 3. Write/edit the extension files on disk yourself.
 4. `reload` — re-scans the folder. Read the returned load/start failures;
    fix and reload until clean.
@@ -245,7 +343,11 @@ has already done step 0.)
    `withdrawn` lists calls to a name this interpreter no longer has, with its
    replacement. A `withdrawn` entry fails on its own and no declaration fixes it;
    rewrite the call. Fix all of it before handing the extension over; `reload`
-   proves it LOADS, this proves it declared itself honestly.
+   proves it LOADS, this proves it declared itself honestly. It reads your Lua
+   from disk on every call but takes the declared `capabilities` from the last
+   `reload`: after editing feature.json, `reload` first, or the verdict compares
+   your current code against the old declaration. It does not prove the current
+   code loads; only `reload` does.
 6. `set_enabled` — enable it, so it can be test-fired. Enabling a SERVICE runs
    its `start(ctx)`. A feature needing the Accessibility grant still enables —
    enabling is one policy everywhere, and the grant is onboarded at first use —
@@ -254,8 +356,14 @@ has already done step 0.)
    running, so a `run_action` that seems to do nothing is the missing permission
    rather than a bug in your extension. Ask the user to grant it. Disable again
    when you are done if the user had it off.
-7. `run_action` — test-fire an enabled feature's action.
-8. `read_log` — check your `ctx.log` traces and any fire errors.
+7. `run_action` — test-fire an enabled feature's action. It runs for real: an
+   action that opens a panel puts it on the user's screen, and you cannot pick
+   a row. Fire such an action once, confirm from the log that it filled, and
+   leave the pick to the user. `set_enabled` false (or `reload`) closes the
+   panel, since teardown stops everything the feature opened; neither `onSelect`
+   nor `onHide` fires.
+8. `read_log` — the tail of the newest daily log: your `ctx.log` traces (prefixed
+   `[<id>]`), every `ctx.run` command line, and any fire errors.
 9. `list_features` / `describe_feature` — verify how the catalog sees it
    (options, triggers, the `extension` flag).
 

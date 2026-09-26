@@ -3320,7 +3320,10 @@ final class IntegrationTests: XCTestCase {
         eval("_G.itFav = nil; return true")
     }
 
-    func testLogFileWrittenAndPruned() {
+    // Retention is covered on a temp folder by
+    // McpServerTests.testReadLogAndRetentionIgnoreNonDailyLogFiles; against the
+    // real logs folder it could only fail on a machine that already holds 14 days.
+    func testLogLineReachesDailyFile() {
         // Always-on file logging: a ctx.log line lands in today's file.
         eval("require('platform.adapter').log('integration log probe'); return true")
         let day = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
@@ -3329,18 +3332,6 @@ final class IntegrationTests: XCTestCase {
         let content = (try? String(contentsOfFile: todayLog, encoding: .utf8)) ?? ""
         XCTAssertTrue(content.contains("integration log probe"),
                       "log lines must reach the daily file, not just stdout")
-
-        // Retention: ancient files are pruned, recent ones kept.
-        let fm = FileManager.default
-        let ancient = Native.logsDir.appendingPathComponent("2020-01-01.log")
-        fm.createFile(atPath: ancient.path, contents: Data("old".utf8))
-        Native.pruneOldLogs(keep: 14)
-        XCTAssertFalse(fm.fileExists(atPath: ancient.path) &&
-                       ((try? fm.contentsOfDirectory(atPath: Native.logsDir.path))?
-                           .filter { $0.hasSuffix(".log") }.count ?? 0) > 14,
-                       "files beyond the keep window are pruned")
-        try? fm.removeItem(at: ancient)   // tidy in case the dir held < keep files
-        XCTAssertTrue(fm.fileExists(atPath: todayLog), "today's log always survives")
     }
 
     // MARK: - Tier 2: end-to-end hotkey via synthesized CGEvents (gated)
