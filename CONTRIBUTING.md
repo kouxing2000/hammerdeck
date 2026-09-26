@@ -50,16 +50,21 @@ the plugin contract -- read it before your first PR.
 ## Dev setup
 
 ```bash
-swift build              # compile CLua + the host
-swift run                # run the app (menubar hammer icon)
+scripts/app.sh start     # compile CLua + the host, then launch it (menubar hammer icon)
+scripts/app.sh stop      # quit it (also: restart, status, logs)
 lua test/run.lua         # fast headless Lua/feature tests (Homebrew Lua)
 scripts/test-lua.sh      # same suite on the vendored 5.4.7 -- run before committing Lua
 scripts/test-swift.sh    # integration tests on the real Swift<->Lua bridge
 scripts/check-lua-types.sh   # LuaLS over the workspace at Error level (CI runs it)
 ```
 
-Two things that surprise people:
+Three things that surprise people:
 
+- **Build through `scripts/app.sh`, not a bare `swift build`.** On Xcode 27,
+  SwiftPM records the deployment target as the linked SDK version, and AppKit
+  picks SDK-gated behaviour from it (an oversized popover is how it shows).
+  `scripts/lib/sdk-link-flags.sh` holds the linker flags that fix it; `app.sh`,
+  `test-swift.sh` and `package.sh` all source it.
 - **`swift test` is not only for Swift changes.** Two integration tests read the
   live on-disk catalog, so a pure-Lua feature can turn it red -- a new feature
   with no gallery preview, or a `page` in `feature.json` with no registered
@@ -72,7 +77,7 @@ Two things that surprise people:
 `swift test` is quiet by default: tests that show panels, synthesize keystrokes,
 or touch the Keychain are skipped so they don't type into whatever app you have
 focused. Run those only when you're away from the keyboard, with
-`HAMMERDECK_UI_TESTS=1 swift test`.
+`HAMMERDECK_UI_TESTS=1 scripts/test-swift.sh`.
 
 Keep all Lua **5.4-compatible** (the embedded engine is vendored Lua 5.4.7, even
 though your local `lua` may be newer). Run the relevant tests before you open a PR.

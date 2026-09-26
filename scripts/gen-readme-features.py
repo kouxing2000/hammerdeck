@@ -107,15 +107,16 @@ REQUIRES_WORDS = {
 }
 
 
-# Rules-engine effects that script another app, so macOS asks for Automation the
-# first time a rule fires one: (effect kind in effects.lua, the ctx method that
-# reaches the same seam call, (seam file, the scripting target it must still
-# contain), label, what it covers). Effects are not features,
+# Rules-engine effects that need a grant of their own -- Automation because they
+# script another app, Full Disk Access because they touch a protected folder:
+# (effect kind in effects.lua, the ctx method that reaches the same seam call or
+# None when no ctx method does, (seam file, the code it must still contain),
+# label, what it covers). Effects are not features,
 # so nothing in feature.json can derive this; the effect's English labels are
 # read from its desc() calls in effects.lua instead, so a renamed or removed
 # effect changes or fails this line rather than leaving it stale.
 EFFECTS_LUA = "app/platform/lua/effects.lua"
-RULES_AUTOMATION = [
+RULES_GRANTS = [
     (
         "setAppearance",
         "ctx.setAppearance",
@@ -124,12 +125,20 @@ RULES_AUTOMATION = [
         "switching the system between dark and light goes through System Events, "
         "so macOS prompts once, the first time a rule does it",
     ),
+    (
+        "emptyTrash",
+        None,
+        ("app/platform/swift/Native+System.swift", "fm.contentsOfDirectory(at: trash"),
+        "Full Disk Access",
+        "emptying the Trash reads a folder macOS protects, and macOS never prompts "
+        "for this one, so switch Hammerdeck on under Privacy & Security yourself",
+    ),
 ]
 
 # Rules-engine effects that need Accessibility, so a rule firing one does nothing
 # until it is granted: (effect kind in effects.lua, the adapter call it reaches,
 # (seam file, the AX-dependent code it must still contain), what to call it).
-# Held to effects.lua and the seam the way RULES_AUTOMATION is: a removed effect,
+# Held to effects.lua and the seam the way RULES_GRANTS is: a removed effect,
 # a rerouted call or a seam that stops depending on the grant fails the build
 # rather than leaving the permissions line stale. Named by hand rather than from
 # desc(): several of these labels are templates ("Move %1$s to %2$s").
@@ -341,9 +350,9 @@ def permissions(features):
     the `browser` capability, since every browser read drives Chrome/Safari over
     AppleScript. A hand-kept list of names here went stale the way the catalog
     did, so neither is kept by hand. The rules engine is not a feature, but an
-    effect that scripts another app prompts for Automation too; RULES_AUTOMATION
-    names those, each held to effects.lua so the line dies with the effect rather
-    than outliving it. Effects that need Accessibility join that line the same
+    effect that scripts another app or reads a protected folder needs a grant
+    too; RULES_GRANTS names those, each held to effects.lua so the line dies with
+    the effect rather than outliving it. Effects that need Accessibility join that line the same
     way, from RULES_ACCESSIBILITY.
     """
     ordered = [f for _, items in sections(features) for f in items]
@@ -372,17 +381,18 @@ def permissions(features):
         path: path.read_text(encoding="utf-8")
         for path in sorted(ROOT.glob("app/features/*/lua/**/*.lua"))
     }
-    for kind, ctx_method, (seam_file, target), label, covers in RULES_AUTOMATION:
+    for kind, ctx_method, (seam_file, target), label, covers in RULES_GRANTS:
         if target not in (ROOT / seam_file).read_text(encoding="utf-8"):
             die(f"{seam_file} no longer contains {target}, so the '{label}' line may be false")
         if not re.search(rf"^\s*{re.escape(kind)} = \{{", effects, re.MULTILINE):
-            die(f"RULES_AUTOMATION names effect '{kind}', which {EFFECTS_LUA} no longer defines")
-        labels = re.findall(rf'desc\("{re.escape(kind)}\.[^"]+",\s*"([^"]+)"\)', effects)
+            die(f"RULES_GRANTS names effect '{kind}', which {EFFECTS_LUA} no longer defines")
+        labels = re.findall(rf'desc\("{re.escape(kind)}(?:\.[^"]+)?",\s*"([^"]+)"\)', effects)
         if not labels:
             die(f"found no desc(\"{kind}.*\", ...) labels in {EFFECTS_LUA} to name the effect by")
         # The line says only rules prompt. A built-in feature calling the same
         # ctx method would prompt too, and this line would then understate it.
-        callers = [p.parent.parent.name for p, src in feature_src.items() if f"{ctx_method}(" in src]
+        callers = [p.parent.parent.name for p, src in feature_src.items()
+                   if ctx_method and f"{ctx_method}(" in src]
         if callers:
             die(f"{', '.join(sorted(set(callers)))} call {ctx_method}, which prompts for {label}; "
                 "the permissions line names only the rules engine -- extend it")

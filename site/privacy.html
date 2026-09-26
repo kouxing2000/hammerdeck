@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy &middot; Hammerdeck</title>
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://hammerdeck.peach-studio.com/privacy.html">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<style>
+  :root { --bg: #fbfaf8; --fg: #1a1917; --muted: #6b6862; --line: #e5e1da; --code: #f2efea; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --fg: #eceae6; --muted: #9a958c; --line: #2c2a26; --code: #25231f; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  code { font: .88em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code); border-radius: .3rem; padding: .08em .35em; }
+  .wrap { max-width: 42rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+  .back { color: var(--muted); font-size: .9rem; text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font-size: 2rem; letter-spacing: -0.02em; margin: 1.5rem 0 .25rem; }
+  h2 { font-size: 1.2rem; margin: 2.2rem 0 .5rem; }
+  .updated { color: var(--muted); font-size: .9rem; margin: 0 0 2rem; }
+  li { margin: .35rem 0; }
+  footer { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1.2rem;
+    color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Hammerdeck</a>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated 25 September 2026</p>
+
+  <p>
+    Hammerdeck is a free, open-source macOS app made by Peach Studio. This page covers
+    the app and this website. The short version: there is no account, no telemetry, no
+    analytics and no automatic crash reporting, and what the app records stays on your Mac.
+  </p>
+
+  <h2>What the app keeps, and where</h2>
+  <p>Everything below is stored only on your Mac. Nothing of it is sent to us.</p>
+  <ul>
+    <li><strong>Logs.</strong> Plain-text daily logs of what the app did, in
+      <code>~/Library/Application Support/Hammerdeck/</code>. The newest 14 files are kept.</li>
+    <li><strong>Feature data</strong> such as Clipboard History, in the same folder. Clipboard
+      History skips clips that the copying app marks as secret (password managers do).</li>
+    <li><strong>Usage Stats</strong>, if you turn it on, writes app usage to a folder you choose
+      (<code>~/.computer-usage</code> by default). Recording which website you are on is a
+      separate option, off by default.</li>
+    <li><strong>Settings</strong> in the app's preferences domain,
+      <code>com.peach-studio.hammerdeck</code>.</li>
+    <li><strong>An OpenAI key</strong>, only if you enter one, in your login Keychain.</li>
+  </ul>
+
+  <h2>What the app sends over the network</h2>
+  <p>The built-in features make four kinds of request, each a consequence of something you
+    turned on or did:</p>
+  <ul>
+    <li><strong>Update checks.</strong> The app checks <code>hammerdeck.peach-studio.com</code>
+      for a new version, and downloads an update you approve from GitHub. The request carries
+      your IP address and the app's version, as any web request does.</li>
+    <li><strong>Bing Daily Wallpaper</strong> (off by default) fetches the picture of the day
+      from Bing.</li>
+    <li><strong>Text Actions' AI entries</strong> (off until you enter your own OpenAI key) send
+      the text you selected to OpenAI, using your key, when you run one. This is the only
+      feature that sends your content anywhere. OpenAI's own privacy policy applies to it.</li>
+    <li><strong>Site icons.</strong> Tab Switcher and Quick Sites show a website's icon. When Chrome
+      has none stored on your Mac, the app fetches it once from that website itself.</li>
+  </ul>
+  <p>
+    A user extension you install yourself can make other requests; that is your own code,
+    not something that ships with the app. The optional agent connection in Settings is
+    reachable only from your own Mac.
+  </p>
+
+  <h2>Problem and crash reports</h2>
+  <p>
+    <strong>Report a Problem</strong> builds a short report, puts it on your clipboard and
+    asks you where to send it: an email from your own mail app, a public GitHub issue, or
+    nowhere. Nothing is sent unless you send it. The report holds:
+  </p>
+  <ul>
+    <li>the app version, bundle id, macOS version and processor type;</li>
+    <li>whether Accessibility is granted and whether the updater is active;</li>
+    <li>how many features are on, and for up to 40 of them the feature, its trigger and the
+      permission it needs;</li>
+    <li>any feature that failed to load, with its error (file paths removed);</li>
+    <li>how many extensions are loaded and whether an extensions folder is set (not where);</li>
+    <li>whether the agent connection is on, and its local port;</li>
+    <li>where the log folder is, with your user name replaced by <code>~</code>.</li>
+  </ul>
+  <p>
+    If Hammerdeck quit unexpectedly, the next launch offers to send the same report plus a
+    short summary of where the crash happened, taken from the macOS crash log: no
+    documents, window titles or file paths. It goes the same way, only if you choose to
+    send it.
+  </p>
+
+  <h2>This website</h2>
+  <p>
+    This site sets no cookies and runs no analytics or tracking scripts. It is hosted on
+    Firebase Hosting, which receives the usual request data (such as your IP address and
+    browser) in order to serve the page; Google's privacy policy covers that. The download
+    button and the Homebrew install fetch the app from GitHub, whose privacy statement
+    covers those downloads.
+  </p>
+
+  <h2>Changes and contact</h2>
+  <p>
+    If this changes, the new version goes on this page with a new date. Questions go to
+    <a href="mailto:studio.peach.go+hammerdeck@gmail.com">studio.peach.go+hammerdeck@gmail.com</a>.
+    The full technical account of what the app can reach is in
+    <a href="https://github.com/kouxing2000/hammerdeck/blob/master/SECURITY.md">SECURITY.md</a>.
+  </p>
+
+  <footer>
+    <a href="/">Hammerdeck</a> &middot; <a href="terms.html">Terms</a> &middot;
+    Built by <a href="https://peach-studio.com">Peach Studio</a>
+  </footer>
+</div>
+</body>
+</html>

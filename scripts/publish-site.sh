@@ -307,6 +307,13 @@ MIN_OS="$PAGE_MIN_OS" PUB_DATE="$PAGE_DATE" \
 # so anything not staged here is deleted from it.
 cp -R "$ROOT/site/assets" "$STAGE/assets"
 echo "    page assets: $(find "$STAGE/assets" -type f | wc -l | tr -d ' ') file(s)"
+# The static pages beside it (privacy, terms) carry no tokens and ship as-is --
+# staged for the same reason as the images.
+local page
+for page in "$ROOT"/site/*.html; do
+  [[ "$(basename "$page")" == index.html ]] || cp "$page" "$STAGE/"
+done
+echo "    static pages: $(find "$STAGE" -maxdepth 1 -name '*.html' ! -name index.html | wc -l | tr -d ' ') file(s)"
 }
 
 # Refuse while a publish.yml run is queued or in flight. --page-only re-serves
