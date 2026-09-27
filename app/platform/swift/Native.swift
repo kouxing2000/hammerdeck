@@ -30,6 +30,7 @@ final class Native {
     var scrims: [Int32: ScrimPanel] = [:]
     var deckWidgets: [Int32: DeckWidgetPanel] = [:]
     var fanWidgets: [Int32: FanWidgetPanel] = [:]
+    var roomPanels: [Int32: RoomPanel] = [:]
     var progresses: [Int32: ProgressPanel] = [:]
     var askTexts: [Int32: AskTextPanel] = [:]
     var widgets: [Int32: UsageWidgetPanel] = [:]
@@ -98,6 +99,7 @@ final class Native {
         scrims[id] = nil
         deckWidgets[id] = nil
         fanWidgets[id] = nil
+        roomPanels[id] = nil
         progresses[id] = nil
         askTexts[id] = nil
         widgets[id] = nil
@@ -194,6 +196,7 @@ final class Native {
             "fan_widget_show":      { L in MainActor.assumeIsolated { Native.shared.fanWidgetShow(L) } },
             "fan_widget_set":       { L in MainActor.assumeIsolated { Native.shared.fanWidgetSet(L) } },
             "fan_widget_reanchor":  { L in MainActor.assumeIsolated { Native.shared.fanWidgetReanchor(L) } },
+            "room_panel_show":      { L in MainActor.assumeIsolated { Native.shared.roomPanelShow(L) } },
             "progress_show": { L in MainActor.assumeIsolated { Native.shared.progressShow(L) } },
             "progress_set":  { L in MainActor.assumeIsolated { Native.shared.progressSet(L) } },
             "usage_widget_show": { L in MainActor.assumeIsolated { Native.shared.usageWidgetShow(L) } },

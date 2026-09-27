@@ -74,6 +74,17 @@ extension Native {
         return 0
     }
 
+    // MARK: - Memory Room overlay (memory_room's contributed RoomPanel)
+
+    func roomPanelShow(_ L: OpaquePointer?) -> Int32 {
+        let dict = LuaState.any(L, 1) as? [String: Any] ?? [:]
+        let panel = RoomPanel(spec: RoomPanel.Spec(dict))
+        let id = registerResource { panel.close() }
+        roomPanels[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
     // MARK: - Chooser
 
     func chooserNew(_ L: OpaquePointer?) -> Int32 {

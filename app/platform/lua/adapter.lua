@@ -418,6 +418,16 @@ function adapter.hud(spec)
     }
 end
 
+-- Memory Room's overlay: a photo (or the default room) with key-lettered pins,
+-- each carrying the icons of the apps placed there. Non-activating and
+-- mouse-transparent, like the HUD. `spec`: { title, image (filename under
+-- <dataDir>/memory_room/, nil = default), pins = {{key, name, x, y, apps}},
+-- hint, front (bundle id of the frontmost app) }. Returns { stop() }.
+function adapter.roomPanel(spec)
+    local id = native.room_panel_show(spec or {})
+    return { stop = function() native.stop(id) end }
+end
+
 -- One-shot text prompt: Enter submits the string, Escape cancels (nil). opts:
 --   title, placeholder, default, onSubmit(text|nil)
 function adapter.askText(opts)

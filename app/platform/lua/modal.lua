@@ -26,6 +26,9 @@ local REPEAT_INTERVAL = 0.04
 --   hud      = structured cheat-sheet card (optional); when present it REPLACES
 --              the plain banner -- see adapter.hud for the shape (a spatial
 --              key map + grouped legend rows, e.g. Window Mode).
+--   silent   = true: show NOTHING on entry (optional). For a feature that draws
+--              its own overlay, on its own schedule -- Memory Room shows its room
+--              only after a pause, so a fast Hyper+L D never flashes a card.
 --   bindings = { { mods = {...}|nil, key = "a", fn = function() end,
 --                  repeats = false }, ... }
 --               repeats=true: hold the key to fire fn repeatedly (Carbon gives
@@ -46,13 +49,19 @@ function modal.enter(spec)
     -- m.stop() -> exit() and nothing leaks. Cancelled on key-up or exit.
     local repeating = {}
 
-    -- A feature can supply a structured `hud` (a spatial cheat-sheet card);
-    -- otherwise fall back to the plain full-width banner built from name + hint.
-    local banner = spec.hud
-        and adapter.hud(spec.hud)
-        or adapter.banner(
+    -- A feature can supply a structured `hud` (a spatial cheat-sheet card), or
+    -- ask for none at all (`silent`); otherwise fall back to the plain
+    -- full-width banner built from name + hint.
+    local banner
+    if spec.hud then
+        banner = adapter.hud(spec.hud)
+    elseif spec.silent then
+        banner = { stop = function() end }
+    else
+        banner = adapter.banner(
             (spec.name or "Mode") .. (spec.hint and ("  --  " .. spec.hint) or "")
             .. "  (Esc exits)")
+    end
 
     local function cancelRepeat(b)
         local r = repeating[b]

@@ -40,6 +40,7 @@ enum FeatureArchetype {
     case pointerFollow              // a window moves and the cursor chases it (pointer follows moved window)
     case passwordReveal             // scrambling characters lock into a strong password, then "copied"
     case chart                      // per-app focus-time bars grow into a usage dashboard (usage stats)
+    case memoryRoom                 // a room picture whose places light up one by one, each holding an app (memory room)
     case wallpaperSwap              // the desktop wallpaper crossfades to a fresh photo (bing daily)
     case textTransform(TextTransformSample) // selected text transforms in place (case change / strip formatting)
     case typeText(TypeTextSample)           // a generated string is typed out as keystrokes (insert date/time)
@@ -88,6 +89,7 @@ enum FeatureArchetype {
         case "pointerFollow":   return .pointerFollow
         case "passwordReveal":  return .passwordReveal
         case "chart":           return .chart
+        case "memoryRoom":      return .memoryRoom
         case "wallpaperSwap":   return .wallpaperSwap
         default:                return .none
         }
@@ -114,6 +116,7 @@ enum FeatureArchetype {
         case .pointerFollow:        return 1.1 * 2     // two spots
         case .passwordReveal:       return 0.32 * 6    // cycle = 6
         case .chart:                return 1.6 * 2     // grow + reset
+        case .memoryRoom:           return MemoryRoomArchetypeScene.loopDuration  // heartbeat x places
         case .wallpaperSwap:        return 1.9 * 2     // two wallpapers
         case .textTransform:        return 1.5 * 2     // before + after
         case .typeText(let s):      return 0.16 * Double(s.full.count + 6)  // heartbeat x (chars + hold)
@@ -137,6 +140,7 @@ enum FeatureArchetype {
         case .pointerFollow:         PointerFollowArchetypeScene(playing: playing)
         case .passwordReveal:        PasswordRevealArchetypeScene(playing: playing)
         case .chart:                 UsageChartArchetypeScene(playing: playing)
+        case .memoryRoom:            MemoryRoomArchetypeScene(playing: playing)
         case .wallpaperSwap:         WallpaperSwapArchetypeScene(playing: playing)
         case .textTransform(let s):  TextTransformArchetypeScene(sample: s, playing: playing)
         case .typeText(let s):       TypeKeystrokesArchetypeScene(playing: playing, full: s.full, caption: s.caption)

@@ -393,6 +393,8 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- only passed when the cell COUNT changed (see adapter.deckWidget).
     function ctx.deckWidget(opts) return track(adapter.deckWidget(opts)) end
     function ctx.fanWidget(opts) return track(adapter.fanWidget(opts)) end
+    -- Memory Room's overlay (see adapter.roomPanel for the spec shape).
+    function ctx.roomPanel(spec) return track(adapter.roomPanel(spec)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end
     -- enter a modal hotkey group (see platform/modal.lua); stop() exits.

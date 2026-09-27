@@ -47,6 +47,7 @@ struct FeaturePageRegistry {
     /// id strings; those live in each provider, in the feature's own folder.
     private static let roster: [FeaturePageProvider.Type] = [
         UsageReportPage.self,
+        MemoryRoomPage.self,
     ]
 
     private let builders: [String: (SettingsStore) -> AnyView]

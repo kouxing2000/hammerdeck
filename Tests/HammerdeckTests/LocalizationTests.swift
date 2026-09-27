@@ -78,6 +78,10 @@ final class LocalizationTests: XCTestCase {
             // the family keeps every verb checked for a translation -- moving keys
             // into a data table must not quietly exempt them from the gate.
             "rules.verb.": EffectKinds.verbStringKeys,
+            // Memory Room's default place names: the set is the default room in
+            // room.lua, and init.lua spells every one as a literal ctx.t call -- so
+            // i18n_parity.lua is what checks each has a translation.
+            "memoryRoom.pin.": [],
         ]
 
         // Every localization call site, then the two shapes we can resolve.

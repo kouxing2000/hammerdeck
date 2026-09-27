@@ -1,0 +1,17 @@
+{
+  "name": "Memory Room",
+  "version": "1.0.0",
+  "description": "A memory palace for your apps: put each app in a place in a room -- an illustrated study, or a photo of a room you know -- then find it by where it lives. Hyper+L, then the place's letter brings it forward; Shift+letter puts the app in front there.",
+  "category": "switching",
+  "order": 7,
+  "selfEvident": true,
+  "icon": "house",
+  "context": "anywhere",
+  "page": {
+    "title": "Memory Room",
+    "icon": "house"
+  },
+  "preview": {
+    "archetype": "memoryRoom"
+  }
+}

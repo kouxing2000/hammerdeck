@@ -77,6 +77,10 @@ let package = Package(
                 "features/display_off",
                 "features/insert_datetime",
                 "features/locate_pointer",
+                "features/memory_room/lua",
+                "features/memory_room/i18n",
+                "features/memory_room/assets",
+                "features/memory_room/feature.json",
                 "features/notify_on_trigger",
                 "features/password_generator",
                 "features/plain_paste",
@@ -102,6 +106,7 @@ let package = Package(
             ],
             sources: [
                 "platform/swift",
+                "features/memory_room/swift",
                 "features/usage_stats/swift",
                 "features/window_deck/swift",
                 "features/window_fan/swift",

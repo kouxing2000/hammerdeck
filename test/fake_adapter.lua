@@ -690,6 +690,23 @@ function adapter.fanWidget(opts)
     }
 end
 
+-- {spec, stopped} -- Memory Room's overlay.
+fake.roomPanels = {}
+function adapter.roomPanel(spec)
+    local p = { spec = spec, stopped = false }
+    fake.roomPanels[#fake.roomPanels + 1] = p
+    alloc()
+    return { stop = function() freeOnce(p) end }
+end
+
+-- The most-recent live (non-stopped) Memory Room overlay, nil if none.
+function fake.liveRoomPanel()
+    for i = #fake.roomPanels, 1, -1 do
+        if not fake.roomPanels[i].stopped then return fake.roomPanels[i] end
+    end
+    return nil
+end
+
 -- The most-recent live (non-stopped) Window Fan widget, nil if none.
 function fake.liveFanWidget()
     for i = #fake.fanWidgets, 1, -1 do
