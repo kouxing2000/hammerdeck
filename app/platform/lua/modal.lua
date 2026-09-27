@@ -111,17 +111,30 @@ function modal.enter(spec)
     -- The entry hotkey stays reachable; only the OTHER bare keys twin.
     local exceptKey = type(spec.stickyExceptKey) == "string" and spec.stickyExceptKey:lower() or nil
 
-    for _, b in ipairs(spec.bindings) do
-        handles[#handles + 1] = bindAt(b, b.mods or {}, false)
-        -- Only bare bindings get a sticky twin; one that already names its own
-        -- modifiers is explicit and left alone, and the entry key is excluded.
-        if hasSticky and (b.mods == nil or #b.mods == 0) and b.key:lower() ~= exceptKey then
-            handles[#handles + 1] = bindAt(b, sticky, true)
+    local function bindAll()
+        for _, b in ipairs(spec.bindings) do
+            handles[#handles + 1] = bindAt(b, b.mods or {}, false)
+            -- Only bare bindings get a sticky twin; one that already names its own
+            -- modifiers is explicit and left alone, and the entry key is excluded.
+            if hasSticky and (b.mods == nil or #b.mods == 0) and b.key:lower() ~= exceptKey then
+                handles[#handles + 1] = bindAt(b, sticky, true)
+            end
+        end
+        handles[#handles + 1] = adapter.bindHotkey({}, "escape", exit)
+        if hasSticky then   -- leader-held Escape exits too
+            handles[#handles + 1] = adapter.bindHotkey(sticky, "escape", exit, nil, true)
         end
     end
-    handles[#handles + 1] = adapter.bindHotkey({}, "escape", exit)
-    if hasSticky then   -- leader-held Escape exits too
-        handles[#handles + 1] = adapter.bindHotkey(sticky, "escape", exit, nil, true)
+    -- All or nothing. The seam RAISES when a combo is already held (Carbon's
+    -- eventHotKeyExistsErr), and a mode dying part-way would otherwise leave
+    -- every key bound before it live with no handle anyone holds -- bare letters
+    -- swallowed system-wide until a restart. Unwind, then re-raise.
+    local bound, err = pcall(bindAll)
+    if not bound then
+        active = false
+        for _, h in ipairs(handles) do pcall(h.stop) end
+        banner.stop()
+        error(err, 0)
     end
 
     return {

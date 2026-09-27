@@ -16,6 +16,8 @@ fake.notifications = {}
 fake.alerts        = {}
 fake.timers        = {}   -- {kind="every"|"after"|"daily", n, fn, stopped}
 fake.hotkeys       = {}   -- {mods, key, fn, stopped}
+---@type (fun(mods: string[], key: string, shadow: boolean?): boolean?)|nil
+fake.rejectHotkey  = nil  -- see adapter.bindHotkey
 fake.chords        = {}   -- {mods, key, follows, fn, stopped}
 fake.watchers      = {}   -- {event, fn, stopped}
 fake.choosers      = {}   -- see adapter.chooser
@@ -135,6 +137,11 @@ end
 
 function adapter.bindHotkey(mods, key, fn, onRelease, shadow)
     assertMods(mods, "bind_hotkey")
+    -- Opt-in (fake.rejectHotkey): refuse a combo the way the real seam does when
+    -- Carbon already holds it in this process -- it RAISES, before binding.
+    if fake.rejectHotkey and fake.rejectHotkey(mods, key, shadow) then
+        error("bind_hotkey: could not register '" .. table.concat(mods, "+") .. "+" .. key .. "'", 0)
+    end
     local h = { mods = mods, key = key, fn = fn, onRelease = onRelease,
                 stopped = false, parked = false }
     -- Model HotkeyCenter.park: when `shadow`, temporarily deactivate every LIVE
@@ -1650,6 +1657,7 @@ function fake.reset()
     fake.screenList    = { { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1, builtin = true } }
     fake.frontmost     = nil
     fake.frontmostId   = ""
+    fake.rejectHotkey  = nil
     fake.runningApps        = {}
     fake.runningAppInfoList = {}
     fake.installedAppsList  = {}
