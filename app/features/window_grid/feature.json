@@ -1,7 +1,7 @@
 {
   "name": "Window Grid",
   "version": "1.0.0",
-  "description": "Precise placement: put the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid (Hyper+9 = 3×3, Hyper+4 = 2×2, Hyper+6 = a 6-cell grid that orients to the screen -- 3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle.",
+  "description": "Precise placement: put the focused window into a grid cell -- or a rectangle spanning several. A hotkey deems the screen a grid -- one each for 3×3, 2×2, and a 6-cell grid that orients to the screen (3×2 wide, 2×3 tall); press a cell to land there, or a second cell down-right of it to fill that rectangle.",
   "category": "windows",
   "order": 2,
   "selfEvident": true,
