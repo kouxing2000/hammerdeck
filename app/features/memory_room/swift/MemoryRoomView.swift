@@ -128,6 +128,9 @@ struct MemoryRoomView: View {
             roomPicker
             HStack(spacing: 8) {
                 Button(Strings.t("memoryRoom.page.choosePhoto", default: "Choose Photo…")) { choosePhoto() }
+                if photo != nil {
+                    Button(Strings.t("memoryRoom.page.removePhoto", default: "Remove Photo…")) { removePhoto() }
+                }
                 Spacer()
                 Text(String(format: Strings.t("memoryRoom.page.count", default: "%1$d of %2$d places"),
                             room.pins.count, 30))
@@ -138,7 +141,7 @@ struct MemoryRoomView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(Strings.t("memoryRoom.page.privacy",
-                           default: "While your photo is the room in use, it shows whenever the room opens -- including while you share your screen. It stays on this Mac: Hammerdeck keeps its own copy until you choose another photo."))
+                           default: "While your photo is the room in use, it shows whenever the room opens -- including while you share your screen. It stays on this Mac: Hammerdeck keeps its own copy until you remove it or choose another photo."))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -385,6 +388,30 @@ struct MemoryRoomView: View {
         } else {
             deleteCopy(name)
         }
+    }
+
+    /// Delete Hammerdeck's copy of the user's photo, once they confirm. The room
+    /// leaves the photo FIRST: deleting a file the record still points at would
+    /// leave the room drawing its "photo missing" board, and a failed switch must
+    /// not cost the user their photo.
+    private func removePhoto() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = Strings.t("memoryRoom.page.removePhotoTitle", default: "Remove your photo?")
+        alert.informativeText = Strings.t("memoryRoom.page.removePhotoBody",
+            default: "Hammerdeck deletes its copy of the photo; the original is not touched. If the room is using it, the room switches to the Study -- your places and their apps stay.")
+        alert.addButton(withTitle: Strings.t("memoryRoom.page.remove", default: "Remove")).hasDestructiveAction = true
+        alert.addButton(withTitle: Strings.t("memoryRoom.page.cancel", default: "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        notice = nil
+        if RoomImage.isPhoto(room.image) {
+            guard apply("setImage", [.string("")]) != nil else { return }
+        }
+        // Every copy, not just the one on the tile: "remove your photo" must leave
+        // none behind for userPhoto to bring back.
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: RoomImage.folder.path)) ?? []
+        for name in names { deleteCopy(name) }
+        load()
     }
 
     /// Delete Hammerdeck's own copy of a photo it no longer uses. Only a name this
