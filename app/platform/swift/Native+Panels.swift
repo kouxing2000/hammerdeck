@@ -76,10 +76,33 @@ extension Native {
 
     // MARK: - Memory Room overlay (memory_room's contributed RoomPanel)
 
+    // room_panel_show(spec, onPick): onPick gets {key, app?} for a click on a place,
+    // {key, action = "place"} / {action = "placeAt", x, y} for the right-click item
+    // on a place / off every place, or nil for a click off every place (see
+    // adapter.roomPanel). stop() closes the room and releases the ref.
     func roomPanelShow(_ L: OpaquePointer?) -> Int32 {
         let dict = LuaState.any(L, 1) as? [String: Any] ?? [:]
-        let panel = RoomPanel(spec: RoomPanel.Spec(dict))
-        let id = registerResource { panel.close() }
+        let pickRef = lua.makeCallbackRef(at: 2, named: "onPick")
+        let panel = RoomPanel(spec: RoomPanel.Spec(dict)) { pick in
+            Native.shared.lua.callRef(pickRef) { L in
+                guard let pick else { lua_pushnil(L); return 1 }
+                lua_createtable(L, 0, 4)
+                if let key = pick.key { lua_pushstring(L, key); lua_setfield(L, -2, "key") }
+                if let app = pick.app { lua_pushinteger(L, lua_Integer(app)); lua_setfield(L, -2, "app") }
+                if let at = pick.at {
+                    lua_pushstring(L, "placeAt"); lua_setfield(L, -2, "action")
+                    lua_pushnumber(L, Double(at.x)); lua_setfield(L, -2, "x")
+                    lua_pushnumber(L, Double(at.y)); lua_setfield(L, -2, "y")
+                } else if pick.place {
+                    lua_pushstring(L, "place"); lua_setfield(L, -2, "action")
+                }
+                return 1
+            }
+        }
+        let id = registerResource {
+            Native.shared.lua.releaseRef(pickRef)
+            panel.close()
+        }
         roomPanels[id] = panel
         lua_pushinteger(L, lua_Integer(id))
         return 1

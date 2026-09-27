@@ -132,13 +132,8 @@ enum Toast {
     }
 
     /// The screen the user is on right now -- the one under the mouse cursor -- so
-    /// a confirmation lands where they're looking. Falls back to main if the cursor
-    /// isn't inside any screen's frame (rare, e.g. mid-transition). Mirrors
-    /// MouseLocatorPanel's cursor-based targeting.
-    private static func activeScreen() -> NSScreen? {
-        let mouse = NSEvent.mouseLocation
-        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-    }
+    /// a confirmation lands where they're looking.
+    private static func activeScreen() -> NSScreen? { NSScreen.underPointer }
 
     private static func buildFlashPill(symbol: String?, text: String) -> NSView {
         let hPad: CGFloat = 13, vPad: CGFloat = 9, gap: CGFloat = 8, glyphSize: CGFloat = 15

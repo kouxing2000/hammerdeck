@@ -394,7 +394,7 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     function ctx.deckWidget(opts) return track(adapter.deckWidget(opts)) end
     function ctx.fanWidget(opts) return track(adapter.fanWidget(opts)) end
     -- Memory Room's overlay (see adapter.roomPanel for the spec shape).
-    function ctx.roomPanel(spec) return track(adapter.roomPanel(spec)) end
+    function ctx.roomPanel(spec, onPick) return track(adapter.roomPanel(spec, onPick)) end
     function ctx.progressBar()   return track(adapter.progressBar()) end
     function ctx.usageWidget(screenIndex) return track(adapter.usageWidget(screenIndex)) end
     -- enter a modal hotkey group (see platform/modal.lua); stop() exits.

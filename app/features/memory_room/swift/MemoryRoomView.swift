@@ -86,8 +86,11 @@ struct MemoryRoomView: View {
             // a default hotkey, is not automatable, and clearing an override
             // restores that default.
             if let key = openShortcut {
-                Text(String(format: Strings.t("memoryRoom.page.subtitle",
-                                              default: "Open the room (%@), then press a place's letter to bring its app forward. Shift+letter puts the app in front there."),
+                Text(String(format: room.showKeys
+                            ? Strings.t("memoryRoom.page.subtitle",
+                                        default: "Open the room (%@), then press a place's letter to bring its app forward. Shift+letter puts the app in front there.")
+                            : Strings.t("memoryRoom.page.subtitleClick",
+                                        default: "Open the room (%@), then click a place to bring its app forward. Right-click anywhere in it to put the app you're in there."),
                             key))
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -121,11 +124,23 @@ struct MemoryRoomView: View {
             editor(image)
                 .aspectRatio(RoomImage.aspect(image), contentMode: .fit)
                 .frame(maxWidth: 760)
-            Text(Strings.t("memoryRoom.page.editHint",
-                           default: "Click an empty spot to add a place; its letter comes from where it sits (top third = QWERT row). Drag a place to move it -- its letter stays."))
+            Text(room.showKeys
+                 ? Strings.t("memoryRoom.page.editHint",
+                             default: "Click an empty spot to add a place; its letter comes from where it sits (top third = QWERT row). Drag a place to move it -- its letter stays.")
+                 : Strings.t("memoryRoom.page.editHintClick",
+                             default: "Click an empty spot to add a place. Drag a place to move it."))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             roomPicker
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle(Strings.t("memoryRoom.page.showKeys", default: "Show key letters"),
+                       isOn: Binding(get: { room.showKeys },
+                                     set: { apply("setShowKeys", [.bool($0)]) }))
+                Text(Strings.t("memoryRoom.page.showKeysHint",
+                               default: "Every place also has a letter: open the room, then press it. Shown or hidden, the letters work."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 8) {
                 Button(Strings.t("memoryRoom.page.choosePhoto", default: "Choose Photo…")) { choosePhoto() }
                 if photo != nil {
@@ -151,7 +166,7 @@ struct MemoryRoomView: View {
         GeometryReader { geo in
             let size = geo.size
             ZStack {
-                RoomCanvas(image: image, pins: displayPins(), selected: selected)
+                RoomCanvas(image: image, pins: displayPins(), selected: selected, showKeys: room.showKeys)
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0)
@@ -281,8 +296,11 @@ struct MemoryRoomView: View {
                                  onRemove: { removePin(pin) })
                     }
                 }
-                Text(Strings.t("memoryRoom.page.placeHint",
-                               default: "To put an app in a place: click + on its row, or open the room over the app and press Shift+the place's letter."))
+                Text(room.showKeys
+                     ? Strings.t("memoryRoom.page.placeHint",
+                                 default: "To put an app in a place: click + on its row, or open the room over the app and press Shift+the place's letter.")
+                     : Strings.t("memoryRoom.page.placeHintClick",
+                                 default: "To put an app in a place: click + on its row, or open the room over the app and right-click where you want it."))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -620,14 +638,18 @@ struct RoomPinRecord: Identifiable, Equatable {
 
 struct RoomRecord {
     let image: String?
+    let showKeys: Bool
     let pins: [RoomPinRecord]
 
-    static let empty = RoomRecord(image: nil, pins: [])
+    static let empty = RoomRecord(image: nil, showKeys: false, pins: [])
 
-    init(image: String?, pins: [RoomPinRecord]) { self.image = image; self.pins = pins }
+    init(image: String?, showKeys: Bool, pins: [RoomPinRecord]) {
+        self.image = image; self.showKeys = showKeys; self.pins = pins
+    }
 
     init(_ dict: [String: Any]) {
         image = (dict["image"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        showKeys = dict["showKeys"] as? Bool ?? false
         pins = (dict["pins"] as? [Any] ?? []).compactMap { v in
             guard let d = v as? [String: Any], let id = d["id"] as? String, let key = d["key"] as? String,
                   let x = d["x"] as? Double, let y = d["y"] as? Double else { return nil }

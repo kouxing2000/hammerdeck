@@ -690,10 +690,10 @@ function adapter.fanWidget(opts)
     }
 end
 
--- {spec, stopped} -- Memory Room's overlay.
+-- {spec, onPick, stopped} -- Memory Room's overlay.
 fake.roomPanels = {}
-function adapter.roomPanel(spec)
-    local p = { spec = spec, stopped = false }
+function adapter.roomPanel(spec, onPick)
+    local p = { spec = spec, onPick = onPick, stopped = false }
     fake.roomPanels[#fake.roomPanels + 1] = p
     alloc()
     return { stop = function() freeOnce(p) end }
@@ -705,6 +705,14 @@ function fake.liveRoomPanel()
         if not fake.roomPanels[i].stopped then return fake.roomPanels[i] end
     end
     return nil
+end
+
+-- Click the live Memory Room overlay as the real panel reports it: `pick` is
+-- {key, app?}, {key, action = "place"}, {action = "placeAt", x, y}, or nil (a
+-- click off every place).
+function fake.pickRoom(pick)
+    local p = assert(fake.liveRoomPanel(), "pickRoom: no room is drawn")
+    p.onPick(pick)
 end
 
 -- The most-recent live (non-stopped) Window Fan widget, nil if none.

@@ -93,8 +93,9 @@ final class VibrancyHUDPanel: FloatingPanel {
     }
 
     /// Size to fit the stack (floored at `minWidth`) and show centered in the
-    /// lower third of the main screen -- the present sequence all three HUDs
-    /// share. Returns the final width (ChordHint sizes its depletion bar from it).
+    /// lower third of `screen` (default: the main screen) -- the present sequence
+    /// all the HUDs share. Returns the final width (ChordHint sizes its depletion
+    /// bar from it).
     ///
     /// `lockSize`: after sizing, clamp the window's content size (min == max ==
     /// the presented size) so AppKit's auto-resize-to-fit-content is pinned and
@@ -102,12 +103,12 @@ final class VibrancyHUDPanel: FloatingPanel {
     /// mutates while shown (HyperHint's hover hint), so nothing it does can grow
     /// or shift the card. Off for the static HUDs.
     @discardableResult
-    func present(minWidth: CGFloat, lockSize: Bool = false) -> CGFloat {
+    func present(minWidth: CGFloat, lockSize: Bool = false, on target: NSScreen? = nil) -> CGFloat {
         effect.layoutSubtreeIfNeeded()
         let fit = stack.fittingSize
         let w = max(minWidth, fit.width)
         let h = fit.height
-        let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let screen = (target ?? NSScreen.main)?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         setFrame(NSRect(x: screen.midX - w / 2,
                         y: screen.minY + screen.height * 0.30,
                         width: w, height: h), display: true)
@@ -315,5 +316,16 @@ enum KeyCap {
             fit.isActive = true
         }
         return cap
+    }
+}
+
+extension NSScreen {
+    /// The screen under the mouse pointer -- where the user is looking -- or main
+    /// when the pointer is inside no screen's frame (rare, mid-transition).
+    /// NSScreen.main is the screen holding KEY focus, which for a background app
+    /// is nowhere in particular and on a multi-display desk often not this one.
+    static var underPointer: NSScreen? {
+        let p = NSEvent.mouseLocation
+        return screens.first { NSMouseInRect(p, $0.frame, false) } ?? main
     }
 }

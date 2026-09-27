@@ -66,9 +66,7 @@ final class MouseLocatorPanel {
     /// pixels: a Retina screen already normalises DPI, so this tracks how much
     /// SCREEN the halo covers, which is what "too small on the big display" is about.
     private static func locatorScale() -> CGFloat {
-        let p = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(p, $0.frame, false) } ?? NSScreen.main
-        let h = screen?.frame.height ?? 900
+        let h = NSScreen.underPointer?.frame.height ?? 900
         return min(3.0, max(1.0, h / 900))
     }
 

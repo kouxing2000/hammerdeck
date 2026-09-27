@@ -418,13 +418,20 @@ function adapter.hud(spec)
     }
 end
 
--- Memory Room's overlay: a photo (or the default room) with key-lettered pins,
--- each carrying the icons of the apps placed there. Non-activating and
--- mouse-transparent, like the HUD. `spec`: { title, image (filename under
--- <dataDir>/memory_room/, nil = default), pins = {{key, name, x, y, apps}},
--- hint, front (bundle id of the frontmost app) }. Returns { stop() }.
-function adapter.roomPanel(spec)
-    local id = native.room_panel_show(spec or {})
+-- Memory Room's overlay: the room's picture with its places, each carrying the
+-- icons of the apps placed there. Non-activating -- it never takes focus from the
+-- app the user is about to leave or place -- but CLICKABLE. `spec`: { title,
+-- image (the record's `image`, nil = the Study), pins = {{key, name, x, y, apps}},
+-- hint, front (bundle id of the frontmost app), showKeys (draw each place's
+-- letter), placeLabel (the right-click item, nil = no menu) }.
+-- `onPick(pick)` gets {key, app?} for a click on a place (app = the icon's index
+-- in the place's apps); for the right-click item, {key, action = "place"} on a
+-- place or {action = "placeAt", x, y} off every place (x, y: 0..1 of the room,
+-- top-left); and nil for a click off every place -- on the room or anywhere else
+-- on screen.
+-- Returns { stop() }.
+function adapter.roomPanel(spec, onPick)
+    local id = native.room_panel_show(spec or {}, onPick or function() end)
     return { stop = function() native.stop(id) end }
 end
 

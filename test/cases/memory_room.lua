@@ -5,9 +5,12 @@
 --    key-from-position, and every edit -- above all place(), whose "an app lives
 --    in ONE place" and "a full place refuses WITHOUT unplacing" rules are the
 --    ones a regression would break silently.
--- 2. The live flow over the fake: Hyper+L arms a silent modal, the room is drawn
---    only after the pause, a letter brings an app forward (stepping on a repeat
---    press), Shift+letter places the frontmost app -- with Hyper still held too.
+-- 2. The live flow over the fake: Hyper+L arms a silent modal. With letters
+--    drawn, the room appears only after the pause, a letter brings an app forward
+--    (stepping on a repeat press), Shift+letter places the frontmost app -- with
+--    Hyper still held too. Without them (the default), the room appears at once
+--    and is clicked: a place, one of its icons, the right-click item, or off
+--    every place to close -- and the unseen letters still work.
 --
 -- Hermetic: registers memory_room itself; state lives in fake.settings.
 
@@ -96,6 +99,14 @@ return {
             ok(R.decode(op.json).image == "room.png" and #R.decode(op.json).pins == 9,
                 "a new photo keeps the pins")
             ok(R.decode(R.setImage(op.json, "").json).image == nil, "\"\" returns to the default room")
+            ok(R.decode(raw).showKeys == false, "letters are hidden by default")
+            ok(not raw:find("showKeys", 1, true),
+                "a record that never showed letters is written without the field")
+            op = R.setShowKeys(raw, true)
+            ok(op.status == "showKeys" and R.decode(op.json).showKeys == true
+                and #R.decode(op.json).pins == 9, "show letters, keeping every place")
+            ok(R.decode(R.place(op.json, "d", "x").json).showKeys == true, "every other edit keeps it")
+            ok(R.decode(R.setShowKeys(op.json, false).json).showKeys == false, "and hide them again")
         end
 
         -- ===== place: one app, one place =====
@@ -124,10 +135,46 @@ return {
             ok(op.status == "unplaced" and #R.pinByKey(R.decode(op.json), "d").apps == 2, "unplace")
         end
 
-        -- ===== the live flow =====
+        -- ===== placeAt: an app goes wherever it is put =====
+        do
+            local empty = '{"v":1,"pins":[]}'
+            local op = R.placeAt(empty, 0.25, 0.1, "slack")
+            local room = R.decode(op.json)
+            ok(op.status == "placed" and #room.pins == 1 and room.pins[1].key == "e"
+                and room.pins[1].name == "" and room.pins[1].apps[1] == "slack"
+                and room.pins[1].x == 0.25 and room.pins[1].y == 0.1,
+                "a new unnamed place right there, on the letter under that spot")
+            local first = room.pins[1].id
+            op = R.placeAt(op.json, 0.9, 0.9, "slack")
+            room = R.decode(op.json)
+            ok(op.status == "moved" and op.from == first and #room.pins == 1 and room.pins[1].id ~= first
+                and room.pins[1].apps[1] == "slack",
+                "put elsewhere, it moves -- and the unnamed place it left goes with it")
+            ok(R.decode(R.placeAt(op.json, 0.5, 0.5, "x").json).pins[2].key ~= room.pins[1].key,
+                "a new place never takes a letter already in use")
+            op = R.place(R.placeAt(R.encode(R.decode(nil)), 0.5, 0.5, "slack").json, "d", "slack")
+            room = R.decode(op.json)
+            ok(op.status == "moved" and #room.pins == 9, "moving into a named place also drops the unnamed one")
+            op = R.place(op.json, "k", "slack")
+            room = R.decode(op.json)
+            ok(#room.pins == 9 and #R.pinByKey(room, "d").apps == 0,
+                "a NAMED place stays when its last app leaves")
+            local full = empty
+            for i = 1, R.MAX_PINS do full = R.addPin(full, (i % 10) / 10, 0.5, "").json end
+            op = R.placeAt(full, 0.5, 0.5, "slack")
+            ok(op.status == "full" and op.json == R.encode(R.decode(full)), "every letter used: refused, nothing changes")
+            local lone = R.placeAt(R.addPin(full, 0, 0, "").json, 0.1, 0.1, "slack")
+            ok(lone.status == "full", "(the thirty-first place is refused before any app moves)")
+            local moved = R.placeAt(R.place(full, R.decode(full).pins[1].key, "slack").json, 0.5, 0.5, "slack")
+            ok(moved.status == "moved", "full, but the app's own unnamed place frees a letter for the new spot")
+            ok(R.placeAt(empty, 0.5, 0.5, "").status == "noapp", "no app in front")
+        end
+
+        -- ===== the live flow, letters drawn =====
         registry.register(require("features.memory_room"))
         registry.setEnabled("memory_room", true)
 
+        fake.settings[STATE] = R.setShowKeys(nil, true).json
         fake.pressHotkey("l", HYP)
         ok(fake.liveRoomPanel() == nil, "Hyper+L draws nothing yet (no flash on a fast jump)")
         ok(#fake.banners == 0 and #fake.huds == 0, "the room's modal is silent")
@@ -245,6 +292,68 @@ return {
         registry.clearTrigger("memory_room", "open")
         fake.settings[STATE] = nil
 
+        -- ===== the click flow, letters hidden (the default) =====
+        fake.settings[STATE] = R.place(R.place(nil, "k", "com.a").json, "k", "com.b").json
+        front("Finder", "com.apple.finder")
+        fake.pressHotkey("l", HYP)
+        local room = fake.liveRoomPanel()
+        ok(room ~= nil and room.spec.showKeys == false,
+            "no letters: the room is drawn at once, to be clicked, and told not to draw them")
+        ok(room and room.spec.hint
+            == "click: bring it forward    right-click anywhere: put the app you're in there    esc: close",
+            "the hint line names clicks, not letters")
+        ok(room and #room.spec.pins == 1 and room.spec.pins[1].key == "k",
+            "a clicked room draws only the places that hold apps")
+        ok(room and room.spec.placeLabel == "Put Finder here", "the right-click item names the app in front")
+        fake.pickRoom({ key = "k" })
+        ok(fake.launchedApps[#fake.launchedApps] == "com.a", "a click on a place brings its app forward")
+        ok(fake.liveRoomPanel() == nil, "and closes the room")
+
+        fake.pressHotkey("l", HYP)
+        fake.pickRoom({ key = "k", app = 2 })
+        ok(fake.launchedApps[#fake.launchedApps] == "com.b", "a click on an icon brings THAT app forward")
+
+        fake.pressHotkey("l", HYP)
+        fake.pressHotkey("d", {})
+        ok(fake.alerts[#fake.alerts] == "Desk is empty. Shift+D puts the app in front there.",
+            "an undrawn empty place, reached by its hidden letter, says how to fill it by letter")
+        ok(fake.liveRoomPanel() ~= nil, "and the room stays open")
+        fake.pickRoom({ action = "placeAt", x = 0.5, y = 0.3 })
+        ok(fake.alerts[#fake.alerts] == "Finder is in the room",
+            "right-click off every place puts the app in front right there, naming no unseen letter")
+        ok(fake.liveRoomPanel() == nil, "placing closes the room")
+        local placed = R.decode(fake.settings[STATE])
+        local here
+        for _, p in ipairs(placed.pins) do if p.apps[1] == "com.apple.finder" then here = p end end
+        ok(here and here.x == 0.5 and here.y == 0.3 and #placed.pins == 10, "a new place, where the click was")
+
+        fake.pressHotkey("l", HYP)
+        ok(#fake.liveRoomPanel().spec.pins == 2, "and the room now draws it")
+        fake.pickRoom({ key = here.key, action = "place" })
+        ok(fake.alerts[#fake.alerts] == "Finder is already there", "right-click on its own place: already there")
+
+        fake.pressHotkey("l", HYP)
+        fake.pickRoom({ key = "k", action = "place" })
+        ok(fake.alerts[#fake.alerts] == "Finder → Armchair", "right-click on a named place joins it")
+        ok(#R.decode(fake.settings[STATE]).pins == 9, "and the unnamed place Finder left is gone")
+
+        local launchedBefore = #fake.launchedApps
+        fake.pressHotkey("l", HYP)
+        fake.pickRoom(nil)
+        ok(fake.liveRoomPanel() == nil, "a click off every place closes the room")
+        fake.pressHotkey("k", {})
+        ok(#fake.launchedApps == launchedBefore, "and releases its letters with it")
+
+        fake.pressHotkey("l", HYP)
+        fake.pressHotkey("k", {})
+        ok(#fake.launchedApps == launchedBefore + 1, "hidden letters still work")
+
+        front("", "")
+        fake.pressHotkey("l", HYP)
+        ok(fake.liveRoomPanel().spec.placeLabel == nil, "no app in front: the menu offers nothing to put")
+        fake.pickRoom(nil)
+        fake.settings[STATE] = nil
+
         -- every default place's name has a literal ctx.t key in init.lua (the
         -- Settings page reads the same keys, and only i18n_parity checks them)
         do
@@ -259,11 +368,19 @@ return {
             ok(#missing == 0, "every default place name is localized: missing " .. table.concat(missing, ","))
         end
 
-        -- a room with no places
-        fake.settings[STATE] = '{"v":1,"pins":[]}'
+        -- a room with no places: lettered, it points at Settings instead of arming
+        -- a modal with no keys; clicked, it opens, since a right-click fills it
+        fake.settings[STATE] = '{"v":1,"showKeys":true,"pins":[]}'
         fake.pressHotkey("l", HYP)
         ok(fake.alerts[#fake.alerts] == "This room has no places yet. Add some in Settings > Memory Room.",
-            "an empty room points at Settings instead of arming a modal with no keys")
+            "an empty lettered room points at Settings")
+        fake.settings[STATE] = '{"v":1,"pins":[]}'
+        front("Finder", "com.apple.finder")
+        fake.pressHotkey("l", HYP)
+        ok(fake.liveRoomPanel() ~= nil and #fake.liveRoomPanel().spec.pins == 0,
+            "an empty clicked room opens, ready for a right-click")
+        fake.pickRoom({ action = "placeAt", x = 0.2, y = 0.2 })
+        ok(#R.decode(fake.settings[STATE]).pins == 1, "and the right-click makes its first place")
 
         -- disabling mid-room tears everything down
         fake.settings[STATE] = nil

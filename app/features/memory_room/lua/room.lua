@@ -11,14 +11,16 @@
 -- reads a single Lua result, so a second return value would never reach it.
 --
 -- A record:
---   { v = 1, image = nil | "neon" | "room-ab12.jpg", pins = { RoomPin, ... } }
+--   { v = 1, image = nil | "neon" | "room-ab12.jpg", showKeys = true | nil,
+--     pins = { RoomPin, ... } }
 -- `image` is the picture the room shows, and this module never interprets it:
 -- nil is the Study, a bare id is one of the built-in rooms in assets/rooms/, and
 -- a `room-*` name is the user's photo copied under <dataDir>/memory_room/. The
 -- list of built-in rooms lives with their pictures, in RoomImage.builtins
 -- (swift/RoomCanvas.swift). Every built-in room has the same furniture in the
 -- same spots, so one set of places fits all of them. Pin x/y are fractions of
--- the image (0..1, top-left).
+-- the image (0..1, top-left). `showKeys` draws each place's letter on the room;
+-- absent (the default) the room is clicked, and the letters still work unseen.
 
 local json = require("platform.json")
 
@@ -43,6 +45,7 @@ R.ROWS = { "qwertyuiop", "asdfghjkl;", "zxcvbnm,./" }
 ---@class Room
 ---@field v integer
 ---@field image string|nil
+---@field showKeys boolean
 ---@field pins RoomPin[]
 
 ---@class RoomOp
@@ -88,7 +91,7 @@ function R.default()
         pins[i] = { id = "p" .. i, name = p.name, nameKey = p.nameKey, key = p.key,
                     x = p.x, y = p.y, apps = {} }
     end
-    return { v = 1, image = nil, pins = pins }
+    return { v = 1, image = nil, showKeys = false, pins = pins }
 end
 
 ---@param raw any
@@ -125,7 +128,7 @@ function R.decode(raw)
     if type(raw) ~= "string" or raw == "" then return R.default() end
     local t = json.decode(raw)
     if type(t) ~= "table" or type(t.pins) ~= "table" then return R.default() end
-    local room = { v = 1, pins = {},
+    local room = { v = 1, pins = {}, showKeys = t.showKeys == true,
                    image = (type(t.image) == "string" and t.image ~= "") and t.image or nil }
     local usedKeys, usedIds, placed = {}, {}, {}
     for _, p in ipairs(t.pins) do
@@ -153,7 +156,10 @@ function R.encode(room)
     end
     -- json.encode fails only on a shape bug here (the record is built above from
     -- scalars); an assert makes that loud instead of persisting nil.
+    -- showKeys is written only when on, so a record that never turned it on
+    -- stays byte-for-byte what it was.
     local out = assert(json.encode(json.asObject({ v = 1, image = room.image,
+                                                   showKeys = room.showKeys or nil,
                                                    pins = json.asArray(pins) })))
     return out
 end
@@ -298,6 +304,36 @@ function R.setImage(raw, image)
     return op(room, "image")
 end
 
+-- Draw each place's letter on the room, or not. Hidden letters still work:
+-- this changes only what the room shows (and so how the room asks to be used).
+---@return RoomOp  status "showKeys"
+function R.setShowKeys(raw, on)
+    local room = R.decode(raw)
+    room.showKeys = on == true
+    return op(room, "showKeys")
+end
+
+-- Take `bundleId` out of the place that holds it, returning that place's id. A
+-- place with NO NAME exists only for its apps -- the room makes one wherever an
+-- app is put (placeAt) -- so it goes with its last app; otherwise moving apps
+-- around would fill the room with invisible leftovers, each holding a letter.
+-- A named place (every default one) stays, empty, until the user removes it.
+---@param room Room
+---@param bundleId string
+---@return string|nil
+local function takeOut(room, bundleId)
+    for i, p in ipairs(room.pins) do
+        for j, a in ipairs(p.apps) do
+            if a == bundleId then
+                table.remove(p.apps, j)
+                if #p.apps == 0 and p.name == "" and not p.nameKey then table.remove(room.pins, i) end
+                return p.id
+            end
+        end
+    end
+    return nil
+end
+
 -- Put app `bundleId` in the place on `key`. An app lives in ONE place, so
 -- placing it elsewhere moves it; a full place refuses and leaves the app where
 -- it was (checked BEFORE the move, or a refused place would still unplace it).
@@ -311,14 +347,27 @@ function R.place(raw, key, bundleId)
         if a == bundleId then return op(room, "already", { id = pin.id }) end
     end
     if #pin.apps >= R.MAX_APPS then return op(room, "full", { id = pin.id }) end
-    local from
-    for _, p in ipairs(room.pins) do
-        for i, a in ipairs(p.apps) do
-            if a == bundleId then table.remove(p.apps, i); from = p.id; break end
-        end
-    end
+    local from = takeOut(room, bundleId)
     pin.apps[#pin.apps + 1] = bundleId
     return op(room, from and "moved" or "placed", { id = pin.id, from = from })
+end
+
+-- Put app `bundleId` exactly at (x, y), wherever that is: a new, unnamed place
+-- there, on the letter under that spot (as a dropped pin gets). The app moves
+-- out of wherever it was first, so moving the last app out of a place the room
+-- made frees that place (and its letter) for this one. A room with every letter
+-- used refuses and moves nothing.
+---@return RoomOp  status "placed" | "moved" | "full" | "noapp"
+function R.placeAt(raw, x, y, bundleId)
+    local room = R.decode(raw)
+    if type(bundleId) ~= "string" or bundleId == "" then return op(room, "noapp") end
+    local id = nextId(room)             -- before takeOut, so a freed id is never reused here
+    local from = takeOut(room, bundleId)
+    local key = #room.pins < R.MAX_PINS and R.keyFor(room, x, y) or nil
+    if not key then return op(R.decode(raw), "full") end
+    room.pins[#room.pins + 1] = { id = id, key = key, x = unit(x), y = unit(y),
+                                  apps = { bundleId }, name = "" }
+    return op(room, from and "moved" or "placed", { id = id, from = from })
 end
 
 ---@return RoomOp  status "unplaced" | "nopin" | "absent"

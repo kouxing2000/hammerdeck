@@ -1,10 +1,11 @@
 import SwiftUI
 
 // memory_room's gallery card (FeatureArchetype.memoryRoom): the default room with
-// a few apps in their places, and a key press lighting one place after another --
-// "find it by where it lives". Its pins are animation FIXTURES, not the feature's
-// real default record (that lives in room.lua): the card must look the same on
-// every Mac, whatever the user has placed.
+// a few apps in their places, drawn as the room opens by default (no letters), and
+// one place after another lighting as if picked -- "find it by where it lives".
+// Its pins are animation FIXTURES, not the feature's real default record (that
+// lives in room.lua): the card must look the same on every Mac, whatever the
+// user has placed.
 struct MemoryRoomArchetypeScene: View {
     let playing: Bool
 
@@ -28,7 +29,7 @@ struct MemoryRoomArchetypeScene: View {
         let image = RoomImage.load(nil)
         RoomCanvas(image: image, pins: pins,
                    selected: playing ? Self.fixtures[lit].key : nil,
-                   scale: 0.8, showNames: false)
+                   scale: 0.8, showKeys: false)
             .aspectRatio(RoomImage.aspect(image), contentMode: .fit)
             .animation(.easeInOut(duration: 0.25), value: lit)
             .heartbeat(Self.heartbeat, active: playing,

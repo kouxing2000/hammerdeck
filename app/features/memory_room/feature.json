@@ -1,7 +1,7 @@
 {
   "name": "Memory Room",
   "version": "1.0.0",
-  "description": "A memory palace for your apps: put each app in a place in a room -- an illustrated room, or a photo of one you know -- then find it by where it lives. Open the room, then press the place's letter to bring it forward; Shift+letter puts the app in front there.",
+  "description": "A memory palace for your apps: put each app in a place in a room -- an illustrated room, or a photo of one you know -- then find it by where it lives. Open the room and click a place to bring its app forward; right-click anywhere in it to put the app you're in there.",
   "category": "switching",
   "order": 7,
   "selfEvident": true,

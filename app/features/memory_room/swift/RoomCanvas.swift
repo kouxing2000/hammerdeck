@@ -1,4 +1,4 @@
-// memory_room's shared drawing: the room picture with its key-lettered pins. One
+// memory_room's shared drawing: the room picture with its pins. One
 // view serves all three places the room appears -- the Hyper+L overlay
 // (RoomPanel), the Settings editor (MemoryRoomView), and the gallery card
 // (MemoryRoomArchetypeScene) -- so a pin can never look different in the editor
@@ -145,20 +145,41 @@ enum RoomImage {
     }
 }
 
+/// Something a click in the room can land on: a place (`app` nil) or one of the
+/// app icons in it (`app` = 1-based index into the place's apps). `rect` is in
+/// the canvas's own coordinates, top-left origin.
+struct RoomTarget: Equatable {
+    let key: String
+    let app: Int?
+    let rect: CGRect
+    static let space = "roomCanvas"
+}
+
+private struct RoomTargetsKey: PreferenceKey {
+    static let defaultValue: [RoomTarget] = []
+    static func reduce(value: inout [RoomTarget], nextValue: () -> [RoomTarget]) {
+        value += nextValue()
+    }
+}
+
 /// The room at a fixed size: picture (dimmed ~20% so light pins stay readable on
-/// any photo), then each pin as a dark keycap chip with the icons of the apps
-/// placed there. `scale` is the caller's HUDScale factor (1 in Settings).
+/// any photo), then each pin as a dark chip with the icons of the apps placed
+/// there -- and its key letter, when the room draws letters. `scale` is the
+/// caller's HUDScale factor (1 in Settings).
 struct RoomCanvas: View {
     let image: NSImage?
     let pins: [RoomPinDisplay]
     /// Bundle id of the frontmost app: its pin gets the accent ring, so the room
     /// also answers "where does the thing I'm in right now live?"
     var front: String? = nil
-    /// The pin selected in the editor (by id).
+    /// The pin selected in the editor, or under the pointer in the overlay (by id).
     var selected: String? = nil
     var scale: CGFloat = 1
-    /// Caption each chip with its place's name -- how a newcomer learns the room.
-    var showNames: Bool = true
+    /// Draw each place's key letter. Off, a place is its icons (or, empty, a ring).
+    var showKeys: Bool = true
+    /// Where each place and icon was drawn, for a caller that takes clicks (the
+    /// overlay's hit layer). Nil draws only.
+    var onTargets: (([RoomTarget]) -> Void)? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -178,57 +199,67 @@ struct RoomCanvas: View {
                 ForEach(pins) { pin in
                     RoomPinChip(pin: pin, scale: scale,
                                 lit: pin.apps.contains { $0 == front } || pin.id == selected,
-                                showName: showNames)
+                                showKey: showKeys,
+                                reportsTargets: onTargets != nil)
                         .position(x: pin.x * geo.size.width, y: pin.y * geo.size.height)
                 }
             }
+            .coordinateSpace(name: RoomTarget.space)
+            .onPreferenceChange(RoomTargetsKey.self) { onTargets?($0) }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10 * scale))
     }
 }
 
-/// One place: the key letter on a dark chip, the placed apps' icons beside it.
+/// One place: a dark chip holding the placed apps' icons, after the key letter
+/// when the room draws letters. An empty place with no letter to show is a small
+/// dashed ring, so it still reads as a spot to click. No name is drawn: the
+/// picture already shows the desk; the name serves the places list and the alerts.
 struct RoomPinChip: View {
     let pin: RoomPinDisplay
     let scale: CGFloat
     let lit: Bool
-    var showName: Bool = true
+    var showKey: Bool = true
+    var reportsTargets: Bool = false
 
     var body: some View {
-        VStack(spacing: 2 * scale) {
-            chip
-            if showName, !pin.name.isEmpty {
-                // On the chip's dark backing, not a bare shadow: on a bright room
-                // (or a bright photo) white text over a shadow alone drops well
-                // under readable contrast.
-                Text(pin.name)
-                    .font(.system(size: 10 * scale, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .padding(.horizontal, 4 * scale)
-                    .padding(.vertical, 1 * scale)
-                    .background(RoundedRectangle(cornerRadius: 4 * scale).fill(Color.black.opacity(0.6)))
-            }
+        Group {
+            if !showKey && pin.apps.isEmpty { ring } else { chip }
         }
         .help(pin.name)
+        .background(target(app: nil))
+    }
+
+    private var ring: some View {
+        Circle()
+            .fill(Color.black.opacity(0.55))
+            .overlay(Circle().strokeBorder(lit ? Color.accentColor : .white.opacity(0.8),
+                                           style: StrokeStyle(lineWidth: (lit ? 2 : 1.5) * scale,
+                                                              dash: [3 * scale, 2 * scale])))
+            .frame(width: 16 * scale, height: 16 * scale)
     }
 
     private var chip: some View {
         HStack(spacing: 3 * scale) {
-            Text(pin.key.uppercased())
-                .font(.system(size: 13 * scale, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .frame(minWidth: 22 * scale, minHeight: 22 * scale)
-            ForEach(pin.apps, id: \.self) { app in
-                if let icon = AppCatalog.icon(forBundleId: app) {
-                    Image(nsImage: icon).resizable().frame(width: 22 * scale, height: 22 * scale)
-                } else {
-                    // Uninstalled since it was placed: a faded placeholder, so the
-                    // place still shows it is taken until the user removes it.
-                    RoundedRectangle(cornerRadius: 5 * scale)
-                        .strokeBorder(.white.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
-                        .frame(width: 20 * scale, height: 20 * scale)
+            if showKey {
+                Text(pin.key.uppercased())
+                    .font(.system(size: 13 * scale, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 22 * scale, minHeight: 22 * scale)
+            }
+            ForEach(Array(pin.apps.enumerated()), id: \.element) { i, app in
+                Group {
+                    if let icon = AppCatalog.icon(forBundleId: app) {
+                        Image(nsImage: icon).resizable().frame(width: 22 * scale, height: 22 * scale)
+                    } else {
+                        // Uninstalled since it was placed: a faded placeholder, so the
+                        // place still shows it is taken until the user removes it.
+                        RoundedRectangle(cornerRadius: 5 * scale)
+                            .strokeBorder(.white.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                            .frame(width: 20 * scale, height: 20 * scale)
+                    }
                 }
+                .background(target(app: i + 1))
             }
         }
         .padding(.horizontal, 5 * scale)
@@ -236,5 +267,17 @@ struct RoomPinChip: View {
         .background(RoundedRectangle(cornerRadius: 7 * scale).fill(Color.black.opacity(0.72)))
         .overlay(RoundedRectangle(cornerRadius: 7 * scale)
             .strokeBorder(lit ? Color.accentColor : .white.opacity(0.35), lineWidth: lit ? 2 * scale : 1))
+    }
+
+    /// Report where this place (or one of its icons) was drawn, for the overlay's
+    /// hit layer. Nothing at all when the caller only draws.
+    @ViewBuilder private func target(app: Int?) -> some View {
+        if reportsTargets {
+            GeometryReader { g in
+                Color.clear.preference(key: RoomTargetsKey.self, value: [
+                    RoomTarget(key: pin.key, app: app, rect: g.frame(in: .named(RoomTarget.space))),
+                ])
+            }
+        }
     }
 }
