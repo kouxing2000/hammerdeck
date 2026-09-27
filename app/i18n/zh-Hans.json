@@ -521,6 +521,7 @@
   "rules.position.bottomRight": "右下",
   "rules.token.theProperty": "%@",
   "settings.about": "关于",
+  "settings.open_page": "打开“%@”页面",
   "settings.about_and_permissions": "关于与权限",
   "settings.app": "应用",
   "settings.auto_update": "自动检查更新",

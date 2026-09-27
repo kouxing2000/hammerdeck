@@ -164,7 +164,7 @@ struct HomepageView: View {
             case .timeline:
                 AutomationTimelineView(store: store)
             case .settings:
-                SettingsPane(store: store)
+                SettingsPane(store: store, openPage: { nav.destination = .feature($0) })
             case .feature(let fid):
                 if store.showsPage(fid),
                    let view = FeaturePageRegistry.shared.view(for: fid, store: store) {

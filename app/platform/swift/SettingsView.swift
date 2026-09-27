@@ -17,6 +17,9 @@ import AppKit
 /// to a feature's detail (set selectedFeatureId, switch to this tab).
 struct SettingsPane: View {
     @ObservedObject var store: SettingsStore
+    /// Opens a feature's own Homepage page (the shell owns navigation). Nil hides
+    /// the link, for a host that has no page to open.
+    var openPage: ((String) -> Void)? = nil
 
     /// Sentinel selection id for the host-level "General" pane (app preferences
     /// that are not a Lua feature -- Caps->Hyper, Show in Dock).
@@ -84,7 +87,7 @@ struct SettingsPane: View {
                     // open) belongs to the feature being shown -- without it SwiftUI
                     // reuses one instance across sidebar selections and the disclosure
                     // state of the last feature carries onto the next.
-                    FeatureDetail(store: store, feature: feature)
+                    FeatureDetail(store: store, feature: feature, openPage: openPage)
                         .id(feature.id)
                 } else {
                     Text(Strings.t("settings.select_feature", default: "Select a feature"))
@@ -753,12 +756,14 @@ private let kAboutAnchor = "feature-detail-about"
 private struct FeatureDetail: View {
     @ObservedObject var store: SettingsStore
     let feature: FeatureInfo
+    let openPage: ((String) -> Void)?
 
     @State private var aboutExpanded: Bool
 
-    init(store: SettingsStore, feature: FeatureInfo) {
+    init(store: SettingsStore, feature: FeatureInfo, openPage: ((String) -> Void)?) {
         self.store = store
         self.feature = feature
+        self.openPage = openPage
         // A pure service with no options has nothing else to show; opening
         // About makes the pane a page instead of a stack of closed doors. A
         // module that never LOADED also has no options and no actions, but its
@@ -801,7 +806,7 @@ private struct FeatureDetail: View {
                     // Naming the page in-content identifies it without touching the
                     // window, and keeps DebugShot captures (which render this form
                     // alone, no sidebar) self-identifying.
-                    FeatureDetailHeader(store: store, feature: feature) {
+                    FeatureDetailHeader(store: store, feature: feature, openPage: openPage) {
                         withAnimation { aboutExpanded = true }
                     }
                 }
@@ -880,6 +885,7 @@ private struct FeatureDetail: View {
 private struct FeatureDetailHeader: View {
     @ObservedObject var store: SettingsStore
     let feature: FeatureInfo
+    let openPage: ((String) -> Void)?
     /// Opens (and scrolls to) the About section -- owned by the parent, since
     /// the section it reveals is the parent's.
     let showAbout: () -> Void
@@ -943,6 +949,20 @@ private struct FeatureDetailHeader: View {
                     .buttonStyle(.link)
                     .fixedSize()
                 }
+            }
+            // A feature with its own page (the Memory Room editor, the Usage report)
+            // keeps its real controls THERE, not in this generated form -- so the
+            // form says where they are. Same gate as the sidebar entry: no link to a
+            // page the shell would refuse to show (a disabled feature's).
+            if let page = feature.page, let openPage, store.showsPage(feature.id) {
+                Button { openPage(feature.id) } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: page.icon)
+                        Text(String(format: Strings.t("settings.open_page", default: "Open the %@ page"), page.title))
+                        Image(systemName: "chevron.right").font(.caption2)
+                    }
+                }
+                .buttonStyle(.link)
             }
         }
         .padding(.vertical, 2)
