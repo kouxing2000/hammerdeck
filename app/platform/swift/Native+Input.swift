@@ -230,7 +230,11 @@ extension Native {
         guard let name = LuaState.string(L, 1), let mod = KeyModifier.parse(name) else {
             return luaError(L, "is_modifier_held: unknown modifier '\(LuaState.string(L, 1) ?? "?")'")
         }
-        lua_pushboolean(L, NSEvent.modifierFlags.contains(mod.nsFlag) ? 1 : 0)
+        // A held Caps-as-Hyper counts as holding ⌘⌥⌃: it never sets them in the
+        // live modifier state, so without this every hold-to-keep-open behavior
+        // (Memory Room's room, cyclingChooser) would read it as "released".
+        let viaCaps = mod != .shift && CapsHyperTap.shared.isHyperHeld
+        lua_pushboolean(L, (NSEvent.modifierFlags.contains(mod.nsFlag) || viaCaps) ? 1 : 0)
         return 1
     }
 

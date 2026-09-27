@@ -68,6 +68,11 @@ final class CapsHyperTap {
 
     var isEnabled: Bool { tap != nil }
 
+    /// Caps is down right now, acting as Hyper. The live modifier state never
+    /// shows ⌘⌥⌃ for it -- the tap ORs them onto the OTHER keys' events -- so a
+    /// "still held?" probe has to ask here (Native+Input.isModifierHeld).
+    var isHyperHeld: Bool { tap != nil && f18Held }
+
     /// Start the tap, then remap Caps→F18. Returns false when the tap cannot be
     /// created (no Accessibility grant) -- the caller then prompts and re-applies.
     ///
