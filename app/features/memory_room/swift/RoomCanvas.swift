@@ -8,6 +8,7 @@
 // (RoomPinDisplay) that the seam and the page decode into.
 
 import AppKit
+import ImageIO
 import SwiftUI
 
 /// One place as the room draws it: already localized, already resolved.
@@ -20,12 +21,43 @@ struct RoomPinDisplay: Identifiable, Equatable {
     let apps: [String]      // bundle ids, placement order
 }
 
-/// Where the room's picture comes from. The default room ships in the feature's
-/// assets/ (copied into the bundle with the rest of app/); a user's photo is
-/// Hammerdeck's own copy under Application Support, so moving or deleting the
-/// original never breaks the room.
+/// Where the room's picture comes from. The record's `image` is one of three kinds:
+/// nil (the Study), a built-in room's id, or `room-*` -- a user's photo, held as
+/// Hammerdeck's own copy under Application Support so moving or deleting the
+/// original never breaks the room. The built-in rooms ship in the feature's
+/// assets/rooms (copied into the bundle with the rest of app/).
 enum RoomImage {
     static let folderName = "memory_room"
+    /// The prefix of every photo copy this app mints: it is what tells a photo
+    /// from a built-in id, and the only kind of file the page ever deletes.
+    static let photoPrefix = "room-"
+
+    /// The built-in rooms, in the order the picker shows them. Every one draws the
+    /// SAME furniture in the SAME spots as the Study, so the default places (and
+    /// whatever the user put in them) fit whichever room is chosen.
+    static let builtins: [(id: String, file: String, name: String)] = [
+        ("study", "study.jpg", "Study"),
+        ("midcentury", "midcentury.jpg", "Mid-century"),
+        ("nordic", "nordic.jpg", "Nordic"),
+        ("japanese", "japanese.jpg", "Japanese"),
+        ("neon", "neon.jpg", "Neon"),
+        ("nightstudy", "nightstudy.jpg", "Night Study"),
+        ("pixel", "pixel.png", "Pixel"),   // PNG: JPEG smears the hard pixel edges
+    ]
+    static let defaultId = "study"
+    static var builtinNameKeys: [String] { builtins.map { "memoryRoom.room.\($0.id)" } }
+
+    static func isPhoto(_ name: String?) -> Bool {
+        guard let name else { return false }
+        return name.hasPrefix(photoPrefix) && !name.contains("/")
+    }
+
+    /// The built-in room a record's `image` shows: an unknown id -- a room a later
+    /// version dropped -- falls back to the Study rather than to nothing.
+    static func builtinId(_ name: String?) -> String {
+        guard let name, builtins.contains(where: { $0.id == name }) else { return defaultId }
+        return name
+    }
 
     /// <Application Support>/Hammerdeck/memory_room -- the same root the seam's
     /// data_dir hands Lua, so a user's photo sits beside the rest of the app's data.
@@ -36,25 +68,64 @@ enum RoomImage {
             .appendingPathComponent(folderName, isDirectory: true)
     }
 
-    static var defaultURL: URL {
-        URL(fileURLWithPath: resourceRoot())
-            .appendingPathComponent("app/features/memory_room/assets/default_room.jpg")
+    static func builtinURL(_ id: String) -> URL {
+        let file = (builtins.first { $0.id == id } ?? builtins[0]).file   // [0] is the Study
+        return URL(fileURLWithPath: resourceRoot())
+            .appendingPathComponent("app/features/memory_room/assets/rooms/\(file)")
+    }
+
+    /// The file a record's `image` points at: a photo resolves ONLY to its copy in
+    /// the folder, so a deleted photo stays missing (the page warns, the canvas
+    /// draws a plain board) instead of quietly turning into the Study.
+    static func url(_ name: String?) -> URL {
+        if let name, isPhoto(name) { return folder.appendingPathComponent(name) }
+        return builtinURL(builtinId(name))
+    }
+
+    /// The user's kept photo: the one `room-*` file in the folder, whichever room
+    /// is showing. The folder, not the record, remembers it, so switching to a
+    /// built-in room keeps it; the page holds the folder to ONE such file.
+    static var userPhoto: String? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.filter { isPhoto($0) }.sorted().first
     }
 
     // Decoded images are cached by path: the overlay opens on every Hyper+L pause,
     // and re-decoding a multi-megapixel photo each time would put a visible hitch
     // exactly where the room is meant to feel instant. A NEW photo always gets a
-    // new filename (MemoryRoomView.importPhoto), so a path never goes stale.
+    // new filename (MemoryRoomView.choosePhoto), so a path never goes stale.
     nonisolated(unsafe) private static let cache = NSCache<NSString, NSImage>()
 
-    /// The picture for a record's `image` field: nil = the default room. Returns
-    /// nil when the file is gone -- the caller draws a plain board, because the
-    /// places are tied to the pins, not the pixels.
+    /// The picture for a record's `image` field. Returns nil when a photo's file is
+    /// gone -- the caller draws a plain board, because the places are tied to the
+    /// pins, not the pixels.
     static func load(_ name: String?) -> NSImage? {
-        let url = name.map { folder.appendingPathComponent($0) } ?? defaultURL
+        let url = url(name)
+        // A photo can be deleted behind our back; the cache must not keep drawing
+        // it (and hiding the page's "photo missing" warning) until a restart.
+        if isPhoto(name), !FileManager.default.fileExists(atPath: url.path) { return nil }
         if let hit = cache.object(forKey: url.path as NSString) { return hit }
         guard let img = NSImage(contentsOf: url) else { return nil }
         cache.setObject(img, forKey: url.path as NSString)
+        return img
+    }
+
+    /// A picker-tile-sized picture (about 300 px on the long side). ImageIO decodes
+    /// straight to that size, so the tile row never holds seven full rooms in memory.
+    static func thumbnail(_ name: String?) -> NSImage? {
+        let url = url(name)
+        if isPhoto(name), !FileManager.default.fileExists(atPath: url.path) { return nil }
+        let key = ("thumb:" + url.path) as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 300,
+              ] as CFDictionary)
+        else { return nil }
+        let img = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        cache.setObject(img, forKey: key)
         return img
     }
 
@@ -127,11 +198,16 @@ struct RoomPinChip: View {
         VStack(spacing: 2 * scale) {
             chip
             if showName, !pin.name.isEmpty {
+                // On the chip's dark backing, not a bare shadow: on a bright room
+                // (or a bright photo) white text over a shadow alone drops well
+                // under readable contrast.
                 Text(pin.name)
                     .font(.system(size: 10 * scale, weight: .semibold))
                     .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.9), radius: 2 * scale)
                     .lineLimit(1)
+                    .padding(.horizontal, 4 * scale)
+                    .padding(.vertical, 1 * scale)
+                    .background(RoundedRectangle(cornerRadius: 4 * scale).fill(Color.black.opacity(0.6)))
             }
         }
         .help(pin.name)

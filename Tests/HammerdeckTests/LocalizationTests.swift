@@ -82,6 +82,8 @@ final class LocalizationTests: XCTestCase {
             // room.lua, and init.lua spells every one as a literal ctx.t call -- so
             // i18n_parity.lua is what checks each has a translation.
             "memoryRoom.pin.": [],
+            // The built-in rooms' tile names: the set is RoomImage.builtins.
+            "memoryRoom.room.": RoomImage.builtinNameKeys,
         ]
 
         // Every localization call site, then the two shapes we can resolve.

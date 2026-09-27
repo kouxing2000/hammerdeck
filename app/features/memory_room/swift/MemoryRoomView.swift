@@ -3,8 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 // The Memory Room editor -- memory_room's feature-contributed Settings page. The
-// user picks the room's picture (the default study, or a photo of a room they
-// know), clicks it to drop places, drags them, renames them, re-keys them, and
+// user picks the room's picture (one of the built-in rooms, or a photo of a room
+// they know), clicks it to drop places, drags them, renames them, re-keys them, and
 // removes the apps they no longer want there.
 //
 // This view owns NO schema. Every read and edit goes through room.lua via
@@ -21,6 +21,9 @@ struct MemoryRoomView: View {
     @State private var selected: String?
     @State private var drag: (id: String, x: Double, y: Double)?
     @State private var notice: String?
+    /// The kept photo's filename. Read in load(), never in body: the room card
+    /// re-renders on every drag frame, and listing a folder there is main-thread I/O.
+    @State private var photo: String?
 
     static let stateKey = "hammerdeck.state.memory_room.room"
     private static let module = "features.memory_room.room"
@@ -50,6 +53,15 @@ struct MemoryRoomView: View {
         if let dict: [String: Any] = store.callValue(Self.module, "decode", [.string(raw)]) {
             room = RoomRecord(dict)
         }
+        // The record's own photo when it names one that is there; the folder only
+        // when it names none (a built-in room is showing). A leftover second copy
+        // then can never stand in for the photo the room actually uses.
+        if let name = room.image, RoomImage.isPhoto(name),
+           FileManager.default.fileExists(atPath: RoomImage.url(name).path) {
+            photo = name
+        } else {
+            photo = RoomImage.userPhoto
+        }
         if let sel = selected, !room.pins.contains(where: { $0.id == sel }) { selected = nil }
     }
 
@@ -70,11 +82,29 @@ struct MemoryRoomView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(Strings.t("memoryRoom.page.title", default: "Memory Room")).font(.title2.weight(.semibold))
-            Text(Strings.t("memoryRoom.page.subtitle",
-                           default: "Open the room (Hyper+L), then press a place's letter to bring its app forward. Shift+letter puts the app in front there."))
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // Only while `open` has a key to press -- which is always, today: it has
+            // a default hotkey, is not automatable, and clearing an override
+            // restores that default.
+            if let key = openShortcut {
+                Text(String(format: Strings.t("memoryRoom.page.subtitle",
+                                              default: "Open the room (%@), then press a place's letter to bring its app forward. Shift+letter puts the app in front there."),
+                            key))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    /// The room's CURRENT shortcut, drawn as the Settings chip draws it -- never
+    /// the default spelled out, which is wrong for anyone who rebound it or does
+    /// not use Caps as Hyper. Nil when there is no key to press.
+    private var openShortcut: String? {
+        guard let action = store.features.first(where: { $0.id == MemoryRoomPage.featureId })?
+                .actions.first(where: { $0.id == "open" }),
+              let t = action.trigger, t.type == "hotkey" || t.type == "chord"
+        else { return nil }
+        let glyph = shortcutGlyph(t)
+        return glyph.isEmpty ? nil : glyph
     }
 
     // MARK: - The room (click to add, drag to move)
@@ -82,7 +112,7 @@ struct MemoryRoomView: View {
     private var roomCard: some View {
         let image = RoomImage.load(room.image)
         return DashCard(title: Strings.t("memoryRoom.page.room", default: "Room"), icon: "photo", tint: .accentColor) {
-            if room.image != nil && image == nil {
+            if RoomImage.isPhoto(room.image) && image == nil {
                 Label(Strings.t("memoryRoom.page.photoMissing",
                                 default: "The room photo is missing. Your places still work; choose the photo again to see it."),
                       systemImage: "exclamationmark.triangle")
@@ -95,11 +125,9 @@ struct MemoryRoomView: View {
                            default: "Click an empty spot to add a place; its letter comes from where it sits (top third = QWERT row). Drag a place to move it -- its letter stays."))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            roomPicker
             HStack(spacing: 8) {
                 Button(Strings.t("memoryRoom.page.choosePhoto", default: "Choose Photo…")) { choosePhoto() }
-                if room.image != nil {
-                    Button(Strings.t("memoryRoom.page.useDefault", default: "Use the Default Room")) { useDefault() }
-                }
                 Spacer()
                 Text(String(format: Strings.t("memoryRoom.page.count", default: "%1$d of %2$d places"),
                             room.pins.count, 30))
@@ -110,7 +138,7 @@ struct MemoryRoomView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(Strings.t("memoryRoom.page.privacy",
-                           default: "The photo shows whenever the room opens -- including while you share your screen. It stays on this Mac: Hammerdeck keeps its own copy."))
+                           default: "While your photo is the room in use, it shows whenever the room opens -- including while you share your screen. It stays on this Mac: Hammerdeck keeps its own copy until you choose another photo."))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -184,6 +212,51 @@ struct MemoryRoomView: View {
                 selected = r.id
             }
         }
+    }
+
+    // MARK: - Which room (built-in rooms + the user's photo)
+
+    /// One tile per built-in room, then the user's photo. Every built-in room has
+    /// the same furniture in the same spots, so switching keeps every place and app;
+    /// the photo tile switches back to the kept photo, or asks for one.
+    ///
+    /// Plain rows of four, not a LazyVGrid: eight tiles need no laziness, and a
+    /// lazy grid leaves cells it has not scrolled to undrawn (blank in @shot).
+    private var roomPicker: some View {
+        let onPhoto = RoomImage.isPhoto(room.image)
+        let aspect = RoomImage.aspect(RoomImage.load(nil))
+        let current = RoomImage.builtinId(room.image)
+        var tiles: [RoomTile] = RoomImage.builtins.map { b in
+            RoomTile(image: RoomImage.thumbnail(b.id),
+                     label: Strings.t("memoryRoom.room.\(b.id)", default: b.name),
+                     selected: !onPhoto && current == b.id, aspect: aspect) {
+                notice = nil
+                // The Study is the record's nil, as it has always been.
+                apply("setImage", [.string(b.id == RoomImage.defaultId ? "" : b.id)])
+            }
+        }
+        tiles.append(RoomTile(image: photo.flatMap { RoomImage.thumbnail($0) },
+                              label: Strings.t("memoryRoom.page.yourPhoto", default: "Your Photo"),
+                              selected: onPhoto, aspect: aspect) {
+            notice = nil
+            if let photo { apply("setImage", [.string(photo)]) } else { choosePhoto() }
+        })
+        let perRow = 4
+        let rows = stride(from: 0, to: tiles.count, by: perRow).map { Array(tiles[$0..<min($0 + perRow, tiles.count)]) }
+        return VStack(spacing: 10) {
+            ForEach(rows.indices, id: \.self) { r in
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(rows[r].indices, id: \.self) { i in
+                        rows[r][i].frame(maxWidth: .infinity)
+                    }
+                    // A short last row keeps the other rows' tile width.
+                    ForEach(rows[r].count..<perRow, id: \.self) { _ in
+                        Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 760)
     }
 
     // MARK: - Places list
@@ -292,7 +365,7 @@ struct MemoryRoomView: View {
         // A NEW name every import: RoomImage caches by path, so reusing one name
         // would keep drawing the old photo.
         let ext = url.pathExtension.isEmpty ? "jpg" : url.pathExtension.lowercased()
-        let name = "room-\(UUID().uuidString.prefix(8)).\(ext)"
+        let name = "\(RoomImage.photoPrefix)\(UUID().uuidString.prefix(8)).\(ext)"
         do {
             try FileManager.default.createDirectory(at: RoomImage.folder, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: url, to: RoomImage.folder.appendingPathComponent(name))
@@ -301,27 +374,81 @@ struct MemoryRoomView: View {
                             error.localizedDescription)
             return
         }
-        let previous = room.image
         // Only once the record points at the new copy: deleting the old one first
-        // would leave a failed write pointing at a file that no longer exists.
+        // would leave a failed write pointing at a file that no longer exists. Then
+        // EVERY other copy goes, not just the one the record named: while a
+        // built-in room shows, the record names no photo at all, and the folder
+        // must hold exactly one for RoomImage.userPhoto to find.
         if apply("setImage", [.string(name)]) != nil {
-            deleteCopy(previous)
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: RoomImage.folder.path)) ?? []
+            for other in names where other != name { deleteCopy(other) }
         } else {
             deleteCopy(name)
         }
-    }
-
-    private func useDefault() {
-        let previous = room.image
-        if apply("setImage", [.string("")]) != nil { deleteCopy(previous) }
     }
 
     /// Delete Hammerdeck's own copy of a photo it no longer uses. Only a name this
     /// page minted (room-*), and only inside the room folder -- never a path the
     /// record could point elsewhere.
     private func deleteCopy(_ name: String?) {
-        guard let name, name.hasPrefix("room-"), !name.contains("/") else { return }
+        guard RoomImage.isPhoto(name), let name else { return }
         try? FileManager.default.removeItem(at: RoomImage.folder.appendingPathComponent(name))
+    }
+}
+
+// MARK: - One room in the picker
+
+private struct RoomTile: View {
+    let image: NSImage?
+    let label: String
+    let selected: Bool
+    /// The Study's shape, so every tile lines up whatever a user's photo measures.
+    let aspect: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                // The picture fills the tile and is cropped to it.
+                Color.clear
+                    .aspectRatio(aspect, contentMode: .fit)
+                    .overlay {
+                        if let image {
+                            Image(nsImage: image).resizable().interpolation(.high)
+                                .aspectRatio(contentMode: .fill)
+                        } else {
+                            // No photo yet: the tile is the way to choose one.
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.secondary.opacity(0.6),
+                                                  style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                Image(systemName: "photo.badge.plus")
+                                    .font(.title2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.12),
+                                      lineWidth: selected ? 3 : 1))
+                    .overlay(alignment: .topTrailing) {
+                        if selected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.white, Color.accentColor)
+                                .padding(5)
+                        }
+                    }
+                Text(label)
+                    .font(.caption.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? .primary : .secondary)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

@@ -14,7 +14,7 @@ import SwiftUI
 final class RoomPanel {
     struct Spec {
         let title: String
-        let image: String?       // nil = the default room
+        let image: String?       // the record's `image`: nil = the Study (see RoomImage)
         let pins: [RoomPinDisplay]
         let hint: String?
         let front: String?

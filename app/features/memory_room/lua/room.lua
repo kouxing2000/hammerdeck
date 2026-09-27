@@ -11,9 +11,14 @@
 -- reads a single Lua result, so a second return value would never reach it.
 --
 -- A record:
---   { v = 1, image = "room.jpg" | nil, pins = { RoomPin, ... } }
--- `image` is a filename under <dataDir>/memory_room/ (nil = the default room
--- shipped in assets/). Pin x/y are fractions of the image (0..1, top-left).
+--   { v = 1, image = nil | "neon" | "room-ab12.jpg", pins = { RoomPin, ... } }
+-- `image` is the picture the room shows, and this module never interprets it:
+-- nil is the Study, a bare id is one of the built-in rooms in assets/rooms/, and
+-- a `room-*` name is the user's photo copied under <dataDir>/memory_room/. The
+-- list of built-in rooms lives with their pictures, in RoomImage.builtins
+-- (swift/RoomCanvas.swift). Every built-in room has the same furniture in the
+-- same spots, so one set of places fits all of them. Pin x/y are fractions of
+-- the image (0..1, top-left).
 
 local json = require("platform.json")
 
@@ -58,7 +63,8 @@ local function unit(v)
     return math.max(0, math.min(1, v))
 end
 
--- The default room: the illustrated study in assets/default_room.jpg. Keys are
+-- The default room: the illustrated study in assets/rooms/study.jpg (and every
+-- other built-in room, drawn to the same layout). Keys are
 -- chosen by hand to sit near where their furniture is (the same rule a dropped
 -- pin follows), nudged onto a mnemonic where the position allows -- D is the
 -- desk. The coordinates are tied to that image; test/cases/memory_room.lua pins
@@ -281,9 +287,10 @@ function R.removePin(raw, id)
     return op(room, "nopin")
 end
 
--- Point the room at a new photo (a filename under <dataDir>/memory_room/, or ""
--- for the default room). Pins stay put: they are fractions, so they land in the
--- same relative spots, and the user drags whichever ones no longer fit.
+-- Point the room at another picture: a built-in room's id, a photo's filename
+-- under <dataDir>/memory_room/, or "" for the Study. Pins stay put: they are
+-- fractions, so they land in the same relative spots -- exactly right on every
+-- built-in room, and on a photo the user drags whichever ones no longer fit.
 ---@return RoomOp  status "image"
 function R.setImage(raw, image)
     local room = R.decode(raw)

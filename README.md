@@ -81,7 +81,7 @@ A feature ships **off** unless its row says *on by default* -- those work from a
 - **Quick Sites** -- Jump to a favorite site -- focuses its tab if it's already open, opens it if not. Per site, pick the browser, a Chrome profile, and whether it opens as a standalone app window, a fresh private window, or both. cmd+<number> jumps straight to a row in the picker, and every site is also a menubar row you can give its own shortcut. <sub>Reaches: reads browser tabs, network, reads/writes files.</sub>
 - **Clipboard History** -- Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded. <sub>Reaches: types keystrokes, reads/writes files.</sub>
 - **App Launcher** -- Launch or focus any installed app from a searchable panel -- found by a plain disk scan, never Spotlight indexing. <sub>Reaches: sees installed apps.</sub>
-- **Memory Room** -- A memory palace for your apps: put each app in a place in a room -- an illustrated study, or a photo of a room you know -- then find it by where it lives. Hyper+L, then the place's letter brings it forward; Shift+letter puts the app in front there.
+- **Memory Room** -- A memory palace for your apps: put each app in a place in a room -- an illustrated room, or a photo of one you know -- then find it by where it lives. Open the room, then press the place's letter to bring it forward; Shift+letter puts the app in front there.
 
 ### Text
 

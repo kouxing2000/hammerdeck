@@ -223,7 +223,7 @@ local function controllerFor(ctx)
                 bindings[#bindings + 1] = { mods = placeMods, key = key, fn = function() place(key) end }
             end
         end
-        ctx.log("open", #room.pins, "places", room.image and "custom" or "default")
+        ctx.log("open", #room.pins, "places", "room", room.image or "study")
         st.modal = ctx.modal({
             silent   = true,
             bindings = bindings,
