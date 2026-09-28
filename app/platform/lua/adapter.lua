@@ -418,17 +418,18 @@ function adapter.hud(spec)
     }
 end
 
--- Memory Room's overlay: the room's picture with its places, each carrying the
--- icons of the apps placed there. Non-activating -- it never takes focus from the
--- app the user is about to leave or place -- but CLICKABLE. `spec`: { title,
--- image (the record's `image`, nil = the Study), pins = {{key, name, x, y, apps}},
--- hint, front (bundle id of the frontmost app), showKeys (draw each place's
--- letter), placeLabel (the right-click item, nil = no menu) }.
--- `onPick(pick)` gets {key, app?} for a click on a place (app = the icon's index
--- in the place's apps); for the right-click item, {key, action = "place"} on a
--- place or {action = "placeAt", x, y} off every place (x, y: 0..1 of the room,
--- top-left); and nil for a click off every place -- on the room or anywhere else
--- on screen.
+-- Memory Room's overlay: the room's picture with one app's windows on it, each an
+-- icon with a short label. Non-activating -- it never takes focus from the window
+-- the user is about to leave -- but CLICKABLE. `spec`: { title, image (the record's
+-- `image`, nil = the Study), pins = {{id, wid, name, title, x, y, apps}}, hint,
+-- front (the id of the window in front), foot = {w, h} (how close two spots may
+-- be, 0..1 of the room: a drop lands at least that far from every other window) }.
+-- Hovering a pin shows its title, and its
+-- window's picture (by `wid`) when Screen Recording is granted -- the panel asks on
+-- the first hover.
+-- `onPick(pick)` gets {id} for a click on a window, {id, action = "move", x, y}
+-- when a drag lets go (x, y: 0..1 of the room, top-left), and nil for a click off
+-- every window -- on the room or anywhere else on screen.
 -- Returns { stop() }.
 function adapter.roomPanel(spec, onPick)
     local id = native.room_panel_show(spec or {}, onPick or function() end)
@@ -629,11 +630,14 @@ end
 -- Windows / apps
 -- ---------------------------------------------------------------------------
 
--- All standard windows, most-recently-focused first: { id, wid, title,
+-- All standard windows, most-recently-focused first: { id, wid, pid, title,
 -- appName, bundleID, x, y, w, h, minimized, fullscreen, screenName? } rows
 -- (frame in top-left-origin global points -- the layout engine snapshots it).
 -- `id` is valid only until the next list; `wid` is the OS-stable CGWindowID
--- (0 = unresolved), the key for long-lived identity (it survives retitles).
+-- (0 = unresolved), the key for long-lived identity (it survives retitles) --
+-- within one WindowServer session: after a reboot or logout the numbers are
+-- handed out again, so a wid kept on disk names the same window only while the
+-- owning process (`pid`) is the one it was kept with.
 -- Minimized/fullscreen windows ARE listed (with their normal frames) --
 -- layout features filter them out. Returns {} when the Accessibility
 -- permission is missing -- check axTrusted()/axPrompt() to onboard.

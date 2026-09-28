@@ -1,12 +1,13 @@
 {
   "name": "Memory Room",
   "version": "1.0.0",
-  "description": "A memory palace for your apps: put each app in a place in a room -- an illustrated room, or a photo of one you know -- then find it by where it lives. Open the room and click a place to bring its app forward; right-click anywhere in it to put the app you're in there.",
+  "description": "A memory palace for an app's many windows: open the room in an app and each of its windows keeps a spot in a room -- an illustrated room, or a photo of one you know -- so you find the one you need by where it lives, not by reading titles. Click a window to bring it forward; drag it to move its spot.",
   "category": "switching",
   "order": 7,
   "selfEvident": true,
   "icon": "house",
-  "context": "anywhere",
+  "context": "window",
+  "requires": ["accessibility"],
   "page": {
     "title": "Memory Room",
     "icon": "house"

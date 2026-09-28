@@ -102,15 +102,21 @@ final class VibrancyHUDPanel: FloatingPanel {
     /// the frame can NEVER change afterward. Use it for a HUD whose content
     /// mutates while shown (HyperHint's hover hint), so nothing it does can grow
     /// or shift the card. Off for the static HUDs.
+    ///
+    /// `centered`: in the middle of the screen's visible area instead (below the
+    /// menu bar, above the Dock) -- for a card too tall for the lower third.
     @discardableResult
-    func present(minWidth: CGFloat, lockSize: Bool = false, on target: NSScreen? = nil) -> CGFloat {
+    func present(minWidth: CGFloat, lockSize: Bool = false, on target: NSScreen? = nil,
+                 centered: Bool = false) -> CGFloat {
         effect.layoutSubtreeIfNeeded()
         let fit = stack.fittingSize
         let w = max(minWidth, fit.width)
         let h = fit.height
-        let screen = (target ?? NSScreen.main)?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let shown = target ?? NSScreen.main
+        let screen = shown?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let visible = shown?.visibleFrame ?? screen
         setFrame(NSRect(x: screen.midX - w / 2,
-                        y: screen.minY + screen.height * 0.30,
+                        y: centered ? visible.midY - h / 2 : screen.minY + screen.height * 0.30,
                         width: w, height: h), display: true)
         if lockSize {
             contentMinSize = NSSize(width: w, height: h)

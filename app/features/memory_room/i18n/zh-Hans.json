@@ -1,28 +1,18 @@
 {
   "name": "记忆房间",
-  "description": "为应用打造的记忆宫殿：把每个应用放进房间里的一个位置——一间插画房间，或你熟悉的房间照片——之后凭“它在哪儿”找到它。打开房间，点击一个位置就把那里的应用调到前面；在房间任意处右键，把你正在用的应用放到那里。",
+  "description": "为同一个应用的许多窗口打造的记忆宫殿：在应用里打开它的房间，每个窗口都有一个固定的位置——一间插画房间，或你熟悉的房间照片——之后凭“它在哪儿”找到它，而不用逐个辨认标题。点击窗口把它调到前面，拖动它换个位置。",
 
   "page.title": "记忆房间",
 
   "action.open.label": "打开房间",
-  "action.open.description": "显示房间：点击一个位置把那里的应用调到前面，在房间任意处右键把你正在用的应用放到那里。",
+  "action.open.description": "显示当前应用的房间：点击一个窗口把它调到前面，拖动一个窗口移动它的位置。",
   "action.open.mnemonic": "L——Loci（记忆宫殿里的位置）",
 
-  "panel.title": "记忆房间",
-  "panel.hint": "字母：调到前面    再按：下一个应用    Shift+字母：把当前应用放到这里    Esc：关闭",
-  "panel.clickHint": "点击：调到前面    在任意处右键：把你正在用的应用放到那里    Esc：关闭",
-  "panel.putHere": "把 %s 放到这里",
+  "panel.hint": "点击：调到前面    拖动：移动它    Esc：关闭",
 
-  "alert.empty": "%1$s 还是空的。按 Shift+%2$s 把当前应用放到那里。",
-  "alert.launchRefused": "无法打开 %1$s 上的应用：%2$s",
-  "alert.gone": "%s 上的应用已不再安装。请在“设置 > 记忆房间”中移除它。",
-  "alert.placed": "%1$s → %2$s",
-  "alert.already": "%1$s 已经在 %2$s 上",
-  "alert.alreadyHere": "%s 已经在那里了",
-  "alert.inRoom": "%s 已放进房间",
-  "alert.full": "%1$s 已放满 %2$d 个应用。请先在“设置 > 记忆房间”中移除一个。",
-  "alert.fullHere": "那个位置已放满 %d 个应用。请先在“设置 > 记忆房间”中移除一个。",
-  "alert.roomFull": "房间里已有 %d 个位置。请先在“设置 > 记忆房间”中移除一个。",
-  "alert.noApp": "前台没有可放置的应用。",
-  "alert.noPins": "这个房间还没有位置。请在“设置 > 记忆房间”中添加。"
+  "alert.gone": "那个窗口已经关闭了。",
+  "alert.noApp": "前台没有应用。",
+  "alert.needsAccess": "记忆房间需要“辅助功能”权限才能看到你的窗口。",
+  "alert.noAnswer": "%s 没有及时响应，请再试一次。",
+  "alert.noWindows": "%s 没有打开的窗口。"
 }

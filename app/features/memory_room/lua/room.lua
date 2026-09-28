@@ -2,62 +2,94 @@
 --
 -- The Memory Room's ONE schema: decode, validate, default, and every edit. Pure
 -- -- JSON text in, JSON text out -- with no ctx, no adapter, no clock, so both
--- writers share it: the running feature (Shift+letter places an app) and the
--- Settings page, which calls these functions through SettingsStore.readerCall
+-- writers share it: the running feature (it lays the room out on every open) and
+-- the Settings page, which calls these functions through SettingsStore.readerCall
 -- and only stores the string it gets back. One decoder means the page and the
 -- overlay can never disagree about what a record holds.
 --
--- Every op the page calls returns ONE table ({json, status, id?}): readerCall
--- reads a single Lua result, so a second return value would never reach it.
+-- Every op the page calls returns ONE table ({json, status}): readerCall reads a
+-- single Lua result, so a second return value would never reach it.
 --
--- A record:
---   { v = 1, image = nil | "neon" | "room-ab12.jpg", showKeys = true | nil,
---     pins = { RoomPin, ... } }
+-- The room holds the WINDOWS of one app at a time: each window the room has seen
+-- keeps a spot on the picture, so the next time it is where it was. A record:
+--   { v = 2, image = nil | "neon" | "room-ab12.jpg",
+--     apps = { [bundleId] = { RoomWindow, ... } } }
 -- `image` is the picture the room shows, and this module never interprets it:
 -- nil is the Study, a bare id is one of the built-in rooms in assets/rooms/, and
--- a `room-*` name is the user's photo copied under <dataDir>/memory_room/. The
--- list of built-in rooms lives with their pictures, in RoomImage.builtins
--- (swift/RoomCanvas.swift). Every built-in room has the same furniture in the
--- same spots, so one set of places fits all of them. Pin x/y are fractions of
--- the image (0..1, top-left). `showKeys` draws each place's letter on the room;
--- absent (the default) the room is clicked, and the letters still work unseen.
+-- a `room-*` name is the user's photo copied under <dataDir>/memory_room/ (the
+-- list of built-in rooms lives with their pictures, in RoomImage.builtins,
+-- swift/RoomCanvas.swift). Each app's windows are in RECENCY order -- the ones the last open saw first -- which is what
+-- the cap trims from the back.
 
 local json = require("platform.json")
+local W = require("platform.windows")
 
 local R = {}
 
-R.MAX_PINS = 30
-R.MAX_APPS = 3
--- The three letter rows of a US keyboard, top to bottom. A pin's key comes from
--- where it sits: the photo's top third is the top row, left to right -- so the
--- letter itself is spatial, and the room reads like the keyboard under your hand.
-R.ROWS = { "qwertyuiop", "asdfghjkl;", "zxcvbnm,./" }
+-- Windows remembered per app. Recency is array order, so the cap drops the ones
+-- no open has seen for longest -- a spot the user placed by hand last.
+R.MAX_WINDOWS = 40
+-- What an icon with its label covers, as a fraction of the picture: two windows
+-- closer than this on both axes draw over each other.
+R.FOOT = { w = 0.16, h = 0.14 }
 
----@class RoomPin
----@field id string
----@field name string        user-given; "" allowed
----@field nameKey string|nil a default pin's i18n name (dropped once renamed)
----@field key string         one character from R.ROWS
+-- Where a new window goes: the furniture every built-in room has in the same place
+-- (desk, armchair, bookshelf, coffee table, window, picture, door, plant, clock --
+-- the order they fill), then a grid over the rest of the picture. One list for
+-- every room: on a photo they are simply well-spread spots. The door sits a little
+-- in from the edge, so a label centred on it is not cut off by the frame.
+R.SLOTS = {
+    { x = 0.29, y = 0.46 }, { x = 0.75, y = 0.56 }, { x = 0.12, y = 0.22 },
+    { x = 0.48, y = 0.80 }, { x = 0.62, y = 0.20 }, { x = 0.34, y = 0.16 },
+    { x = 0.91, y = 0.48 }, { x = 0.07, y = 0.74 }, { x = 0.83, y = 0.13 },
+}
+-- A grid point is kept only when it clears every furniture spot by an icon's
+-- footprint, so two neighbours never draw over each other.
+do
+    local anchors = #R.SLOTS
+    for _, y in ipairs({ 0.35, 0.62, 0.90 }) do
+        for _, x in ipairs({ 0.10, 0.30, 0.50, 0.70, 0.90 }) do
+            local clear = true
+            for i = 1, anchors do
+                local s = R.SLOTS[i]
+                if math.abs(s.x - x) < R.FOOT.w and math.abs(s.y - y) < R.FOOT.h then clear = false end
+            end
+            if clear then R.SLOTS[#R.SLOTS + 1] = { x = x, y = y } end
+        end
+    end
+end
+-- When every slot is held, a new window looks for a gap on a finer grid (top to
+-- bottom, left to right) before it would share a slot.
+R.GAPS = {}
+for j = 0, 10 do
+    for i = 0, 12 do R.GAPS[#R.GAPS + 1] = { x = 0.08 + i * 0.07, y = 0.10 + j * 0.08 } end
+end
+
+---@class RoomWindow
+---@field wid integer        the OS-stable CGWindowID; 0 = unresolved
+---@field pid integer|nil    the process that owned it: the wid counts only alongside it
+---@field title string       its title when last seen; "" allowed
 ---@field x number           0..1 of the image width
 ---@field y number           0..1 of the image height
----@field apps string[]      bundle ids, placement order, at most R.MAX_APPS
+---@field placed boolean|nil true once the user dragged it: its spot is never given away
+---@field isPrivate boolean|nil a private window's entry: held in memory, never stored (R.arrange)
 
 ---@class Room
 ---@field v integer
 ---@field image string|nil
----@field showKeys boolean
----@field pins RoomPin[]
+---@field apps table<string, RoomWindow[]>
 
 ---@class RoomOp
 ---@field json string
 ---@field status string
----@field id string|nil
----@field from string|nil    place(): the pin the app moved from
 
-local VALID_KEY = {}
-for _, row in ipairs(R.ROWS) do
-    for i = 1, #row do VALID_KEY[row:sub(i, i)] = true end
-end
+---@class RoomSpot
+---@field row table          the live window (a ctx.window.list() row)
+---@field entry RoomWindow   what the room remembers for it
+---@field new boolean        the room had not seen it before this open
+---@field x number           where it is drawn this open: its own spot, or beside it
+---@field y number
+---@field aside boolean      drawn beside its spot, because another open window holds it
 
 ---@param v any
 ---@return number
@@ -66,81 +98,65 @@ local function unit(v)
     return math.max(0, math.min(1, v))
 end
 
--- The default room: the illustrated study in assets/rooms/study.jpg (and every
--- other built-in room, drawn to the same layout). Keys are
--- chosen by hand to sit near where their furniture is (the same rule a dropped
--- pin follows), nudged onto a mnemonic where the position allows -- D is the
--- desk. The coordinates are tied to that image; test/cases/memory_room.lua pins
--- the count and key validity so a swap of the image cannot silently orphan them.
-local DEFAULT_PINS = {
-    { nameKey = "bookshelf", name = "Bookshelf",    key = "w", x = 0.12, y = 0.22 },
-    { nameKey = "picture",   name = "Picture",      key = "r", x = 0.34, y = 0.16 },
-    { nameKey = "window",    name = "Window",       key = "u", x = 0.62, y = 0.20 },
-    { nameKey = "clock",     name = "Clock",        key = "o", x = 0.83, y = 0.13 },
-    { nameKey = "desk",      name = "Desk",         key = "d", x = 0.29, y = 0.46 },
-    { nameKey = "armchair",  name = "Armchair",     key = "k", x = 0.75, y = 0.56 },
-    { nameKey = "door",      name = "Door",         key = "l", x = 0.94, y = 0.48 },
-    { nameKey = "plant",     name = "Plant",        key = "z", x = 0.07, y = 0.74 },
-    { nameKey = "table",     name = "Coffee table", key = "b", x = 0.48, y = 0.80 },
-}
-
 ---@return Room
-function R.default()
-    local pins = {}
-    for i, p in ipairs(DEFAULT_PINS) do
-        pins[i] = { id = "p" .. i, name = p.name, nameKey = p.nameKey, key = p.key,
-                    x = p.x, y = p.y, apps = {} }
-    end
-    return { v = 1, image = nil, showKeys = false, pins = pins }
+function R.empty()
+    return { v = 2, image = nil, apps = {} }
+end
+
+-- The id a window goes by on the page and in the overlay's picks: its wid, or its
+-- title when the wid never resolved.
+---@param e RoomWindow
+---@return string
+function R.windowId(e)
+    if e.wid ~= 0 then return "w" .. string.format("%d", e.wid) end
+    return "t:" .. e.title
+end
+
+-- The process a window row or a stored entry names; nil when it names none.
+---@param t table
+---@return integer|nil
+local function pidOf(t)
+    local n = math.tointeger(tonumber(t.pid) or 0) or 0
+    return n ~= 0 and n or nil
 end
 
 ---@param raw any
----@return RoomPin|nil
-local function cleanPin(raw, usedKeys, usedIds)
+---@return RoomWindow|nil
+local function cleanWindow(raw)
     if type(raw) ~= "table" then return nil end
-    local key = type(raw.key) == "string" and raw.key:lower() or nil
-    local id = raw.id
-    if not key or not VALID_KEY[key] or usedKeys[key] then return nil end
-    if type(id) ~= "string" or id == "" or usedIds[id] then return nil end
-    local apps, seen = {}, {}
-    if type(raw.apps) == "table" then
-        for _, a in ipairs(raw.apps) do
-            if type(a) == "string" and a ~= "" and not seen[a] and #apps < R.MAX_APPS then
-                seen[a] = true
-                apps[#apps + 1] = a
-            end
-        end
-    end
-    usedKeys[key], usedIds[id] = true, true
-    return { id = id, key = key, x = unit(raw.x), y = unit(raw.y), apps = apps,
-             name = type(raw.name) == "string" and raw.name or "",
-             nameKey = type(raw.nameKey) == "string" and raw.nameKey or nil }
+    local wid = math.tointeger(tonumber(raw.wid) or 0) or 0
+    local title = type(raw.title) == "string" and raw.title or ""
+    if wid == 0 and title == "" then return nil end         -- nothing to find it by
+    if W.isPrivate(title) then return nil end                -- never kept on disk
+    return { wid = wid, pid = pidOf(raw), title = title, x = unit(raw.x), y = unit(raw.y),
+             placed = raw.placed == true or nil }
 end
 
--- Decode a stored record. MISSING or unreadable -> the default room; a record
--- that decodes keeps exactly what it says, so a user who removed every pin gets
--- an empty room back, never the default resurrected. Bad pins are dropped one
--- by one (a duplicate key, a key off the three rows, a missing id) rather than
--- failing the whole record, and an app placed on two pins stays on the first.
+-- Decode a stored record. MISSING or unreadable -> an empty room. A v1 record (the
+-- room that held apps in places) keeps its picture; its places have no meaning in
+-- a room of windows and are dropped. Bad windows are dropped one by one, and a
+-- second entry for the same wid (or id) is dropped. Fields it does not know are
+-- read past and not written back.
 ---@param raw string|nil
 ---@return Room
 function R.decode(raw)
-    if type(raw) ~= "string" or raw == "" then return R.default() end
+    local room = R.empty()
+    if type(raw) ~= "string" or raw == "" then return room end
     local t = json.decode(raw)
-    if type(t) ~= "table" or type(t.pins) ~= "table" then return R.default() end
-    local room = { v = 1, pins = {}, showKeys = t.showKeys == true,
-                   image = (type(t.image) == "string" and t.image ~= "") and t.image or nil }
-    local usedKeys, usedIds, placed = {}, {}, {}
-    for _, p in ipairs(t.pins) do
-        if #room.pins >= R.MAX_PINS then break end
-        local pin = cleanPin(p, usedKeys, usedIds)
-        if pin then
-            local kept = {}
-            for _, a in ipairs(pin.apps) do
-                if not placed[a] then placed[a] = true; kept[#kept + 1] = a end
+    if type(t) ~= "table" then return room end
+    room.image = (type(t.image) == "string" and t.image ~= "") and t.image or nil
+    if type(t.apps) ~= "table" then return room end
+    for app, list in pairs(t.apps) do
+        if type(app) == "string" and app ~= "" and not W.isPrivate(nil, app) and type(list) == "table" then
+            local out, ids = {}, {}
+            for _, rawWin in ipairs(list) do
+                local e = cleanWindow(rawWin)
+                if e and not ids[R.windowId(e)] and #out < R.MAX_WINDOWS then
+                    ids[R.windowId(e)] = true
+                    out[#out + 1] = e
+                end
             end
-            pin.apps = kept
-            room.pins[#room.pins + 1] = pin
+            if #out > 0 then room.apps[app] = out end
         end
     end
     return room
@@ -149,256 +165,316 @@ end
 ---@param room Room
 ---@return string
 function R.encode(room)
-    local pins = {}
-    for i, p in ipairs(room.pins) do
-        pins[i] = json.asObject({ id = p.id, name = p.name, nameKey = p.nameKey, key = p.key,
-                                  x = p.x, y = p.y, apps = json.asArray(p.apps) })
+    -- `apps` is tagged an OBJECT even when empty: an untagged {} encodes as [] and
+    -- would decode back as an array that a bundle-id key can no longer join.
+    local apps = json.asObject({})
+    for app, list in pairs(room.apps) do
+        local arr = {}
+        for i, e in ipairs(list) do
+            arr[i] = json.asObject({ wid = e.wid, pid = e.pid, title = e.title, x = e.x, y = e.y,
+                                     placed = e.placed })
+        end
+        apps[app] = json.asArray(arr)
     end
     -- json.encode fails only on a shape bug here (the record is built above from
     -- scalars); an assert makes that loud instead of persisting nil.
-    -- showKeys is written only when on, so a record that never turned it on
-    -- stays byte-for-byte what it was.
-    local out = assert(json.encode(json.asObject({ v = 1, image = room.image,
-                                                   showKeys = room.showKeys or nil,
-                                                   pins = json.asArray(pins) })))
-    return out
-end
-
----@param room Room
----@param key string
----@return RoomPin|nil
-function R.pinByKey(room, key)
-    for _, p in ipairs(room.pins) do if p.key == key then return p end end
-    return nil
-end
-
----@param room Room
----@param id string
----@return RoomPin|nil
-local function pinById(room, id)
-    for _, p in ipairs(room.pins) do if p.id == id then return p end end
-    return nil
-end
-
--- The key a pin dropped at (x, y) gets: the letter under that spot (row band by
--- y, column by x), or -- when another pin holds it -- the nearest free letter in
--- the same row (left wins a tie), then the nearest rows. nil when all 30 are used.
----@param room Room
----@param x number
----@param y number
----@return string|nil
-function R.keyFor(room, x, y)
-    local used = {}
-    for _, p in ipairs(room.pins) do used[p.key] = true end
-    local row = math.min(3, math.floor(unit(y) * 3) + 1)
-    local col = math.min(10, math.floor(unit(x) * 10) + 1)
-    local rowOrder = ({ { 1, 2, 3 }, { 2, 1, 3 }, { 3, 2, 1 } })[row]
-    for _, r in ipairs(rowOrder) do
-        local letters = R.ROWS[r]
-        for d = 0, 9 do
-            for _, c in ipairs(d == 0 and { col } or { col - d, col + d }) do
-                if c >= 1 and c <= 10 then
-                    local k = letters:sub(c, c)
-                    if not used[k] then return k end
-                end
-            end
-        end
-    end
-    return nil
-end
-
----@param room Room
----@return string
-local function nextId(room)
-    local n = 0
-    for _, p in ipairs(room.pins) do
-        local k = tonumber(p.id:match("^p(%d+)$"))
-        if k and k > n then n = k end
-    end
-    return "p" .. (n + 1)
+    return assert(json.encode(json.asObject({ v = 2, image = room.image, apps = apps })))
 end
 
 ---@param room Room
 ---@param status string
----@param extra table|nil
 ---@return RoomOp
-local function op(room, status, extra)
-    local out = { json = R.encode(room), status = status }
-    for k, v in pairs(extra or {}) do out[k] = v end
+local function op(room, status)
+    return { json = R.encode(room), status = status }
+end
+
+-- Title parts that never tell two windows apart: a terminal's size ("80×24") and
+-- login shell ("-zsh"), a size ("871 MB"), and the notes apps add after the name
+-- -- Chrome's "High memory usage", a document's "Edited".
+local NOISE = { ["high memory usage"] = true, ["edited"] = true }
+---@param p string
+---@return boolean
+local function noise(p)
+    return NOISE[p:lower()] ~= nil or p:match("^%d+\195\151%d+$") ~= nil or p:match("^%-%a+$") ~= nil
+        or p:match("^%d+[%.,]?%d*%s?[KMGT]B$") ~= nil
+end
+
+-- What a window is called: the part of its title right BEFORE the app's own name
+-- ("page - Google Chrome - profile" -> the page), or the last part when the title
+-- does not name the app ("room.lua — hammerdeck" in VS Code -> the project) --
+-- after dropping the noise. A project changes less than the file open in it, and
+-- a label that keeps changing is one nobody learns. It is also how a window is
+-- recognised after its app restarts (R.arrange), so it is kept whole here; the
+-- room shortens it for display.
+---@param title string
+---@param appName string
+---@return string
+function R.nameOf(title, appName)
+    -- The separators apps put between title parts: " — ", " – ", " - ", " | ". A
+    -- Lua pattern class matches BYTES, so the multi-byte dashes are replaced one by one.
+    local s = title:gsub(" \226\128\148 ", "\0"):gsub(" \226\128\147 ", "\0"):gsub(" %- ", "\0"):gsub(" | ", "\0")
+    local want, keep, before = (appName or ""):lower(), {}, nil
+    for part in (s .. "\0"):gmatch("(.-)\0") do
+        local p = part:match("^%s*(.-)%s*$")
+        -- The app's name, bare or with a note in parentheses ("Google Chrome (Incognito)").
+        local l = p:lower()
+        if p ~= "" and want ~= "" and (l == want or l:sub(1, #want + 2) == want .. " (") then
+            before = before or keep[#keep]
+        elseif p ~= "" and not noise(p) then
+            keep[#keep + 1] = p
+        end
+    end
+    return before or keep[#keep] or title
+end
+
+---@param list RoomWindow[]
+---@param x number
+---@param y number
+---@return RoomWindow[] the windows an icon at (x, y) would draw over
+local function under(list, x, y)
+    local out = {}
+    for _, e in ipairs(list) do
+        if math.abs(e.x - x) < R.FOOT.w and math.abs(e.y - y) < R.FOOT.h then out[#out + 1] = e end
+    end
     return out
 end
 
----@param raw string|nil
+-- The nearest point to (x, y) where an icon covers none of `shown`, for a window
+-- whose spot `hit` holds: rings of growing radius, and on a ring the point furthest
+-- along the way away from `hit`. nil when the picture has no such point.
 ---@param x number
 ---@param y number
----@param name string|nil
----@return RoomOp  status "added" | "full"
-function R.addPin(raw, x, y, name)
-    local room = R.decode(raw)
-    local key = #room.pins < R.MAX_PINS and R.keyFor(room, x, y) or nil
-    if not key then return op(room, "full") end
-    local id = nextId(room)
-    room.pins[#room.pins + 1] = { id = id, key = key, x = unit(x), y = unit(y), apps = {},
-                                  name = type(name) == "string" and name or "" }
-    return op(room, "added", { id = id })
-end
-
--- Moving a pin never changes its key: the letter is what the user has learned,
--- and re-deriving it from the new spot would silently move their memory.
----@return RoomOp  status "moved" | "nopin"
-function R.movePin(raw, id, x, y)
-    local room = R.decode(raw)
-    local p = pinById(room, id)
-    if not p then return op(room, "nopin") end
-    p.x, p.y = unit(x), unit(y)
-    return op(room, "moved")
-end
-
----@return RoomOp  status "renamed" | "nopin"
-function R.renamePin(raw, id, name)
-    local room = R.decode(raw)
-    local p = pinById(room, id)
-    if not p then return op(room, "nopin") end
-    p.name, p.nameKey = type(name) == "string" and name or "", nil
-    return op(room, "renamed")
-end
-
--- Give pin `id` the key `key`; a pin already holding it takes this pin's old key
--- (a swap), so no edit can ever leave two places on one letter.
----@return RoomOp  status "rekeyed" | "swapped" | "badkey" | "nopin"
-function R.setKey(raw, id, key)
-    local room = R.decode(raw)
-    local p = pinById(room, id)
-    if not p then return op(room, "nopin") end
-    key = type(key) == "string" and key:lower() or ""
-    if not VALID_KEY[key] then return op(room, "badkey") end
-    local holder = R.pinByKey(room, key)
-    if holder and holder ~= p then
-        holder.key, p.key = p.key, key
-        return op(room, "swapped", { id = holder.id })
+---@param shown {x: number, y: number}[]
+---@param hit {x: number, y: number}
+---@return {x: number, y: number}|nil
+local function beside(x, y, shown, hit)
+    local ax, ay = x - hit.x, y - hit.y
+    local len = math.sqrt(ax * ax + ay * ay)
+    if len < 1e-6 then ax, ay = 1, 0 else ax, ay = ax / len, ay / len end
+    for k = 1, 50 do
+        local r = k * 0.02
+        local best, bestD
+        for i = 0, 31 do
+            local a = i / 32 * 2 * math.pi
+            local cx, cy = x + math.cos(a) * r, y + math.sin(a) * r
+            if cx >= 0.03 and cx <= 0.97 and cy >= 0.05 and cy <= 0.95 and #under(shown, cx, cy) == 0 then
+                local d = (cx - (x + ax * r)) ^ 2 + (cy - (y + ay * r)) ^ 2
+                if not bestD or d < bestD then best, bestD = { x = cx, y = cy }, d end
+            end
+        end
+        if best then return best end
     end
-    p.key = key
-    return op(room, "rekeyed")
+    return nil
 end
 
----@return RoomOp  status "removed" | "nopin"
-function R.removePin(raw, id)
+-- Lay out the room for app `app` over its live windows (`live`: ctx.window.list()
+-- rows of that app, most recently focused first). Each live window finds its
+-- remembered entry -- by wid, then by exact title (W.matchSaved's two passes), then
+-- by name (R.nameOf: after an app restart a VS Code window's title names another
+-- file, but the same project) -- and keeps its spot; the entry takes the window's
+-- current wid, pid and title, so from then on it is known by its new wid. A
+-- remembered wid counts only while the window with it has the pid it was stored
+-- with: after a reboot or logout wids are handed out again, and a new window given
+-- an old one would otherwise take that window's spot for good -- so the entry
+-- drops that wid and is known by its title. An entry with no pid on record is
+-- taken at its wid: refusing it would re-place every window of a record that
+-- carries none.
+-- A window the room has never seen takes the first slot (R.SLOTS) no remembered
+-- window's icon covers. When every slot is covered, it takes one covered only by
+-- windows that are closed and were placed automatically, and forgets them -- a spot
+-- the user placed by hand is never given away. Failing that, a gap on the finer
+-- grid clear of every open or hand-placed window; failing that, the slot with the
+-- fewest open windows is shared.
+-- Then the open windows are drawn so that none covers another: two can want the
+-- same spot (one was dragged there while the other was closed; a crowded room
+-- gave a new window a closed one's spot). A spot placed by hand beats an automatic
+-- one; otherwise the window seen there last keeps it. The other is drawn beside
+-- it for this open only -- its own spot is unchanged, and it is drawn there again
+-- once the spot is free. Returns the record to store and a spot per live window,
+-- in `live` order.
+-- A private window (W.isPrivate) takes part in all of this but is never stored:
+-- its entry lives in `mem`, which the caller keeps in memory between opens and
+-- gets back (holding only the private windows still open) as the result's `mem`.
+---@param raw string|nil
+---@param app string
+---@param live table[]
+---@param mem table<string, RoomWindow>|nil  private windows' entries by R.windowId
+---@return {json: string, spots: RoomSpot[], mem: table<string, RoomWindow>}
+function R.arrange(raw, app, live, mem)
     local room = R.decode(raw)
-    for i, p in ipairs(room.pins) do
-        if p.id == id then
-            table.remove(room.pins, i)
-            return op(room, "removed")
+    local saved = room.apps[app] or {}
+    mem = mem or {}
+    local kept, private = {}, {}                       -- live rows the room may store, and not
+    for _, w in ipairs(live) do
+        if W.isPrivate(w.title, w.bundleID) then private[w] = true else kept[#kept + 1] = w end
+    end
+    local function rowId(w)
+        return R.windowId({ wid = math.tointeger(tonumber(w.wid) or 0) or 0,
+                            title = type(w.title) == "string" and w.title or "" })
+    end
+    local byWid = {}
+    for _, w in ipairs(kept) do
+        if w.wid and w.wid ~= 0 then byWid[w.wid] = w end
+    end
+    local desc = {}
+    for i, e in ipairs(saved) do
+        local w = e.wid ~= 0 and byWid[e.wid]
+        -- Another process's window holds its wid: that wid is dead for this entry,
+        -- which is known by its title from now on (and no longer shares an id with
+        -- the window that has the wid now).
+        if w and e.pid ~= nil and pidOf(w) ~= e.pid then e.wid = 0 end
+        desc[i] = { bundleID = app, wid = e.wid, title = e.title, entry = e }
+    end
+    local _, pick = W.matchSaved(desc, kept)
+    -- Pass 3, by name: the same matcher over what is left, each title read as its name.
+    local appName = live[1] and type(live[1].appName) == "string" and live[1].appName or ""
+    local taken, restSaved, restLive = {}, {}, {}
+    for _, w in pairs(pick) do taken[w] = true end
+    for _, d in ipairs(desc) do
+        if not pick[d] then
+            restSaved[#restSaved + 1] = { bundleID = app, wid = 0, title = R.nameOf(d.title, appName), d = d }
         end
     end
-    return op(room, "nopin")
+    for _, w in ipairs(kept) do
+        if not taken[w] then
+            restLive[#restLive + 1] = { bundleID = w.bundleID, wid = w.wid,
+                                        title = R.nameOf(type(w.title) == "string" and w.title or "", appName), row = w }
+        end
+    end
+    local _, byName = W.matchSaved(restSaved, restLive)
+    for _, r in ipairs(restSaved) do
+        if byName[r] then pick[r.d] = byName[r].row end
+    end
+    local bound = {}                                   -- live row -> its entry
+    for _, d in ipairs(desc) do
+        if pick[d] then bound[pick[d]] = d.entry end
+    end
+    local open = {}                                    -- entries bound to a live window
+    for _, e in pairs(bound) do open[e] = true end
+
+    local all = {}                                     -- every entry that holds a spot
+    for _, e in ipairs(saved) do all[#all + 1] = e end
+    local nextMem = {}
+    for _, w in ipairs(live) do                        -- private windows already in memory
+        local e = private[w] and mem[rowId(w)]
+        if e then bound[w] = e; open[e] = true; all[#all + 1] = e; nextMem[rowId(w)] = e end
+    end
+    local function forget(e)
+        for i, o in ipairs(all) do if o == e then table.remove(all, i); return end end
+    end
+    local function freeSlot()
+        for _, s in ipairs(R.SLOTS) do
+            if #under(all, s.x, s.y) == 0 then return s end
+        end
+        for _, s in ipairs(R.SLOTS) do
+            local here, kept = under(all, s.x, s.y), false
+            for _, e in ipairs(here) do if open[e] or e.placed then kept = true end end
+            if not kept then
+                for _, e in ipairs(here) do forget(e) end
+                return s
+            end
+        end
+        local held = {}                                -- what a gap must stay clear of
+        for _, e in ipairs(all) do if open[e] or e.placed then held[#held + 1] = e end end
+        for _, g in ipairs(R.GAPS) do
+            if #under(held, g.x, g.y) == 0 then return g end
+        end
+        local best, fewest = R.SLOTS[1], math.huge
+        for _, s in ipairs(R.SLOTS) do
+            local n = 0
+            for _, e in ipairs(under(all, s.x, s.y)) do if open[e] then n = n + 1 end end
+            if n < fewest then best, fewest = s, n end
+        end
+        return best
+    end
+
+    local spots = {}
+    for _, w in ipairs(live) do
+        local e, new = bound[w], false
+        if e then
+            e.wid = math.tointeger(tonumber(w.wid) or 0) or 0
+            e.pid = pidOf(w)
+            e.title = type(w.title) == "string" and w.title or ""
+        else
+            local s = freeSlot()
+            e = { wid = math.tointeger(tonumber(w.wid) or 0) or 0,
+                  pid = pidOf(w),
+                  title = type(w.title) == "string" and w.title or "", x = s.x, y = s.y,
+                  isPrivate = private[w] or nil }
+            new = true
+            all[#all + 1] = e
+            open[e] = true
+            if e.isPrivate then nextMem[rowId(w)] = e end
+        end
+        spots[#spots + 1] = { row = w, entry = e, new = new, x = e.x, y = e.y, aside = false }
+    end
+
+    -- Who keeps a contested spot: hand-placed first, then the most recently seen
+    -- (the saved list's order), then the windows new to the room.
+    local rank = {}
+    for i, e in ipairs(saved) do rank[e] = i end
+    local order = {}
+    for i, sp in ipairs(spots) do order[i] = sp end
+    table.sort(order, function(a, b)
+        if (a.entry.placed == true) ~= (b.entry.placed == true) then return a.entry.placed == true end
+        local ra, rb = rank[a.entry] or math.huge, rank[b.entry] or math.huge
+        if ra ~= rb then return ra < rb end
+        return (a.row.wid or 0) < (b.row.wid or 0)
+    end)
+    local shown = {}
+    for _, sp in ipairs(order) do
+        local hit = under(shown, sp.x, sp.y)[1]
+        if hit then
+            local p = beside(sp.x, sp.y, shown, hit)
+            if p then sp.x, sp.y, sp.aside = p.x, p.y, true end
+        end
+        shown[#shown + 1] = { x = sp.x, y = sp.y }
+    end
+
+    -- Recency: this open's windows first (most recently focused first), then the
+    -- rest as they were; the cap trims the tail.
+    local list, seen = {}, {}
+    for _, s in ipairs(spots) do
+        if not seen[s.entry] and not s.entry.isPrivate and cleanWindow(s.entry) then
+            list[#list + 1] = s.entry; seen[s.entry] = true
+        end
+    end
+    for _, e in ipairs(all) do
+        if not seen[e] and not e.isPrivate then list[#list + 1] = e; seen[e] = true end
+    end
+    while #list > R.MAX_WINDOWS do
+        local drop = #list
+        for i = #list, 1, -1 do
+            if not list[i].placed then drop = i; break end
+        end
+        table.remove(list, drop)
+    end
+    room.apps[app] = #list > 0 and list or nil
+    return { json = R.encode(room), spots = spots, mem = nextMem }
+end
+
+-- Move window `id` (R.windowId) of app `app` to (x, y). The spot is now the user's:
+-- it is kept for the window while it is closed, and no other window is given it.
+---@return RoomOp  status "moved" | "nowindow"
+function R.move(raw, app, id, x, y)
+    local room = R.decode(raw)
+    for _, e in ipairs(room.apps[app] or {}) do
+        if R.windowId(e) == id then
+            e.x, e.y, e.placed = unit(x), unit(y), true
+            return op(room, "moved")
+        end
+    end
+    return op(room, "nowindow")
 end
 
 -- Point the room at another picture: a built-in room's id, a photo's filename
--- under <dataDir>/memory_room/, or "" for the Study. Pins stay put: they are
--- fractions, so they land in the same relative spots -- exactly right on every
--- built-in room, and on a photo the user drags whichever ones no longer fit.
+-- under <dataDir>/memory_room/, or "" for the Study. Spots stay put: they are
+-- fractions, so they land in the same relative places on any picture.
 ---@return RoomOp  status "image"
 function R.setImage(raw, image)
     local room = R.decode(raw)
     room.image = (type(image) == "string" and image ~= "") and image or nil
     return op(room, "image")
-end
-
--- Draw each place's letter on the room, or not. Hidden letters still work:
--- this changes only what the room shows (and so how the room asks to be used).
----@return RoomOp  status "showKeys"
-function R.setShowKeys(raw, on)
-    local room = R.decode(raw)
-    room.showKeys = on == true
-    return op(room, "showKeys")
-end
-
--- Take `bundleId` out of the place that holds it, returning that place's id. A
--- place with NO NAME exists only for its apps -- the room makes one wherever an
--- app is put (placeAt) -- so it goes with its last app; otherwise moving apps
--- around would fill the room with invisible leftovers, each holding a letter.
--- A named place (every default one) stays, empty, until the user removes it.
----@param room Room
----@param bundleId string
----@return string|nil
-local function takeOut(room, bundleId)
-    for i, p in ipairs(room.pins) do
-        for j, a in ipairs(p.apps) do
-            if a == bundleId then
-                table.remove(p.apps, j)
-                if #p.apps == 0 and p.name == "" and not p.nameKey then table.remove(room.pins, i) end
-                return p.id
-            end
-        end
-    end
-    return nil
-end
-
--- Put app `bundleId` in the place on `key`. An app lives in ONE place, so
--- placing it elsewhere moves it; a full place refuses and leaves the app where
--- it was (checked BEFORE the move, or a refused place would still unplace it).
----@return RoomOp  status "placed" | "moved" | "already" | "full" | "nopin" | "noapp"
-function R.place(raw, key, bundleId)
-    local room = R.decode(raw)
-    local pin = R.pinByKey(room, key)
-    if not pin then return op(room, "nopin") end
-    if type(bundleId) ~= "string" or bundleId == "" then return op(room, "noapp") end
-    for _, a in ipairs(pin.apps) do
-        if a == bundleId then return op(room, "already", { id = pin.id }) end
-    end
-    if #pin.apps >= R.MAX_APPS then return op(room, "full", { id = pin.id }) end
-    local from = takeOut(room, bundleId)
-    pin.apps[#pin.apps + 1] = bundleId
-    return op(room, from and "moved" or "placed", { id = pin.id, from = from })
-end
-
--- Put app `bundleId` exactly at (x, y), wherever that is: a new, unnamed place
--- there, on the letter under that spot (as a dropped pin gets). The app moves
--- out of wherever it was first, so moving the last app out of a place the room
--- made frees that place (and its letter) for this one. A room with every letter
--- used refuses and moves nothing.
----@return RoomOp  status "placed" | "moved" | "full" | "noapp"
-function R.placeAt(raw, x, y, bundleId)
-    local room = R.decode(raw)
-    if type(bundleId) ~= "string" or bundleId == "" then return op(room, "noapp") end
-    local id = nextId(room)             -- before takeOut, so a freed id is never reused here
-    local from = takeOut(room, bundleId)
-    local key = #room.pins < R.MAX_PINS and R.keyFor(room, x, y) or nil
-    if not key then return op(R.decode(raw), "full") end
-    room.pins[#room.pins + 1] = { id = id, key = key, x = unit(x), y = unit(y),
-                                  apps = { bundleId }, name = "" }
-    return op(room, from and "moved" or "placed", { id = id, from = from })
-end
-
----@return RoomOp  status "unplaced" | "nopin" | "absent"
-function R.unplace(raw, id, bundleId)
-    local room = R.decode(raw)
-    local p = pinById(room, id)
-    if not p then return op(room, "nopin") end
-    for i, a in ipairs(p.apps) do
-        if a == bundleId then
-            table.remove(p.apps, i)
-            return op(room, "unplaced")
-        end
-    end
-    return op(room, "absent")
-end
-
--- Which of a place's apps a press should bring forward: the one after the app
--- that is already frontmost (so pressing the letter again steps through the
--- place in the order apps were put there), else the first. Stepping keys off
--- what is in FRONT, not a counter, so it survives leaving and re-entering the
--- room and never drifts from what the user is looking at.
----@param pin RoomPin
----@param frontmostId string|nil
----@return integer|nil  nil for an empty place
-function R.nextIndex(pin, frontmostId)
-    local n = #pin.apps
-    if n == 0 then return nil end
-    for i, a in ipairs(pin.apps) do
-        if a == frontmostId then return i % n + 1 end
-    end
-    return 1
 end
 
 return R

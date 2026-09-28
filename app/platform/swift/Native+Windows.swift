@@ -234,7 +234,7 @@ extension Native {
         }
 
         struct Row {
-            let z: Int; let id: Int; let wid: CGWindowID; let app: String
+            let z: Int; let id: Int; let wid: CGWindowID; let pid: pid_t; let app: String
             let title: String; let bundleID: String; let screenName: String?
             let iconToken: String; let frame: CGRect; let tabCount: Int?
             let minimized: Bool; let fullscreen: Bool
@@ -353,7 +353,7 @@ extension Native {
                 // AXTabGroup never yields a misleading badge); nil otherwise.
                 let tabCount = Self.browserBundleIDs.contains(bundleID)
                     ? browserTabCount(win) : nil
-                rows.append(Row(z: z, id: id, wid: wid, app: appName,
+                rows.append(Row(z: z, id: id, wid: wid, pid: pid, app: appName,
                                 title: title.isEmpty ? appName : title,
                                 bundleID: bundleID, screenName: screenName,
                                 iconToken: iconToken, frame: frame, tabCount: tabCount,
@@ -374,6 +374,9 @@ extension Native {
             // The OS-stable CGWindowID (0 = unresolved): survives retitles, so
             // callers key long-lived identity on it (Window Deck's members).
             lua_pushinteger(L, lua_Integer(r.wid)); lua_setfield(L, -2, "wid")
+            // The owning process: a wid names the same window only within one
+            // WindowServer session, and a kept wid is trusted only alongside it.
+            lua_pushinteger(L, lua_Integer(r.pid)); lua_setfield(L, -2, "pid")
             lua_pushstring(L, r.title);            lua_setfield(L, -2, "title")
             lua_pushstring(L, r.app);              lua_setfield(L, -2, "appName")
             lua_pushstring(L, r.bundleID);         lua_setfield(L, -2, "bundleID")

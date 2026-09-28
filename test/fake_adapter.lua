@@ -708,8 +708,7 @@ function fake.liveRoomPanel()
 end
 
 -- Click the live Memory Room overlay as the real panel reports it: `pick` is
--- {key, app?}, {key, action = "place"}, {action = "placeAt", x, y}, or nil (a
--- click off every place).
+-- {id}, {id, action = "move", x, y}, or nil (a click off every window).
 function fake.pickRoom(pick)
     local p = assert(fake.liveRoomPanel(), "pickRoom: no room is drawn")
     p.onPick(pick)

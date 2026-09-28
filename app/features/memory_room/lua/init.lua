@@ -1,365 +1,199 @@
 -- features/memory_room
 --
--- A memory palace for apps. The room is a picture -- an illustrated room, or a
--- photo of a room you know -- with places pinned on it. You put an app in a
--- place once; after that you find it by WHERE it lives, not by reading names.
+-- A memory palace for ONE app's windows. When an app has many windows that look
+-- alike (five VS Code projects, a pile of Terminal tabs), Hyper+L shows a room
+-- holding only that app's windows, each at a spot it keeps: the first time the
+-- room sees a window it gives it a free spot (the furniture first, then the rest
+-- of the picture), and from then on the window is there -- found by WHERE it
+-- lives, not by reading titles. App Exposé shows the same windows, but laid out
+-- fresh every time.
 --
--- By default the room is CLICKED: Hyper+L draws it at once, a click on a place
--- brings its app forward (a click on one of its icons, that app), a right-click
--- puts the app you are in there, and a click anywhere else closes it.
+-- The room is POINTED AT: Hyper+L draws it at once, hovering a window shows its
+-- full title (and its picture, when Screen Recording allows), a click brings it
+-- forward, dragging one moves its spot, and a click anywhere else -- or Escape --
+-- closes it. The keyboard way to a window is the Window Switcher.
 --
--- Every place also sits on the key letter where it is on the keyboard (the
--- picture's top third is the QWERT row, and so on). Those letters always work;
--- the room DRAWS them only when the user turns them on (the record's showKeys):
---
---   Hyper+L, D         bring forward the app on the desk (launch it if needed)
---   ...D again         with Hyper still held: the next app on the desk, in the
---                      order you put them there (the room stays open until
---                      Hyper is released; otherwise Hyper+L, D again)
---   Hyper+L, Shift+D   put the app in front on the desk
---
--- With letters drawn, the room appears only if you pause, so a fast Hyper+L D
--- never flashes a card. Pins are made on the Settings page
--- (swift/MemoryRoomView.swift); the record they live in is owned by room.lua,
--- which the page calls too.
---
--- v1 places hold APPS: an app's identity survives a relaunch, so a place is
--- always resolvable. Windows are a later phase.
+-- The record is owned by room.lua, which the Settings page calls too.
 
 local json = require("platform.json")
-local hotkeys = require("platform.hotkeys")
 local R = require("features.memory_room.room")
 
--- The pause before a room WITH LETTERS is drawn: long enough that a practiced
--- Hyper+L D never shows it, short enough that hesitating does (ChordCenter's hint
--- delay). A room without letters is there to be clicked, so it is drawn at once.
-local SHOW_DELAY = 0.35
--- How often a held room checks whether the entry modifier is still down.
-local RELEASE_POLL = 0.05
+-- The longest label, in characters: about one slot wide.
+local LABEL_MAX = 16
 
--- The default room's place names. Global-catalog keys, because the Settings
--- page (Swift, Strings.t) shows the same names from the same catalog.
----@param ctx Ctx
----@return table<string, string>
-local function defaultNames(ctx)
-    return {
-        bookshelf = ctx.t("memoryRoom.pin.bookshelf", "Bookshelf"),
-        picture   = ctx.t("memoryRoom.pin.picture", "Picture"),
-        window    = ctx.t("memoryRoom.pin.window", "Window"),
-        clock     = ctx.t("memoryRoom.pin.clock", "Clock"),
-        desk      = ctx.t("memoryRoom.pin.desk", "Desk"),
-        armchair  = ctx.t("memoryRoom.pin.armchair", "Armchair"),
-        door      = ctx.t("memoryRoom.pin.door", "Door"),
-        plant     = ctx.t("memoryRoom.pin.plant", "Plant"),
-        table     = ctx.t("memoryRoom.pin.table", "Coffee table"),
-    }
-end
-
--- A place's name, nil when it has none (a place the room made for an app).
----@param ctx Ctx
----@param pin RoomPin
----@return string|nil
-local function namedAs(ctx, pin)
-    local named = pin.nameKey and defaultNames(ctx)[pin.nameKey]
-    if named then return named end
-    if pin.name ~= "" then return pin.name end
-    return nil
-end
-
--- What to call a place in a message: its name, or its key when it has none.
----@param ctx Ctx
----@param pin RoomPin
+-- The label under a window's icon: its name (R.nameOf), shortened when long. Long
+-- ones keep both ends: a label wider than a slot draws over its neighbour.
+---@param title string
+---@param appName string
 ---@return string
-local function placeName(ctx, pin)
-    return namedAs(ctx, pin) or pin.key:upper()
-end
-
--- What to call a place in a message the user sees right after using the room:
--- its letter only if the room draws letters -- a letter they never saw names
--- nothing. nil means say it without naming the place.
----@param ctx Ctx
----@param room Room
----@param pin RoomPin
----@return string|nil
-local function shownName(ctx, room, pin)
-    if room.showKeys then return placeName(ctx, pin) end
-    return namedAs(ctx, pin)
-end
-
----@param ctx Ctx
----@param room Room
----@return table
-local function panelSpec(ctx, room)
-    -- A clicked room draws only places that hold apps: an empty one is nothing
-    -- to click, and apps are put anywhere by right-click, not into slots. With
-    -- letters drawn, an empty place is still a letter to press.
-    local pins = {}
-    for _, p in ipairs(room.pins) do
-        if room.showKeys or #p.apps > 0 then
-            local apps = {}
-            for i, a in ipairs(p.apps) do apps[i] = a end
-            pins[#pins + 1] = json.asObject({ key = p.key, name = placeName(ctx, p),
-                                              x = p.x, y = p.y, apps = json.asArray(apps) })
-        end
+local function label(title, appName)
+    local name = R.nameOf(title, appName)
+    local n = utf8.len(name)
+    if n and n > LABEL_MAX then
+        local head = LABEL_MAX // 2
+        -- utf8.offset in parentheses: Lua 5.5 returns a second value (the
+        -- character's last byte), which sub() would take as its end.
+        name = name:sub(1, (utf8.offset(name, head + 1)) - 1) .. "…"
+            .. name:sub((utf8.offset(name, n - (LABEL_MAX - head - 1) + 1)))
     end
-    local front = ctx.frontmostAppInfo()
-    local hint = room.showKeys
-        and ctx.t("panel.hint",
-            "letter: bring it forward    again: next app    shift+letter: put the front app here    esc: close")
-        or ctx.t("panel.clickHint",
-            "click: bring it forward    right-click anywhere: put the app you're in there    esc: close")
+    return name
+end
+
+---@param ctx Ctx
+---@param room Room
+---@param spots RoomSpot[]
+---@param appName string
+---@return table
+local function panelSpec(ctx, room, spots, appName)
+    local focused = ctx.window.focusedWid()
+    local pins, front = {}, nil
+    for _, s in ipairs(spots) do
+        local e, id = s.entry, R.windowId(s.entry)
+        if focused and focused ~= 0 and e.wid == focused then front = id end
+        -- wid: the window's picture, when the room shows one on hover.
+        pins[#pins + 1] = json.asObject({ id = id, wid = s.row.wid,
+                                          name = label(e.title, appName), title = e.title, x = s.x, y = s.y,
+                                          apps = json.asArray({ s.row.bundleID or "" }) })
+    end
     return json.asObject({
-        title    = ctx.t("panel.title", "Memory Room"),
-        image    = room.image,
-        pins     = json.asArray(pins),
-        front    = front.bundleId,
-        showKeys = room.showKeys,
-        hint     = hint,
-        -- The right-click menu's one item. None when no app is in front: there
-        -- is nothing to put anywhere, so the menu does not offer it.
-        placeLabel = front.name ~= "" and ctx.t("panel.putHere", "Put %s here", front.name) or nil,
+        title = appName,
+        image = room.image,
+        pins  = json.asArray(pins),
+        front = front,
+        -- How close two spots may be: a drop lands clear of this, so the next open
+        -- does not find the two covering each other and draw one aside.
+        foot  = json.asObject({ w = R.FOOT.w, h = R.FOOT.h }),
+        hint  = ctx.t("panel.hint", "click: bring it forward    drag: move it    esc: close"),
     })
 end
 
 ---@param ctx Ctx
 local function controllerFor(ctx)
-    local st = {}
+    -- mem: each app's private windows (R.arrange), held here and never stored.
+    local st = { mem = {} }
+
+    -- What the log may say about window `id`: a private window's id can carry its
+    -- title (a window with no wid goes by it), and the log is written to disk.
+    local function logId(id)
+        local s = st.byId and st.byId[id]
+        return (s and s.entry.isPrivate) and "private" or id
+    end
 
     local function close()
         if st.modal then st.modal.stop() end        -- onExit clears the rest
     end
 
-    local onPick                                    -- defined after jump/place
-    local function showPanel(room)
-        if st.panel or not st.modal then return end
-        st.panel = ctx.roomPanel(panelSpec(ctx, room), function(pick) onPick(pick) end)
-    end
-
-    -- After a jump: while the entry hotkey's modifier is still held, the room
-    -- stays open, so a held Caps + L, D, D steps through the desk's apps. Closing
-    -- at once would hand the second D to whatever global shortcut owns Hyper+D
-    -- (Insert Date typing into the app just brought forward). Released -- or
-    -- opened with nothing held, from the menubar -- it closes at once, so a held
-    -- room never captures typing: letters pressed with Hyper down are not text.
-    local function closeOrHold()
-        local mod = st.leader
-        if not (mod and ctx.isModifierHeld(mod)) then close(); return end
-        -- The front app just changed under the drawn room; drop it rather than
-        -- leave its "you are here" ring on the wrong place.
-        if st.showTimer then st.showTimer.stop(); st.showTimer = nil end
-        if st.panel then st.panel.stop(); st.panel = nil end
-        if st.releasePoll then return end
-        ctx.log("hold: open until", mod, "is released")
-        st.releasePoll = ctx.everySeconds(RELEASE_POLL, function()
-            if not ctx.isModifierHeld(mod) then
-                ctx.log("hold released")
-                close()
-            end
-        end)
-    end
-
-    -- Bring forward the app in the place on `key`. `clicked`: it came from the
-    -- room, not a letter; `app`: the icon clicked, an index into the place's apps.
-    local function jump(key, clicked, app)
-        local room = R.decode(ctx.getState("room"))
-        local pin = R.pinByKey(room, key)
-        if not pin then close(); return end
-        local label = placeName(ctx, pin)
-        -- A clicked icon names its app. Otherwise a repeat press in the SAME open
-        -- room steps on from the last jump: the app it brought forward may not be
-        -- frontmost yet (activation is async), and stepping off the stale front
-        -- app would land on the same one twice.
-        local i
-        if app and pin.apps[app] then
-            i = app
-        elseif #pin.apps > 0 and st.lastJump and st.lastJump.key == key then
-            i = st.lastJump.index % #pin.apps + 1
-        else
-            i = R.nextIndex(pin, ctx.frontmostAppInfo().bundleId)
+    -- Bring window `id` (R.windowId) forward. The row is the one this open listed:
+    -- its id stays good across later listings (the bridge keys it by wid), so a
+    -- click needs no second walk over every app's windows.
+    local function focus(id)
+        local spot = st.byId and st.byId[id]
+        if not spot then close(); return end
+        local ok = ctx.window.focus(spot.row.id)
+        ctx.log("focus", logId(id), ok and "ok" or "gone")
+        close()
+        if not ok then
+            ctx.alert(ctx.t("alert.gone", "That window is no longer open."))
         end
-        if not i then
-            -- Nothing here yet: say how to fill it, and keep the room open (and
-            -- drawn) so the user can pick another place without starting over.
-            -- Only a letter reaches an empty place (a clicked room draws none),
-            -- so the letter is the way to fill it.
-            ctx.log("jump empty", key)
-            ctx.alert(ctx.t("alert.empty", "%1$s is empty. Shift+%2$s puts the app in front there.",
-                label, key:upper()))
-            showPanel(room)
+    end
+
+    -- Drag: the window keeps its new spot; the room stays open.
+    local function move(id, x, y)
+        local s = st.byId and st.byId[id]
+        if s and s.entry.isPrivate then                -- its entry is the one in st.mem
+            s.entry.x, s.entry.y, s.entry.placed = x, y, true
+            ctx.log("move private", string.format("%.2f,%.2f", x, y), "(memory only)")
             return
         end
-        -- Try the apps round the place from `i`. One uninstalled since it was
-        -- placed keeps its spot (the user decides when to forget it) but must not
-        -- block the apps after it: stepping keys off the app in FRONT, and a
-        -- missing app never is, so without this every press would stop on it.
-        -- A clicked icon is the one app wanted: it is tried alone.
-        local n = #pin.apps
-        for step = 0, (app and pin.apps[app]) and 0 or n - 1 do
-            local k = (i - 1 + step) % n + 1
-            local bundleId = pin.apps[k]
-            local found = ctx.launchOrFocusApp(bundleId, function(ok, reason)
-                if not ok then
-                    ctx.log("jump refused", key, bundleId, reason)
-                    ctx.alert(ctx.t("alert.launchRefused", "Could not open the app on %1$s: %2$s",
-                        label, reason or ""))
-                end
-            end)
-            if found then
-                ctx.log("jump", key, bundleId, k .. "/" .. n)
-                st.lastJump = { key = key, index = k }
-                -- A click is done once it lands; the held-Hyper stepping is a
-                -- keyboard thing, and a room left open under the pointer is not.
-                if clicked then close() else closeOrHold() end
-                local shown = shownName(ctx, room, pin)
-                if shown then ctx.confirmAction(shown) end
-                return
-            end
-            ctx.log("jump gone", key, bundleId)
-        end
-        -- Every app here is gone: say where to fix it.
-        close()
-        ctx.alert(ctx.t("alert.gone",
-            "The app on %s is no longer installed. Remove it in Settings > Memory Room.", label))
+        local op = R.move(ctx.getState("room"), st.app, id, x, y)
+        ctx.log("move", id, string.format("%.2f,%.2f", x, y), op.status)
+        if op.status == "moved" then ctx.setState("room", op.json) end
     end
 
-    -- Say how putting the front app somewhere went. `pin`: where it went (or
-    -- would have), named only as the room shows it.
-    ---@param op RoomOp
-    ---@param room Room
-    ---@param pin RoomPin|nil
-    ---@param app string
-    local function reportPlace(op, room, pin, app)
-        local where = pin and shownName(ctx, room, pin)
-        if op.status == "placed" or op.status == "moved" then
-            ctx.setState("room", op.json)
-            if where then
-                ctx.alert(ctx.t("alert.placed", "%1$s → %2$s", app, where))
-            else
-                ctx.alert(ctx.t("alert.inRoom", "%s is in the room", app))
-            end
-        elseif op.status == "already" then
-            if where then
-                ctx.alert(ctx.t("alert.already", "%1$s is already on %2$s", app, where))
-            else
-                ctx.alert(ctx.t("alert.alreadyHere", "%s is already there", app))
-            end
-        elseif op.status == "full" and pin then
-            if where then
-                ctx.alert(ctx.t("alert.full", "%1$s already holds %2$d apps. Remove one in Settings > Memory Room.",
-                    where, R.MAX_APPS))
-            else
-                ctx.alert(ctx.t("alert.fullHere", "That place already holds %d apps. Remove one in Settings > Memory Room.",
-                    R.MAX_APPS))
-            end
-        elseif op.status == "full" then
-            ctx.alert(ctx.t("alert.roomFull", "The room already has %d places. Remove one in Settings > Memory Room.",
-                R.MAX_PINS))
-        elseif op.status == "noapp" then
-            ctx.alert(ctx.t("alert.noApp", "No app is in front to put there."))
-        end
-    end
-
-    -- Put the app in front in the place on `key`.
-    local function place(key)
-        local front = ctx.frontmostAppInfo()
-        local op = R.place(ctx.getState("room"), key, front.bundleId)
-        local room = R.decode(op.json)
-        ctx.log("place", key, front.bundleId, op.status)
-        close()
-        reportPlace(op, room, R.pinByKey(room, key), front.name ~= "" and front.name or front.bundleId)
-    end
-
-    -- Put the app in front exactly at (x, y) of the room -- a right-click off
-    -- every place: the room makes a place there for it.
-    local function placeAt(x, y)
-        local front = ctx.frontmostAppInfo()
-        local op = R.placeAt(ctx.getState("room"), x, y, front.bundleId)
-        local room = R.decode(op.json)
-        local pin
-        for _, p in ipairs(room.pins) do if p.id == op.id then pin = p end end
-        ctx.log("placeAt", string.format("%.2f,%.2f", x, y), front.bundleId, op.status,
-                pin and pin.key or "-", op.from and ("from " .. op.from) or "")
-        close()
-        reportPlace(op, room, pin, front.name ~= "" and front.name or front.bundleId)
-    end
-
-    -- What the drawn room reports: a click on a place ({key, app?}), the
-    -- right-click's "Put <app> here" on a place ({key, action = "place"}) or off
-    -- every place ({action = "placeAt", x, y}), or nil -- a click off every place,
-    -- on the room or anywhere else, which closes it.
-    ---@param pick {key: string|nil, app: integer|nil, action: string|nil, x: number|nil, y: number|nil}|nil
-    function onPick(pick)
+    -- What the drawn room reports: a click on a window ({id}), a drag that let go
+    -- ({id, action = "move", x, y}), or nil -- a click off every window, on the
+    -- room or anywhere else, which closes it.
+    ---@param pick {id: string|nil, action: string|nil, x: number|nil, y: number|nil}|nil
+    local function onPick(pick)
         if not st.modal then return end              -- a click racing the close
-        if type(pick) == "table" and pick.action == "placeAt"
-            and type(pick.x) == "number" and type(pick.y) == "number" then
-            placeAt(pick.x, pick.y)
-            return
-        end
-        if type(pick) ~= "table" or type(pick.key) ~= "string" then
+        if type(pick) ~= "table" or type(pick.id) ~= "string" then
             ctx.log("click: dismiss")
             close()
             return
         end
-        ctx.log("click", pick.key, pick.action or "jump", pick.app or "-")
-        if pick.action == "place" then place(pick.key) else jump(pick.key, true, pick.app) end
+        if pick.action == "move" and type(pick.x) == "number" and type(pick.y) == "number" then
+            move(pick.id, pick.x, pick.y)
+            return
+        end
+        ctx.log("click", logId(pick.id))
+        focus(pick.id)
     end
 
     function st.open()
         close()
-        local room = R.decode(ctx.getState("room"))
-        -- A clicked room opens empty too: a right-click anywhere is how it fills.
-        -- A lettered room with no places would be a mode with nothing to press.
-        if #room.pins == 0 and room.showKeys then
-            ctx.log("open: no places")
-            ctx.alert(ctx.t("alert.noPins", "This room has no places yet. Add some in Settings > Memory Room."))
+        local front = ctx.frontmostAppInfo()
+        if front.bundleId == "" then
+            ctx.log("open: no app in front")
+            ctx.alert(ctx.t("alert.noApp", "No app is in front."))
             return
         end
-        -- Shift+letter places. modal.lua gives a held-leader twin only to BARE
-        -- keys, so the Shift binding gets its own twin under the entry hotkey's
-        -- modifiers: placing then works with Hyper still held, as jumping does.
-        -- Not when the leader already has Shift: the bare key's leader twin sits
-        -- on that exact combo, and binding it twice makes the seam raise.
-        local trigger = ctx.actionTrigger("open")
-        st.leader, st.lastJump = hotkeys.cycleModifier(trigger), nil
-        local placeMods = { "shift" }
-        if trigger and trigger.type == "hotkey" and type(trigger.mods) == "table" then
-            for _, m in ipairs(trigger.mods) do
-                if m == "shift" then placeMods = { "shift" }; break end
-                placeMods[#placeMods + 1] = m
-            end
+        local appName = front.name ~= "" and front.name or front.bundleId
+        local rows = ctx.window.list()
+        -- Empty for three different reasons, each with its own way out: no
+        -- Accessibility grant (nothing lists at all), the app not answering in time,
+        -- or genuinely no windows.
+        if #rows == 0 and not ctx.axTrusted() then
+            ctx.log("open: no accessibility")
+            ctx.alert(ctx.t("alert.needsAccess", "Memory Room needs Accessibility to see your windows."))
+            ctx.axPrompt()
+            return
         end
-        local bindings = {}
-        for _, pin in ipairs(room.pins) do
-            local key = pin.key
-            bindings[#bindings + 1] = { key = key, fn = function() jump(key) end }
-            bindings[#bindings + 1] = { mods = { "shift" }, key = key, fn = function() place(key) end }
-            if #placeMods > 1 then
-                bindings[#bindings + 1] = { mods = placeMods, key = key, fn = function() place(key) end }
-            end
+        local live = {}
+        for _, w in ipairs(rows) do
+            if w.bundleID == front.bundleId then live[#live + 1] = w end
         end
-        ctx.log("open", #room.pins, "places", "room", room.image or "study",
-                room.showKeys and "letters" or "click")
+        if #live == 0 then
+            local dropped = false
+            for _, b in ipairs(ctx.window.droppedApps()) do
+                if b == front.bundleId then dropped = true end
+            end
+            ctx.log("open: no windows", front.bundleId, dropped and "(did not answer)" or "")
+            if dropped then
+                ctx.alert(ctx.t("alert.noAnswer", "%s did not answer in time. Try again.", appName))
+            else
+                ctx.alert(ctx.t("alert.noWindows", "%s has no open windows.", appName))
+            end
+            return
+        end
+
+        local arranged = R.arrange(ctx.getState("room"), front.bundleId, live, st.mem[front.bundleId])
+        st.mem[front.bundleId] = next(arranged.mem) and arranged.mem or nil
+        ctx.setState("room", arranged.json)
+        local room = R.decode(arranged.json)
+        local fresh, aside, private = 0, {}, 0
+        st.app, st.byId = front.bundleId, {}
+        for _, s in ipairs(arranged.spots) do
+            st.byId[R.windowId(s.entry)] = s
+            if s.new then fresh = fresh + 1 end
+            if s.entry.isPrivate then private = private + 1 end
+        end
+        for _, s in ipairs(arranged.spots) do
+            if s.aside then aside[#aside + 1] = logId(R.windowId(s.entry)) end
+        end
+        ctx.log("open", front.bundleId, #live, "windows", fresh, "new", "room", room.image or "study",
+                private > 0 and (private .. " private (memory only)") or "",
+                #aside > 0 and ("aside " .. table.concat(aside, ",")) or "")
+
+        -- A mode with no keys of its own: it holds Escape while the room is open.
         st.modal = ctx.modal({
             silent   = true,
-            bindings = bindings,
-            -- A place can sit on the entry key itself (L, the door, in the default
-            -- room), so every bare key gets the held-leader twin -- Hyper+L L reaches it.
-            stickyExceptKey = false,
+            bindings = {},
             onExit   = function()
-                if st.showTimer then st.showTimer.stop() end
                 if st.panel then st.panel.stop() end
-                if st.releasePoll then st.releasePoll.stop() end
-                st.modal, st.panel, st.showTimer, st.releasePoll, st.lastJump = nil, nil, nil, nil, nil
+                st.modal, st.panel, st.app, st.byId = nil, nil, nil, nil
             end,
         })
-        if not room.showKeys then
-            showPanel(room)
-            return
-        end
-        st.showTimer = ctx.afterSeconds(SHOW_DELAY, function()
-            st.showTimer = nil
-            showPanel(room)
-        end)
+        st.panel = ctx.roomPanel(panelSpec(ctx, room, arranged.spots, appName), onPick)
     end
 
     return st
@@ -368,12 +202,12 @@ end
 return {
     api = 1,
     id  = "memory_room",
-    -- no capabilities: launchOrFocusApp / frontmostAppInfo are ungated, and the
-    -- photo is read by the Swift panel, never by Lua.
+    -- no capabilities: window listing / focus and frontmostAppInfo are ungated,
+    -- and the photo is read by the Swift panel, never by Lua.
     actions = {
         { id = "open", label = "Open the room",
-          description = "Show the room: click a place to bring its app forward, "
-              .. "right-click anywhere in it to put the app you're in there.",
+          description = "Show the room of the app you're in: click a window to bring it forward, "
+              .. "drag one to move its spot.",
           defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "l" },
           -- Not R: Hyper+R is the near-universal "reload config" in Hammerspoon
           -- setups, and a clash with another app is invisible here (Carbon lets

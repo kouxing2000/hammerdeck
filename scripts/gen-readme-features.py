@@ -156,6 +156,19 @@ RULES_ACCESSIBILITY = [
      ("app/platform/swift/Native+Input.swift", 'guard inputTrusted("media_key")'), "media keys"),
 ]
 
+# Grants a feature asks for only for an extra -- the feature works without them,
+# so they are no `requires` (which the Settings badge reads as "does not work
+# until granted"): (feature id, the file that asks, the call it makes, label, what
+# it covers). Held to that file the way RULES_GRANTS is held to the seam, and the
+# ask itself is held to that one caller, so a second feature asking fails here
+# instead of going unlisted.
+OPTIONAL_GRANTS = [
+    ("memory_room", "app/features/memory_room/swift/RoomPanel.swift", "Native.requestWindowCapture()",
+     "Screen Recording (optional)",
+     "to show a window's picture while you point at it; macOS asks the first time, "
+     "and everything else works without it"),
+]
+
 
 def die(msg):
     sys.exit(f"gen-readme-features: {msg}")
@@ -217,6 +230,7 @@ def load_features():
 
         out.append(
             {
+                "id": fdir.name,
                 "name": clean(d.get("name", ""), "name", fdir.name),
                 "description": clean(d.get("description", ""), "description", fdir.name),
                 "category": clean(d.get("category", "general"), "category", fdir.name),
@@ -377,6 +391,21 @@ def permissions(features):
             "AppleScript, so macOS prompts once per browser",
             browser,
         ))
+    swift_src = {
+        path: path.read_text(encoding="utf-8") for path in sorted(ROOT.glob("app/**/*.swift"))
+    }
+    for fid, src_file, call, label, covers in OPTIONAL_GRANTS:
+        if call not in (ROOT / src_file).read_text(encoding="utf-8"):
+            die(f"{src_file} no longer contains {call}, so the '{label}' line may be false")
+        ask = call.split(".")[-1].split("(")[0]
+        others = [str(p.relative_to(ROOT)) for p, src in swift_src.items()
+                  if p != ROOT / src_file and f"{ask}(" in src and f"func {ask}(" not in src]
+        if others:
+            die(f"{', '.join(others)} call {ask} too, which the '{label}' line does not name")
+        names = [f["name"] for f in ordered if f["id"] == fid]
+        if not names:
+            die(f"OPTIONAL_GRANTS names feature '{fid}', which does not exist")
+        out.append((label, covers, names))
     feature_src = {
         path: path.read_text(encoding="utf-8")
         for path in sorted(ROOT.glob("app/features/*/lua/**/*.lua"))

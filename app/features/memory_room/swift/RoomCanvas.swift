@@ -1,24 +1,24 @@
-// memory_room's shared drawing: the room picture with its pins. One
-// view serves all three places the room appears -- the Hyper+L overlay
-// (RoomPanel), the Settings editor (MemoryRoomView), and the gallery card
-// (MemoryRoomArchetypeScene) -- so a pin can never look different in the editor
-// from how it looks when the user reaches for it.
+// memory_room's shared drawing: the room picture with one app's windows on it.
+// One view serves every place the room appears -- the Hyper+L overlay (RoomPanel),
+// the gallery card (MemoryRoomArchetypeScene) and the settings page's picture
+// (MemoryRoomView, with no windows) -- so each shows exactly what the user will
+// reach for.
 //
 // The record itself is owned by room.lua; this file only holds the display shape
-// (RoomPinDisplay) that the seam and the page decode into.
+// (RoomPinDisplay) that the seam decodes into.
 
 import AppKit
 import ImageIO
 import SwiftUI
 
-/// One place as the room draws it: already localized, already resolved.
+/// One window as the room draws it: already resolved.
 struct RoomPinDisplay: Identifiable, Equatable {
-    let id: String          // the pin id on the page; the key in the overlay
-    let key: String         // one character, drawn upper-cased
-    let name: String
+    let id: String          // room.lua's windowId: what a pick reports back
+    let name: String        // the short label under the icon
+    let title: String       // the full title, for the hover line
     let x: Double           // 0..1 of the image, top-left origin
     let y: Double
-    let apps: [String]      // bundle ids, placement order
+    let apps: [String]      // bundle ids: the app the window belongs to
 }
 
 /// Where the room's picture comes from. The record's `image` is one of three kinds:
@@ -145,12 +145,17 @@ enum RoomImage {
     }
 }
 
-/// Something a click in the room can land on: a place (`app` nil) or one of the
-/// app icons in it (`app` = 1-based index into the place's apps). `rect` is in
-/// the canvas's own coordinates, top-left origin.
+/// A window's picture, shown in a bubble over the room while its icon is hovered.
+struct RoomPreview {
+    let id: String          // the pin it belongs to
+    let image: NSImage
+}
+
+/// A window a click in the room can land on (`id` = its RoomPinDisplay id), and
+/// where it was drawn: `rect` is in the canvas's own coordinates, top-left origin;
+/// its centre is the window's spot.
 struct RoomTarget: Equatable {
-    let key: String
-    let app: Int?
+    let id: String
     let rect: CGRect
     static let space = "roomCanvas"
 }
@@ -162,24 +167,25 @@ private struct RoomTargetsKey: PreferenceKey {
     }
 }
 
-/// The room at a fixed size: picture (dimmed ~20% so light pins stay readable on
-/// any photo), then each pin as a dark chip with the icons of the apps placed
-/// there -- and its key letter, when the room draws letters. `scale` is the
-/// caller's HUDScale factor (1 in Settings).
+/// The room at a fixed size: picture (dimmed ~20% so light icons stay readable on
+/// any photo), then each window as a dark chip with its app's icon and its short
+/// label underneath. `scale` is the caller's HUDScale factor.
 struct RoomCanvas: View {
     let image: NSImage?
     let pins: [RoomPinDisplay]
-    /// Bundle id of the frontmost app: its pin gets the accent ring, so the room
-    /// also answers "where does the thing I'm in right now live?"
+    /// The window in front (by id): its chip gets the accent ring, so the room also
+    /// answers "where does the window I'm in right now live?"
     var front: String? = nil
-    /// The pin selected in the editor, or under the pointer in the overlay (by id).
+    /// The window under the pointer, or being dragged (by id).
     var selected: String? = nil
     var scale: CGFloat = 1
-    /// Draw each place's key letter. Off, a place is its icons (or, empty, a ring).
-    var showKeys: Bool = true
-    /// Where each place and icon was drawn, for a caller that takes clicks (the
-    /// overlay's hit layer). Nil draws only.
+    /// Draw each window's label (the gallery card leaves them off).
+    var showLabels: Bool = true
+    /// Where each window was drawn, for a caller that takes clicks (the overlay's
+    /// hit layer). Nil draws only.
     var onTargets: (([RoomTarget]) -> Void)? = nil
+    /// The hovered window's picture, drawn beside its icon.
+    var preview: RoomPreview? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -192,16 +198,34 @@ struct RoomCanvas: View {
                     Color.black.opacity(0.2)
                 } else {
                     // The photo is missing (deleted behind our back): a plain board
-                    // keeps every place usable in the same spots.
+                    // keeps every window in the same spot.
                     LinearGradient(colors: [Color(white: 0.20), Color(white: 0.12)],
                                    startPoint: .top, endPoint: .bottom)
                 }
                 ForEach(pins) { pin in
+                    let at = CGPoint(x: pin.x * geo.size.width, y: pin.y * geo.size.height)
                     RoomPinChip(pin: pin, scale: scale,
-                                lit: pin.apps.contains { $0 == front } || pin.id == selected,
-                                showKey: showKeys,
-                                reportsTargets: onTargets != nil)
-                        .position(x: pin.x * geo.size.width, y: pin.y * geo.size.height)
+                                lit: pin.id == front || pin.id == selected,
+                                showLabel: showLabels,
+                                reportsTargets: onTargets != nil,
+                                at: at, room: geo.size)
+                        .position(at)
+                }
+                if let preview, let pin = pins.first(where: { $0.id == preview.id }) {
+                    let size = preview.image.size
+                    let f = Self.previewFrame(at: CGPoint(x: pin.x * geo.size.width, y: pin.y * geo.size.height),
+                                              aspect: size.width / max(1, size.height),
+                                              in: geo.size, scale: scale)
+                    Image(nsImage: preview.image)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: f.width, height: f.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 6 * scale))
+                        .overlay(RoundedRectangle(cornerRadius: 6 * scale)
+                            .strokeBorder(.white.opacity(0.85), lineWidth: 1.5 * scale))
+                        .shadow(color: .black.opacity(0.5), radius: 8 * scale, y: 3 * scale)
+                        .position(x: f.midX, y: f.midY)
+                        .allowsHitTesting(false)
                 }
             }
             .coordinateSpace(name: RoomTarget.space)
@@ -209,57 +233,151 @@ struct RoomCanvas: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10 * scale))
     }
+
+    /// Where a window dropped at `p` lands: `p` itself when it covers no other
+    /// icon, else the nearest point where it covers none -- rings of growing
+    /// radius, and on a ring the point furthest along the way it was sliding off
+    /// the icon it hit -- with its centre inside the room. `p` again when the room
+    /// has no such point. It covers another when its icon (a box of `size` centred
+    /// there) meets one, or when the two are closer than `foot` on both axes:
+    /// room.lua's R.FOOT, as a fraction of the room, which is what the next open
+    /// judges two spots by -- a drop it would call covering is drawn aside there.
+    /// All else in the room's points.
+    static func landing(for p: CGPoint, size: CGSize, others: [CGRect],
+                        foot: CGSize = .zero, in room: CGSize) -> CGPoint {
+        let gap: CGFloat = 2
+        // A point over the footprint, so rounding through the room's fractions
+        // never lands a drop on its edge.
+        let reach = CGSize(width: foot.width * room.width + 1, height: foot.height * room.height + 1)
+        func box(_ c: CGPoint) -> CGRect {
+            CGRect(x: c.x - size.width / 2, y: c.y - size.height / 2, width: size.width, height: size.height)
+                .insetBy(dx: -gap, dy: -gap)
+        }
+        func covers(_ o: CGRect, _ c: CGPoint) -> Bool {
+            o.intersects(box(c)) || (abs(c.x - o.midX) < reach.width && abs(c.y - o.midY) < reach.height)
+        }
+        func clear(_ c: CGPoint) -> Bool {
+            c.x >= 0 && c.x <= room.width && c.y >= 0 && c.y <= room.height
+                && !others.contains { covers($0, c) }
+        }
+        guard let hit = others.first(where: { covers($0, p) }) else { return p }
+        // Away from the centre of the icon it hit; straight right when dead centre.
+        var away = CGVector(dx: p.x - hit.midX, dy: p.y - hit.midY)
+        let len = hypot(away.dx, away.dy)
+        away = len > 0.5 ? CGVector(dx: away.dx / len, dy: away.dy / len) : CGVector(dx: 1, dy: 0)
+        let steps = 32
+        for r in stride(from: CGFloat(4), through: max(room.width, room.height), by: 4) {
+            let want = CGPoint(x: p.x + away.dx * r, y: p.y + away.dy * r)
+            let ring = (0..<steps).map { i -> CGPoint in
+                let a = CGFloat(i) / CGFloat(steps) * 2 * .pi
+                return CGPoint(x: p.x + cos(a) * r, y: p.y + sin(a) * r)
+            }.filter(clear)
+            if let best = ring.min(by: { hypot($0.x - want.x, $0.y - want.y) < hypot($1.x - want.x, $1.y - want.y) }) {
+                return best
+            }
+        }
+        return p
+    }
+
+    /// Where a window's preview goes, for an icon centred at `p` in a room of
+    /// `size`: centred over the icon, above it when it fits, else below, else on
+    /// whichever side has more room. Always inside the room (the card never
+    /// grows), and sized so the larger side can hold it clear of the icon.
+    static func previewFrame(at p: CGPoint, aspect: CGFloat, in size: CGSize, scale: CGFloat) -> CGRect {
+        let margin = 6 * scale, gap = 6 * scale
+        let reach = 22 * scale                          // the icon and its label, from its centre
+        let above = p.y - reach - gap - margin          // the height free on each side
+        let below = size.height - (p.y + reach + gap) - margin
+        var w = size.width * 0.45
+        var h = w / max(aspect, 0.1)
+        let fit = max(above, below, size.height * 0.3)
+        if h > fit { h = fit; w = h * max(aspect, 0.1) }
+        let y: CGFloat
+        if h <= above { y = p.y - reach - gap - h }
+        else if h <= below { y = p.y + reach + gap }
+        else if above >= below { y = margin }
+        else { y = size.height - margin - h }
+        let x = min(max(p.x - w / 2, margin), size.width - margin - w)
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
 }
 
-/// One place: a dark chip holding the placed apps' icons, after the key letter
-/// when the room draws letters. An empty place with no letter to show is a small
-/// dashed ring, so it still reads as a spot to click. No name is drawn: the
-/// picture already shows the desk; the name serves the places list and the alerts.
+/// A chip with its label under it, like a VStack -- except that the label stays
+/// inside the room: near a side it slides in, and at the bottom it goes above the
+/// chip, instead of being cut off by the frame. The pin is centred on its spot
+/// (`at`, in the room's coordinates), which is how the room is found from here.
+private struct PinLayout: Layout {
+    let spacing: CGFloat
+    let at: CGPoint
+    let room: CGSize
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        return CGSize(width: sizes.map(\.width).max() ?? 0,
+                      height: sizes.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, sizes.count - 1)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let chip = subviews.first else { return }
+        let c = chip.sizeThatFits(.unspecified)
+        chip.place(at: CGPoint(x: bounds.midX, y: bounds.minY), anchor: .top, proposal: ProposedViewSize(c))
+        guard subviews.count > 1 else { return }
+        let label = subviews[1]
+        let l = label.sizeThatFits(.unspecified)
+        // The room's edges in these coordinates; with no room given, nothing moves.
+        let x: CGFloat
+        var y = bounds.minY + c.height + spacing
+        if room.width > 0 {
+            let minX = bounds.midX - at.x, maxX = minX + room.width
+            x = min(max(bounds.midX, minX + l.width / 2), maxX - l.width / 2)
+            if y + l.height > bounds.midY - at.y + room.height { y = bounds.minY - spacing - l.height }
+        } else {
+            x = bounds.midX
+        }
+        label.place(at: CGPoint(x: x, y: y), anchor: .top, proposal: ProposedViewSize(l))
+    }
+}
+
+/// One window: a dark chip with its app's icon, and a short label under it -- every icon in the room is the same
+/// app, so the label is what tells two windows apart until their spots do.
 struct RoomPinChip: View {
     let pin: RoomPinDisplay
     let scale: CGFloat
     let lit: Bool
-    var showKey: Bool = true
+    var showLabel: Bool = true
     var reportsTargets: Bool = false
+    /// Its spot, and the room's size: the label is kept inside the room.
+    var at: CGPoint = .zero
+    var room: CGSize = .zero
 
     var body: some View {
-        Group {
-            if !showKey && pin.apps.isEmpty { ring } else { chip }
+        PinLayout(spacing: 2 * scale, at: at, room: room) {
+            chip
+            if showLabel, !pin.name.isEmpty {
+                // On a dark backing: white text over a bare shadow drops under
+                // readable contrast on a bright room or photo.
+                Text(pin.name)
+                    .font(.system(size: 10 * scale, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, 4 * scale)
+                    .padding(.vertical, 1 * scale)
+                    .background(RoundedRectangle(cornerRadius: 4 * scale).fill(Color.black.opacity(0.6)))
+            }
         }
-        .help(pin.name)
-        .background(target(app: nil))
-    }
-
-    private var ring: some View {
-        Circle()
-            .fill(Color.black.opacity(0.55))
-            .overlay(Circle().strokeBorder(lit ? Color.accentColor : .white.opacity(0.8),
-                                           style: StrokeStyle(lineWidth: (lit ? 2 : 1.5) * scale,
-                                                              dash: [3 * scale, 2 * scale])))
-            .frame(width: 16 * scale, height: 16 * scale)
+        .background(target)
     }
 
     private var chip: some View {
         HStack(spacing: 3 * scale) {
-            if showKey {
-                Text(pin.key.uppercased())
-                    .font(.system(size: 13 * scale, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 22 * scale, minHeight: 22 * scale)
-            }
-            ForEach(Array(pin.apps.enumerated()), id: \.element) { i, app in
-                Group {
-                    if let icon = AppCatalog.icon(forBundleId: app) {
-                        Image(nsImage: icon).resizable().frame(width: 22 * scale, height: 22 * scale)
-                    } else {
-                        // Uninstalled since it was placed: a faded placeholder, so the
-                        // place still shows it is taken until the user removes it.
-                        RoundedRectangle(cornerRadius: 5 * scale)
-                            .strokeBorder(.white.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
-                            .frame(width: 20 * scale, height: 20 * scale)
-                    }
+            ForEach(Array(pin.apps.enumerated()), id: \.offset) { _, app in
+                if let icon = AppCatalog.icon(forBundleId: app) {
+                    Image(nsImage: icon).resizable().frame(width: 22 * scale, height: 22 * scale)
+                } else {
+                    RoundedRectangle(cornerRadius: 5 * scale)
+                        .strokeBorder(.white.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                        .frame(width: 20 * scale, height: 20 * scale)
                 }
-                .background(target(app: i + 1))
             }
         }
         .padding(.horizontal, 5 * scale)
@@ -269,13 +387,13 @@ struct RoomPinChip: View {
             .strokeBorder(lit ? Color.accentColor : .white.opacity(0.35), lineWidth: lit ? 2 * scale : 1))
     }
 
-    /// Report where this place (or one of its icons) was drawn, for the overlay's
-    /// hit layer. Nothing at all when the caller only draws.
-    @ViewBuilder private func target(app: Int?) -> some View {
+    /// Report where this window was drawn, for the overlay's hit layer. Nothing at
+    /// all when the caller only draws.
+    @ViewBuilder private var target: some View {
         if reportsTargets {
             GeometryReader { g in
                 Color.clear.preference(key: RoomTargetsKey.self, value: [
-                    RoomTarget(key: pin.key, app: app, rect: g.frame(in: .named(RoomTarget.space))),
+                    RoomTarget(id: pin.id, rect: g.frame(in: .named(RoomTarget.space))),
                 ])
             }
         }

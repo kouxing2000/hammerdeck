@@ -76,10 +76,9 @@ extension Native {
 
     // MARK: - Memory Room overlay (memory_room's contributed RoomPanel)
 
-    // room_panel_show(spec, onPick): onPick gets {key, app?} for a click on a place,
-    // {key, action = "place"} / {action = "placeAt", x, y} for the right-click item
-    // on a place / off every place, or nil for a click off every place (see
-    // adapter.roomPanel). stop() closes the room and releases the ref.
+    // room_panel_show(spec, onPick): onPick gets {id} for a click on a window,
+    // {id, action = "move", x, y} for a drag let go, or nil for a click off every
+    // window (see adapter.roomPanel). stop() closes the room and releases the ref.
     func roomPanelShow(_ L: OpaquePointer?) -> Int32 {
         let dict = LuaState.any(L, 1) as? [String: Any] ?? [:]
         let pickRef = lua.makeCallbackRef(at: 2, named: "onPick")
@@ -87,14 +86,11 @@ extension Native {
             Native.shared.lua.callRef(pickRef) { L in
                 guard let pick else { lua_pushnil(L); return 1 }
                 lua_createtable(L, 0, 4)
-                if let key = pick.key { lua_pushstring(L, key); lua_setfield(L, -2, "key") }
-                if let app = pick.app { lua_pushinteger(L, lua_Integer(app)); lua_setfield(L, -2, "app") }
-                if let at = pick.at {
-                    lua_pushstring(L, "placeAt"); lua_setfield(L, -2, "action")
-                    lua_pushnumber(L, Double(at.x)); lua_setfield(L, -2, "x")
-                    lua_pushnumber(L, Double(at.y)); lua_setfield(L, -2, "y")
-                } else if pick.place {
-                    lua_pushstring(L, "place"); lua_setfield(L, -2, "action")
+                lua_pushstring(L, pick.id); lua_setfield(L, -2, "id")
+                if let to = pick.movedTo {
+                    lua_pushstring(L, "move"); lua_setfield(L, -2, "action")
+                    lua_pushnumber(L, Double(to.x)); lua_setfield(L, -2, "x")
+                    lua_pushnumber(L, Double(to.y)); lua_setfield(L, -2, "y")
                 }
                 return 1
             }

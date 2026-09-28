@@ -1,20 +1,28 @@
--- test/cases/memory_room.lua -- memory_room: a memory palace for apps. Two halves:
---
+-- test/cases/memory_room.lua -- memory_room: a memory palace for ONE app's
+-- windows. Two halves:
 -- 1. room.lua, the pure schema both writers share (the running feature and the
---    Settings page via readerCall): the default room, decode's forgiveness rules,
---    key-from-position, and every edit -- above all place(), whose "an app lives
---    in ONE place" and "a full place refuses WITHOUT unplacing" rules are the
---    ones a regression would break silently.
--- 2. The live flow over the fake: Hyper+L arms a silent modal. With letters
---    drawn, the room appears only after the pause, a letter brings an app forward
---    (stepping on a repeat press), Shift+letter places the frontmost app -- with
---    Hyper still held too. Without them (the default), the room appears at once
---    and is clicked: a place, one of its icons, the right-click item, or off
---    every place to close -- and the unseen letters still work.
+--    Settings page via readerCall): decode's forgiveness rules, v1 records, and
+--    arrange() -- a window keeps its spot across opens, across a
+--    retitle (wid) and across an app restart (title), new windows take free
+--    slots, closed windows' slots are reused only when every slot is taken.
+-- 2. The live flow over the fake: Hyper+L lists the FRONT app's windows only,
+--    draws them at once, a click focuses the window it names, a drag keeps
+--    the new spot, Escape closes the room, and the three empty cases
+--    (no Accessibility, app not answering, no windows) each say their own thing.
 --
 -- Hermetic: registers memory_room itself; state lives in fake.settings.
 
 local STATE = "hammerdeck.state.memory_room.room"
+
+---@param id integer
+---@param wid integer
+---@param title string
+---@param bundle string|nil
+---@return table
+local function win(id, wid, title, bundle)
+    return { id = id, wid = wid, title = title, appName = "Code", bundleID = bundle or "com.code",
+             x = 0, y = 0, w = 800, h = 600 }
+end
 
 return {
     id = "memory_room",
@@ -23,371 +31,422 @@ return {
         local ok, fake, registry = t.ok, t.fake, t.registry
         local HYP = { "cmd", "alt", "ctrl" }
         local R = require("features.memory_room.room")
+        local json = require("platform.json")
         local function front(name, bundleId) fake.frontmost, fake.frontmostId = name, bundleId end
+        local function entries(raw, app) return R.decode(raw).apps[app] or {} end
 
-        -- ===== the default room =====
+        -- ===== decode =====
         do
             local room = R.decode(nil)
-            ok(room.image == nil, "no stored record: the default room (no photo)")
-            ok(#room.pins == 9, "the default room has its nine places")
-            local seen, valid = {}, true
-            for _, p in ipairs(room.pins) do
-                local onRow = false
-                for _, row in ipairs(R.ROWS) do if row:find(p.key, 1, true) then onRow = true end end
-                if seen[p.key] or not onRow or p.x < 0 or p.x > 1 or p.y < 0 or p.y > 1 then valid = false end
-                seen[p.key] = true
+            ok(room.image == nil and next(room.apps) == nil, "no record: an empty room")
+            ok(next(R.decode("not json").apps) == nil, "an unreadable record: an empty room")
+            local v1 = R.decode('{"v":1,"image":"neon","showKeys":true,"pins":[{"id":"p1","key":"d","x":0.3,"y":0.5,"apps":["x"]}]}')
+            ok(v1.image == "neon" and next(v1.apps) == nil,
+                "a v1 record (apps in places) keeps its picture; its places are dropped")
+            local r = R.decode(json.encode(json.asObject({ v = 2, apps = json.asObject({ ["com.code"] = json.asArray({
+                json.asObject({ wid = 11, title = "a", x = 0.2, y = 0.2, key = "w" }),
+                json.asObject({ wid = 0, title = "", x = 0.5, y = 0.5 }),
+                json.asObject({ wid = 11, title = "dup", x = 0.9, y = 0.9 }),
+                json.asObject({ wid = 12, title = "b", x = 2, y = -1, key = "w" }),
+            }) }) })))
+            local list = r.apps["com.code"]
+            ok(#list == 2, "a window with nothing to find it by, and a second entry for one wid, are dropped")
+            ok(list[2].x == 1 and list[2].y == 0, "spots are clamped into the picture")
+            local rewritten = R.encode(r)
+            ok(not rewritten:find('"key"', 1, true) and not R.encode(v1):find("showKeys", 1, true),
+                "fields the schema does not know (a window's letter, the letters setting) are not written back")
+            ok(R.encode(R.empty()):find('"apps":{}', 1, true) ~= nil,
+                "an empty apps table is written as an object, so a bundle id can join it later")
+        end
+
+        -- ===== arrange: a window keeps its spot =====
+        do
+            local live = { win(1, 101, "api — Code"), win(2, 102, "web — Code"), win(3, 103, "docs — Code") }
+            local a = R.arrange(nil, "com.code", live)
+            ok(#a.spots == 3 and a.spots[1].new and a.spots[3].new, "three windows the room has never seen")
+            ok(a.spots[1].entry.x == R.SLOTS[1].x and a.spots[1].entry.y == R.SLOTS[1].y
+                and a.spots[2].entry.x == R.SLOTS[2].x and a.spots[3].entry.x == R.SLOTS[3].x,
+                "they take the first free slots (the furniture), most recently focused first")
+            ok(#entries(a.json, "com.code") == 3, "and the room remembers all three")
+
+            -- the next open, listed in another order: same spots
+            local again = R.arrange(a.json, "com.code", { win(9, 103, "docs — Code"), win(8, 101, "api — Code"),
+                                                         win(7, 102, "web — Code") })
+            local by = {}
+            for _, s in ipairs(again.spots) do by[s.entry.wid] = s end
+            ok(not by[101].new and by[101].entry.x == R.SLOTS[1].x
+                and by[103].entry.x == R.SLOTS[3].x, "the next open: every window where it was")
+            ok(entries(again.json, "com.code")[1].wid == 103, "recency: this open's windows lead, in list order")
+
+            -- a retitle (same wid) keeps the spot and takes the new title
+            local retitled = R.arrange(a.json, "com.code", { win(1, 101, "api (edited) — Code") })
+            ok(retitled.spots[1].entry.x == R.SLOTS[1].x and retitled.spots[1].entry.title == "api (edited) — Code",
+                "a retitled window keeps its spot (found by wid) and the room learns the new title")
+
+            -- the app restarted: new wids, same titles
+            local restarted = R.arrange(a.json, "com.code", { win(4, 201, "web — Code"), win(5, 202, "api — Code") })
+            local rb = {}
+            for _, s in ipairs(restarted.spots) do rb[s.entry.title] = s end
+            ok(rb["api — Code"].entry.x == R.SLOTS[1].x and rb["api — Code"].entry.wid == 202
+                and rb["web — Code"].entry.x == R.SLOTS[2].x,
+                "after an app restart a window is found by title, and known by its new wid from then on")
+            ok(#entries(restarted.json, "com.code") == 3, "the window not open now is remembered, not forgotten")
+
+            -- a new window does not take a closed window's slot while a free one is left
+            local closedOne = R.arrange(a.json, "com.code", { win(1, 101, "api — Code"), win(6, 106, "new — Code") })
+            local fresh
+            for _, s in ipairs(closedOne.spots) do if s.new then fresh = s end end
+            ok(fresh and fresh.entry.x == R.SLOTS[4].x and fresh.entry.y == R.SLOTS[4].y,
+                "a new window takes the next FREE slot, not one a closed window still holds")
+
+            -- other apps are untouched
+            local other = R.arrange(a.json, "com.term", { win(1, 301, "zsh", "com.term") })
+            ok(#entries(other.json, "com.code") == 3 and other.spots[1].entry.x == R.SLOTS[1].x,
+                "each app has its own room: another app starts at the first slot, and the first keeps its windows")
+        end
+
+        -- ===== arrange: full rooms =====
+        do
+            local live = {}
+            for i = 1, #R.SLOTS do live[i] = win(i, 1000 + i, "w" .. i) end
+            local full = R.arrange(nil, "com.code", live)
+            local newOne = R.arrange(full.json, "com.code", { win(99, 5000, "brand new") })
+            ok(newOne.spots[1].entry.x == R.SLOTS[1].x and newOne.spots[1].entry.y == R.SLOTS[1].y,
+                "every slot taken by closed windows: the first is reused")
+            ok(#entries(newOne.json, "com.code") == #R.SLOTS, "and the closed window that held it is forgotten")
+
+            live = {}
+            for i = 1, #R.SLOTS + 2 do live[i] = win(i, 2000 + i, "v" .. i) end
+            local crowded = R.arrange(nil, "com.code", live)
+            ok(#crowded.spots == #R.SLOTS + 2, "more open windows than slots: every one is still drawn (some share)")
+
+            local raw = nil
+            for i = 1, R.MAX_WINDOWS + 5 do raw = R.arrange(raw, "com.code", { win(i, 3000 + i, "x" .. i) }).json end
+            ok(#entries(raw, "com.code") == #R.SLOTS,
+                "one window at a time: closed windows give up their slots, so the room holds one per slot")
+            ok(entries(raw, "com.code")[1].wid == 3000 + R.MAX_WINDOWS + 5, "the newest leads")
+
+            live = {}
+            for i = 1, R.MAX_WINDOWS + 5 do live[i] = win(i, 4000 + i, "z" .. i) end
+            ok(#entries(R.arrange(nil, "com.code", live).json, "com.code") == R.MAX_WINDOWS,
+                "more open windows than the cap: the least recently focused are not remembered")
+        end
+
+        -- ===== names: the part next to the app's name, without the noise =====
+        do
+            local CH = "Google Chrome"
+            ok(R.nameOf("Today · Dashboard - Google Chrome - Work", CH) == "Today · Dashboard",
+                "Chrome: the page, not the profile after the app's name")
+            ok(R.nameOf("An answer - Quora - High memory usage - 871 MB - Google Chrome", CH) == "Quora",
+                "Chrome's memory note and sizes are not a name")
+            ok(R.nameOf("Release notes | Example Docs - Google Chrome", CH) == "Example Docs",
+                "a ' | ' separates parts too")
+            ok(R.nameOf("room.lua — hammerdeck", "Code") == "hammerdeck",
+                "a title that does not name the app: its last part (VS Code's project)")
+            ok(R.nameOf("hammerdeck — -zsh — 80×24", "Terminal") == "hammerdeck", "a terminal's shell and size are not a name")
+            ok(R.nameOf("notes.txt — Edited", "TextEdit") == "notes.txt", "a document's 'Edited' is not a name")
+            ok(R.nameOf("Google Chrome", CH) == "Google Chrome", "nothing but the app's name: the title itself")
+            ok(R.nameOf("Sign in - Google Accounts - Google Chrome (Incognito)", CH) == "Google Accounts",
+                "the app's name with a note after it (an Incognito window) is still the app's name")
+        end
+
+        -- ===== a window that comes back =====
+        do
+            local a = R.arrange(nil, "com.code", { win(1, 101, "room.lua — hammerdeck"), win(2, 102, "a.ts — web") })
+            -- VS Code restarted: new wids, and each window has another file open
+            local b = R.arrange(a.json, "com.code", { win(3, 201, "b.ts — web"), win(4, 202, "init.lua — hammerdeck") })
+            local by = {}
+            for _, sp in ipairs(b.spots) do by[sp.entry.wid] = sp end
+            ok(not by[202].new and by[202].entry.x == R.SLOTS[1].x and not by[201].new and by[201].entry.x == R.SLOTS[2].x,
+                "after an app restart a window is found by its name (the project), not only its exact title")
+            ok(#entries(b.json, "com.code") == 2, "and nothing is remembered twice")
+        end
+
+        -- ===== spots the user placed are kept; icons never land on each other =====
+        do
+            local live = {}
+            for i = 1, #R.SLOTS do live[i] = win(i, 1000 + i, "w" .. i) end
+            local full = R.arrange(nil, "com.code", live)
+            local raw = full.json
+            -- the user drags the window on the first slot a little, and closes everything
+            raw = R.move(raw, "com.code", "w1001", R.SLOTS[1].x + 0.01, R.SLOTS[1].y).json
+            local e1
+            for _, e in ipairs(entries(raw, "com.code")) do if e.wid == 1001 then e1 = e end end
+            ok(e1 and e1.placed, "a dragged window is marked as placed by the user")
+            local n = R.arrange(raw, "com.code", { win(99, 5000, "brand new") })
+            ok(n.spots[1].entry.x == R.SLOTS[2].x and n.spots[1].entry.y == R.SLOTS[2].y,
+                "a new window skips the slot a closed window was placed in, and reuses the next automatic one")
+            local kept
+            for _, e in ipairs(entries(n.json, "com.code")) do if e.wid == 1001 then kept = e end end
+            ok(kept and kept.x == R.SLOTS[1].x + 0.01, "the placed window's spot waits for it while it is closed")
+
+            -- every slot placed by hand: a new window finds a gap rather than a placed spot
+            raw = full.json
+            for i = 1, #R.SLOTS do raw = R.move(raw, "com.code", "w" .. (1000 + i), R.SLOTS[i].x, R.SLOTS[i].y).json end
+            local g = R.arrange(raw, "com.code", { win(98, 6000, "another") }).spots[1].entry
+            local clear = true
+            for _, sl in ipairs(R.SLOTS) do
+                if math.abs(sl.x - g.x) < R.FOOT.w and math.abs(sl.y - g.y) < R.FOOT.h then clear = false end
             end
-            ok(valid, "default keys are unique, on the three letter rows, and inside the image")
-            ok(R.pinByKey(room, "d").nameKey == "desk", "D is the desk")
-            ok(#R.decode("not json").pins == 9, "an unreadable record falls back to the default room")
-            ok(#R.decode('{"v":1,"pins":[]}').pins == 0,
-                "a record with every pin removed stays EMPTY (the default is not resurrected)")
+            ok(clear, "every slot placed by hand: the new window takes a gap no icon covers")
+
+            -- a window dragged near (not onto) a slot still keeps new windows off it
+            local near = R.arrange(nil, "com.code", { win(1, 101, "one"), win(2, 102, "two") })
+            local moved = R.move(near.json, "com.code", "w102", R.SLOTS[3].x + 0.08, R.SLOTS[3].y).json
+            local third = R.arrange(moved, "com.code", { win(1, 101, "one"), win(2, 102, "two"), win(3, 103, "three") })
+            local e3
+            for _, sp in ipairs(third.spots) do if sp.entry.wid == 103 then e3 = sp.entry end end
+            ok(e3 and e3.x == R.SLOTS[2].x and e3.y == R.SLOTS[2].y,
+                "the slot the dragged window left is free again")
+            local fourth = R.arrange(third.json, "com.code", { win(4, 104, "four") })
+            ok(fourth.spots[1].entry.x == R.SLOTS[4].x and fourth.spots[1].entry.y == R.SLOTS[4].y,
+                "a slot another icon half covers is skipped, not drawn over")
+
+            -- the cap forgets automatic spots before placed ones
+            local capped = full.json
+            capped = R.move(capped, "com.code", "w" .. (1000 + #R.SLOTS), 0.5, 0.5).json   -- the oldest, placed
+            local many = {}
+            for i = 1, R.MAX_WINDOWS do many[i] = win(i, 7000 + i, "m" .. i) end
+            local after = R.arrange(capped, "com.code", many)
+            local stillThere = false
+            for _, e in ipairs(entries(after.json, "com.code")) do
+                if e.wid == 1000 + #R.SLOTS then stillThere = true end
+            end
+            ok(stillThere and #entries(after.json, "com.code") == R.MAX_WINDOWS,
+                "over the cap, the forgotten windows are automatic ones: a placed spot stays")
         end
 
-        -- ===== decode forgives one bad pin at a time =====
+        -- ===== two windows, one spot: open windows are never drawn on each other =====
         do
-            local room = R.decode([[{"v":1,"image":"room.jpg","pins":[
-                {"id":"p1","key":"d","x":0.3,"y":0.5,"apps":["a","a","b"]},
-                {"id":"p2","key":"d","x":0.1,"y":0.1,"apps":[]},
-                {"id":"p3","key":"1","x":0.1,"y":0.1,"apps":[]},
-                {"id":"p4","key":"K","x":2,"y":-1,"apps":["b","c"]}]}]])
-            ok(room.image == "room.jpg", "the custom photo survives decode")
-            ok(#room.pins == 2, "a duplicate key and a key off the letter rows are dropped")
-            ok(#room.pins[1].apps == 2, "a repeated app on one pin collapses to one")
-            ok(room.pins[2].key == "k", "keys are lower-cased")
-            ok(room.pins[2].x == 1 and room.pins[2].y == 0, "coordinates are clamped into the image")
-            ok(#room.pins[2].apps == 1 and room.pins[2].apps[1] == "c",
-                "an app already placed on an earlier pin stays only there")
+            local function spotOf(a, wid)
+                for _, sp in ipairs(a.spots) do if sp.entry.wid == wid then return sp end end
+            end
+            local function apart(p, q)
+                return math.abs(p.x - q.x) >= R.FOOT.w or math.abs(p.y - q.y) >= R.FOOT.h
+            end
+            -- A is placed and closed; B is dragged onto A's spot; A comes back
+            local raw = R.arrange(nil, "com.code", { win(1, 101, "a — A"), win(2, 102, "b — B") }).json
+            raw = R.move(raw, "com.code", "w101", 0.5, 0.5).json
+            raw = R.arrange(raw, "com.code", { win(2, 102, "b — B") }).json
+            raw = R.move(raw, "com.code", "w102", 0.5, 0.5).json
+            local back = R.arrange(raw, "com.code", { win(1, 101, "a — A"), win(2, 102, "b — B") })
+            local a, b = spotOf(back, 101), spotOf(back, 102)
+            ok(b.x == 0.5 and b.y == 0.5 and not b.aside,
+                "both placed by hand: the window seen there last (B, dragged there) keeps the spot")
+            ok(a.aside and apart(a, b), "the one coming back is drawn beside it, not on it")
+            ok(math.abs(a.x - 0.5) < 0.3 and math.abs(a.y - 0.5) < 0.3, "right beside it, not across the room")
+            ok(a.entry.x == 0.5 and a.entry.y == 0.5, "and its own spot is still remembered")
+            local alone = R.arrange(back.json, "com.code", { win(1, 101, "a — A") })
+            ok(spotOf(alone, 101).x == 0.5 and not spotOf(alone, 101).aside, "once the spot is free, it is drawn there again")
+
+            -- a hand-placed spot beats an automatic one, even one seen more recently
+            local contested = json.encode(json.asObject({ v = 2, apps = json.asObject({ ["com.code"] = json.asArray({
+                json.asObject({ wid = 202, title = "auto", x = 0.5, y = 0.5 }),
+                json.asObject({ wid = 201, title = "mine", x = 0.5, y = 0.5, placed = true }),
+            }) }) }))
+            local both = R.arrange(contested, "com.code", { win(1, 201, "mine"), win(2, 202, "auto") })
+            ok(spotOf(both, 201).x == 0.5 and not spotOf(both, 201).aside and spotOf(both, 202).aside,
+                "a spot placed by hand beats an automatic one on it")
+            local stored = {}
+            for _, e in ipairs(entries(both.json, "com.code")) do stored[e.wid] = e end
+            ok(stored[202].x == 0.5 and stored[202].y == 0.5, "standing aside changes nothing stored")
+
+            -- more open windows than slots: none drawn on another while the picture has room
+            local live = {}
+            for i = 1, #R.SLOTS + 3 do live[i] = win(i, 8000 + i, "c" .. i) end
+            local crowd = R.arrange(nil, "com.code", live)
+            local clash = false
+            for i = 1, #crowd.spots do
+                for j = i + 1, #crowd.spots do
+                    if not apart(crowd.spots[i], crowd.spots[j]) then clash = true end
+                end
+            end
+            ok(not clash, "a crowded room still draws every open window clear of the others")
+
+            -- two windows dropped side by side (the panel lands a drop R.FOOT clear of
+            -- the others) stay put, whichever of them was seen last
+            local pair = R.arrange(nil, "com.code", { win(1, 401, "l"), win(2, 402, "r") }).json
+            pair = R.move(pair, "com.code", "w401", 0.40, 0.5).json
+            pair = R.move(pair, "com.code", "w402", 0.40 + R.FOOT.w + 0.001, 0.5).json
+            local steady = true
+            for _, first in ipairs({ 1, 2, 1 }) do
+                local rows = { win(1, 401, "l"), win(2, 402, "r") }
+                local o = R.arrange(pair, "com.code", { rows[first], rows[3 - first] })
+                for _, sp in ipairs(o.spots) do if sp.aside then steady = false end end
+                pair = o.json
+            end
+            ok(steady, "two windows a footprint apart are never drawn aside, whichever was seen last")
         end
 
-        -- ===== key from position =====
+        -- ===== a remembered wid counts only for the process it was seen in =====
         do
-            local empty = '{"v":1,"pins":[]}'
-            local op = R.addPin(empty, 0.25, 0.1, "Shelf")
-            ok(op.status == "added" and R.decode(op.json).pins[1].key == "e",
-                "top third, third column: E")
-            op = R.addPin(op.json, 0.25, 0.1, "")
-            ok(R.decode(op.json).pins[2].key == "w", "E taken: the nearest free letter, left first")
-            op = R.addPin(op.json, 0.99, 0.99, "")
-            ok(R.decode(op.json).pins[3].key == "/", "bottom-right corner: /")
-            local id = R.decode(op.json).pins[1].id
-            local moved = R.movePin(op.json, id, 0.9, 0.9)
-            ok(R.decode(moved.json).pins[1].key == "e", "moving a pin never changes its learned key")
-            local full = empty
-            for i = 1, R.MAX_PINS do full = R.addPin(full, (i % 10) / 10, 0.5, "").json end
-            ok(#R.decode(full).pins == R.MAX_PINS, "all thirty letters can be used")
-            ok(R.addPin(full, 0.5, 0.5, "").status == "full", "a thirty-first pin is refused")
+            local function pwin(id, wid, pid, title)
+                local w = win(id, wid, title)
+                w.pid = pid
+                return w
+            end
+            local raw = R.arrange(nil, "com.code", { pwin(1, 101, 500, "api — Code") }).json
+            raw = R.move(raw, "com.code", "w101", 0.2, 0.3).json
+            ok(entries(raw, "com.code")[1].pid == 500, "a window's pid is kept with its wid")
+            -- after a reboot, a new window of the same app is handed the old wid
+            local rebooted = R.arrange(raw, "com.code", { pwin(1, 101, 900, "notes — Code") })
+            local sp = rebooted.spots[1]
+            ok(sp.new and not (sp.x == 0.2 and sp.y == 0.3),
+                "a wid seen under another pid is another window: it gets a spot of its own")
+            local kept
+            for _, e in ipairs(entries(rebooted.json, "com.code")) do
+                if e.title == "api — Code" then kept = e end
+            end
+            ok(kept and kept.x == 0.2 and kept.placed, "and the window the wid was stored for keeps its spot")
+            local same = R.arrange(raw, "com.code", { pwin(1, 101, 500, "api (edited) — Code") })
+            ok(not same.spots[1].new and same.spots[1].x == 0.2,
+                "under the same pid a wid still finds its window through a retitle")
+            local legacy = json.encode(json.asObject({ v = 2, apps = json.asObject({ ["com.code"] = json.asArray({
+                json.asObject({ wid = 101, title = "old title", x = 0.2, y = 0.3, placed = true }),
+            }) }) }))
+            local l = R.arrange(legacy, "com.code", { pwin(1, 101, 900, "new title") })
+            ok(not l.spots[1].new and l.spots[1].entry.pid == 900,
+                "an entry with no pid on record is found by its wid, and takes the window's pid")
         end
 
-        -- ===== edits =====
+        -- ===== private windows: shown and placed, never stored =====
         do
-            local raw = R.encode(R.decode(nil))
-            local desk = R.pinByKey(R.decode(raw), "d")
-            local op = R.setKey(raw, desk.id, "k")
-            local room = R.decode(op.json)
-            ok(op.status == "swapped" and R.pinByKey(room, "k").id == desk.id
-                and R.pinByKey(room, "d").nameKey == "armchair",
-                "taking a used key swaps it: no edit can put two places on one letter")
-            ok(R.setKey(raw, desk.id, "1").status == "badkey", "a key off the letter rows is refused")
-            op = R.renamePin(raw, desk.id, "Work")
-            room = R.decode(op.json)
-            ok(R.pinByKey(room, "d").name == "Work" and R.pinByKey(room, "d").nameKey == nil,
-                "renaming drops the default name so the user's name shows")
-            op = R.removePin(raw, desk.id)
-            ok(#R.decode(op.json).pins == 8 and R.pinByKey(R.decode(op.json), "d") == nil, "remove a pin")
-            op = R.setImage(raw, "room.png")
-            ok(R.decode(op.json).image == "room.png" and #R.decode(op.json).pins == 9,
-                "a new photo keeps the pins")
-            ok(R.decode(R.setImage(op.json, "").json).image == nil, "\"\" returns to the default room")
-            ok(R.decode(raw).showKeys == false, "letters are hidden by default")
-            ok(not raw:find("showKeys", 1, true),
-                "a record that never showed letters is written without the field")
-            op = R.setShowKeys(raw, true)
-            ok(op.status == "showKeys" and R.decode(op.json).showKeys == true
-                and #R.decode(op.json).pins == 9, "show letters, keeping every place")
-            ok(R.decode(R.place(op.json, "d", "x").json).showKeys == true, "every other edit keeps it")
-            ok(R.decode(R.setShowKeys(op.json, false).json).showKeys == false, "and hide them again")
+            local W = require("platform.windows")
+            ok(W.isPrivate("Sign in - Google Chrome (Incognito)") and W.isPrivate("x — Mozilla Firefox Private Browsing")
+                and W.isPrivate("News - [InPrivate] - Microsoft Edge") and W.isPrivate("anything", "org.torproject.torbrowser"),
+                "Incognito, Private Browsing, InPrivate and Tor Browser are private")
+            ok(not W.isPrivate("room.lua — hammerdeck", "com.code"), "an ordinary window is not")
+            local stored = json.encode(json.asObject({ v = 2, apps = json.asObject({
+                ["com.code"] = json.asArray({ json.asObject({ wid = 1, title = "Mail - Google Chrome (Incognito)", x = 0.2, y = 0.2 }),
+                                              json.asObject({ wid = 2, title = "ok", x = 0.5, y = 0.5 }) }),
+                ["org.torproject.torbrowser"] = json.asArray({ json.asObject({ wid = 3, title = "t", x = 0.5, y = 0.5 }) }),
+            }) }))
+            local d = R.decode(stored)
+            ok(#d.apps["com.code"] == 1 and d.apps["com.code"][1].wid == 2 and d.apps["org.torproject.torbrowser"] == nil,
+                "a private window already on disk is dropped, so the next save removes it")
+
+            local P = "Secret page - Google Chrome (Incognito)"
+            local a = R.arrange(nil, "com.code", { win(1, 101, "a — A"), win(2, 102, P) })
+            local pv
+            for _, sp in ipairs(a.spots) do if sp.entry.wid == 102 then pv = sp end end
+            ok(pv and pv.entry.isPrivate and pv.x == R.SLOTS[2].x, "a private window is drawn and gets a spot")
+            ok(not a.json:find("Secret", 1, true) and not a.json:find("102", 1, true), "nothing of it is stored")
+            ok(a.mem["w102"] == pv.entry, "its spot is held in memory")
+            a.mem["w102"].x, a.mem["w102"].y, a.mem["w102"].placed = 0.66, 0.33, true    -- the controller's drag
+            local b = R.arrange(a.json, "com.code", { win(1, 101, "a — A"), win(2, 102, P), win(3, 103, "c — C") }, a.mem)
+            local pv2
+            for _, sp in ipairs(b.spots) do if sp.entry.wid == 102 then pv2 = sp end end
+            ok(pv2.x == 0.66 and pv2.y == 0.33 and not pv2.new, "the next open finds it where it was dragged, from memory")
+            local c = R.arrange(b.json, "com.code", { win(1, 101, "a — A") }, b.mem)
+            ok(next(c.mem) == nil, "closed, a private window is forgotten")
         end
 
-        -- ===== place: one app, one place =====
+        -- ===== move / picture =====
         do
-            local raw = R.encode(R.decode(nil))
-            local op = R.place(raw, "d", "slack")
-            ok(op.status == "placed", "place an app")
-            ok(R.place(op.json, "d", "slack").status == "already", "placing it there again is a no-op")
-            op = R.place(op.json, "k", "slack")
-            local room = R.decode(op.json)
-            ok(op.status == "moved" and #R.pinByKey(room, "d").apps == 0
-                and R.pinByKey(room, "k").apps[1] == "slack", "placing elsewhere MOVES the app")
-            raw = op.json
-            for _, a in ipairs({ "a", "b", "c" }) do raw = R.place(raw, "d", a).json end
-            op = R.place(raw, "d", "slack")
-            room = R.decode(op.json)
-            ok(op.status == "full" and R.pinByKey(room, "k").apps[1] == "slack",
-                "a full place refuses AND leaves the app where it was")
-            ok(R.place(raw, "q", "x").status == "nopin", "a key with no place")
-            ok(R.place(raw, "d", "").status == "noapp", "no frontmost app")
-            local pin = assert(R.pinByKey(R.decode(raw), "d"))
-            ok(R.nextIndex(pin, "zzz") == 1, "nothing of the place in front: the first app")
-            ok(R.nextIndex(pin, "a") == 2 and R.nextIndex(pin, "c") == 1,
-                "the app in front steps to the next one, wrapping")
-            op = R.unplace(raw, pin.id, "b")
-            ok(op.status == "unplaced" and #R.pinByKey(R.decode(op.json), "d").apps == 2, "unplace")
+            local a = R.arrange(nil, "com.code", { win(1, 101, "api") })
+            local id = R.windowId(a.spots[1].entry)
+            ok(id == "w101", "a window goes by its wid")
+            local op = R.move(a.json, "com.code", id, 0.9, 0.1)
+            local e = entries(op.json, "com.code")[1]
+            ok(op.status == "moved" and e.x == 0.9 and e.y == 0.1, "a drag moves the spot")
+            local back = R.arrange(op.json, "com.code", { win(1, 101, "api") })
+            ok(back.spots[1].entry.x == 0.9, "and the next open draws it where it was dropped")
+            ok(R.move(a.json, "com.code", "w999", 0, 0).status == "nowindow", "moving an unknown window is refused")
+            ok(#entries(R.setImage(op.json, "neon").json, "com.code") == 1, "a new picture keeps every spot")
         end
 
-        -- ===== placeAt: an app goes wherever it is put =====
-        do
-            local empty = '{"v":1,"pins":[]}'
-            local op = R.placeAt(empty, 0.25, 0.1, "slack")
-            local room = R.decode(op.json)
-            ok(op.status == "placed" and #room.pins == 1 and room.pins[1].key == "e"
-                and room.pins[1].name == "" and room.pins[1].apps[1] == "slack"
-                and room.pins[1].x == 0.25 and room.pins[1].y == 0.1,
-                "a new unnamed place right there, on the letter under that spot")
-            local first = room.pins[1].id
-            op = R.placeAt(op.json, 0.9, 0.9, "slack")
-            room = R.decode(op.json)
-            ok(op.status == "moved" and op.from == first and #room.pins == 1 and room.pins[1].id ~= first
-                and room.pins[1].apps[1] == "slack",
-                "put elsewhere, it moves -- and the unnamed place it left goes with it")
-            ok(R.decode(R.placeAt(op.json, 0.5, 0.5, "x").json).pins[2].key ~= room.pins[1].key,
-                "a new place never takes a letter already in use")
-            op = R.place(R.placeAt(R.encode(R.decode(nil)), 0.5, 0.5, "slack").json, "d", "slack")
-            room = R.decode(op.json)
-            ok(op.status == "moved" and #room.pins == 9, "moving into a named place also drops the unnamed one")
-            op = R.place(op.json, "k", "slack")
-            room = R.decode(op.json)
-            ok(#room.pins == 9 and #R.pinByKey(room, "d").apps == 0,
-                "a NAMED place stays when its last app leaves")
-            local full = empty
-            for i = 1, R.MAX_PINS do full = R.addPin(full, (i % 10) / 10, 0.5, "").json end
-            op = R.placeAt(full, 0.5, 0.5, "slack")
-            ok(op.status == "full" and op.json == R.encode(R.decode(full)), "every letter used: refused, nothing changes")
-            local lone = R.placeAt(R.addPin(full, 0, 0, "").json, 0.1, 0.1, "slack")
-            ok(lone.status == "full", "(the thirty-first place is refused before any app moves)")
-            local moved = R.placeAt(R.place(full, R.decode(full).pins[1].key, "slack").json, 0.5, 0.5, "slack")
-            ok(moved.status == "moved", "full, but the app's own unnamed place frees a letter for the new spot")
-            ok(R.placeAt(empty, 0.5, 0.5, "").status == "noapp", "no app in front")
-        end
-
-        -- ===== the live flow, letters drawn =====
+        -- ===== the live flow =====
         registry.register(require("features.memory_room"))
         registry.setEnabled("memory_room", true)
 
-        fake.settings[STATE] = R.setShowKeys(nil, true).json
-        fake.pressHotkey("l", HYP)
-        ok(fake.liveRoomPanel() == nil, "Hyper+L draws nothing yet (no flash on a fast jump)")
-        ok(#fake.banners == 0 and #fake.huds == 0, "the room's modal is silent")
-        fake.fireTimers("after", 0.35)
-        local panel = fake.liveRoomPanel()
-        ok(panel ~= nil and #panel.spec.pins == 9, "after the pause the room is drawn")
-        ok(panel.spec.image == nil, "the default room carries no photo name")
-
-        -- an empty place: say how to fill it, stay open
-        fake.pressHotkey("d", {})
-        ok(fake.alerts[#fake.alerts] == "Desk is empty. Shift+D puts the app in front there.",
-            "an empty place explains how to fill it")
-        ok(fake.liveRoomPanel() ~= nil, "and the room stays open")
-
-        -- place the frontmost app, with Shift alone
-        front("Slack", "com.tinyspeck.slackmacgap")
-        fake.pressHotkey("d", { "shift" })
-        ok(fake.alerts[#fake.alerts] == "Slack → Desk", "Shift+D puts the app in front on the desk")
-        ok(fake.liveRoomPanel() == nil, "placing closes the room")
-        ok(R.pinByKey(R.decode(fake.settings[STATE]), "d").apps[1] == "com.tinyspeck.slackmacgap",
-            "the place is persisted")
-
-        -- place a second app with Hyper STILL HELD (the explicit leader+shift twin)
-        front("Terminal", "com.apple.Terminal")
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", { "cmd", "alt", "ctrl", "shift" })
-        ok(fake.alerts[#fake.alerts] == "Terminal → Desk", "Hyper+Shift+D places with the leader held")
-
-        -- jump: the app after the one in front, in placement order
-        front("Terminal", "com.apple.Terminal")
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", {})
-        ok(fake.launchedApps[#fake.launchedApps] == "com.tinyspeck.slackmacgap",
-            "Terminal in front: D steps on to Slack (wrapping)")
-        ok(fake.liveRoomPanel() == nil, "jumping closes the room before it was ever drawn")
-        front("Slack", "com.tinyspeck.slackmacgap")
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", HYP)
-        ok(fake.launchedApps[#fake.launchedApps] == "com.apple.Terminal",
-            "Slack in front: Hyper+L D (leader held) steps on to Terminal")
-
-        -- an app uninstalled since it was placed: skipped, not stopped on
-        fake.uninstalledApps["com.apple.Terminal"] = true
-        front("Slack", "com.tinyspeck.slackmacgap")
-        local alertsBefore = #fake.alerts
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", {})
-        ok(fake.launchedApps[#fake.launchedApps] == "com.tinyspeck.slackmacgap"
-            and #fake.alerts == alertsBefore,
-            "the next app is gone: the step wraps on to the one that still exists, silently")
-        -- every app in the place gone: say where to fix it
-        fake.uninstalledApps["com.tinyspeck.slackmacgap"] = true
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", {})
-        ok(fake.alerts[#fake.alerts]
-            == "The app on Desk is no longer installed. Remove it in Settings > Memory Room.",
-            "a place whose apps are all gone says where to remove them")
-        fake.uninstalledApps["com.apple.Terminal"] = nil
-        fake.uninstalledApps["com.tinyspeck.slackmacgap"] = nil
-
-        -- Hyper still held after a jump: the room stays open, D again steps on
-        -- (from the last jump -- the fake's front app never catches up, like a slow
-        -- activation), and releasing Hyper closes it
-        fake.settings[STATE] = R.place(R.place(nil, "d", "com.a").json, "d", "com.b").json
-        front("Finder", "com.apple.finder")
-        fake.modifiers = { cmd = true, alt = true, ctrl = true }
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", HYP)
-        ok(fake.launchedApps[#fake.launchedApps] == "com.a", "held: D brings the first app forward")
-        fake.pressHotkey("d", HYP)
-        ok(fake.launchedApps[#fake.launchedApps] == "com.b",
-            "held: D again steps on, though the front app has not caught up")
-        fake.pressHotkey("d", HYP)
-        ok(fake.launchedApps[#fake.launchedApps] == "com.a", "held: and wraps round the place")
-        local launched = #fake.launchedApps
-        fake.modifiers = {}
-        fake.fireTimers("every", 0.05)
-        fake.pressHotkey("d", HYP)
-        fake.pressHotkey("d", {})
-        ok(#fake.launchedApps == launched, "released: the room closes, and D is a plain key again")
-        fake.settings[STATE] = nil
-
-        -- a place whose first app was uninstalled still reaches the ones after it
-        fake.settings[STATE] = R.place(R.place(nil, "d", "com.gone").json, "d", "com.apple.Notes").json
-        fake.uninstalledApps["com.gone"] = true
-        front("Finder", "com.apple.finder")
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", {})
-        ok(fake.launchedApps[#fake.launchedApps] == "com.apple.Notes",
-            "an uninstalled app does not block stepping on to the next one")
-        fake.uninstalledApps["com.gone"] = nil
-        fake.settings[STATE] = nil
-
-        -- a leader that already has Shift: the place twin would duplicate the bare
-        -- key's leader twin, which the real seam refuses -- so it is not bound
-        fake.rejectHotkey = function(mods, key, shadow)
-            local want = {}
-            for _, m in ipairs(mods) do want[m] = true end
-            for _, h in ipairs(fake.hotkeys) do
-                if not h.stopped and not h.parked and not shadow and h.key == key and #h.mods == #mods then
-                    local same = true
-                    for _, m in ipairs(h.mods) do if not want[m] then same = false end end
-                    if same then return true end
-                end
-            end
-            return false
-        end
-        registry.setTrigger("memory_room", "open", { type = "hotkey", mods = { "cmd", "shift" }, key = "l" })
-        local before = #fake.alerts
-        fake.pressHotkey("l", { "cmd", "shift" })
-        fake.pressHotkey("d", { "shift" })
-        ok(#fake.alerts == before + 1 and fake.alerts[#fake.alerts] == "Finder → Desk",
-            "a Shift leader still opens the room and places (no duplicate registration)")
-        fake.rejectHotkey = nil
-        registry.clearTrigger("memory_room", "open")
-        fake.settings[STATE] = nil
-
-        -- ===== the click flow, letters hidden (the default) =====
-        fake.settings[STATE] = R.place(R.place(nil, "k", "com.a").json, "k", "com.b").json
-        front("Finder", "com.apple.finder")
+        fake.windows = {
+            win(1, 101, "room.lua — hammerdeck — Code"), win(2, 102, "a-very-long-project-name-here — Code"),
+            win(3, 301, "zsh", "com.term"),
+        }
+        front("Code", "com.code")
+        fake.focusedWid = 102
         fake.pressHotkey("l", HYP)
         local room = fake.liveRoomPanel()
-        ok(room ~= nil and room.spec.showKeys == false,
-            "no letters: the room is drawn at once, to be clicked, and told not to draw them")
-        ok(room and room.spec.hint
-            == "click: bring it forward    right-click anywhere: put the app you're in there    esc: close",
-            "the hint line names clicks, not letters")
-        ok(room and #room.spec.pins == 1 and room.spec.pins[1].key == "k",
-            "a clicked room draws only the places that hold apps")
-        ok(room and room.spec.placeLabel == "Put Finder here", "the right-click item names the app in front")
-        fake.pickRoom({ key = "k" })
-        ok(fake.launchedApps[#fake.launchedApps] == "com.a", "a click on a place brings its app forward")
+        ok(room ~= nil, "the room is drawn at once, to be pointed at")
+        ok(room and #room.spec.pins == 2 and room.spec.title == "Code",
+            "only the front app's windows, under the app's name")
+        ok(room and room.spec.pins[1].name == "hammerdeck"
+            and room.spec.pins[1].title == "room.lua — hammerdeck — Code",
+            "a window's label is the last part of its title that is not the app (the project, not the "
+            .. "file open in it); the full title rides along for hover")
+        ok(room and room.spec.pins[2].name == "a-very-l…me-here",
+            "a long label keeps both ends, so it stays about one slot wide")
+        ok(room and room.spec.front == "w102", "the window in front is marked")
+        ok(room and room.spec.pins[1].wid == 101 and room.spec.pins[2].wid == 102,
+            "each window carries its wid, so hovering it can show its picture")
+        ok(room and room.spec.hint == "click: bring it forward    drag: move it    esc: close", "the hint names clicks")
+        ok(room and room.spec.foot and room.spec.foot.w == R.FOOT.w and room.spec.foot.h == R.FOOT.h,
+            "the panel is told the footprint a drop must land clear of")
+
+        fake.pickRoom({ id = "w102" })
+        ok(fake.focused[#fake.focused] == 2, "a click focuses the window it names (its listed id)")
         ok(fake.liveRoomPanel() == nil, "and closes the room")
 
         fake.pressHotkey("l", HYP)
-        fake.pickRoom({ key = "k", app = 2 })
-        ok(fake.launchedApps[#fake.launchedApps] == "com.b", "a click on an icon brings THAT app forward")
-
-        fake.pressHotkey("l", HYP)
-        fake.pressHotkey("d", {})
-        ok(fake.alerts[#fake.alerts] == "Desk is empty. Shift+D puts the app in front there.",
-            "an undrawn empty place, reached by its hidden letter, says how to fill it by letter")
+        fake.pickRoom({ id = "w101", action = "move", x = 0.8, y = 0.2 })
+        local moved
+        for _, x in ipairs(entries(fake.settings[STATE], "com.code")) do if x.wid == 101 then moved = x end end
+        ok(moved and moved.x == 0.8 and moved.y == 0.2, "a drag keeps the new spot")
         ok(fake.liveRoomPanel() ~= nil, "and the room stays open")
-        fake.pickRoom({ action = "placeAt", x = 0.5, y = 0.3 })
-        ok(fake.alerts[#fake.alerts] == "Finder is in the room",
-            "right-click off every place puts the app in front right there, naming no unseen letter")
-        ok(fake.liveRoomPanel() == nil, "placing closes the room")
-        local placed = R.decode(fake.settings[STATE])
-        local here
-        for _, p in ipairs(placed.pins) do if p.apps[1] == "com.apple.finder" then here = p end end
-        ok(here and here.x == 0.5 and here.y == 0.3 and #placed.pins == 10, "a new place, where the click was")
-
-        fake.pressHotkey("l", HYP)
-        ok(#fake.liveRoomPanel().spec.pins == 2, "and the room now draws it")
-        fake.pickRoom({ key = here.key, action = "place" })
-        ok(fake.alerts[#fake.alerts] == "Finder is already there", "right-click on its own place: already there")
-
-        fake.pressHotkey("l", HYP)
-        fake.pickRoom({ key = "k", action = "place" })
-        ok(fake.alerts[#fake.alerts] == "Finder → Armchair", "right-click on a named place joins it")
-        ok(#R.decode(fake.settings[STATE]).pins == 9, "and the unnamed place Finder left is gone")
-
-        local launchedBefore = #fake.launchedApps
-        fake.pressHotkey("l", HYP)
         fake.pickRoom(nil)
-        ok(fake.liveRoomPanel() == nil, "a click off every place closes the room")
-        fake.pressHotkey("k", {})
-        ok(#fake.launchedApps == launchedBefore, "and releases its letters with it")
+        ok(fake.liveRoomPanel() == nil, "a click off every window closes the room")
 
         fake.pressHotkey("l", HYP)
-        fake.pressHotkey("k", {})
-        ok(#fake.launchedApps == launchedBefore + 1, "hidden letters still work")
+        local before = #fake.focused
+        fake.pressHotkey("escape", {})
+        ok(fake.liveRoomPanel() == nil and #fake.focused == before, "Escape closes the room and focuses nothing")
+        fake.settings[STATE] = nil
 
+        -- a private window in the live room: drawn, dragged, never written down
+        fake.windows[#fake.windows + 1] = win(4, 104, "Secret page - Google Chrome (Incognito)")
+        fake.logs = {}
+        fake.pressHotkey("l", HYP)
+        local drawn
+        for _, pin in ipairs(fake.liveRoomPanel().spec.pins) do if pin.wid == 104 then drawn = pin end end
+        ok(drawn ~= nil, "a private window is in the room")
+        fake.pickRoom({ id = "w104", action = "move", x = 0.66, y = 0.33 })
+        fake.pickRoom(nil)
+        fake.pressHotkey("l", HYP)
+        for _, pin in ipairs(fake.liveRoomPanel().spec.pins) do if pin.wid == 104 then drawn = pin end end
+        ok(drawn.x == 0.66 and drawn.y == 0.33, "dragged, it stays where it was put while Hammerdeck runs")
+        ok(not fake.settings[STATE]:find("Secret", 1, true), "its title never reaches the stored record")
+        local leaked = false
+        for _, line in ipairs(fake.logs) do if line:find("Secret", 1, true) then leaked = true end end
+        ok(not leaked, "nor the log")
+        fake.pickRoom(nil)
+        table.remove(fake.windows)
+
+        -- the three empty cases, each with its own way out
+        front("Notes", "com.notes")
+        fake.pressHotkey("l", HYP)
+        ok(fake.alerts[#fake.alerts] == "Notes has no open windows.", "an app with no windows says so")
+        fake.droppedApps = { "com.notes" }
+        fake.pressHotkey("l", HYP)
+        ok(fake.alerts[#fake.alerts] == "Notes did not answer in time. Try again.",
+            "an app that did not answer is not mistaken for one with no windows")
+        fake.droppedApps = {}
+        local saved = fake.windows
+        fake.windows, fake.axTrusted = {}, false
+        local prompts = fake.axPrompts
+        fake.pressHotkey("l", HYP)
+        ok(fake.alerts[#fake.alerts] == "Memory Room needs Accessibility to see your windows."
+            and fake.axPrompts == prompts + 1, "no Accessibility: says so and asks for it")
+        fake.windows, fake.axTrusted = saved, true
         front("", "")
         fake.pressHotkey("l", HYP)
-        ok(fake.liveRoomPanel().spec.placeLabel == nil, "no app in front: the menu offers nothing to put")
-        fake.pickRoom(nil)
-        fake.settings[STATE] = nil
-
-        -- every default place's name has a literal ctx.t key in init.lua (the
-        -- Settings page reads the same keys, and only i18n_parity checks them)
-        do
-            local f = assert(io.open("app/features/memory_room/lua/init.lua"))
-            local src = f:read("a"); f:close()
-            local missing = {}
-            for _, p in ipairs(R.default().pins) do
-                if not src:find('ctx.t("memoryRoom.pin.' .. p.nameKey .. '"', 1, true) then
-                    missing[#missing + 1] = p.nameKey
-                end
-            end
-            ok(#missing == 0, "every default place name is localized: missing " .. table.concat(missing, ","))
-        end
-
-        -- a room with no places: lettered, it points at Settings instead of arming
-        -- a modal with no keys; clicked, it opens, since a right-click fills it
-        fake.settings[STATE] = '{"v":1,"showKeys":true,"pins":[]}'
-        fake.pressHotkey("l", HYP)
-        ok(fake.alerts[#fake.alerts] == "This room has no places yet. Add some in Settings > Memory Room.",
-            "an empty lettered room points at Settings")
-        fake.settings[STATE] = '{"v":1,"pins":[]}'
-        front("Finder", "com.apple.finder")
-        fake.pressHotkey("l", HYP)
-        ok(fake.liveRoomPanel() ~= nil and #fake.liveRoomPanel().spec.pins == 0,
-            "an empty clicked room opens, ready for a right-click")
-        fake.pickRoom({ action = "placeAt", x = 0.2, y = 0.2 })
-        ok(#R.decode(fake.settings[STATE]).pins == 1, "and the right-click makes its first place")
+        ok(fake.alerts[#fake.alerts] == "No app is in front.", "no app in front")
 
         -- disabling mid-room tears everything down
-        fake.settings[STATE] = nil
+        front("Code", "com.code")
         fake.pressHotkey("l", HYP)
-        fake.fireTimers("after", 0.35)
         ok(fake.liveRoomPanel() ~= nil, "room drawn before the disable")
         registry.setEnabled("memory_room", false)
         ok(fake.liveRoomPanel() == nil, "disabling closes the room")
+        fake.focusedWid = nil
     end,
 }
