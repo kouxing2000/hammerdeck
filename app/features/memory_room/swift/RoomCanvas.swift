@@ -234,31 +234,39 @@ struct RoomCanvas: View {
         .clipShape(RoundedRectangle(cornerRadius: 10 * scale))
     }
 
-    /// Where a window dropped at `p` lands: `p` itself when it covers no other
-    /// icon, else the nearest point where it covers none -- rings of growing
-    /// radius, and on a ring the point furthest along the way it was sliding off
-    /// the icon it hit -- with its centre inside the room. `p` again when the room
-    /// has no such point. It covers another when its icon (a box of `size` centred
-    /// there) meets one, or when the two are closer than `foot` on both axes:
-    /// room.lua's R.FOOT, as a fraction of the room, which is what the next open
-    /// judges two spots by -- a drop it would call covering is drawn aside there.
-    /// All else in the room's points.
-    static func landing(for p: CGPoint, size: CGSize, others: [CGRect],
+    /// Where a window dropped at `p` lands: first moved in until its icon and label
+    /// (a box of `size` centred there) are inside the room by a few points -- a label
+    /// past the edge is drawn slid in or flipped above, off the part that takes
+    /// clicks, and the margin absorbs rounding through the stored fractions and a
+    /// room drawn a little smaller on another display --
+    /// then kept there when it covers no other icon, else the nearest point where
+    /// it covers none: rings of growing radius, and on a ring the point furthest
+    /// along the way it was sliding off the icon it hit. Where it was moved in to
+    /// when the room has no such point. It covers another when its box meets one,
+    /// or when the two are closer than `foot` on both axes: room.lua's R.FOOT, as a
+    /// fraction of the room, which is what the next open judges two spots by -- a
+    /// drop it would call covering is drawn aside there. All else in the room's
+    /// points.
+    static func landing(for drop: CGPoint, size: CGSize, others: [CGRect],
                         foot: CGSize = .zero, in room: CGSize) -> CGPoint {
+        let edge: CGFloat = 4
+        guard size.width + 2 * edge <= room.width, size.height + 2 * edge <= room.height else { return drop }
+        let p = CGPoint(x: min(max(drop.x, size.width / 2 + edge), room.width - size.width / 2 - edge),
+                        y: min(max(drop.y, size.height / 2 + edge), room.height - size.height / 2 - edge))
         let gap: CGFloat = 2
         // A point over the footprint, so rounding through the room's fractions
         // never lands a drop on its edge.
         let reach = CGSize(width: foot.width * room.width + 1, height: foot.height * room.height + 1)
         func box(_ c: CGPoint) -> CGRect {
             CGRect(x: c.x - size.width / 2, y: c.y - size.height / 2, width: size.width, height: size.height)
-                .insetBy(dx: -gap, dy: -gap)
         }
         func covers(_ o: CGRect, _ c: CGPoint) -> Bool {
-            o.intersects(box(c)) || (abs(c.x - o.midX) < reach.width && abs(c.y - o.midY) < reach.height)
+            o.intersects(box(c).insetBy(dx: -gap, dy: -gap))
+                || (abs(c.x - o.midX) < reach.width && abs(c.y - o.midY) < reach.height)
         }
+        let inside = CGRect(origin: .zero, size: room).insetBy(dx: edge - 0.5, dy: edge - 0.5)
         func clear(_ c: CGPoint) -> Bool {
-            c.x >= 0 && c.x <= room.width && c.y >= 0 && c.y <= room.height
-                && !others.contains { covers($0, c) }
+            inside.contains(box(c)) && !others.contains { covers($0, c) }
         }
         guard let hit = others.first(where: { covers($0, p) }) else { return p }
         // Away from the centre of the icon it hit; straight right when dead centre.
@@ -330,7 +338,8 @@ private struct PinLayout: Layout {
         if room.width > 0 {
             let minX = bounds.midX - at.x, maxX = minX + room.width
             x = min(max(bounds.midX, minX + l.width / 2), maxX - l.width / 2)
-            if y + l.height > bounds.midY - at.y + room.height { y = bounds.minY - spacing - l.height }
+            // A point of slack: a spot stored as a fraction comes back a hair off.
+            if y + l.height > bounds.midY - at.y + room.height + 1 { y = bounds.minY - spacing - l.height }
         } else {
             x = bounds.midX
         }

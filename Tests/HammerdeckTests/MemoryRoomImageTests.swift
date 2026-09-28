@@ -112,6 +112,31 @@ final class MemoryRoomImageTests: XCTestCase {
                        "a drop already a footprint away stays where it was let go")
     }
 
+    /// A label past the room's edge is drawn slid in or flipped above its icon,
+    /// off the part of the pin that takes clicks, so a drop is moved in first.
+    func testADropNearTheEdgeLandsWhollyInsideTheRoom() {
+        let room = CGSize(width: 720, height: 450)
+        let size = CGSize(width: 104, height: 44)
+        let whole = CGRect(origin: .zero, size: room)
+        func box(_ c: CGPoint) -> CGRect { CGRect(x: c.x - 52, y: c.y - 22, width: 104, height: 44) }
+        // Moved straight in, to a few points inside the edge: no further.
+        let cases: [(CGPoint, CGPoint)] = [(CGPoint(x: 360, y: 448), CGPoint(x: 360, y: 424)),
+                                           (CGPoint(x: 5, y: 200), CGPoint(x: 56, y: 200)),
+                                           (CGPoint(x: 719, y: 2), CGPoint(x: 664, y: 26))]
+        for (drop, want) in cases {
+            let at = RoomCanvas.landing(for: drop, size: size, others: [], in: room)
+            XCTAssertTrue(whole.contains(box(at)), "\(drop) lands wholly inside: \(at)")
+            XCTAssertEqual(at.x, want.x, accuracy: 0.01, "\(drop)")
+            XCTAssertEqual(at.y, want.y, accuracy: 0.01, "\(drop)")
+        }
+        let foot = CGSize(width: 0.16, height: 0.14)
+        let b = CGRect(x: 308, y: 400, width: 104, height: 44)          // a window on the bottom edge
+        let at = RoomCanvas.landing(for: CGPoint(x: 360, y: 448), size: size, others: [b], foot: foot, in: room)
+        XCTAssertTrue(whole.contains(box(at)), "still inside when it has to go around a window: \(at)")
+        XCTAssertTrue(abs(at.x - b.midX) >= foot.width * room.width || abs(at.y - b.midY) >= foot.height * room.height,
+                      "and clear of that window's footprint: \(at)")
+    }
+
     @MainActor
     func testThePanelReadsTheFootprintTheRoomSends() {
         XCTAssertEqual(RoomPanel.Spec(["pins": [Any](), "foot": ["w": 0.16, "h": 0.14]]).foot,
