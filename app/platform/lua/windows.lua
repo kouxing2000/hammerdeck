@@ -812,4 +812,25 @@ function M.matchSaved(saved, live)
     return matched, pick
 end
 
+-- Whether a window is PRIVATE: a browser's Incognito / Private Browsing /
+-- InPrivate window, or any window of a browser that is private throughout. A
+-- feature that writes windows down (a saved deck, a room) keeps such a window's
+-- title off disk. Known only by the words browsers put in the title (English;
+-- Safari's private windows carry none): a wrong match merely leaves a window
+-- unremembered, a miss writes a private title down, so the words lean wide.
+local PRIVATE_WORDS = { "incognito", "private browsing", "inprivate" }
+local PRIVATE_APPS = { ["org.torproject.torbrowser"] = true }
+
+---@param title string|nil
+---@param bundleID string|nil
+---@return boolean
+function M.isPrivate(title, bundleID)
+    if bundleID and PRIVATE_APPS[bundleID] then return true end
+    local t = type(title) == "string" and title:lower() or ""
+    for _, w in ipairs(PRIVATE_WORDS) do
+        if t:find(w, 1, true) then return true end
+    end
+    return false
+end
+
 return M

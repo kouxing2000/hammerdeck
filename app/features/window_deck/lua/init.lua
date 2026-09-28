@@ -183,7 +183,9 @@ local function controllerFor(ctx)
                 end
                 if pick then
                     local old, new = m.key, keyOf(pick)
-                    ctx.log("adopt retitle:", m.appName or "?", "->", pick.title or "?")
+                    -- the log is on disk too: a private window's title stays out
+                    ctx.log("adopt retitle:", m.appName or "?", "->",
+                        W.isPrivate(pick.title, pick.bundleID) and "(private)" or pick.title or "?")
                     m.key, m.title = new, pick.title
                     claimed[new] = true
                     if st.borders and st.borders[old] then

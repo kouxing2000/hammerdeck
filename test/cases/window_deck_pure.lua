@@ -200,6 +200,14 @@ return {
             })
             ok(#matched == 2 and matched[1].id == 1,
                 "restored wid matches through save/read despite a retitle (PASS 1 proven end-to-end)")
+            -- a private window's title never reaches the stored deck; its wid does
+            persist.saveLastDeck("Main", {
+                { bundleID = "com.google.Chrome", title = "Mail - Google Chrome (Incognito)", wid = 51 },
+                { bundleID = "com.b", title = "Doc B", wid = 52 },
+            })
+            ok(not mem.lastDeck:find("Mail", 1, true) and persist.readLastDeck().members[1].wid == 51
+                and persist.readLastDeck().members[2].title == "Doc B",
+                "a private member is saved by wid only: its title stays off disk, the rest is untouched")
             -- a one-member store is rejected (a deck needs two)
             persist.saveLastDeck("Main", { { bundleID = "com.a", title = "solo", wid = 7 } })
             ok(persist.readLastDeck() == nil, "readLastDeck rejects a < 2 member record")

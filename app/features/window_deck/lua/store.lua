@@ -8,10 +8,11 @@
 --
 -- Not a pure leaf (it closes over ctx's state store), but it touches ONLY
 -- ctx.getState/setState -- never native or the seam -- and requires only the
--- json leaf util. All shape/round-trip concerns (empty map -> {} not []) live
--- here, in one place.
+-- json and windows leaf utils. All shape/round-trip concerns (empty map -> {}
+-- not []) live here, in one place.
 
 local json = require("platform.json")
+local W = require("platform.windows")
 
 local M = {}
 
@@ -90,9 +91,11 @@ function M.new(ctx)
     function s.saveLastDeck(screenName, members)
         local ms = {}
         for i, m in ipairs(members) do
+            -- A private window keeps its wid (a restore in this session still
+            -- finds it) but its title stays off disk (W.isPrivate).
             ms[i] = json.asObject({
                 bundleID = m.bundleID or "",
-                title    = m.title or "",
+                title    = (not W.isPrivate(m.title, m.bundleID)) and m.title or "",
                 wid      = m.wid or 0,
             })
         end
