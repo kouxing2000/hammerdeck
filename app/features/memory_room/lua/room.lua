@@ -227,6 +227,27 @@ function R.nameOf(title, appName)
     return before or keep[#keep] or title
 end
 
+-- The longest label, in characters: about one slot wide.
+R.LABEL_MAX = 16
+
+-- The label under a window's icon: its name (R.nameOf), shortened when long. Long
+-- ones keep both ends: a label wider than a slot draws over its neighbour.
+---@param title string
+---@param appName string
+---@return string
+function R.label(title, appName)
+    local name = R.nameOf(title, appName)
+    local n = utf8.len(name)
+    if n and n > R.LABEL_MAX then
+        local head = R.LABEL_MAX // 2
+        -- utf8.offset in parentheses: Lua 5.5 returns a second value (the
+        -- character's last byte), which sub() would take as its end.
+        name = name:sub(1, (utf8.offset(name, head + 1)) - 1) .. "…"
+            .. name:sub((utf8.offset(name, n - (R.LABEL_MAX - head - 1) + 1)))
+    end
+    return name
+end
+
 ---@param list RoomWindow[]
 ---@param x number
 ---@param y number
@@ -465,6 +486,53 @@ function R.move(raw, app, id, x, y)
         end
     end
     return op(room, "nowindow")
+end
+
+-- Forget window `id` (R.windowId) of app `app`: its entry goes, spot and all. A
+-- window still open is simply new to the room the next time it opens.
+---@return RoomOp  status "forgot" | "nowindow"
+function R.forget(raw, app, id)
+    local room = R.decode(raw)
+    local list = room.apps[app] or {}
+    for i, e in ipairs(list) do
+        if R.windowId(e) == id then
+            table.remove(list, i)
+            room.apps[app] = #list > 0 and list or nil
+            return op(room, "forgot")
+        end
+    end
+    return op(room, "nowindow")
+end
+
+-- The apps whose room keeps a spot the user placed, for the Settings page.
+---@param raw string|nil
+---@return string[] bundle ids
+function R.keptApps(raw)
+    local out = {}
+    for app, list in pairs(R.decode(raw).apps) do
+        for _, e in ipairs(list) do
+            if e.placed then out[#out + 1] = app; break end
+        end
+    end
+    table.sort(out)
+    return json.asArray(out)
+end
+
+-- The spots the user placed in app `app`'s room, drawn as the room draws them:
+-- {id, name, title, x, y} each, `name` the label (R.label over `appName`).
+---@param raw string|nil
+---@param app string
+---@param appName string
+---@return table[]
+function R.kept(raw, app, appName)
+    local out = {}
+    for _, e in ipairs(R.decode(raw).apps[app] or {}) do
+        if e.placed then
+            out[#out + 1] = json.asObject({ id = R.windowId(e), name = R.label(e.title, appName),
+                                            title = e.title, x = e.x, y = e.y })
+        end
+    end
+    return json.asArray(out)
 end
 
 -- Point the room at another picture: a built-in room's id, a photo's filename

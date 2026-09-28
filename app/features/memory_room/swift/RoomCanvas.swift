@@ -1,8 +1,8 @@
 // memory_room's shared drawing: the room picture with one app's windows on it.
 // One view serves every place the room appears -- the Hyper+L overlay (RoomPanel),
 // the gallery card (MemoryRoomArchetypeScene) and the settings page's picture
-// (MemoryRoomView, with no windows) -- so each shows exactly what the user will
-// reach for.
+// (MemoryRoomView, with the spots the user placed, faint) -- so each shows exactly
+// what the user will reach for.
 //
 // The record itself is owned by room.lua; this file only holds the display shape
 // (RoomPinDisplay) that the seam decodes into.
@@ -19,6 +19,9 @@ struct RoomPinDisplay: Identifiable, Equatable {
     let x: Double           // 0..1 of the image, top-left origin
     let y: Double
     let apps: [String]      // bundle ids: the app the window belongs to
+    /// A spot kept for a window, drawn faint with a dashed ring: the Settings
+    /// page's kept spots.
+    var ghost: Bool = false
 }
 
 /// Where the room's picture comes from. The record's `image` is one of three kinds:
@@ -186,6 +189,8 @@ struct RoomCanvas: View {
     var onTargets: (([RoomTarget]) -> Void)? = nil
     /// The hovered window's picture, drawn beside its icon.
     var preview: RoomPreview? = nil
+    /// Forget a ghost pin (by id): set, hovering a ghost shows an x that does it.
+    var onForget: ((String) -> Void)? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -208,7 +213,8 @@ struct RoomCanvas: View {
                                 lit: pin.id == front || pin.id == selected,
                                 showLabel: showLabels,
                                 reportsTargets: onTargets != nil,
-                                at: at, room: geo.size)
+                                at: at, room: geo.size,
+                                onForget: pin.ghost ? onForget.map { f in { f(pin.id) } } : nil)
                         .position(at)
                 }
                 if let preview, let pin = pins.first(where: { $0.id == preview.id }) {
@@ -358,10 +364,18 @@ struct RoomPinChip: View {
     /// Its spot, and the room's size: the label is kept inside the room.
     var at: CGPoint = .zero
     var room: CGSize = .zero
+    /// Set: hovering shows an x on the chip's corner that calls it.
+    var onForget: (() -> Void)? = nil
+    @State private var hovering = false
+
+    private var fade: Double { pin.ghost ? 0.45 : 1 }
 
     var body: some View {
         PinLayout(spacing: 2 * scale, at: at, room: room) {
-            chip
+            // The x sits inside the chip: past the pin's edge, reaching for it
+            // would end the hover and take it away.
+            chip.opacity(fade)
+                .overlay(alignment: .topTrailing) { forgetButton }
             if showLabel, !pin.name.isEmpty {
                 // On a dark backing: white text over a bare shadow drops under
                 // readable contrast on a bright room or photo.
@@ -372,9 +386,27 @@ struct RoomPinChip: View {
                     .padding(.horizontal, 4 * scale)
                     .padding(.vertical, 1 * scale)
                     .background(RoundedRectangle(cornerRadius: 4 * scale).fill(Color.black.opacity(0.6)))
+                    .opacity(fade)
             }
         }
         .background(target)
+        .modifier(ForgetHover(active: onForget != nil, hovering: $hovering))
+    }
+
+    @ViewBuilder private var forgetButton: some View {
+        if let onForget, hovering {
+            Button(action: onForget) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 6.5 * scale, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 13 * scale, height: 13 * scale)
+                    .background(Circle().fill(Color.black.opacity(0.85)))
+                    .overlay(Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help(Strings.t("memoryRoom.page.forget", default: "Forget this spot"))
+            .accessibilityLabel(Strings.t("memoryRoom.page.forget", default: "Forget this spot"))
+        }
     }
 
     private var chip: some View {
@@ -393,7 +425,8 @@ struct RoomPinChip: View {
         .padding(.vertical, 3 * scale)
         .background(RoundedRectangle(cornerRadius: 7 * scale).fill(Color.black.opacity(0.72)))
         .overlay(RoundedRectangle(cornerRadius: 7 * scale)
-            .strokeBorder(lit ? Color.accentColor : .white.opacity(0.35), lineWidth: lit ? 2 * scale : 1))
+            .strokeBorder(lit ? Color.accentColor : .white.opacity(pin.ghost ? 0.9 : 0.35),
+                          style: StrokeStyle(lineWidth: lit ? 2 * scale : 1, dash: pin.ghost ? [3, 2] : [])))
     }
 
     /// Report where this window was drawn, for the overlay's hit layer. Nothing at
@@ -405,6 +438,21 @@ struct RoomPinChip: View {
                     RoomTarget(id: pin.id, rect: g.frame(in: .named(RoomTarget.space))),
                 ])
             }
+        }
+    }
+}
+
+/// Tracks the pointer over a pin only where it has an x to show: everywhere else
+/// (the Hyper+L room, the gallery card) a hover would re-render the chip for nothing.
+private struct ForgetHover: ViewModifier {
+    let active: Bool
+    @Binding var hovering: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            content.onHover { hovering = $0 }
+        } else {
+            content
         }
     }
 }

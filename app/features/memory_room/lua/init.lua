@@ -18,27 +18,6 @@
 local json = require("platform.json")
 local R = require("features.memory_room.room")
 
--- The longest label, in characters: about one slot wide.
-local LABEL_MAX = 16
-
--- The label under a window's icon: its name (R.nameOf), shortened when long. Long
--- ones keep both ends: a label wider than a slot draws over its neighbour.
----@param title string
----@param appName string
----@return string
-local function label(title, appName)
-    local name = R.nameOf(title, appName)
-    local n = utf8.len(name)
-    if n and n > LABEL_MAX then
-        local head = LABEL_MAX // 2
-        -- utf8.offset in parentheses: Lua 5.5 returns a second value (the
-        -- character's last byte), which sub() would take as its end.
-        name = name:sub(1, (utf8.offset(name, head + 1)) - 1) .. "…"
-            .. name:sub((utf8.offset(name, n - (LABEL_MAX - head - 1) + 1)))
-    end
-    return name
-end
-
 ---@param ctx Ctx
 ---@param room Room
 ---@param spots RoomSpot[]
@@ -52,7 +31,7 @@ local function panelSpec(ctx, room, spots, appName)
         if focused and focused ~= 0 and e.wid == focused then front = id end
         -- wid: the window's picture, when the room shows one on hover.
         pins[#pins + 1] = json.asObject({ id = id, wid = s.row.wid,
-                                          name = label(e.title, appName), title = e.title, x = s.x, y = s.y,
+                                          name = R.label(e.title, appName), title = e.title, x = s.x, y = s.y,
                                           apps = json.asArray({ s.row.bundleID or "" }) })
     end
     return json.asObject({

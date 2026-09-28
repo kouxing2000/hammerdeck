@@ -355,6 +355,29 @@ return {
             ok(#entries(R.setImage(op.json, "neon").json, "com.code") == 1, "a new picture keeps every spot")
         end
 
+        -- ===== the spots the user placed, for the Settings page =====
+        do
+            local raw = R.arrange(nil, "com.code", { win(1, 101, "api — Code"), win(2, 102, "a-very-long-project-name-here — Code") }).json
+            raw = R.arrange(raw, "com.term", { win(3, 301, "zsh", "com.term") }).json
+            ok(#R.keptApps(raw) == 0 and #R.kept(raw, "com.code", "Code") == 0,
+                "spots the room chose itself are not kept spots")
+            raw = R.move(raw, "com.code", "w102", 0.3, 0.4).json
+            local apps, kept = R.keptApps(raw), R.kept(raw, "com.code", "Code")
+            ok(#apps == 1 and apps[1] == "com.code", "an app is listed once a spot in its room is placed by hand")
+            ok(#kept == 1 and kept[1].id == "w102" and kept[1].x == 0.3 and kept[1].y == 0.4
+                and kept[1].name == "a-very-l…me-here" and kept[1].title == "a-very-long-project-name-here — Code",
+                "a kept spot carries its id, place, and the label the room draws")
+            local gone = R.forget(raw, "com.code", "w102")
+            ok(gone.status == "forgot" and #entries(gone.json, "com.code") == 1 and #R.keptApps(gone.json) == 0,
+                "forgetting a spot drops that window's entry and nothing else")
+            ok(R.forget(gone.json, "com.code", "w102").status == "nowindow", "forgetting it twice is refused")
+            local last = R.forget(R.forget(gone.json, "com.code", "w101").json, "com.term", "w301")
+            ok(last.status == "forgot" and not last.json:find("com.code", 1, true)
+                and not last.json:find("com.term", 1, true), "an app with nothing left drops out of the record")
+            local back = R.arrange(gone.json, "com.code", { win(2, 102, "a-very-long-project-name-here — Code") })
+            ok(back.spots[1].new, "a forgotten window that is still open is new to the room next time")
+        end
+
         -- ===== the live flow =====
         registry.register(require("features.memory_room"))
         registry.setEnabled("memory_room", true)

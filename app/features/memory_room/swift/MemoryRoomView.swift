@@ -4,9 +4,11 @@ import UniformTypeIdentifiers
 
 // The Memory Room page -- memory_room's feature-contributed Settings page. The
 // user picks the room's picture (one of the built-in rooms, or a photo of a room
-// they know). Where each window
-// sits is not set here: the room gives a window its spot the first time it sees
-// it, and the user drags it in the room itself.
+// they know). Where each window sits is not set here: the room gives a window its
+// spot the first time it sees it, and the user drags it in the room itself. The
+// spots the user placed by hand are shown on the picture, faint, one app at a
+// time -- each is kept for its window even while it is closed, and no other window
+// takes it -- and any can be forgotten.
 //
 // This view owns NO schema. Every read and edit goes through room.lua via
 // SettingsStore.readerCall -- decode for display, one op per edit -- and the
@@ -23,6 +25,12 @@ struct MemoryRoomView: View {
     /// The kept photo's filename. Read in load(), never in body: listing a folder
     /// there is main-thread I/O on every render.
     @State private var photo: String?
+    /// The apps with spots placed by hand (by name), the one shown, and its spots.
+    /// Names are resolved in load(), never in body: that is Launch Services work.
+    @State private var keptApps: [String] = []
+    @State private var appNames: [String: String] = [:]
+    @State private var keptApp: String?
+    @State private var kept: [RoomPinDisplay] = []
 
     static let stateKey = "hammerdeck.state.memory_room.room"
     private static let module = "features.memory_room.room"
@@ -59,6 +67,24 @@ struct MemoryRoomView: View {
             photo = name
         } else {
             photo = RoomImage.userPhoto
+        }
+        let apps: [Any] = store.callValue(Self.module, "keptApps", [.string(raw)]) ?? []
+        var names: [String: String] = [:]
+        for case let id as String in apps { names[id] = AppCatalog.processName(forBundleId: id) ?? id }
+        appNames = names
+        keptApps = names.keys.sorted { names[$0]!.localizedStandardCompare(names[$1]!) == .orderedAscending }
+        if keptApp.map({ !keptApps.contains($0) }) ?? true { keptApp = keptApps.first }
+        loadKept()
+    }
+
+    private func loadKept() {
+        guard let app = keptApp else { kept = []; return }
+        let rows: [Any] = store.callValue(Self.module, "kept", [.string(raw), .string(app), .string(appNames[app] ?? app)]) ?? []
+        kept = rows.compactMap { v in
+            guard let d = v as? [String: Any], let id = d["id"] as? String,
+                  let x = d["x"] as? Double, let y = d["y"] as? Double else { return nil }
+            return RoomPinDisplay(id: id, name: d["name"] as? String ?? "", title: d["title"] as? String ?? "",
+                                  x: x, y: y, apps: [app], ghost: true)
         }
     }
 
@@ -115,9 +141,27 @@ struct MemoryRoomView: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.orange)
             }
-            RoomCanvas(image: image, pins: [])
+            if keptApps.count > 1 {
+                Picker(Strings.t("memoryRoom.page.keptIn", default: "Spots you placed in"),
+                       selection: Binding(get: { keptApp ?? "" }, set: { keptApp = $0; loadKept() })) {
+                    ForEach(keptApps, id: \.self) { Text(appNames[$0] ?? $0).tag($0) }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            RoomCanvas(image: image, pins: kept, onForget: { id in
+                if let app = keptApp { apply("forget", [.string(app), .string(id)]) }
+            })
                 .aspectRatio(RoomImage.aspect(image), contentMode: .fit)
                 .frame(maxWidth: 760)
+            Text(kept.isEmpty
+                 ? Strings.t("memoryRoom.page.keptNone",
+                             default: "Drag a window in the room and it keeps that spot for good; the spots you place show up here.")
+                 : String(format: Strings.t("memoryRoom.page.kept",
+                                            default: "The faint icons are the spots you placed in %@'s room. Each is kept for its window, even while the window is closed, and the room never gives it to a new window. Hover one and click × to forget it: a window that is still open gets a new spot the next time you open its room."),
+                          keptApp.flatMap { appNames[$0] } ?? ""))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             roomPicker
             HStack(spacing: 8) {
                 Button(Strings.t("memoryRoom.page.choosePhoto", default: "Choose Photo…")) { choosePhoto() }

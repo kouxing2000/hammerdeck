@@ -29,6 +29,25 @@ enum AppCatalog {
         return cleanAppName(FileManager.default.displayName(atPath: url.path))
     }
 
+    /// The name the app gives its own process: the running app's localizedName, else
+    /// its bundle's (localized) CFBundleDisplayName / CFBundleName -- which is what
+    /// localizedName reports once it runs ("Code", where Finder shows "Visual Studio
+    /// Code"). Nil when the bundle can't be located. Window titles name the app this
+    /// way, so it is the name to read them against.
+    static func processName(forBundleId id: String) -> String? {
+        if let n = NSRunningApplication.runningApplications(withBundleIdentifier: id).first?.localizedName {
+            return n
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id),
+              let bundle = Bundle(url: url) else { return nil }
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let n = (bundle.localizedInfoDictionary?[key] ?? bundle.infoDictionary?[key]) as? String, !n.isEmpty {
+                return n
+            }
+        }
+        return displayName(forBundleId: id)
+    }
+
     /// Finder's display name honors the "Show all filename extensions" setting, so an
     /// app can come back as "Safari.app"; strip a trailing ".app" for a clean label
     /// that's also consistent with NSRunningApplication.localizedName (never suffixed).
