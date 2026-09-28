@@ -82,6 +82,7 @@ end
 ---@class RoomOp
 ---@field json string
 ---@field status string
+---@field nudged string[]|nil  R.move: the ids of the spots it moved aside
 
 ---@class RoomSpot
 ---@field row table          the live window (a ctx.window.list() row)
@@ -307,8 +308,8 @@ end
 -- grid clear of every open or hand-placed window; failing that, the slot with the
 -- fewest open windows is shared.
 -- Then the open windows are drawn so that none covers another: two can want the
--- same spot (one was dragged there while the other was closed; a crowded room
--- gave a new window a closed one's spot). A spot placed by hand beats an automatic
+-- same spot (a drop that found no clear point to move the other to, R.move; a
+-- crowded room gave a new window a closed one's spot). A spot placed by hand beats an automatic
 -- one; otherwise the window seen there last keeps it. The other is drawn beside
 -- it for this open only -- its own spot is unchanged, and it is drawn there again
 -- once the spot is free. Returns the record to store and a spot per live window,
@@ -476,13 +477,29 @@ end
 
 -- Move window `id` (R.windowId) of app `app` to (x, y). The spot is now the user's:
 -- it is kept for the window while it is closed, and no other window is given it.
+-- Any other spot the new one covers -- a closed window's, which the room does not
+-- draw, so a drop cannot keep clear of it -- steps to the nearest point beside it
+-- that covers no spot, and keeps that place. Left where it was, the two windows
+-- would want one spot, and one of them would be drawn somewhere else on every open.
+-- The op's `nudged` names the spots that stepped aside.
 ---@return RoomOp  status "moved" | "nowindow"
 function R.move(raw, app, id, x, y)
     local room = R.decode(raw)
-    for _, e in ipairs(room.apps[app] or {}) do
+    local list = room.apps[app] or {}
+    for _, e in ipairs(list) do
         if R.windowId(e) == id then
             e.x, e.y, e.placed = unit(x), unit(y), true
-            return op(room, "moved")
+            local others, nudged = {}, {}
+            for _, o in ipairs(list) do if o ~= e then others[#others + 1] = o end end
+            for _, o in ipairs(under(others, e.x, e.y)) do
+                local rest = { e }
+                for _, q in ipairs(others) do if q ~= o then rest[#rest + 1] = q end end
+                local p = beside(o.x, o.y, rest, e)
+                if p then o.x, o.y = p.x, p.y; nudged[#nudged + 1] = R.windowId(o) end
+            end
+            local r = op(room, "moved")
+            r.nudged = nudged
+            return r
         end
     end
     return op(room, "nowindow")

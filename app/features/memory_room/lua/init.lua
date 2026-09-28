@@ -85,7 +85,8 @@ local function controllerFor(ctx)
             return
         end
         local op = R.move(ctx.getState("room"), st.app, id, x, y)
-        ctx.log("move", id, string.format("%.2f,%.2f", x, y), op.status)
+        ctx.log("move", id, string.format("%.2f,%.2f", x, y), op.status,
+                (op.nudged and #op.nudged > 0) and ("nudged " .. table.concat(op.nudged, ",")) or "")
         if op.status == "moved" then ctx.setState("room", op.json) end
     end
 

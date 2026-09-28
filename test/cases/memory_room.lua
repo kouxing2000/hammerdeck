@@ -224,15 +224,36 @@ return {
             local function apart(p, q)
                 return math.abs(p.x - q.x) >= R.FOOT.w or math.abs(p.y - q.y) >= R.FOOT.h
             end
-            -- A is placed and closed; B is dragged onto A's spot; A comes back
-            local raw = R.arrange(nil, "com.code", { win(1, 101, "a — A"), win(2, 102, "b — B") }).json
-            raw = R.move(raw, "com.code", "w101", 0.5, 0.5).json
-            raw = R.arrange(raw, "com.code", { win(2, 102, "b — B") }).json
-            raw = R.move(raw, "com.code", "w102", 0.5, 0.5).json
+            -- A is placed and closed; B is dropped on A's spot: A's spot steps beside
+            -- the drop, and each window keeps a place of its own
+            local three = R.arrange(nil, "com.code", { win(1, 101, "a — A"), win(2, 102, "b — B"), win(3, 103, "c — C") }).json
+            three = R.move(three, "com.code", "w101", 0.5, 0.5).json
+            -- C sits where the nearest point beside the drop would be
+            three = R.move(three, "com.code", "w103", 0.30, 0.45).json
+            local drop = R.move(three, "com.code", "w102", 0.52, 0.51)
+            local s = {}
+            for _, e in ipairs(entries(drop.json, "com.code")) do s[e.wid] = e end
+            ok(drop.status == "moved" and s[102].x == 0.52 and s[102].y == 0.51, "a drop stays where it was let go")
+            ok(apart(s[101], s[102]) and s[101].placed, "the spot it covered steps beside it, still placed by hand")
+            ok(apart(s[101], s[103]), "clear of every other spot too")
+            ok(math.abs(s[101].x - 0.5) < 0.3 and math.abs(s[101].y - 0.5) < 0.3, "right beside it, not across the room")
+            ok(s[103].x == 0.30 and s[103].y == 0.45, "a spot the drop does not cover stays where it was")
+            ok(#drop.nudged == 1 and drop.nudged[1] == "w101", "the move names the spot it moved")
+            local both = R.arrange(drop.json, "com.code", { win(1, 101, "a — A"), win(2, 102, "b — B") })
+            ok(not spotOf(both, 101).aside and not spotOf(both, 102).aside
+                and spotOf(both, 101).x == s[101].x and spotOf(both, 102).x == 0.52,
+                "both open: each is drawn at its own spot")
+
+            -- A and B both placed by hand on one spot (a drop that found no clear point
+            -- to move the other to); B was seen there last; A comes back
+            local raw = json.encode(json.asObject({ v = 2, apps = json.asObject({ ["com.code"] = json.asArray({
+                json.asObject({ wid = 102, title = "b — B", x = 0.5, y = 0.5, placed = true }),
+                json.asObject({ wid = 101, title = "a — A", x = 0.5, y = 0.5, placed = true }),
+            }) }) }))
             local back = R.arrange(raw, "com.code", { win(1, 101, "a — A"), win(2, 102, "b — B") })
             local a, b = spotOf(back, 101), spotOf(back, 102)
             ok(b.x == 0.5 and b.y == 0.5 and not b.aside,
-                "both placed by hand: the window seen there last (B, dragged there) keeps the spot")
+                "both placed by hand: the window seen there last (B) keeps the spot")
             ok(a.aside and apart(a, b), "the one coming back is drawn beside it, not on it")
             ok(math.abs(a.x - 0.5) < 0.3 and math.abs(a.y - 0.5) < 0.3, "right beside it, not across the room")
             ok(a.entry.x == 0.5 and a.entry.y == 0.5, "and its own spot is still remembered")
