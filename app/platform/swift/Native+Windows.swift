@@ -834,6 +834,13 @@ extension Native {
             return 1
         }
         let win = ref.element
+        // A minimized window is listed like any other, and neither SLPS nor AXRaise
+        // brings it off the Dock: focusing one means un-minimizing it first.
+        var minRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef) == .success,
+           (minRef as? Bool) == true {
+            AXUIElementSetAttributeValue(win, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        }
         var pid: pid_t = 0
         guard AXUIElementGetPid(win, &pid) == .success else {
             AXUIElementPerformAction(win, kAXRaiseAction as CFString)
