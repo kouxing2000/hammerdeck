@@ -30,7 +30,7 @@
 -- deliberate pick -- Enter still defaults to a fresh deck on the current screen);
 -- choosing it rebuilds the deck with no window multi-select. Restore is SMART
 -- about availability: it re-matches the saved members against the live windows
--- (identity.matchMembers -- wid within a session, title across an app restart),
+-- (windows.matchSaved -- wid within a session, title across an app restart),
 -- restores around any that are now closed (as long as >= 2 survive, labelled
 -- "N of M available"), and does NOT rewrite the template, so it survives a lean
 -- session intact. Single-monitor keeps its one-tap fast path (no selector step),
@@ -707,7 +707,7 @@ local function controllerFor(ctx)
     -- nil when nothing is restorable right now. Reads the saved membership,
     -- resolves its target screen (the saved screen if still connected, else the
     -- active/current one), and matches the saved members against that screen's
-    -- live windows (identity.matchMembers -- wid within a session, title across a
+    -- live windows (windows.matchSaved -- wid within a session, title across a
     -- restart). Restorable only if >= 2 members are available NOW (a deck needs
     -- two), so a last deck whose windows are all closed is silently NOT offered.
     -- `total` (vs #matched) lets the label say "N of M available" -- the "some
@@ -728,7 +728,7 @@ local function controllerFor(ctx)
         end
         -- match against ALL on-screen windows (uncapped) so a member past the
         -- top-9 in MRU order isn't wrongly seen as closed (see groupWindows).
-        local matched = identity.matchMembers(last.members, groupWindows(screen, math.huge))
+        local matched = W.matchSaved(last.members, groupWindows(screen, math.huge))
         if #matched < 2 then return nil end
         return { screen = screen, matched = matched, total = #last.members }
     end
@@ -915,7 +915,7 @@ local function controllerFor(ctx)
         local screen = restore.screen
         -- match against ALL on-screen windows (uncapped) so a member past the
         -- top-9 in MRU order isn't wrongly seen as closed (see groupWindows).
-        local matched = identity.matchMembers(last.members, groupWindows(screen, math.huge))
+        local matched = W.matchSaved(last.members, groupWindows(screen, math.huge))
         if #matched < 2 then
             ctx.log("restore refused -- " .. #matched .. " of the last deck's "
                 .. #last.members .. " windows are open on this screen")

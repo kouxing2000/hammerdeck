@@ -1,7 +1,7 @@
 -- test/cases/window_deck_pure.lua -- window_deck's PURE sibling modules, tested directly
 -- (no deck, no adapter handles) now that the stateful controller's decision logic lives in
 -- them: focus.classify (the 5-way reconcile dispatch, with its precedence), identity (the
--- wid->title key ladder, frameFar, matchMembers' wid-beats-title restore), colors
+-- wid->title key ladder, frameFar, matchSaved' wid-beats-title restore), colors
 -- (free-palette dealing around a stored recolor), and store (the last-deck save/read/json
 -- round-trip that carries the PRIMARY wid identity end-to-end).
 --
@@ -85,7 +85,7 @@ return {
             ok(sameApp[1] == pal[1], "assign gives the stored app's first window its stored color")
             ok(sameApp[2] ~= pal[1], "a second same-app window deals a fresh positional color")
 
-            -- matchMembers: rebuild a saved deck from the live windows (drives "restore
+            -- matchSaved: rebuild a saved deck from the live windows (drives "restore
             -- last deck"). wid matches within a session (survives a retitle); title
             -- matches across an app restart (new wid, same title); each live window is
             -- claimed once; a missing member simply drops (a partial restore).
@@ -95,40 +95,40 @@ return {
                 { bundleID = "com.b", title = "B",  wid = 21 },
             }
             -- same session: A1 retitled to "A1*" but its wid still matches
-            local inSession = ident.matchMembers(saved, {
+            local inSession = require("platform.windows").matchSaved(saved, {
                 { id = 1, bundleID = "com.a", title = "A1*", wid = 11 },
                 { id = 2, bundleID = "com.a", title = "A2",  wid = 12 },
                 { id = 3, bundleID = "com.b", title = "B",   wid = 21 },
             })
-            ok(#inSession == 3, "matchMembers: all three match in-session (wid survives a retitle)")
+            ok(#inSession == 3, "matchSaved: all three match in-session (wid survives a retitle)")
             -- after a restart: fresh wids, titles carry the match; B is closed -> 2 of 3
-            local crossRestart = ident.matchMembers(saved, {
+            local crossRestart = require("platform.windows").matchSaved(saved, {
                 { id = 1, bundleID = "com.a", title = "A1", wid = 91 },
                 { id = 2, bundleID = "com.a", title = "A2", wid = 92 },
             })
             ok(#crossRestart == 2 and crossRestart[1].title == "A1" and crossRestart[2].title == "A2",
-                "matchMembers: cross-restart title match; a closed window drops (2 of 3)")
+                "matchSaved: cross-restart title match; a closed window drops (2 of 3)")
             -- two same-app saved members must not both collapse onto one live window
-            ok(#ident.matchMembers(
+            ok(#require("platform.windows").matchSaved(
                 { { bundleID = "com.a", title = "A1", wid = 0 }, { bundleID = "com.a", title = "A1", wid = 0 } },
                 { { id = 1, bundleID = "com.a", title = "A1", wid = 0 } }) == 1,
-                "matchMembers claims each live window once (no collapse)")
+                "matchSaved claims each live window once (no collapse)")
             -- wid BEATS title: two same-app windows share a title in one session, listed
             -- wid-descending. A single greedy (wid OR title) pass would bind the first
             -- saved member to the wrong window through the title; the wid-first split
             -- binds each to its own wid regardless of list order.
-            local mt = ident.matchMembers(
+            local mt = require("platform.windows").matchSaved(
                 { { bundleID = "com.a", title = "T", wid = 100 },
                   { bundleID = "com.a", title = "T", wid = 200 } },
                 { { id = 200, bundleID = "com.a", title = "T", wid = 200 },   -- B's window first
                   { id = 100, bundleID = "com.a", title = "T", wid = 100 } })
             ok(#mt == 2 and mt[1].id == 100 and mt[2].id == 200,
-                "matchMembers: wid wins over title (each twin binds to its own wid, not the title-first hit)")
+                "matchSaved: wid wins over title (each twin binds to its own wid, not the title-first hit)")
             -- a member with neither a real wid nor a title can't be identified
-            ok(#ident.matchMembers(
+            ok(#require("platform.windows").matchSaved(
                 { { bundleID = "com.a", title = "", wid = 0 } },
                 { { id = 1, bundleID = "com.a", title = "", wid = 0 } }) == 0,
-                "matchMembers: an unidentifiable (no wid, no title) member never matches")
+                "matchSaved: an unidentifiable (no wid, no title) member never matches")
 
             -- occludedMembers: which deck rings must NOT draw because a FOREIGN
             -- window sits in front of the member and over its centre. `list` is
@@ -174,7 +174,7 @@ return {
         end
 
         -- the last-deck round-trip: PROVE the PRIMARY wid identity flows through
-        -- save -> json -> read -> PASS 1 (matchMembers), the path quadWindows()'s
+        -- save -> json -> read -> PASS 1 (matchSaved), the path quadWindows()'s
         -- title-only fixtures in the integration case never exercise.
         do
             local store = require("features.window_deck.store")
@@ -194,7 +194,7 @@ return {
                 "a member's wid + title survive the json round-trip")
             -- PASS 1 binds by the round-tripped wid even after a RETITLE -- only wid
             -- (not title) could carry this match, so it proves the primary path E2E.
-            local matched = ident.matchMembers(last.members, {
+            local matched = require("platform.windows").matchSaved(last.members, {
                 { id = 1, bundleID = "com.a", title = "Doc A -- edited", wid = 4242 },  -- retitled
                 { id = 2, bundleID = "com.b", title = "Doc B",          wid = 4243 },
             })

@@ -70,7 +70,7 @@ function M.new(ctx)
     -- The "last deck": the membership of the most recently COMMITTED FRESH pick,
     -- so the entry screen-selector can offer a one-tap "restore last deck". Each
     -- member is a re-matchable descriptor {bundleID, title, wid} (matched by
-    -- identity.matchMembers -- wid within a session, title across an app restart)
+    -- windows.matchSaved -- wid within a session, title across an app restart)
     -- plus the screen NAME the deck was on. Only a fresh pick writes this; a
     -- restore reuses it WITHOUT overwriting (see init.commit), so the curated
     -- template survives a session where some of its windows are closed. Object-
