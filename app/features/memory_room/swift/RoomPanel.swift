@@ -73,8 +73,8 @@ final class RoomPanel {
     private var host: NSHostingView<RoomCanvas>?
     private var image: NSImage?
     private var scale: CGFloat = 1
-    /// The pins as drawn: a drag moves one here -- to where it will land, not under
-    /// the pointer -- and it stays where it was let go for as long as this room is open.
+    /// The pins as drawn: a drag moves one here, and it stays where it landed for as
+    /// long as this room is open.
     private var pins: [RoomPinDisplay]
     private var hovered: String?
     private var dragging = false
@@ -306,9 +306,7 @@ final class RoomPanel {
         }
     }
 
-    /// A drag in progress: the icon sits where it would land if let go now
-    /// (RoomHitView reports RoomCanvas.landing, not the raw pointer), so the drop
-    /// never jumps.
+    /// A drag in progress, or its drop: the icon is drawn at `at`.
     private func drag(_ t: RoomTarget, to at: CGPoint) {
         guard let i = pins.firstIndex(where: { $0.id == t.id }) else { return }
         let p = pins[i]
@@ -375,10 +373,10 @@ private final class RoomHitView: NSView {
     var onHover: ((RoomTarget?) -> Void)?
     /// nil = a click off every window.
     var onClick: ((RoomTarget?) -> Void)?
-    /// A window being dragged, and where it would land if let go now (a unit point
-    /// of the room): the drag shows the landing, so the drop never jumps.
+    /// A window being dragged, and where it is now (a unit point of the room): under
+    /// the pointer, kept inside the room.
     var onDrag: ((RoomTarget, CGPoint) -> Void)?
-    /// Where it was let go: the same landing -- beside, never on, another window.
+    /// Where it was let go: beside, never on, another window.
     var onDrop: ((RoomTarget, CGPoint) -> Void)?
     private var tracking: NSTrackingArea?
     private var hovered: RoomTarget?
@@ -443,14 +441,16 @@ private final class RoomHitView: NSView {
         let p = point(e)
         if !dragging, hypot(p.x - pressedAt.x, p.y - pressedAt.y) < 4 { return }
         dragging = true
-        onDrag?(t, landing(t, p))
+        onDrag?(t, landing(t, p, clearOfOthers: false))
     }
 
-    /// Where `t` lands when let go with the pointer at `p` (RoomCanvas.landing), as
-    /// a unit point of the room.
-    private func landing(_ t: RoomTarget, _ p: NSPoint) -> CGPoint {
+    /// Where `t` sits with the pointer at `p`, as a unit point of the room: kept
+    /// inside it, and -- `clearOfOthers`, on the drop only -- moved beside any window
+    /// it covers (RoomCanvas.landing). A drag follows the pointer over the others:
+    /// checked on every move, the icon hops from side to side of each one it crosses.
+    private func landing(_ t: RoomTarget, _ p: NSPoint, clearOfOthers: Bool) -> CGPoint {
         let drop = NSPoint(x: p.x + grab.dx, y: p.y + grab.dy)
-        let others = targets.filter { $0.id != t.id }.map(\.rect)
+        let others = clearOfOthers ? targets.filter { $0.id != t.id }.map(\.rect) : []
         return unit(RoomCanvas.landing(for: drop, size: t.rect.size, others: others, foot: foot, in: bounds.size))
     }
 
@@ -459,7 +459,7 @@ private final class RoomHitView: NSView {
         guard let t = pressing else { return }
         let p = point(e)
         if dragging {
-            onDrop?(t, landing(t, p))
+            onDrop?(t, landing(t, p, clearOfOthers: true))
         } else if target(at: p)?.id == t.id {
             onClick?(t)
         }
