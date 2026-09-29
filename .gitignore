@@ -72,3 +72,6 @@ __pycache__/
 # link, git would happily commit it, and the private path would ship.
 /.meta
 /scratchpad
+
+# .feedback -- feedback mail pulled from the app's inbox (users' own words). Never public.
+/.feedback
