@@ -7,7 +7,7 @@
 
 import AppKit
 import CoreGraphics
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 extension Native {
     /// Whether a window can be captured now. Never prompts. Also false after a

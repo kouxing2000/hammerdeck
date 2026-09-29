@@ -95,6 +95,7 @@ final class MemoryRoomImageTests: XCTestCase {
     /// The next open judges two spots by room.lua's R.FOOT -- closer than it on both
     /// axes and one is drawn aside -- so a drop has to land clear of that too, not
     /// just clear of the other icon's box.
+    @MainActor
     func testADropLandsAFootprintClearOfTheOthers() {
         let room = CGSize(width: 720, height: 450)
         let size = CGSize(width: 40, height: 44)
@@ -114,6 +115,7 @@ final class MemoryRoomImageTests: XCTestCase {
 
     /// A label past the room's edge is drawn slid in or flipped above its icon,
     /// off the part of the pin that takes clicks, so a drop is moved in first.
+    @MainActor
     func testADropNearTheEdgeLandsWhollyInsideTheRoom() {
         let room = CGSize(width: 720, height: 450)
         let size = CGSize(width: 104, height: 44)
