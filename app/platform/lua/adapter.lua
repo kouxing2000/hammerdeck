@@ -1265,7 +1265,8 @@ function adapter.toggleMute()
     return native.toggle_mute()
 end
 
--- Empty the user's home Trash (no Finder prompt); returns the count removed.
+-- Empty the user's home Trash (no Finder prompt); returns the count removed, or
+-- -1 when the Trash could not be read or emptied (a Full Disk Access denial).
 function adapter.emptyTrash()
     return native.empty_trash()
 end

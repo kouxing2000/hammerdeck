@@ -768,7 +768,8 @@ EFFECT_KINDS = {
     emptyTrash = {
         run = function()
             local n = adapter.emptyTrash()
-            -- -1 = found items but removed none (a Full Disk Access denial); surface it
+            -- -1 = the Trash could not be read, or none of its items could be removed
+            -- (both a Full Disk Access denial); surface it
             -- as a real failure, not a lying green "fired". A count > 0 rides as a note.
             if n == -1 then
                 return false, "couldn't empty the Trash -- grant Full Disk Access in System Settings > Privacy & Security"

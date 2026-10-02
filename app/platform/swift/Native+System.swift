@@ -362,7 +362,8 @@ extension Native {
     // MARK: - Disk / Trash (rule-effect system actions)
 
     // empty_trash() -> Int  -- remove every item from the user's home Trash
-    // (~/.Trash) and return the count removed. Deliberately NO Finder prompt (a
+    // (~/.Trash) and return the count removed, or -1 when the Trash could not be
+    // read or emptied (see emptyDirectory). Deliberately NO Finder prompt (a
     // rule fires unattended); best-effort per item, so a locked/SIP item is
     // skipped, not fatal. Scope is the home Trash -- per-external-volume .Trashes
     // are left alone. The Test button confirms first (see disruptiveTestKinds).
@@ -371,17 +372,34 @@ extension Native {
         let trash = (try? fm.url(for: .trashDirectory, in: .userDomainMask,
                                  appropriateFor: nil, create: false))
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".Trash")
-        let items = (try? fm.contentsOfDirectory(at: trash,
-                        includingPropertiesForKeys: nil, options: [])) ?? []
+        lua_pushinteger(L, lua_Integer(Native.emptyDirectory(trash)))
+        return 1
+    }
+
+    // Remove every item in `dir` and return the count removed, or -1 when the
+    // directory could not be read or nothing in it could be removed. Both are
+    // almost always a Full Disk Access (TCC) denial on ~/.Trash, and the rule
+    // must log a real failure for them. A failed read must not be counted as an
+    // empty directory: that reports "already empty" for a full Trash. A directory
+    // that reads back empty, or does not exist, returns 0 -- there is nothing to
+    // remove, and "grant Full Disk Access" would send the user after a fix that
+    // changes nothing.
+    nonisolated static func emptyDirectory(_ dir: URL) -> Int {
+        let fm = FileManager.default
+        let items: [URL]
+        do {
+            items = try fm.contentsOfDirectory(at: dir,
+                        includingPropertiesForKeys: nil, options: [])
+        } catch CocoaError.fileReadNoSuchFile {
+            return 0
+        } catch {
+            return -1
+        }
         var removed = 0
         for item in items {
             if (try? fm.removeItem(at: item)) != nil { removed += 1 }
         }
-        // Found items but couldn't remove ANY -> almost always a Full Disk Access
-        // (TCC) denial; report -1 so the rule logs a real failure instead of a
-        // green no-op. An already-empty Trash returns 0 (a clean success).
-        lua_pushinteger(L, (!items.isEmpty && removed == 0) ? -1 : lua_Integer(removed))
-        return 1
+        return (!items.isEmpty && removed == 0) ? -1 : removed
     }
 
     // eject() -> Int  -- unmount and eject every ejectable/removable EXTERNAL
