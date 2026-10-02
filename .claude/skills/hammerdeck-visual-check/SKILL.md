@@ -44,7 +44,7 @@ popup that flashes, toggles closed, and shifts position with the other menu
 extras. `menu-shot.sh` asks Accessibility for the open menu's exact rect and
 feeds it to `screencapture -R`, so no crop offsets are guessed. Default output
 `/tmp/hammerdeck-menu.png`. If two Hammerdeck instances are running you may
-capture a stale menu -- `pgrep -lf debug/Hammerdeck` and kill the extra first.
+capture a stale menu -- `pgrep -ilf debug/Hammerdeck` and kill the extra first.
 
 `scripts/shot.sh` waits `HD_SHOT_DELAY` (default `0.4`s) for the panel to finish
 drawing. Bump it (`HD_SHOT_DELAY=0.6`) if you capture mid-animation.

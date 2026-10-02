@@ -6,7 +6,10 @@
 # frame (it flashes, toggles closed, and its position shifts with the other menu
 # extras). This helper instead asks Accessibility for the OPEN menu's exact
 # rectangle and hands that straight to `screencapture -R`, so the capture is the
-# menu and nothing else -- no guessed crop offsets.
+# menu and nothing else -- no guessed crop offsets. The status item is found by
+# its description in the process's LAST menu bar (menu bar 1 is the app's main
+# menu). Matching by name, not position, makes a missing status item fail loudly
+# instead of opening and capturing the Apple menu.
 #
 # Usage:
 #   scripts/app.sh start            # the app must be running with its menubar icon
@@ -19,7 +22,7 @@
 # once in System Settings > Privacy & Security.
 #
 # GOTCHA: if two Hammerdeck instances are running you may screenshot a stale
-# menu -- `pgrep -lf debug/Hammerdeck` and kill the extra first.
+# menu -- `pgrep -ilf debug/Hammerdeck` and kill the extra first.
 
 set -euo pipefail
 
@@ -34,10 +37,11 @@ DELAY="${HD_MENU_DELAY:-0.4}"
 read_rect() {
   osascript 2>/dev/null <<OSA
 tell application "System Events" to tell process "$PROC"
-  click menu bar item 1 of menu bar 1
+  set mi to first menu bar item of menu bar -1 whose description is "$PROC"
+  click mi
   delay $DELAY
-  set p to position of menu 1 of menu bar item 1 of menu bar 1
-  set s to size of menu 1 of menu bar item 1 of menu bar 1
+  set p to position of menu 1 of mi
+  set s to size of menu 1 of mi
   return ((item 1 of p) as text) & "," & ((item 2 of p) as text) & "," & ((item 1 of s) as text) & "," & ((item 2 of s) as text)
 end tell
 OSA
@@ -55,7 +59,7 @@ if [[ -z "${RECT:-}" ]]; then
   echo "menu-shot: could not read a valid menu rect." >&2
   echo "  - is $PROC running with a menubar icon? (scripts/app.sh status)" >&2
   echo "  - is Accessibility granted to this terminal/IDE?" >&2
-  echo "  - more than one instance running? (pgrep -lf debug/Hammerdeck)" >&2
+  echo "  - more than one instance running? (pgrep -ilf debug/Hammerdeck)" >&2
   osascript -e 'tell application "System Events" to key code 53' >/dev/null 2>&1 || true
   exit 1
 fi
