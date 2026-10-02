@@ -9,9 +9,12 @@
   "option.sites.label": "网站",
   "option.sites.hint": "每个网站：名称，网址，用于打开它的浏览器，Chrome 配置文件 (仅 Chrome)，以及以独立应用窗口，全新的隐私窗口，或两者同时打开。",
 
+  "alert.chromeFailed": "没能打开 %s -- Chrome 没有响应，请检查“隐私与安全性 > 自动化”",
   "alert.invalidURL": "无效的网站网址：%s",
   "alert.noPrivateWindow": "隐私窗口需要 Chrome 系浏览器 -- 请为这个网站选一个",
   "alert.noSites": "还没有网站 -- 请在设置中每行添加一个",
+  "alert.openFailed": "没能打开 %s -- 它的浏览器还装着吗？",
+  "alert.safariFailed": "没能打开 %s -- Safari 没有响应，请检查“隐私与安全性 > 自动化”",
   "chooser.placeholder": "跳转到网站",
   "chooser.privateSite": "隐私网站"
 }

@@ -80,6 +80,9 @@ return {
             and logged("couldn't open https://www.example.com/ -- the Chrome script failed")
             and not logged("opened https://www.example.com/"),
             "a failed Chrome script logs that nothing opened, not 'opened <url>'")
+        ok(#fake.alerts > 0 and fake.alerts[#fake.alerts]:find("https://www.example.com/", 1, true)
+            and fake.alerts[#fake.alerts]:find("Automation", 1, true),
+            "... and says so on screen, naming the URL and the Automation setting")
         fake.browserScriptFails = false
 
         -- a scheme-less entry is normalized to https:// so it actually navigates
@@ -174,6 +177,15 @@ return {
             and fake.siteOpens[2].app == false
             and fake.siteOpens[2].url == "https://news.ycombinator.com",
             "a site routed to a non-scriptable browser opens via openSite")
+        fake.refuseSiteOpen = true   -- Firefox uninstalled: the seam can't launch it
+        fake.logs = {}
+        fake.pressHotkey("u", { "cmd", "alt", "ctrl" })
+        fake.visibleChooser().userSelect(2)
+        ok(fake.alerts[#fake.alerts]:find("Couldn't open https://news.ycombinator.com", 1, true)
+            and logged("couldn't open https://news.ycombinator.com")
+            and not logged("opened https://news.ycombinator.com"),
+            "a site whose browser won't launch says so on screen and never logs 'opened'")
+        fake.refuseSiteOpen = false
 
         -- a Safari-routed site (no app) focuses its existing Safari tab via focusSafariTab
         -- (NOT openSite), and opens it when absent
@@ -197,6 +209,8 @@ return {
         ok(logged("couldn't open https://news.ycombinator.com -- the Safari script failed")
             and not logged("opened Safari"),
             "a failed Safari script logs that nothing opened, not 'opened Safari <url>'")
+        ok(#fake.alerts > 0 and fake.alerts[#fake.alerts]:find("Safari didn't respond", 1, true),
+            "... and says so on screen")
         fake.browserScriptFails = false
 
         -- PRIVATE WINDOWS: a site marked incognito always OPENS a fresh private

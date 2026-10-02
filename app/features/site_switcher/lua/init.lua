@@ -273,6 +273,9 @@ local function jump(ctx, site)
     if isChrome and not hasProfile and not site.app then
         local found = ctx.focusBrowserTab(pattern, site.url)
         if found == nil then
+            ctx.alert(ctx.t("alert.chromeFailed",
+                "Couldn't open %s -- Chrome didn't respond. Check Privacy & Security > Automation",
+                site.url))
             ctx.log("couldn't open " .. site.url .. " -- the Chrome script failed or timed out (Automation denied?)")
         else
             ctx.log(found and ("focused " .. pattern) or ("opened " .. site.url))
@@ -284,15 +287,24 @@ local function jump(ctx, site)
     elseif isSafari and not site.app then
         local found = ctx.focusSafariTab(pattern, site.url)
         if found == nil then
+            ctx.alert(ctx.t("alert.safariFailed",
+                "Couldn't open %s -- Safari didn't respond. Check Privacy & Security > Automation",
+                site.url))
             ctx.log("couldn't open " .. site.url .. " -- the Safari script failed or timed out (Automation denied?)")
         else
             ctx.log(found and ("focused Safari " .. pattern) or ("opened Safari " .. site.url))
         end
     else
-        ctx.openSite(browser or "", site.profile or "", site.app == true, site.url)
-        ctx.log(("opened %s [%s]%s%s"):format(site.url, browser or "default",
+        local where = ("[%s]%s%s"):format(browser or "default",
             hasProfile and (" /" .. site.profile) or "",
-            site.app and " (app)" or ""))
+            site.app and " (app)" or "")
+        if ctx.openSite(browser or "", site.profile or "", site.app == true, site.url) then
+            ctx.log(("opened %s %s"):format(site.url, where))
+        else
+            ctx.alert(ctx.t("alert.openFailed",
+                "Couldn't open %s -- is its browser still installed?", site.url))
+            ctx.log(("couldn't open %s %s -- the browser is missing or failed to launch"):format(site.url, where))
+        end
     end
 end
 
