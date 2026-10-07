@@ -603,6 +603,40 @@ extension Native {
         guard let pv = AXValueCreate(.cgPoint, &pos), let sv = AXValueCreate(.cgSize, &size) else {
             return false
         }
+        // AppKit ANIMATES each size/position write in an app whose
+        // AXEnhancedUserInterface is on (Chrome, once an assistive client has asked for
+        // it), so the next write of the dance lands mid-animation and the window stops
+        // part-way -- measured on Chrome: the old origin kept, or a size halfway
+        // between old and new. So the flag is off for the write and back on after: it
+        // belongs to whoever set it, and leaving it off would break that tool instead.
+        // The restore has a cost: Chromium and Electron drop full accessibility mode on
+        // the off and rebuild it about 2s after the on (Electron also tells the app
+        // accessibility went away). VoiceOver users are exempt -- both ignore the flag
+        // while it runs.
+        var pid: pid_t = 0
+        let app = AXUIElementGetPid(win, &pid) == .success ? AXUIElementCreateApplication(pid) : nil
+        var euiRef: CFTypeRef?
+        let enhancedUI = app.map {
+            AXUIElementCopyAttributeValue($0, "AXEnhancedUserInterface" as CFString, &euiRef) == .success
+                && (euiRef as? Bool) == true
+        } ?? false
+        var euiOff = AXError.success
+        if enhancedUI, let app {
+            euiOff = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse)
+        }
+        defer {
+            if enhancedUI, let app {
+                let euiOn = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+                // Logged, never gated on: Chrome answers both writes with -25208 (not
+                // implemented) and applies them anyway, so skipping the restore on an
+                // error would leave its flag off. Keyed by outcome as well as pid, so
+                // an unusual code gets its own throttle slot.
+                seamLogThrottled("applyFrame:eui:\(pid):\(euiOff.rawValue):\(euiOn.rawValue)",
+                                 "set frame: \(NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid \(pid)") "
+                                 + "has AXEnhancedUserInterface on -- off for the write (AXError \(euiOff.rawValue)), "
+                                 + "back on (AXError \(euiOn.rawValue))")
+            }
+        }
         let sizeErr = AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
         let posErr = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv)
         AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
