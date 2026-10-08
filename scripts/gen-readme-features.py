@@ -128,7 +128,7 @@ RULES_GRANTS = [
     (
         "emptyTrash",
         None,
-        ("app/platform/swift/Native+System.swift", "fm.contentsOfDirectory(at: trash"),
+        ("app/platform/swift/Native+System.swift", "Native.emptyDirectory(trash)"),
         "Full Disk Access",
         "emptying the Trash reads a folder macOS protects, and macOS never prompts "
         "for this one, so switch Hammerdeck on under Privacy & Security yourself",
