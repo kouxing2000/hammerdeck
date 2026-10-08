@@ -270,9 +270,9 @@ cp -R "$SPARKLE_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # The license notices travel with the BINARY, not merely with the repo. Most
 # people who ever hold this app will have downloaded a disk image and never see the
-# source, and all three obligations are addressed to them: GPLv3 s6 requires the
-# License be conveyed with the object code, and both MIT notices require the
-# permission text "in all copies". Into Resources rather than inside Sparkle's
+# source, and every one of these obligations is addressed to them: GPLv3 s6
+# requires the License be conveyed with the object code, and each MIT notice
+# requires the permission text "in all copies". Into Resources rather than inside Sparkle's
 # framework, because the framework is signed as a nested bundle below and adding
 # files to it afterwards would break that seal.
 echo "==> bundling license notices"
@@ -300,6 +300,20 @@ SPARKLE_LICENSE="$(dirname "$(dirname "$(dirname "$SPARKLE_SRC")")")/LICENSE"
   exit 1
 }
 cp "$SPARKLE_LICENSE" "$LICENSES/Sparkle-LICENSE.txt"
+
+# Code ported from MIT projects: the grid math in app/platform/lua/windows.lua
+# from Hammerspoon's hs.grid, and the key-window event recipe in
+# Native+Activation.swift from yabai. Neither project is a build input, so their
+# notices are kept verbatim in licenses/ -- named here, not globbed, so a deleted
+# file fails the package instead of shipping the port without its notice.
+for upstream in Hammerspoon yabai; do
+  notice="$ROOT/licenses/$upstream-LICENSE.txt"
+  grep -q "Permission is hereby granted" "$notice" 2>/dev/null || {
+    echo "error: $notice is missing or not an MIT notice -- we ship code ported from $upstream, so the notice must ship too" >&2
+    exit 1
+  }
+  cp "$notice" "$LICENSES/$upstream-LICENSE.txt"
+done
 
 # Drop Sparkle's XPC services. They exist to let a SANDBOXED app hand privileged
 # work to a separate process; Sparkle's own sandboxing guide says to remove them

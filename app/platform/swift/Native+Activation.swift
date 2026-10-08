@@ -40,7 +40,8 @@ extension Native {
 
     // The two-event SLPS dance that makes window `wid` the key window of its
     // process (ported faithfully from the Hammerspoon #370 / yabai recipe; the
-    // magic byte offsets are an undocumented SLPS event record).
+    // magic byte offsets are an undocumented SLPS event record). yabai is MIT: its
+    // notice, licenses/yabai-LICENSE.txt, ships in the app (scripts/package.sh).
     private func makeKeyWindow(_ psn: inout SLPSProcessSerial, wid: CGWindowID,
                                post: SLPS.PostEventFn) {
         var bytes = [UInt8](repeating: 0, count: 0xf8)

@@ -93,7 +93,8 @@ function M.moveToScreen(f, s, t, opts)
 end
 
 -- ---------------------------------------------------------------------------
--- Ported grid algorithm (Hammerspoon hs.grid, MIT). Pure rect arithmetic.
+-- Ported grid algorithm (Hammerspoon hs.grid, MIT). Pure rect arithmetic. Its
+-- notice, licenses/Hammerspoon-LICENSE.txt, ships in the app (scripts/package.sh).
 -- ---------------------------------------------------------------------------
 
 --- Convert a GRID CELL to a pixel frame (hs.grid's "place window in cell").

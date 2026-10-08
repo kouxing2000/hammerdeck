@@ -23,7 +23,8 @@ a system event**.
 
 It is a native Swift app with a Lua engine inside -- think a focused, miniature
 Hammerspoon -- except you never write Lua. Every feature is a switch, some
-options, and a trigger picker.
+options, and a trigger picker. It grew out of the author's own Hammerspoon
+config and owes Hammerspoon a great deal (see [Third-party](#third-party)).
 
 And it is automation you can **see**: every shortcut press flashes which action
 fired, automated runs can notify you of what happened while you were away, one
@@ -331,6 +332,16 @@ Hammerdeck, and anything built from it, stays open.
   2015-2017 Mayur Pawashe; 2014 C.W. Betts; 2014 Petroules Corporation; 2014 Big
   Nerd Ranch. Sparkle's `LICENSE` also carries the licenses of the components it
   bundles in turn.
+- **[Hammerspoon](https://www.hammerspoon.org)** -- where Hammerdeck comes from.
+  It began as the author's Hammerspoon config, years of Lua scripts written
+  against it, and Hammerspoon's design still shows throughout. The grid math in
+  `app/platform/lua/windows.lua` is ported from `hs.grid`, under Hammerspoon's
+  **MIT** license (Copyright (c) 2014-2025 Hammerspoon contributors); see
+  [`licenses/Hammerspoon-LICENSE.txt`](licenses/Hammerspoon-LICENSE.txt).
+- **[yabai](https://github.com/koekeishiya/yabai)** -- the event recipe that
+  makes a window key in `app/platform/swift/Native+Activation.swift` is ported
+  from yabai, under its **MIT** license (Copyright (c) 2019 Åsmund Vikane); see
+  [`licenses/yabai-LICENSE.txt`](licenses/yabai-LICENSE.txt).
 
 Every one of these notices ships inside the app, in
 `Hammerdeck.app/Contents/Resources/Licenses/`, alongside a copy of the GPL.
