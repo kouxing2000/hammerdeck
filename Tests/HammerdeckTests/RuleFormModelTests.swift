@@ -34,6 +34,25 @@ final class RuleFormModelTests: XCTestCase {
         ])
     }
 
+    /// A "when a display connects" recipe must start on an external monitor. The
+    /// display candidates are alphabetical, so the laptop's "Built-in ..." panel usually
+    /// sorts first, and a rule waiting for it to connect never fires. This covers the
+    /// default the recipes read; the recipes themselves set SwiftUI state and are not
+    /// reachable from a test.
+    func testConnectRecipesStartOnTheExternalDisplay() {
+        let docked = RuleFormOptions([
+            "signalCandidates": ["displaysPresent": ["Built-in Retina Display", "DELL U3224KB"]],
+            "layoutDisplays": ["Built-in Retina Display", "DELL U3224KB"],
+            "externalDisplays": ["DELL U3224KB"],
+        ])
+        XCTAssertEqual(docked.connectDisplayDefault, "DELL U3224KB")
+        let laptopOnly = RuleFormOptions([
+            "signalCandidates": ["displaysPresent": ["Built-in Retina Display"]],
+            "externalDisplays": [String](),
+        ])
+        XCTAssertEqual(laptopOnly.connectDisplayDefault, "", "blank for the user to pick, never the built-in panel")
+    }
+
     private func model(_ effectId: String) -> RuleFormModel {
         var m = RuleFormModel()
         m.opts = makeOpts()

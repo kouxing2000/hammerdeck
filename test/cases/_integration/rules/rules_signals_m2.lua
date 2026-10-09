@@ -69,6 +69,19 @@ return {
 
         -- (d) formOptions carries signal metadata (label + transition verbs) for the form
         local fo = rules.formOptions()
+        -- ...and the EXTERNAL displays a "when a display connects" recipe starts on:
+        -- the laptop's own panel never connects, so it is never one of them.
+        local screens0 = fake.screenList
+        fake.screenList = {
+            { x = 0, y = 0, w = 1440, h = 900, name = "Built-in", index = 1, builtin = true },
+            { x = 1440, y = 0, w = 2560, h = 1440, name = "DELL U2720Q", index = 2, builtin = false },
+        }
+        local ext = rules.formOptions().externalDisplays
+        ok(#ext == 1 and ext[1] == "DELL U2720Q", "externalDisplays lists the monitor, not the laptop's panel")
+        fake.screenList = { screens0[1] }
+        ext = rules.formOptions().externalDisplays
+        ok(#ext == 0 and (getmetatable(ext) or {}).__jsontype == "array", "laptop alone: externalDisplays is an empty array, not a missing field")
+        fake.screenList = screens0
         ok(type(fo.signalMeta) == "table", "formOptions includes signalMeta")
         ok(fo.signalMeta.appearance and fo.signalMeta.appearance.label == "Appearance",
             "signalMeta carries a label per signal")

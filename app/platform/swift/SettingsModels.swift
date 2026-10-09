@@ -493,6 +493,7 @@ struct RuleFormOptions {
     let effects: [RuleEffectOption]
     let breakerNote: String             // the breaker's rule, localized, with the live limit
     let layoutDisplays: [String]        // currently-connected display names
+    let externalDisplays: [String]      // the connected ones that are not the laptop's own panel
     let layoutPositions: [LayoutPosition]
 
     init(_ dict: [String: Any]) {
@@ -512,8 +513,14 @@ struct RuleFormOptions {
             .compactMap { $0 as? [String: Any] }.compactMap(RuleEffectOption.init) ?? []
         self.breakerNote = dict.str("breakerNote")
         self.layoutDisplays = dict.strArray("layoutDisplays")
+        self.externalDisplays = dict.strArray("externalDisplays")
         self.layoutPositions = (dict["layoutPositions"] as? [Any])?
             .compactMap { $0 as? [String: Any] }
             .compactMap { d in (d["id"] as? String).map { LayoutPosition(id: $0, label: d["label"] as? String ?? $0) } } ?? []
     }
+
+    /// The display a "when a display connects" recipe starts on: the first external
+    /// one, or blank for the user to pick. Never the laptop's own panel -- it never
+    /// connects, so a rule waiting for it would never fire.
+    var connectDisplayDefault: String { externalDisplays.first ?? "" }
 }

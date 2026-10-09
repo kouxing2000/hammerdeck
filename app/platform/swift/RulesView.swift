@@ -1467,7 +1467,7 @@ private struct AddRuleForm: View {
         switch id {
         case "whiten_eink":
             triggerType = "state:displaysPresent"; transition = "becomes"
-            stateValue = opts.signalCandidates["displaysPresent"]?.first ?? ""
+            stateValue = opts.connectDisplayDefault
             effectId = "solidWallpaper"; solidColor = "#FFFFFF"; solidDisplay = Self.triggerSentinel("display")
         case "minimize_away":
             triggerType = "state:frontmostApp"; transition = "leaves"
@@ -1478,7 +1478,7 @@ private struct AddRuleForm: View {
             effectId = "notify"; notifyTitle = AppInfo.displayName; notifyText = ""; notifyChannel = "system"
         case "arrange_dock":
             triggerType = "state:displaysPresent"; transition = "becomes"
-            stateValue = opts.signalCandidates["displaysPresent"]?.first ?? ""
+            stateValue = opts.connectDisplayDefault
             effectId = "layout"   // onChange(effectId) seeds a first placement
         case "dark_battery":
             triggerType = "state:powerSource"; transition = "becomes"; stateValue = "battery"

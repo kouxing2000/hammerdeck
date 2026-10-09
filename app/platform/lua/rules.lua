@@ -1004,12 +1004,17 @@ function rules.formOptions()
         cand[name] = signals.candidates(name)
         meta[name] = signals.meta(name)
     end
-    -- Connected displays (names) for the layout editor's display picker.
-    local displays = {}
+    -- Connected displays (names) for the layout editor's display picker, plus the
+    -- EXTERNAL subset a "when a display connects" recipe starts on: the laptop's
+    -- own panel never connects, so a rule waiting for it would never fire.
+    local displays, external = {}, {}
     local okS, screens = pcall(adapter.screenFrames)
     if okS and type(screens) == "table" then
         for _, s in ipairs(screens) do
-            if type(s) == "table" and s.name then displays[#displays + 1] = s.name end
+            if type(s) == "table" and s.name then
+                displays[#displays + 1] = s.name
+                if not s.builtin then external[#external + 1] = s.name end
+            end
         end
     end
     -- The named snap positions (id + label) for the layout editor's position picker.
@@ -1033,6 +1038,7 @@ function rules.formOptions()
             "If it fires %1$d times within %2$d minutes, Hammerdeck turns it off.",
             BREAKER_LIMIT, BREAKER_WINDOW // 60),
         layoutDisplays   = json.asArray(displays),
+        externalDisplays = json.asArray(external),
         layoutPositions  = positions,
     }
 end
