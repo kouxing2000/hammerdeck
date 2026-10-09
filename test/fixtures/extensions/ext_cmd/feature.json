@@ -1,0 +1,8 @@
+{
+  "name": "Ext Cmd",
+  "version": "1.0.0",
+  "description": "Test fixture: an extension holding the commands capability, for the feature-statistics case.",
+  "category": "utilities",
+  "context": "anywhere",
+  "capabilities": ["commands"]
+}

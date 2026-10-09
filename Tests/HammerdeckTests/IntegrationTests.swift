@@ -1258,6 +1258,25 @@ final class IntegrationTests: XCTestCase {
         // tears the pending timer down long before it could fire.
     }
 
+    func testMenuQuickTriggerCountsAsTheUsersOwnFire() {
+        // A menu-bar run is the user's own pick, so with feature statistics on it
+        // counts -- the store must mark it (registry.runAction's byUser), which the
+        // Lua case cannot see because it passes the mark itself.
+        host.store.setEnabled("plain_paste", true)
+        let d = UserDefaults.standard
+        defer {
+            host.store.setEnabled("plain_paste", false)
+            d.removeObject(forKey: FeatureStats.shareKey)
+            d.removeObject(forKey: FeatureStats.countsKey)
+        }
+        d.set(true, forKey: FeatureStats.shareKey)
+        d.removeObject(forKey: FeatureStats.countsKey)
+        host.store.runAction("plain_paste", "main")
+        let stored = d.string(forKey: FeatureStats.countsKey) ?? ""
+        XCTAssertTrue(stored.contains("\"plain_paste\":1"),
+                      "the menu-bar run is counted as the user's (got \(stored))")
+    }
+
     // MARK: - Real native panels, driven in-process (no global hotkey)
 
     /// Probe: can borderless panels actually take key focus in THIS launch

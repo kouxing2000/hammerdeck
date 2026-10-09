@@ -67,8 +67,8 @@ and make its verdicts meaningless.
 
 ## Network
 
-Hammerdeck has no telemetry, no analytics, no crash reporting, and no account.
-Nothing *about you* is ever transmitted -- but two of the four requests below do
+Hammerdeck has no account and no crash reporting, and it sends usage statistics
+only if you opt in (below). Unless you do, nothing *about you* is transmitted -- but two of the four requests below do
 run unprompted on a timer, so "nothing happens on a schedule" would be wrong: the
 update check polls the feed, and Bing Daily Wallpaper fetches on the schedule you
 set it. It makes exactly **four** kinds of outbound request, all of them
@@ -83,6 +83,22 @@ consequences of something you turned on or did:
    is over the archive's bytes rather than over where they came from -- so a
    download host that served the wrong file cannot install anything, and neither
    can a feed that cannot produce a valid signature.
+
+   **Feature statistics, opt-in.** Off until you say yes -- the app asks once,
+   on a launch after the first, and the switch is in Settings > General. When on,
+   the same feed request carries five query fields (`FeatureStats.swift`): a
+   random install ID you can reset (`hd_id`), the macOS version (`hd_os`), the
+   built-in features switched on (`hd_on`), and how often you fired each on the
+   newest complete day, as a range (`hd_day`, `hd_use`). Only fires you make
+   count -- a shortcut, a chord, the menu bar, the command palette, a click in
+   the Caps-Hyper legend, a rule you fire with its own shortcut; schedules,
+   system events, automatic rules and agent runs do not. User extensions are left
+   out of both lists, since their ids are folder names you chose. The fields land
+   in the site's request log beside the IP address every request carries, so
+   resetting the ID does not make a copy unlinkable while that 30-day log holds
+   it. Turning sharing off forgets the ID and the counts. Every feed request
+   carries the fields, "Check for Updates" included, and `hd_use` repeats the
+   newest day with use until a newer one exists. No new endpoint is involved.
 2. **Bing Daily Wallpaper** (feature, off by default) -- fetches the picture of
    the day from `bing.com`. It is the entire point of the feature.
 3. **Text Actions -> AI entries** (feature, off by default, and the AI half stays

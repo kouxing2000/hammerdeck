@@ -440,8 +440,9 @@ public func hammerdeckMain() {
     // down by then, so a discarded failure would leave a click that did nothing
     // with no trace anywhere.
     CapsHyperTap.shared.actionRunner = { id, actionId in
+        // The user clicked it, so it counts toward the opt-in statistics.
         let ret = (try? Native.shared.lua.call("platform.registry", "runAction",
-                                               [.string(id), .string(actionId)],
+                                               [.string(id), .string(actionId), .bool(true)],
                                                results: 2)) ?? []
         if ret.first as? Bool == true { return nil }
         return (ret.count > 1 ? ret[1] as? String : nil) ?? "registry.runAction did not answer"
@@ -519,6 +520,10 @@ public func hammerdeckMain() {
     DispatchQueue.main.async {
         statusBar.offerCrashReportIfNeeded(isFirstRun: isFirstRun)
     }
+
+    // The feature-statistics question: once, on a launch after the first, and
+    // nothing is sent unless the user says yes.
+    FeatureStats.askOnceIfDue(isFirstRun: isFirstRun)
 
     // First launch: open the Homepage, not a bare menubar icon. The Dashboard's
     // get-started card carries the golden path from there -- the Accessibility

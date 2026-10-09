@@ -496,7 +496,12 @@ EFFECT_KINDS = {
             assert(node.action == nil or type(node.action) == "string",
                 "command effect action must be a string id (or nil for a sole action)")
         end,
-        run = function(node) return registry.runAction(node.feature, node.action) end,
+        -- context._byUser: set by rules.fire only when the user's own shortcut or
+        -- chord fired the rule (see registry.runAction's byUser).
+        run = function(node, context)
+            return registry.runAction(node.feature, node.action,
+                type(context) == "table" and context._byUser == true)
+        end,
         describe = function(node)
             -- Prefer the action's friendly "Do"-dropdown label (the feature name for
             -- a sole action, e.g. "Run Bing Daily Wallpaper") over the raw

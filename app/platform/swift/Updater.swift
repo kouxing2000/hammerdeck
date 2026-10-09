@@ -193,6 +193,13 @@ final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
         Native.shared.seamLog(UpdaterDelegate.cycleLogLine(check: check, error: error as NSError?))
     }
 
+    /// The opt-in feature statistics, appended to the feed request's query string
+    /// -- empty unless the user said yes. `FeatureStats` owns what goes in.
+    @objc(feedParametersForUpdater:sendingSystemProfile:)
+    func feedParameters(for updater: SPUUpdater, sendingSystemProfile: Bool) -> [[String: String]] {
+        FeatureStats.parameters()
+    }
+
     /// Logged on its own because a cycle that finds an update ends with no error
     /// whether the user installed it or dismissed it -- without this line the
     /// finish line alone cannot say an update was ever offered.

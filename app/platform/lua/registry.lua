@@ -21,6 +21,7 @@ local json      = require("platform.json")
 local capscan   = require("platform.capscan")
 local i18n      = require("platform.i18n")
 local window_ops = require("platform.window_ops")
+local feature_stats = require("platform.feature_stats")
 -- The READ MODEL (localized metadata, describe(), the command list, the Hyper
 -- legend). Split out so this file is lifecycle only; wired to live state via
 -- view.configure at the bottom. See registry_view.lua for the direction rule.
@@ -469,6 +470,17 @@ local FAIL_ALERT_AFTER = 3
 
 local function fireKey(m, a) return m.id .. "." .. a.id end
 
+-- Count a fire for the opt-in feature statistics -- only one the USER made on
+-- purpose (a shortcut, a chord, the menu bar, the command palette), never a
+-- schedule, a system event, a rule or an agent: those measure configuration, and
+-- an every-minute schedule would read as heavy use. Best-effort, like the fire
+-- feedback below: a bad stored value must never turn a fire that worked into one
+-- that failed.
+local function noteFire(m)
+    local ok, err = pcall(feature_stats.note, m, adapter.now())
+    if not ok then adapter.log("feature stats: not counted for " .. m.id .. ": " .. tostring(err)) end
+end
+
 -- Run an action's handler from a trigger, contained: a throw is caught, logged,
 -- counted, and (on a sustained streak) alerted -- never propagated to the bridge.
 -- The trigger-fired streak is a separate channel from the manual menubar path
@@ -559,7 +571,7 @@ local function bindAction(b, m, a, spec)
     local leaderKey  = spec.type == "hotkey" and spec.key or nil
     -- Automated = fired with nobody present (schedule / system event). Only these
     -- get the optional "which feature ran" toast; manual hotkey/chord fires don't.
-    local isAutomated = spec.type == "schedule" or spec.type == "event"
+    local isAutomated = triggers.isAutomated(spec)
     b.actionHandles[a.id] =
         b.scope.adopt(triggers.bind(spec, function()
             b.ctx._leaderMods, b.ctx._leaderKey = leaderMods, leaderKey
@@ -574,6 +586,7 @@ local function bindAction(b, m, a, spec)
             if isAutomated then
                 if fired then notifyAutomatedFire(m, a) end
             else
+                if fired then noteFire(m) end
                 flashManualFire(m, a)
             end
         -- 4th arg: the which-key hint glyph. Resolve action icon -> feature icon
@@ -608,7 +621,10 @@ local function commandsExtra(m)
     if not manifest.hasCapability(m, "commands") then return nil end
     return {
         commands   = function() return buildCommandList(m.id) end,
-        runCommand = function(id, actionId) return registry.runAction(id, actionId) end,
+        -- A built-in holder is the command palette, whose pick is the user's. An
+        -- extension may hold the capability too and run commands on its own
+        -- schedule, so its runs never count.
+        runCommand = function(id, actionId) return registry.runAction(id, actionId, not m.extension) end,
     }
 end
 
@@ -1045,7 +1061,11 @@ end
 -- Run one action of an ENABLED feature on demand (the menubar's quick
 -- triggers; also the only way to fire a dormant action that has no trigger
 -- bound). Returns true, or false + reason. Quarantined like trigger firing.
-function registry.runAction(id, actionId)
+-- `byUser` = true only from a path where the user chose this run (menu bar,
+-- palette, Caps-Hyper hint, a rule fired by the user's own shortcut or chord);
+-- an automated rule and the agent endpoint leave it nil, so their runs are not
+-- counted as use.
+function registry.runAction(id, actionId, byUser)
     local m = features[id]
     if not m then return false, "no such feature: " .. tostring(id) end
     local b = bound[id]
@@ -1057,7 +1077,26 @@ function registry.runAction(id, actionId)
         adapter.log(id .. "." .. a.id .. ": manual run failed: " .. tostring(err))
         return false, tostring(err)
     end
+    if byUser == true then noteFire(m) end
     return true
+end
+
+-- What an update check carries when the user shares feature statistics:
+-- { on = "id,id" (enabled built-in features), day = "YYYY-MM-DD", use = "id:1,..." }
+-- -- day/use only when a complete day with use exists. nil when sharing is off,
+-- so the Swift caller needs no second check. Extensions are left out of both
+-- lists: their ids are folder names the user chose.
+function registry.statsReport()
+    if not feature_stats.isSharing() then return nil end
+    local on = {}
+    for id, m in pairs(features) do
+        if not m.extension and registry.isEnabled(id) then on[#on + 1] = id end
+    end
+    table.sort(on)
+    local out = { on = table.concat(on, ",") }
+    local r = feature_stats.report(adapter.now())
+    if r then out.day, out.use = r.day, r.use end
+    return json.asObject(out)
 end
 
 -- Is one action automatable -- may it be fired by an AUTOMATED trigger

@@ -463,8 +463,10 @@ final class SettingsStore: ObservableObject {
     }
 
     /// Fire one action of an enabled feature on demand (menubar quick triggers).
+    /// The user picked it, so it counts toward the opt-in feature statistics.
     func runAction(_ id: String, _ actionId: String) {
-        _ = try? lua.call("platform.registry", "runAction", [.string(id), .string(actionId)])
+        _ = try? lua.call("platform.registry", "runAction",
+                          [.string(id), .string(actionId), .bool(true)])
     }
 
     /// Run a feature's option-action (a Settings "Test" button). Fire-and-forget;

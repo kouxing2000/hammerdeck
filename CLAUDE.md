@@ -61,8 +61,8 @@ only through the seam, never `native.*`.
 **`app/platform/lua/` tiers** (the dir is FLAT; this is the layering `ls` does
 not show): **SEAM** = `adapter.lua` (the only file here that reaches `native.*`).
 **CORE / stateful** = `ctx`, `registry`, `registry_view`, `triggers`, `manifest`,
-`modal`, `window_ops`, `window_history` (hold state + lifecycle; features never
-`require` them). `registry_view` is the registry's read model -- stateless
+`modal`, `window_ops`, `window_history`, `feature_stats` (hold state + lifecycle;
+features never `require` them). `registry_view` is the registry's read model -- stateless
 itself, but registry-injected and firmly off the feature allowlist. `window_ops` owns the live focused-window move +
 "pointer-follows-window" policy (`ctx.window.setFrame` delegates to it); the
 registry injects its pointer-follow predicate at boot. It ALSO owns the
@@ -82,7 +82,9 @@ key a lease by and no pointer fallback. A guard case fails a new FEATURE that
 moves a window without consulting it; it is a per-file scan, so it does not
 catch a new unGATED ACTION inside a feature that already consults it elsewhere. `window_history` is the
 single-step window-undo engine behind `ctx.window.undoLast` (only `window_ops`
-requires it). **SUBSYSTEM** = the automation rules engine
+requires it). `feature_stats` counts the user's own fires of built-in features for the OPT-IN statistics the
+update check carries (only `registry` requires it; `FeatureStats.swift` is the
+Swift half, and nothing is counted or sent until the user says yes). **SUBSYSTEM** = the automation rules engine
 (`rules` + `signals` + `effects` -- domain logic that, like core, requires the
 adapter's high-level surface but never touches `native.*` directly -- only
 `adapter.lua` does that), plus `i18n` (locale-injected, internal), `text`

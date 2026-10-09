@@ -341,6 +341,7 @@ private struct GeneralSettingsDetail: View {
     @State private var testFeedHost = Updater.shared.testFeedHost
     // Ours, not Sparkle's -- the delegate reads the same key on every check.
     @State private var receivesBeta = Updater.shared.receivesBeta
+    @State private var sharesStats = FeatureStats.isSharing
     @State private var language = LocalePreference.override
     @State private var showRestartPrompt = false
     @State private var extensionsDir = ExtensionsPreference.dir
@@ -403,6 +404,21 @@ private struct GeneralSettingsDetail: View {
                     Text(Strings.t("settings.beta_channel_caption", default: "Every release is offered here first, before it goes out to everyone. Betas are signed and verified exactly like a release, but they have had less use -- turn this off at any time to go back to the general releases."))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    Toggle(Strings.t("settings.share_stats", default: "Share feature statistics with update checks"), isOn: $sharesStats)
+                        .onChange(of: sharesStats) { on in
+                            // Our own refresh writes the same value back; only a
+                            // real flip is the user's answer.
+                            guard on != FeatureStats.isSharing else { return }
+                            FeatureStats.setSharing(on)
+                        }
+                    Text(Strings.t("settings.share_stats_caption", default: "Sends which features are on, roughly how often each was used, your macOS version and a random ID -- never window titles, app names, websites or anything you type. Every update check reaches our website's log with your IP address, shared or not."))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if sharesStats {
+                        Button(Strings.t("settings.share_stats_reset", default: "Reset ID")) {
+                            FeatureStats.resetID()
+                        }
+                    }
                     // Only ever visible on a copy someone pointed at another
                     // feed from a terminal. Nothing we ship does that, and this
                     // exists for the way BACK: the redirect survives updates,
@@ -654,6 +670,7 @@ private struct GeneralSettingsDetail: View {
             openAtLogin = LoginItem.isEnabled || LoginItem.needsApproval
             loginItemError = nil
             receivesBeta = Updater.shared.receivesBeta
+            sharesStats = FeatureStats.isSharing
             appearance = AppearancePreference.mode
             language = LocalePreference.override
             extensionsDir = ExtensionsPreference.dir

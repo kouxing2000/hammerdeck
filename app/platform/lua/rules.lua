@@ -417,7 +417,12 @@ local function fire(id, spec, via)
             return false, autoDisabledReason()
         end
     end
-    local ok, note = effects.dispatch(spec.effect, triggerContext(spec))
+    local context = triggerContext(spec)
+    -- A rule the user fired with its own shortcut or chord is the user's run, so a
+    -- command effect counts it toward the opt-in feature statistics; an automated
+    -- trigger or the Test button never does.
+    context._byUser = (via == nil and not triggers.isAutomated(spec.on)) or nil
+    local ok, note = effects.dispatch(spec.effect, context)
     -- Stamp the fire history (the list's "fired/not-fired" status). A real trigger
     -- fire has no `via`; the Test button passes "test" so the UI can distinguish.
     lastFire[id] = { at = adapter.now(), via = via, ok = ok }
