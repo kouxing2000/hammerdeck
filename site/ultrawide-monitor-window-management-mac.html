@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Window management for an ultrawide monitor on Mac &middot; Hammerdeck</title>
+<meta name="description" content="Halves waste a 34- to 49-inch ultrawide. How to put Mac windows in thirds, a grid or any span of cells from the keyboard, and see every window at once.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://hammerdeck.peach-studio.com/ultrawide-monitor-window-management-mac.html">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Hammerdeck">
+<meta property="og:url" content="https://hammerdeck.peach-studio.com/ultrawide-monitor-window-management-mac.html">
+<meta property="og:title" content="Window management for an ultrawide monitor on Mac">
+<meta property="og:description" content="Thirds, grids and spans from the keyboard, and every window visible at once, on a big Mac display.">
+<meta property="og:image" content="https://hammerdeck.peach-studio.com/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { --bg: #fbfaf8; --fg: #1a1917; --muted: #6b6862; --line: #e5e1da; --code: #f2efea; --card: #ffffff; --accent: #b4491f; --accent-fg: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --fg: #eceae6; --muted: #9a958c; --line: #2c2a26; --code: #25231f; --card: #1e1d1a; --accent: #e2703f; --accent-fg: #17120f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  code, kbd { font: .88em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code); border-radius: .3rem; padding: .08em .35em; }
+  kbd { border: 1px solid var(--line); white-space: nowrap; }
+  pre { background: var(--code); border-radius: .6rem; padding: 1rem 1.2rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+  .back { color: var(--muted); font-size: .9rem; text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font-size: 2rem; letter-spacing: -0.02em; line-height: 1.25; margin: 1.5rem 0 1rem; }
+  h2 { font-size: 1.3rem; margin: 2.6rem 0 .6rem; }
+  .answer { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: 1.1rem 1.4rem; }
+  .answer p { margin: 0 0 .6rem; }
+  .answer p:last-child { margin: 0; }
+  li { margin: .35rem 0; }
+  video { display: block; width: 100%; height: auto; border-radius: .6rem; border: 1px solid var(--line); margin: 1.5rem 0 .5rem; }
+  .cap { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 1rem 0; }
+  th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .muted { color: var(--muted); }
+  .cta { margin: 2.5rem 0 0; padding: 1.3rem 1.4rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--card); }
+  .cta p { margin: 0 0 .7rem; }
+  .dl { display: inline-block; background: var(--accent); color: var(--accent-fg); text-decoration: none;
+    font-weight: 600; padding: .6rem 1.3rem; border-radius: .55rem; }
+  .dl:hover { filter: brightness(1.08); }
+  footer { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1.2rem;
+    color: var(--muted); font-size: .85rem; }
+  footer ul { list-style: none; padding: 0; margin: .4rem 0 1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Hammerdeck</a>
+  <h1>Window management for an ultrawide monitor on Mac</h1>
+
+  <div class="answer">
+    <p>
+      macOS arranges windows in <strong>halves and quarters</strong> (macOS 15 and later).
+      On a laptop that is the right answer. On a 49-inch ultrawide, half the screen is a
+      whole 27-inch display's worth of window, which is rarely what anyone wants.
+    </p>
+    <p>
+      An ultrawide wants <strong>thirds, a grid, and spans of cells</strong>, all from the
+      keyboard, plus a way to see every window when there are too many to keep track of.
+      Hammerdeck does all of it, free.
+    </p>
+  </div>
+
+  <h2>What macOS gives you</h2>
+  <p>
+    Since macOS 15 Sequoia: drag a window to a screen edge to tile it, the
+    <strong>Window &rsaquo; Move &amp; Resize</strong> menu, and keyboard shortcuts for halves
+    (<kbd>fn</kbd> <kbd>&#8963;</kbd> plus an arrow key), fill, centre, and arranging two windows
+    side by side. Quarters exist but ship without a shortcut. There are no thirds and no grid.
+  </p>
+
+  <h2>A grid on one key</h2>
+  <p>
+    Hammerdeck's Window Grid is on from the first launch. Press a grid key and the screen shows
+    numbered cells; press a cell and the focused window fills it. Press a second cell, below
+    and to the right of the first, and the window spans everything between them.
+  </p>
+  <ul>
+    <li><kbd>&#8963;&#8997;&#8984;6</kbd> &mdash; a 6-cell grid: 3 across by 2 down on a wide
+      screen. Cells <code>1</code> then <code>4</code> give you the left third, full height.</li>
+    <li><kbd>&#8963;&#8997;&#8984;9</kbd> &mdash; 3&times;3, for finer pieces.</li>
+    <li><kbd>&#8963;&#8997;&#8984;4</kbd> &mdash; 2&times;2.</li>
+    <li><kbd>&#8963;&#8997;&#8984;Z</kbd> &mdash; undo the last placement.</li>
+  </ul>
+  <video src="assets/demo-grid.mp4" width="1600" height="918" autoplay loop muted playsinline
+         aria-label="Window Grid: cells 1 then 4 put Safari in the left third, 2 then 3 put Calendar across the top right, 5 then 6 put Weather below it; one key then undoes the last move"></video>
+  <p class="cap">Three windows into three pieces of an ultrawide, in six key presses, then one key undoes the last.</p>
+
+  <h2>See every window at once</h2>
+  <p>
+    The other ultrawide problem is the reverse: twelve windows on one huge screen, half of them
+    buried. Two features answer it, both on by default:
+  </p>
+  <ul>
+    <li><strong>Window Deck</strong> (<kbd>&#8963;&#8997;&#8984;K</kbd>) tiles every window on the
+      screen into an even grid. Click one and it becomes a large centred window with the rest
+      peeking behind; the same key puts every window back where it was.</li>
+    <li><strong>Window Fan</strong> (<kbd>&#8963;&#8997;&#8984;F</kbd>) spreads the windows against
+      the screen edges so each keeps a strip no other window can cover. Click any strip to
+      switch to it.</li>
+  </ul>
+  <video src="assets/demo-deck.mp4" width="1600" height="918" autoplay loop muted playsinline
+         aria-label="Window Deck: one key tiles eight windows across an ultrawide; focusing Chess, then Weather, makes each the large centered hero; the same key puts every window back"></video>
+  <p class="cap">Window Deck on an ultrawide: eight windows tiled, one brought forward at a time, then everything restored.</p>
+
+  <h2>Halves, corners and fine adjustment</h2>
+  <p>
+    The everyday moves are there too: <kbd>&#8963;&#8997;&#8984;</kbd> with an arrow key snaps to a
+    half, <kbd>&#8963;&#8997;&#8984;&#8617;</kbd> toggles between full size and a centred 75%, and
+    <kbd>&#8963;&#8997;&#8984;W</kbd> enters a keyboard mode where single keys move, resize and
+    nudge the window until you press Escape. You can also save any rectangle you like and give it
+    its own key. Every shortcut can be changed in Settings.
+  </p>
+  <p>
+    Using more than one display as well? See
+    <a href="move-window-to-another-display-mac.html">moving windows between displays</a> and
+    <a href="restore-window-layout-after-monitor-reconnect-mac.html">putting them back when a monitor reconnects</a>.
+  </p>
+
+  <h2>Other apps</h2>
+  <p>
+    <a href="https://rectangleapp.com">Rectangle</a> (free, open source) has keys for thirds,
+    fourths, sixths, eighths and ninths, and drag-to-edge snapping. <a href="https://manytricks.com/moom/">Moom</a>
+    ($15) has a resize grid and saved layouts. The <a href="hammerdeck-vs-rectangle-vs-moom.html">comparison page</a> has the details.
+  </p>
+
+  <div class="cta">
+    <p><strong>Hammerdeck</strong> is free and open source (GPL), notarized by Apple, and runs on
+      macOS 13 and later.</p>
+    <a class="dl" href="/">Download Hammerdeck</a>
+    <p class="muted" style="margin:.8rem 0 0">Or <code>brew install --cask kouxing2000/tap/hammerdeck</code></p>
+  </div>
+
+  <footer>
+    More guides:
+    <ul>
+      <li><a href="move-window-to-another-display-mac.html">Move a window to another display with a keyboard shortcut</a></li>
+      <li><a href="restore-window-layout-after-monitor-reconnect-mac.html">Put your windows back when a monitor reconnects</a></li>
+      <li><a href="hammerdeck-vs-rectangle-vs-moom.html">Hammerdeck, Rectangle or Moom</a></li>
+    </ul>
+    <a href="/">Hammerdeck</a> &middot; <a href="https://github.com/kouxing2000/hammerdeck">Source on GitHub</a> &middot;
+    <a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a>
+  </footer>
+</div>
+</body>
+</html>

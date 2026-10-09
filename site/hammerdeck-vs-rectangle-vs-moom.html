@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hammerdeck, Rectangle or Moom: which Mac window tool fits &middot; Hammerdeck</title>
+<meta name="description" content="An honest side-by-side of three Mac window managers: Rectangle, Moom and Hammerdeck. What each does with displays, grids, saved layouts and undo, and which setup each one suits.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://hammerdeck.peach-studio.com/hammerdeck-vs-rectangle-vs-moom.html">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Hammerdeck">
+<meta property="og:url" content="https://hammerdeck.peach-studio.com/hammerdeck-vs-rectangle-vs-moom.html">
+<meta property="og:title" content="Hammerdeck, Rectangle or Moom: which Mac window tool fits">
+<meta property="og:description" content="What each does with displays, grids, saved layouts and undo, and which setup each one suits.">
+<meta property="og:image" content="https://hammerdeck.peach-studio.com/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { --bg: #fbfaf8; --fg: #1a1917; --muted: #6b6862; --line: #e5e1da; --code: #f2efea; --card: #ffffff; --accent: #b4491f; --accent-fg: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --fg: #eceae6; --muted: #9a958c; --line: #2c2a26; --code: #25231f; --card: #1e1d1a; --accent: #e2703f; --accent-fg: #17120f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  code, kbd { font: .88em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code); border-radius: .3rem; padding: .08em .35em; }
+  kbd { border: 1px solid var(--line); white-space: nowrap; }
+  pre { background: var(--code); border-radius: .6rem; padding: 1rem 1.2rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+  .back { color: var(--muted); font-size: .9rem; text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font-size: 2rem; letter-spacing: -0.02em; line-height: 1.25; margin: 1.5rem 0 1rem; }
+  h2 { font-size: 1.3rem; margin: 2.6rem 0 .6rem; }
+  .answer { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: 1.1rem 1.4rem; }
+  .answer p { margin: 0 0 .6rem; }
+  .answer p:last-child { margin: 0; }
+  li { margin: .35rem 0; }
+  video { display: block; width: 100%; height: auto; border-radius: .6rem; border: 1px solid var(--line); margin: 1.5rem 0 .5rem; }
+  .cap { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 1rem 0; }
+  th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .muted { color: var(--muted); }
+  .cta { margin: 2.5rem 0 0; padding: 1.3rem 1.4rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--card); }
+  .cta p { margin: 0 0 .7rem; }
+  .dl { display: inline-block; background: var(--accent); color: var(--accent-fg); text-decoration: none;
+    font-weight: 600; padding: .6rem 1.3rem; border-radius: .55rem; }
+  .dl:hover { filter: brightness(1.08); }
+  footer { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1.2rem;
+    color: var(--muted); font-size: .85rem; }
+  footer ul { list-style: none; padding: 0; margin: .4rem 0 1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Hammerdeck</a>
+  <h1>Hammerdeck, Rectangle or Moom: which Mac window tool fits</h1>
+
+  <div class="answer">
+    <p>
+      <strong>Rectangle</strong> if you want halves, thirds and drag-to-snap on a laptop or a
+      single monitor, free. <strong>Moom</strong> if you want polished saved layouts and support
+      back to macOS 10.13, for $15. <strong>Hammerdeck</strong> if you work across a big or
+      several displays and want swaps, undo for every kind of move, and layouts that rebuild
+      themselves, free.
+    </p>
+    <p class="muted">
+      This page is written by Hammerdeck's maker, so check the claims about the other two against
+      their own pages, linked below. Each was read on 8 October 2026.
+    </p>
+  </div>
+
+  <h2>Side by side</h2>
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th></th><th>Rectangle</th><th>Moom</th><th>Hammerdeck</th></tr>
+    </thead>
+    <tbody>
+      <tr><th>Price</th><td>Free, open source</td><td>$15 one-time, direct or Mac App Store</td><td>Free, open source (GPL)</td></tr>
+      <tr><th>macOS</th><td>14 and later</td><td>10.13 and later</td><td>13 and later</td></tr>
+      <tr><th>Window to the next display, by key</th><td>Yes</td><td>Yes (<em>Move to Other Display</em>)</td><td>Yes, pointer follows</td></tr>
+      <tr><th>Swap everything on two displays</th><td>Not in its docs</td><td>Not in its docs</td><td>Yes</td></tr>
+      <tr><th>Sizes from the keyboard</th><td>Halves, thirds, fourths, sixths, eighths, ninths</td><td>A grid you set, plus custom actions</td><td>Halves; 3&times;3, 2&times;2 and 6-cell grids where two cells span a rectangle; your own saved rectangles</td></tr>
+      <tr><th>Drag to a screen edge to snap</th><td>Yes</td><td>Yes (<em>Snap</em> mode)</td><td>No (macOS 15 and later does this natively)</td></tr>
+      <tr><th>Saved layout applied when a display connects</th><td>Not in its docs</td><td>Yes</td><td>Yes, as a rule; capture the layout with one button</td></tr>
+      <tr><th>Undo</th><td><em>Restore</em>: one window's previous size</td><td><em>Revert</em>: one window, to before Moom touched it</td><td>One key puts back every window the last move touched: a snap, swap, grid or deck (one step)</td></tr>
+      <tr><th>Every window on screen at once</th><td>Tile and cascade actions</td><td>Not in its docs</td><td>Window Deck and Window Fan</td></tr>
+      <tr><th>Shows what ran</th><td>Not in its docs</td><td>Not in its docs</td><td>Names each action as it fires; local plain-text log</td></tr>
+      <tr><th>Beyond windows</th><td>No</td><td>No</td><td>Optional extras: clipboard history, command palette, break reminders and more, all off until switched on</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">
+    &ldquo;Not in its docs&rdquo; means we could not find it in that app's own documentation,
+    not that it is impossible. Sources: <a href="https://github.com/rxhanson/Rectangle">Rectangle's README</a>,
+    <a href="https://manytricks.com/moom/">Moom's site</a> and
+    <a href="https://manytricks.com/moom/help/customactions.html">custom actions help</a>.
+    If something here is wrong, <a href="https://github.com/kouxing2000/hammerdeck/issues">open an issue</a>
+    and it will be fixed.
+  </p>
+
+  <h2>When Rectangle is the better pick</h2>
+  <p>
+    You use one screen, or a laptop plus one monitor, and want the standard sizes on keys with
+    nothing else to learn. Rectangle is mature, popular and free, and it has a named key for each
+    fraction, eighths included, where Hammerdeck has you pick cells on a grid.
+  </p>
+
+  <h2>When Moom is the better pick</h2>
+  <p>
+    You want saved layouts as the centre of how you work, a long-established paid app, or a Mac
+    older than macOS 13.
+  </p>
+
+  <h2>When Hammerdeck is the better pick</h2>
+  <ul>
+    <li>You have an ultrawide or several displays and move windows between them all day; see
+      <a href="move-window-to-another-display-mac.html">moving windows between displays</a>.</li>
+    <li>You want to swap everything on two displays in one go.</li>
+    <li>You want every window move, not just one window, to be undoable with one key.</li>
+    <li>You unplug a laptop daily and want the layout rebuilt when you come back; see
+      <a href="restore-window-layout-after-monitor-reconnect-mac.html">putting windows back on reconnect</a>.</li>
+    <li>You want to see what your automation did, and to read the code that did it.</li>
+  </ul>
+
+  <h2>What Hammerdeck does not do</h2>
+  <ul>
+    <li><strong>Drag-to-snap.</strong> macOS 15 and later has it built in; on macOS 13 and 14 use
+      the keys.</li>
+    <li><strong>Always-on automatic tiling</strong>, where every new window is placed for you.
+      That is a different kind of tool: look at <a href="https://github.com/nikitabobko/AeroSpace">AeroSpace</a>
+      or <a href="https://github.com/koekeishiya/yabai">yabai</a>.</li>
+    <li><strong>Multi-step undo.</strong> One key undoes the most recent change, not a history.</li>
+    <li><strong>The Mac App Store.</strong> It is a notarized download from this site, or Homebrew.</li>
+  </ul>
+
+  <div class="cta">
+    <p><strong>Hammerdeck</strong> is free and open source (GPL), notarized by Apple, and runs on
+      macOS 13 and later.</p>
+    <a class="dl" href="/">Download Hammerdeck</a>
+    <p class="muted" style="margin:.8rem 0 0">Or <code>brew install --cask kouxing2000/tap/hammerdeck</code></p>
+  </div>
+
+  <footer>
+    More guides:
+    <ul>
+      <li><a href="move-window-to-another-display-mac.html">Move a window to another display with a keyboard shortcut</a></li>
+      <li><a href="ultrawide-monitor-window-management-mac.html">Window management for an ultrawide monitor on Mac</a></li>
+      <li><a href="restore-window-layout-after-monitor-reconnect-mac.html">Put your windows back when a monitor reconnects</a></li>
+    </ul>
+    <a href="/">Hammerdeck</a> &middot; <a href="https://github.com/kouxing2000/hammerdeck">Source on GitHub</a> &middot;
+    <a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a>
+  </footer>
+</div>
+</body>
+</html>

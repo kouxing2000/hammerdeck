@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Put your windows back when a monitor reconnects (Mac) &middot; Hammerdeck</title>
+<meta name="description" content="Unplug a Mac from its external display and the windows pile onto the laptop screen. Capture your layout once and have it rebuilt automatically every time the monitor connects.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://hammerdeck.peach-studio.com/restore-window-layout-after-monitor-reconnect-mac.html">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Hammerdeck">
+<meta property="og:url" content="https://hammerdeck.peach-studio.com/restore-window-layout-after-monitor-reconnect-mac.html">
+<meta property="og:title" content="Put your windows back when a monitor reconnects (Mac)">
+<meta property="og:description" content="Capture your window layout once; it rebuilds itself every time the external display connects.">
+<meta property="og:image" content="https://hammerdeck.peach-studio.com/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { --bg: #fbfaf8; --fg: #1a1917; --muted: #6b6862; --line: #e5e1da; --code: #f2efea; --card: #ffffff; --accent: #b4491f; --accent-fg: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --fg: #eceae6; --muted: #9a958c; --line: #2c2a26; --code: #25231f; --card: #1e1d1a; --accent: #e2703f; --accent-fg: #17120f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  code, kbd { font: .88em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code); border-radius: .3rem; padding: .08em .35em; }
+  kbd { border: 1px solid var(--line); white-space: nowrap; }
+  pre { background: var(--code); border-radius: .6rem; padding: 1rem 1.2rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+  .back { color: var(--muted); font-size: .9rem; text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font-size: 2rem; letter-spacing: -0.02em; line-height: 1.25; margin: 1.5rem 0 1rem; }
+  h2 { font-size: 1.3rem; margin: 2.6rem 0 .6rem; }
+  .answer { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: 1.1rem 1.4rem; }
+  .answer p { margin: 0 0 .6rem; }
+  .answer p:last-child { margin: 0; }
+  li { margin: .35rem 0; }
+  video { display: block; width: 100%; height: auto; border-radius: .6rem; border: 1px solid var(--line); margin: 1.5rem 0 .5rem; }
+  .cap { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 1rem 0; }
+  th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .muted { color: var(--muted); }
+  .cta { margin: 2.5rem 0 0; padding: 1.3rem 1.4rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--card); }
+  .cta p { margin: 0 0 .7rem; }
+  .dl { display: inline-block; background: var(--accent); color: var(--accent-fg); text-decoration: none;
+    font-weight: 600; padding: .6rem 1.3rem; border-radius: .55rem; }
+  .dl:hover { filter: brightness(1.08); }
+  footer { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1.2rem;
+    color: var(--muted); font-size: .85rem; }
+  footer ul { list-style: none; padding: 0; margin: .4rem 0 1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Hammerdeck</a>
+  <h1>Put your windows back when a monitor reconnects</h1>
+
+  <div class="answer">
+    <p>
+      Take a MacBook away from its desk and every window on the external display lands on the
+      laptop screen. Plug it back in, and putting each one back where it was is your job.
+    </p>
+    <p>
+      The fix is to <strong>capture the arrangement once</strong> and let a rule rebuild it
+      <strong>whenever that display connects</strong>. Hammerdeck does this for free, with
+      no scripting: about two minutes of setup.
+    </p>
+  </div>
+
+  <video src="assets/demo-hero.mp4" width="1600" height="864" autoplay loop muted playsinline
+         aria-label="Two displays. One key throws Safari from the laptop to the external display and back. The external display is unplugged and every window piles onto the laptop; it is plugged back in and a rule puts all four windows back in place"></video>
+  <p class="cap">The external display is unplugged and everything piles onto the laptop; it is plugged
+    back in and a rule puts all four windows back.</p>
+
+  <h2>Set it up once</h2>
+  <ol>
+    <li>With the monitor connected, arrange your windows on it the way you want them.</li>
+    <li>Click Hammerdeck's menu bar icon and choose <strong>Rules&hellip;</strong>, then pick the
+      recipe <strong>Arrange windows on dock</strong> (&ldquo;Snap your windows into place when a
+      display connects&rdquo;). It fills in a connected display; pick the right one if you have several.</li>
+    <li>Press <strong>Capture current layout</strong>. Every window on that display is recorded:
+      its app, and its exact position and size.</li>
+    <li>Save the rule. Press <strong>Test</strong> to watch it run without unplugging anything.</li>
+  </ol>
+  <p>
+    From then on, each time that monitor connects, by cable or through a dock, the windows go back. With several monitors, make one rule per display; a placement whose
+    display is not connected is simply skipped.
+  </p>
+
+  <h2>What to expect</h2>
+  <ul>
+    <li><strong>Windows are matched by app.</strong> If an app has several windows, each one is
+      placed, but which goes where follows window order. To pin a particular window, add part of
+      its title in the rule's JSON editor.</li>
+    <li><strong>Apps that are not running are skipped</strong>, and the run says which ones in
+      Hammerdeck's local log, along with any window macOS refused to move.</li>
+    <li><strong>A rule can do more than arrange windows.</strong> The same trigger can open an
+      app, set the wallpaper, or run any macOS Shortcut, in a chain.</li>
+    <li>Moving windows needs the Accessibility permission; Hammerdeck explains why on first launch
+      before macOS asks.</li>
+  </ul>
+
+  <h2>And by hand, in between</h2>
+  <p>
+    For the moves you make all day, <kbd>&#8963;&#8997;&#8984;]</kbd> throws a window to the next
+    display and <kbd>&#8963;&#8997;&#8984;Z</kbd> undoes the last move. More in
+    <a href="move-window-to-another-display-mac.html">moving a window to another display</a>.
+  </p>
+
+  <h2>Other ways to do it</h2>
+  <ul>
+    <li><a href="https://manytricks.com/moom/">Moom</a> ($15) can apply a saved layout
+      automatically when displays are added or removed, and several smaller paid apps
+      do this one job.</li>
+    <li><a href="https://www.hammerspoon.org">Hammerspoon</a> (free, open source) can do anything
+      here if you write the Lua yourself. Hammerdeck grew out of years of Hammerspoon scripts, and
+      exists for the people who would rather not.</li>
+  </ul>
+  <p>
+    <a href="hammerdeck-vs-rectangle-vs-moom.html">Hammerdeck, Rectangle or Moom</a> compares them in
+    more detail.
+  </p>
+
+  <div class="cta">
+    <p><strong>Hammerdeck</strong> is free and open source (GPL), notarized by Apple, and runs on
+      macOS 13 and later.</p>
+    <a class="dl" href="/">Download Hammerdeck</a>
+    <p class="muted" style="margin:.8rem 0 0">Or <code>brew install --cask kouxing2000/tap/hammerdeck</code></p>
+  </div>
+
+  <footer>
+    More guides:
+    <ul>
+      <li><a href="move-window-to-another-display-mac.html">Move a window to another display with a keyboard shortcut</a></li>
+      <li><a href="ultrawide-monitor-window-management-mac.html">Window management for an ultrawide monitor on Mac</a></li>
+      <li><a href="hammerdeck-vs-rectangle-vs-moom.html">Hammerdeck, Rectangle or Moom</a></li>
+    </ul>
+    <a href="/">Hammerdeck</a> &middot; <a href="https://github.com/kouxing2000/hammerdeck">Source on GitHub</a> &middot;
+    <a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a>
+  </footer>
+</div>
+</body>
+</html>

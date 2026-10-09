@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move a window to another display with a keyboard shortcut on Mac &middot; Hammerdeck</title>
+<meta name="description" content="macOS ships no shortcut to move a window to another display. Three ways to get one: the built-in App Shortcuts trick, Rectangle, or Hammerdeck, which also swaps two displays and undoes the move.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://hammerdeck.peach-studio.com/move-window-to-another-display-mac.html">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Hammerdeck">
+<meta property="og:url" content="https://hammerdeck.peach-studio.com/move-window-to-another-display-mac.html">
+<meta property="og:title" content="Move a window to another display with a keyboard shortcut on Mac">
+<meta property="og:description" content="macOS ships no shortcut for it. Three ways to get one, and how to swap two displays in one key.">
+<meta property="og:image" content="https://hammerdeck.peach-studio.com/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { --bg: #fbfaf8; --fg: #1a1917; --muted: #6b6862; --line: #e5e1da; --code: #f2efea; --card: #ffffff; --accent: #b4491f; --accent-fg: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --fg: #eceae6; --muted: #9a958c; --line: #2c2a26; --code: #25231f; --card: #1e1d1a; --accent: #e2703f; --accent-fg: #17120f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  code, kbd { font: .88em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code); border-radius: .3rem; padding: .08em .35em; }
+  kbd { border: 1px solid var(--line); white-space: nowrap; }
+  pre { background: var(--code); border-radius: .6rem; padding: 1rem 1.2rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+  .back { color: var(--muted); font-size: .9rem; text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font-size: 2rem; letter-spacing: -0.02em; line-height: 1.25; margin: 1.5rem 0 1rem; }
+  h2 { font-size: 1.3rem; margin: 2.6rem 0 .6rem; }
+  .answer { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: 1.1rem 1.4rem; }
+  .answer p { margin: 0 0 .6rem; }
+  .answer p:last-child { margin: 0; }
+  li { margin: .35rem 0; }
+  video { display: block; width: 100%; height: auto; border-radius: .6rem; border: 1px solid var(--line); margin: 1.5rem 0 .5rem; }
+  .cap { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 1rem 0; }
+  th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .muted { color: var(--muted); }
+  .cta { margin: 2.5rem 0 0; padding: 1.3rem 1.4rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--card); }
+  .cta p { margin: 0 0 .7rem; }
+  .dl { display: inline-block; background: var(--accent); color: var(--accent-fg); text-decoration: none;
+    font-weight: 600; padding: .6rem 1.3rem; border-radius: .55rem; }
+  .dl:hover { filter: brightness(1.08); }
+  footer { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1.2rem;
+    color: var(--muted); font-size: .85rem; }
+  footer ul { list-style: none; padding: 0; margin: .4rem 0 1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Hammerdeck</a>
+  <h1>Move a window to another display with a keyboard shortcut on Mac</h1>
+
+  <div class="answer">
+    <p>
+      <strong>macOS ships no keyboard shortcut for it</strong>, at any version through macOS 27.
+      Its own window shortcuts (macOS 15 and later) cover halves, quarters, fill and centre on
+      the display the window is already on.
+    </p>
+    <p>
+      Three ways to get one: bind the Window menu's <em>Move to</em> command yourself, use
+      Rectangle, or use Hammerdeck, which also swaps everything on two displays in one go and
+      undoes either move with one key.
+    </p>
+  </div>
+
+  <h2>1. The built-in way: App Shortcuts</h2>
+  <p>
+    With a second display connected, most apps' <strong>Window</strong> menu has a
+    <em>Move to &lt;display name&gt;</em> item. macOS lets you give any menu item a shortcut:
+  </p>
+  <ol>
+    <li>Open <strong>System Settings &rsaquo; Keyboard &rsaquo; Keyboard Shortcuts &rsaquo; App Shortcuts</strong>.</li>
+    <li>Click <strong>+</strong>, choose <em>All Applications</em>.</li>
+    <li>Under <em>Menu Title</em>, type the item exactly as it appears, display name included,
+      for example <code>Move to DELL U3224KB</code>.</li>
+    <li>Press the keys you want, and add one more entry for each other display.</li>
+  </ol>
+  <p class="muted">
+    It costs nothing, and it has three limits: the title must match character for character,
+    so a renamed or replaced monitor breaks it; you need one shortcut per display rather than
+    one for &ldquo;the next one&rdquo;; and apps without a standard Window menu don't have the
+    item at all.
+  </p>
+
+  <h2>2. With Hammerdeck: one key, any app, and undo</h2>
+  <p>
+    Hammerdeck is a free, open-source menu bar app. Window Snap is on from the first launch:
+  </p>
+  <ul>
+    <li><kbd>&#8963;&#8997;&#8984;]</kbd> throws the focused window to the next display,
+      <kbd>&#8963;&#8997;&#8984;[</kbd> to the previous one. The window keeps its relative size
+      and position, and the pointer rides along so you can keep working in it.</li>
+    <li><kbd>&#8963;&#8997;&#8984;Z</kbd> (Window Rewind) puts it back.</li>
+    <li><strong>Swap windows between displays</strong> moves everything on your display to the
+      other one and everything there to yours, rescaled to fit. It has no default shortcut, as
+      it is an occasional move: run it from the menu bar, or give it any key in Settings. With
+      three or more displays it asks which one to swap with.</li>
+  </ul>
+  <video src="assets/demo-hero.mp4" width="1600" height="864" autoplay loop muted playsinline
+         aria-label="Two displays. One key throws Safari from the laptop to the external display and back. The external display is unplugged and every window piles onto the laptop; it is plugged back in and a rule puts all four windows back in place"></video>
+  <p class="cap">One key throws a window to the other display and back. The second half is a rule
+    rebuilding the layout on replug, covered in
+    <a href="restore-window-layout-after-monitor-reconnect-mac.html">putting windows back when a monitor reconnects</a>.</p>
+  <p>
+    Every shortcut can be changed in Settings, and each press flashes the name of the action
+    that ran, so a wrong key is obvious. It needs the Accessibility permission to move windows,
+    and explains why before macOS asks.
+  </p>
+
+  <h2>3. Other apps that do it</h2>
+  <ul>
+    <li><a href="https://rectangleapp.com">Rectangle</a> (free, open source, macOS 14 and later)
+      has next and previous display shortcuts, alongside its halves and thirds.</li>
+    <li><a href="https://manytricks.com/moom/">Moom</a> ($15, macOS 10.13 and later) has a
+      <em>Move to Other Display</em> action you can put on a key.</li>
+  </ul>
+  <p>
+    If a display throw is all you need, any of them will do. Hammerdeck is built for the setup
+    where you do it all day: the swap, the undo, and layouts that rebuild themselves. The
+    <a href="hammerdeck-vs-rectangle-vs-moom.html">side-by-side comparison</a> lists what each
+    one does.
+  </p>
+
+  <div class="cta">
+    <p><strong>Hammerdeck</strong> is free and open source (GPL), notarized by Apple, and runs on
+      macOS 13 and later.</p>
+    <a class="dl" href="/">Download Hammerdeck</a>
+    <p class="muted" style="margin:.8rem 0 0">Or <code>brew install --cask kouxing2000/tap/hammerdeck</code></p>
+  </div>
+
+  <footer>
+    More guides:
+    <ul>
+      <li><a href="ultrawide-monitor-window-management-mac.html">Window management for an ultrawide monitor on Mac</a></li>
+      <li><a href="restore-window-layout-after-monitor-reconnect-mac.html">Put your windows back when a monitor reconnects</a></li>
+      <li><a href="hammerdeck-vs-rectangle-vs-moom.html">Hammerdeck, Rectangle or Moom</a></li>
+    </ul>
+    <a href="/">Hammerdeck</a> &middot; <a href="https://github.com/kouxing2000/hammerdeck">Source on GitHub</a> &middot;
+    <a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a>
+  </footer>
+</div>
+</body>
+</html>
