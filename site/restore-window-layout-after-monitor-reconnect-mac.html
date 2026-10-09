@@ -80,24 +80,33 @@
 
   <h2>Set it up once</h2>
   <ol>
-    <li>With the monitor connected, arrange your windows on it the way you want them.</li>
-    <li>Click Hammerdeck's menu bar icon and choose <strong>Rules&hellip;</strong>, then pick the
+    <li>With the monitor connected, arrange your windows on it the way you want them. Keep
+      Hammerdeck's own windows on the laptop screen, so they aren't captured too.</li>
+    <li>Click Hammerdeck's menu bar icon, choose <strong>Rules&hellip;</strong>, and pick the
       recipe <strong>Arrange windows on dock</strong> (&ldquo;Snap your windows into place when a
-      display connects&rdquo;). It fills in a connected display; pick the right one if you have several.</li>
-    <li>Press <strong>Capture current layout</strong>. Every window on that display is recorded:
+      display connects&rdquo;).</li>
+    <li>The rule reads &ldquo;When <em>display</em> connects&rdquo;. Click the display name and make
+      sure it is your external monitor, not the laptop's built-in screen: the next step captures
+      only windows on the display named here.</li>
+    <li>Click <strong>Capture current layout</strong>. Every window on that monitor is recorded:
       its app, and its exact position and size.</li>
-    <li>Save the rule. Press <strong>Test</strong> to watch it run without unplugging anything.</li>
+    <li>Click <strong>Add rule</strong>.</li>
   </ol>
   <p>
-    From then on, each time that monitor connects, by cable or through a dock, the windows go back. With several monitors, make one rule per display; a placement whose
-    display is not connected is simply skipped.
+    From then on, each time that monitor connects, by cable or through a dock, the captured
+    windows go back onto it in the same places. To try it without unplugging, drag a couple of
+    those windows onto the laptop screen, then click the &#9654; next to the rule in the list.
+    With several monitors, make one rule per display.
   </p>
 
   <h2>What to expect</h2>
   <ul>
-    <li><strong>Windows are matched by app.</strong> If an app has several windows, each one is
-      placed, but which goes where follows window order. To pin a particular window, add part of
-      its title in the rule's JSON editor.</li>
+    <li><strong>Only windows of the apps you captured are moved</strong>; everything else stays
+      where it is.</li>
+    <li><strong>Windows are matched by app name.</strong> Each captured window is one slot, filled
+      by that app's windows from front to back, so two windows of the same app can trade places.
+      To pin one, click <strong>Edit as JSON</strong> and put part of its title in that window's
+      <code>titlePattern</code>.</li>
     <li><strong>Apps that are not running are skipped</strong>, and the run says which ones in
       Hammerdeck's local log, along with any window macOS refused to move.</li>
     <li><strong>A rule can do more than arrange windows.</strong> The same trigger can open an
