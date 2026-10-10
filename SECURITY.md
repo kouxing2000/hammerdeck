@@ -67,7 +67,7 @@ and make its verdicts meaningless.
 
 ## Network
 
-Hammerdeck has no account and no crash reporting, and it sends usage statistics
+Hammerdeck has no account and no automatic crash reporting, and it sends usage statistics
 only if you opt in (below). Unless you do, nothing *about you* is transmitted -- but two of the four requests below do
 run unprompted on a timer, so "nothing happens on a schedule" would be wrong: the
 update check polls the feed, and Bing Daily Wallpaper fetches on the schedule you
@@ -86,10 +86,11 @@ consequences of something you turned on or did:
 
    **Feature statistics, opt-in.** Off until you say yes -- the app asks once,
    on a launch after the first, and the switch is in Settings > General. When on,
-   the same feed request carries five query fields (`FeatureStats.swift`): a
+   the same feed request carries up to five query fields (`FeatureStats.swift`): a
    random install ID you can reset (`hd_id`), the macOS version (`hd_os`), the
    built-in features switched on (`hd_on`), and how often you fired each on the
-   newest complete day, as a range (`hd_day`, `hd_use`). Only fires you make
+   newest complete day, as a range (`hd_day`, `hd_use`; absent until such a day
+   exists). Only fires you make
    count -- a shortcut, a chord, the menu bar, the command palette, a click in
    the Caps-Hyper legend, a rule you fire with its own shortcut; schedules,
    system events, automatic rules and agent runs do not. User extensions are left

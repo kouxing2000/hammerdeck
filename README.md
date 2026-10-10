@@ -43,7 +43,7 @@ turn it on, and the badge shows the shortcut it is bound to.</em></p>
 
 <table>
   <tr>
-    <td width="50%"><img src="site/assets/demo-deck.gif" alt="Window Deck: one key tiles eight windows across an ultrawide; focusing Chess, then Weather, makes each the large centered hero; the same key puts every window back"><br><b>Window Deck</b> -- one key tiles every window; focus one and it takes the stage.</td>
+    <td width="50%"><img src="site/assets/demo-deck.gif" alt="Window Deck: eight windows tiled across an ultrawide; focusing Chess, then Weather, makes each the large centered hero; the same key puts every window back"><br><b>Window Deck</b> -- pick the windows and they tile; focus one and it takes the stage.</td>
     <td width="50%"><img src="site/assets/demo-grid.gif" alt="Window Grid: cells 1 then 4 put Safari in the left third, 2 then 3 put Calendar across the top right, 5 then 6 put Weather below it; one key then undoes the last move"><br><b>Window Grid</b> -- name two corners, the window fills them. One key undoes it.</td>
   </tr>
   <tr>
