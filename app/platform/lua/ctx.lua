@@ -336,10 +336,15 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ---@param fn fun()
     ---@return Handle
     function ctx.everySeconds(n, fn)       return track(adapter.everySeconds(n, fn)) end
+    -- A one-shot, so it retires its scope entry when it fires (trackOneShot): a
+    -- service that schedules one per event would otherwise hold every fired
+    -- timer's entry until disable.
     ---@param n number seconds to wait
     ---@param fn fun()
     ---@return Handle
-    function ctx.afterSeconds(n, fn)       return track(adapter.afterSeconds(n, fn)) end
+    function ctx.afterSeconds(n, fn)
+        return trackOneShot(function(f) return adapter.afterSeconds(n, f) end, fn)
+    end
     ---@param timeStr string "HH:MM" (00:00-23:59)
     ---@param fn fun()
     ---@return Handle

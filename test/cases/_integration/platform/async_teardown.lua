@@ -105,5 +105,34 @@ return {
         registry.setEnabled("async_probe", false)
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
             "clean after async teardown test")
+
+        -- ctx.afterSeconds is a one-shot too and retires the same way. A service
+        -- that schedules one per event (window_switcher's focus settle) would
+        -- otherwise add a scope entry per event for as long as it stays enabled.
+        local timerFires, schedule = 0, nil
+        registry.register({
+            api = 1,
+            id = "timer_probe",
+            name = "Timer probe",
+            start = function(ctx)
+                schedule = function()
+                    ctx.afterSeconds(0.5, function() timerFires = timerFires + 1 end)
+                end
+            end,
+        })
+        registry.setEnabled("timer_probe", true)
+        local base = registry.liveHandleCount()
+        for _ = 1, 50 do schedule() end
+        ok(registry.liveHandleCount() == base + 50, "a pending timer is a tracked handle")
+        fake.fireTimers("after", 0.5)
+        ok(timerFires == 50 and registry.liveHandleCount() == base,
+            "50 fired timers leave no dead scope entries (got "
+            .. registry.liveHandleCount() .. ", expected " .. base .. ")")
+        schedule()
+        registry.setEnabled("timer_probe", false)
+        ok(fake.fireTimers("after", 0.5) == 0 and timerFires == 50,
+            "a timer still pending at disable never fires")
+        ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
+            "clean after the timer probe")
     end,
 }
