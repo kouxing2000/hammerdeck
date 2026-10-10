@@ -61,7 +61,7 @@ local window_ops = require("platform.window_ops")
 ---@field w number
 ---@field h number
 
----One row of `ctx.window.list()`, most-recently-focused first.
+---One row of `ctx.window.list()`, front-to-back stacking order (not focus recency).
 ---@class WindowInfo : Frame
 ---@field id integer          valid ONLY until the next list() -- never persist it
 ---@field wid integer         OS-stable CGWindowID (0 = unresolved); the key for
@@ -433,7 +433,9 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ctx.window = {}
     -- Routed through window_ops so window_history captures the snapshot (lets a
     -- following setFrameFor batch resolve before-frames without re-listing).
-    ---Every standard window, most-recently-focused first. Returns {} when the
+    ---Every standard window, in front-to-back STACKING order -- not focus recency:
+    ---activating an app lifts all of its windows at once, so they come out clumped
+    ---by app (window_switcher keeps its own focus history). Returns {} when the
     ---Accessibility permission is missing -- check axTrusted()/axPrompt() to
     ---onboard rather than treating empty as "no windows".
     ---@return WindowInfo[]

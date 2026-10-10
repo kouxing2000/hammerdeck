@@ -175,7 +175,7 @@ extension Native {
 
     // MARK: - Windows / apps (AXUIElement)
 
-    // list_windows() -> Lua window handles, MRU-first. The Lua side never sees
+    // list_windows() -> Lua window handles, front to back. The Lua side never sees
     // an AXUIElement: each call refreshes `axWindowCache` (id -> {element, wid},
     // stored on the class -- see Native.swift) and focus_window(id) resolves from
     // it. A window KEEPS its id across listings (keyed by the stable CGWindowID),
@@ -186,9 +186,11 @@ extension Native {
     /// Real window enumeration: AXUIElement per app for titles + elements
     /// (Accessibility permission only -- no Screen Recording, which CGWindowList
     /// window NAMES would require), z-ordered via CGWindowList bounds matching
-    /// (front-to-back ~= focus recency, the same ordering hs.window.orderedWindows
-    /// gives the donor). Returns {} when the permission is missing -- features
-    /// check ax_trusted/ax_prompt to onboard.
+    /// (front to back, the ordering hs.window.orderedWindows gives the donor).
+    /// That is STACKING order, not focus recency: activating an app lifts all of
+    /// its windows at once, so they come out clumped by app. A caller that needs
+    /// recency keeps its own history (window_switcher does). Returns {} when the
+    /// permission is missing -- features check ax_trusted/ax_prompt to onboard.
     func listWindows(_ L: OpaquePointer?) -> Int32 {
         // Rebuilt by every listing (including the untrusted early-out), so
         // windows_dropped_apps() always describes the listing just returned.

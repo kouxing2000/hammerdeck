@@ -142,6 +142,59 @@ return {
         registry.setEnabled("window_switcher", false)
         ok(registry.liveHandleCount() == 0, "window_switcher disable left no live handles")
 
+        -- focus RECENCY, not stacking order. The user worked in A2, then B1, then
+        -- ⌘Tabbed back to AppA landing on A1 -- which lifts BOTH AppA windows, so
+        -- the OS stacking order (the listing) reads A1, C1, A2, B1 with AppA
+        -- clumped. The previous window is B1, not A2. C1 was never focused since
+        -- enable, so it trails every focused window despite sitting high in the
+        -- stack; U (wid unresolved) can never be stamped and trails too.
+        registry.setEnabled("window_switcher", true)
+        fake.windows = {
+            { id = 1, wid = 101, title = "A1", appName = "AppA", bundleID = "com.a" },
+            { id = 4, wid = 104, title = "C1", appName = "AppC", bundleID = "com.c" },
+            { id = 2, wid = 102, title = "A2", appName = "AppA", bundleID = "com.a" },
+            { id = 5, wid = 0,   title = "U",  appName = "AppD", bundleID = "com.d" },
+            { id = 3, wid = 103, title = "B1", appName = "AppB", bundleID = "com.b" },
+        }
+        fake.focusedWid = 102; fake.focusWindowChanged()        -- ⌘` inside AppA
+        fake.focusedWid = 103; fake.activateApp("AppB", "com.b")
+        fake.focusedWid = 101; fake.activateApp("AppA", "com.a")
+        fake.pressHotkey("tab")
+        ch = fake.visibleChooser()
+        local order = {}
+        for i, c in ipairs(ch.choices) do order[i] = c.text end
+        ok(table.concat(order, ",") == "A1,B1,A2,C1,U",
+            "rows run most recently focused first, never-focused after in stacking order (got "
+            .. table.concat(order, ",") .. ")")
+        ch.userSelect(2)
+        ok(fake.focused[#fake.focused] == 3, "the preselected previous window is B1, not A2")
+
+        -- a focus move no event reported is still row 1: opening stamps it.
+        fake.focusedWid = 104
+        fake.pressHotkey("tab")
+        ch = fake.visibleChooser()
+        ok(ch.choices[1].text == "C1" and ch.choices[2].text == "A1",
+            "the window focused at open leads even without a focus event")
+        ch.userSelect(1)
+
+        -- the activation race: ⌘Tab to AppB fires before AppB's focused window
+        -- resolves (focusedWid reads 0), and the activation is the only event that
+        -- switch sends. The settle re-read must still stamp B1, so after ⌘Tabbing
+        -- back to A1 the previous window is B1 -- not C1, focused before B1.
+        fake.focusedWid = 0;   fake.activateApp("AppB", "com.b")
+        fake.focusedWid = 103; fake.fireTimers("after", 0.12)   -- AX settles
+        fake.focusedWid = 101; fake.activateApp("AppA", "com.a")
+        fake.pressHotkey("tab")
+        ch = fake.visibleChooser()
+        ok(ch.choices[2].text == "B1",
+            "a switch whose focus resolved late is still recorded (row 2 = "
+            .. tostring(ch.choices[2].text) .. ")")
+        ch.userSelect(1)
+        fake.focusedWid = nil
+
+        registry.setEnabled("window_switcher", false)
+        ok(registry.liveHandleCount() == 0, "the focus-history watchers stop on disable")
+
         -- no-windows onboarding (was T21): untrusted fires the AX grant prompt +
         -- explains; trusted-but-empty says "No windows" plainly and does not re-prompt.
         registry.setEnabled("window_switcher", true)

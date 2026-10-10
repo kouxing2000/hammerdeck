@@ -630,7 +630,8 @@ end
 -- Windows / apps
 -- ---------------------------------------------------------------------------
 
--- All standard windows, most-recently-focused first: { id, wid, pid, title,
+-- All standard windows, front-to-back stacking order (NOT focus recency -- an
+-- activated app's windows come out clumped together): { id, wid, pid, title,
 -- appName, bundleID, x, y, w, h, minimized, fullscreen, screenName? } rows
 -- (frame in top-left-origin global points -- the layout engine snapshots it).
 -- `id` is valid only until the next list; `wid` is the OS-stable CGWindowID

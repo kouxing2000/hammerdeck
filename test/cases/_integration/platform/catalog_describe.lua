@@ -24,7 +24,8 @@ return {
         ok(#desc == 3, "describe lists all 3 features")
         ok(desc[1].id == "break_reminder" and desc[1].kind == "service", "describe is sorted by id")
         local jumpDesc = desc[3]
-        ok(jumpDesc.id == "window_switcher" and jumpDesc.kind == "action", "window_switcher is an action")
+        ok(jumpDesc.id == "window_switcher" and jumpDesc.kind == "service",
+            "window_switcher is a service (its start() keeps the focus history)")
         -- (window_switcher is single-action since the backward action was
         -- dropped; the "N actions" multi-action summary stays covered by the
         -- hybrid_probe block below.)
@@ -62,6 +63,7 @@ return {
             "typed options (incl. enum values) exported for the form generator")
         ok(probeDesc0.options[1].labels and probeDesc0.options[1].labels[2] == "Bee",
             "enum display labels exported parallel to values")
+        ok(probeDesc0.kind == "action", "a feature with no start() is an action")
         registry.unregister("enum_probe")
         local sleepDesc = desc[2]
         ok(sleepDesc.kind == "service" and sleepDesc.triggerDesc == "always-on service",

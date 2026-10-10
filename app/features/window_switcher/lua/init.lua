@@ -59,10 +59,69 @@ local function pulseScreen(ctx, st, frame)
         .. tostring(frame.index) .. " (" .. tostring(frame.name) .. ")")
 end
 
+-- Per-enable state, memoized on the ctx: start() and every action fire share it.
+-- `lastUse` maps a window's stable CGWindowID to the sequence number of its last
+-- focus -- one integer per window focused since enable, gone with the ctx.
+---@param ctx Ctx
+local function state(ctx)
+    return ctx.perEnable(function()
+        return { chooser = nil, altTimer = nil, lastUse = {}, seq = 0, focusSettle = nil }
+    end)
+end
+
+-- Record that the window focused right now is the most recently used one.
+---@param ctx Ctx
+local function stamp(ctx, st)
+    local wid = ctx.window.focusedWid()
+    if wid and wid ~= 0 then
+        st.seq = st.seq + 1
+        st.lastUse[wid] = st.seq
+    end
+end
+
+-- Focus recency, the order the list is shown in. ctx.window.list() is the OS's
+-- front-to-back STACKING order, and that is not recency: activating an app
+-- (⌘Tab, the Dock) lifts ALL of its windows in one block, so a stacking-ordered
+-- list clumps each app's windows together. Most recently focused first; windows
+-- not focused since enable follow, in stacking order. table.sort is not stable,
+-- so the stacking position is the explicit tie-break.
+local function byRecency(windows, lastUse)
+    local sorted, pos = {}, {}
+    for i, w in ipairs(windows) do sorted[i] = w; pos[w] = i end
+    table.sort(sorted, function(a, b)
+        local ua, ub = lastUse[a.wid] or 0, lastUse[b.wid] or 0
+        if ua ~= ub then return ua > ub end
+        return pos[a] < pos[b]
+    end)
+    return sorted
+end
+
+-- The history behind byRecency: an app activation and a within-app focus move
+-- (⌘`) are separate events, and only both together see every switch. Each
+-- stamps now AND once more after a short settle: a cross-app activation can fire
+-- before the new app's focused window resolves (focusedWid reads 0, or briefly
+-- the OLD app's window), and the activation is the only signal that switch
+-- sends -- without the re-read the window just switched to is never stamped
+-- (window_fan's syncFocus cures the same race the same way).
+---@param ctx Ctx
+local function start(ctx)
+    local st = state(ctx)
+    local function onFocus()
+        stamp(ctx, st)
+        if st.focusSettle then st.focusSettle.stop() end
+        st.focusSettle = ctx.afterSeconds(0.12, function()
+            st.focusSettle = nil
+            stamp(ctx, st)
+        end)
+    end
+    ctx.onAppActivated(onFocus)
+    ctx.window.onFocusChanged(onFocus)
+    stamp(ctx, st)
+end
+
 ---@param ctx Ctx
 local function jump(ctx)
-    -- Per-enable state, memoized on the ctx.
-    local st = ctx.perEnable(function() return { chooser = nil, altTimer = nil } end)
+    local st = state(ctx)
 
     if not st.chooser then
         st.chooser = ctx.chooser {
@@ -128,6 +187,17 @@ local function jump(ctx)
                               windows[1].y + windows[1].h / 2)
             or nil
 
+        -- Stamp the focused window first: a missed focus event must not cost
+        -- row 1, which the preselect below assumes is the current window.
+        stamp(ctx, st)
+        windows = byRecency(windows, st.lastUse)
+        local known = 0
+        for _, w in ipairs(windows) do
+            if st.lastUse[w.wid] then known = known + 1 end
+        end
+        ctx.log("opened: " .. #windows .. " windows, " .. known
+            .. " by focus history, the rest by stacking order")
+
         local choices = {}
         for _, w in ipairs(windows) do
             local parts = {}
@@ -179,6 +249,7 @@ return {
     id          = "window_switcher",
 
     options = {},
+    start = start,
 
     actions = {
         -- id "main" keeps pre-multi-action stored trigger keys valid.
