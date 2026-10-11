@@ -273,8 +273,12 @@ return {
 ```
 
 The case registers its own feature (the harness does not disk-discover), and the runner
-asserts a clean handle count after every case -- that tripwire catches leaked
-watchers/timers, the #1 service bug, so you don't assert it yourself. `freshWorld()`
+asserts a clean handle count after every case -- that tripwire catches a watcher or
+timer that SURVIVES disable, the #1 service bug. It cannot see growth WHILE enabled:
+teardown clears every handle, however many piled up. So a service that creates a
+handle per event (a timer per focus change, a watcher per window) asserts
+`registry.liveHandleCount()` stays flat across many events with the feature still on.
+`freshWorld()`
 gives each case a pristine registry + catalog, so cases are order-independent; keep
 yours that way (`lua test/run.lua --shuffle` proves it).
 

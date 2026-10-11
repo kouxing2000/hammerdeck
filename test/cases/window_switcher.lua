@@ -190,6 +190,16 @@ return {
             "a switch whose focus resolved late is still recorded (row 2 = "
             .. tostring(ch.choices[2].text) .. ")")
         ch.userSelect(1)
+
+        -- every focus change schedules a settle timer, so the handle count must stay
+        -- flat across many of them WHILE enabled (the disable check below cannot see
+        -- a pile-up: teardown clears it).
+        fake.fireTimers("after", 0.12)
+        local settled = registry.liveHandleCount()
+        for _ = 1, 50 do fake.focusWindowChanged(); fake.fireTimers("after", 0.12) end
+        ok(registry.liveHandleCount() == settled,
+            "50 focus changes leave no handles behind (got " .. registry.liveHandleCount()
+            .. ", expected " .. settled .. ")")
         fake.focusedWid = nil
 
         registry.setEnabled("window_switcher", false)
