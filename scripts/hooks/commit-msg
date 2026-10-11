@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#
+# commit-msg: a commit message publishes with the code, so it gets the same scan as
+# a staged file -- business/strategy words, and the private names kept in
+# .git/info/private-names. All the logic lives in pre-commit; this is its --msg mode.
+# Bypass (ONLY for a genuine false positive):  git commit --no-verify
+exec "$(dirname "$0")/pre-commit" --msg "$1"

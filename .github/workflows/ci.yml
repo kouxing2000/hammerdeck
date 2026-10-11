@@ -45,6 +45,11 @@ jobs:
       - name: Business-content guard (hook backstop)
         run: scripts/hooks/pre-commit --all
 
+      # The hooks themselves: a hook that passes everything looks exactly like a
+      # clean repo, so prove each one still blocks what it must (in a throwaway repo).
+      - name: Publication hooks block what they must
+        run: scripts/hooks/test-hooks.sh
+
       # README's feature catalog is GENERATED from each feature.json -- a doc that
       # restates what the code declares drifts by construction, so the code checks
       # the doc. Needs no toolchain, so it runs first: fastest possible red.

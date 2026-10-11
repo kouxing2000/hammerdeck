@@ -13,6 +13,9 @@
 #   - local scratch:  notes/   (gitignored)
 # See "Where a document goes" in CLAUDE.md.
 #
+# The commit MESSAGE publishes with the code too: scripts/hooks/commit-msg runs
+# this same scan over it (--msg).
+#
 # Install:  git config core.hooksPath scripts/hooks
 # Bypass (ONLY for a genuine false positive):  git commit --no-verify
 #
@@ -22,7 +25,9 @@
 
 set -uo pipefail
 
+MODE=staged
 if [ "${1:-}" = "--all" ]; then
+    MODE=all
     # git ls-files is cwd-relative: from a subdirectory it silently scans a
     # SUBSET and exits 0 -- indistinguishable from a clean full scan. Pin to the
     # repo root and refuse an empty list, so a partial scan can never pass green.
@@ -35,6 +40,15 @@ if [ "${1:-}" = "--all" ]; then
         printf 'pre-commit --all: git ls-files returned nothing -- refusing a vacuous pass.\n' >&2
         exit 1
     fi
+elif [ "${1:-}" = "--msg" ]; then
+    # The commit-msg hook: a commit message publishes with the code, so it gets the
+    # same scan as a file. Every line is scanned, "#" lines included: with -m / -F
+    # git keeps them in the published message. Only what follows the scissors line
+    # is dropped -- that is the diff `git commit -v` shows, never part of the message.
+    MODE=msg
+    MSG_FILE="${2:?--msg needs the commit message file}"
+    list_files() { printf '%s\n' "(commit message)"; }
+    read_candidate() { sed '/^[^ ] -\{24\} >8 -\{24\}$/,$d' "$MSG_FILE" > "$SCAN_TMP"; }
 else
     list_files() { git diff --cached --name-only --diff-filter=ACM; }
     # The INDEX blob, never the working file. A commit writes what is staged, so
@@ -63,7 +77,21 @@ EXEMPT=(
 # Per-process temp, atomic in the sense that matters here: two hooks running at
 # once (a commit while CI runs --all) must not scan each other's bytes.
 SCAN_TMP="$(mktemp "${TMPDIR:-/tmp}/pre-commit-scan.$$.XXXXXX")"
-trap 'rm -f "$SCAN_TMP"' EXIT
+NAMES_TMP="$(mktemp "${TMPDIR:-/tmp}/pre-commit-names.$$.XXXXXX")"
+trap 'rm -f "$SCAN_TMP" "$NAMES_TMP"' EXIT
+
+# Names that must never reach this public repo: the author's private repos, their
+# home path. The list lives OUTSIDE the tracked tree, in .git/info/private-names
+# (never committed, never pushed), because committing a list of private names
+# would publish them. One fixed string per line, matched case-insensitively; "#"
+# lines are comments. No list (CI, a fresh clone) means no private-name check.
+# Unlike PATTERN this applies to the EXEMPT files too: none has a reason to hold one.
+# --git-path, not --git-dir: a linked worktree's git dir is .git/worktrees/<name>,
+# and the list lives in the main repo's .git/info, which every worktree shares.
+PRIVATE_LIST="$(git rev-parse --git-path info/private-names 2>/dev/null)"
+if [ -f "$PRIVATE_LIST" ]; then
+    grep -v -e '^#' -e '^[[:space:]]*$' -- "$PRIVATE_LIST" > "$NAMES_TMP"
+fi
 
 is_exempt() {
     local candidate="$1" e
@@ -76,7 +104,6 @@ is_exempt() {
 found=0
 
 while IFS= read -r f; do
-    is_exempt "$f" && continue
     # Materialize the candidate bytes ONCE, then classify and scan the same file.
     # Reading into a shell variable instead would silently drop NUL bytes (bash
     # warns and truncates), which both mangles binaries and re-reads a path that
@@ -90,11 +117,19 @@ while IFS= read -r f; do
     if file --mime "$SCAN_TMP" 2>/dev/null | grep -q 'charset=binary'; then
         continue
     fi
-    matches=$(grep -inE "$PATTERN" -- "$SCAN_TMP" 2>/dev/null | head -5)
+    matches=""
+    if ! is_exempt "$f"; then
+        matches=$(grep -inE "$PATTERN" -- "$SCAN_TMP" 2>/dev/null | head -5)
+    fi
+    if [ -s "$NAMES_TMP" ]; then
+        private=$(grep -inF -f "$NAMES_TMP" -- "$SCAN_TMP" 2>/dev/null | head -5)
+        [ -n "$private" ] && matches="${matches:+$matches$'\n'}$private"
+    fi
     if [ -n "$matches" ]; then
         if [ "$found" -eq 0 ]; then
-            printf '\n\033[31mBLOCKED\033[0m: business/strategy content in a checked file.\n' >&2
-            printf 'This repo is going PUBLIC -- that content must not enter its history.\n\n' >&2
+            printf '\n\033[31mBLOCKED\033[0m: business/strategy content or a private name in %s.\n' \
+                "$([ "$MODE" = msg ] && echo "the commit message" || echo "a checked file")" >&2
+            printf 'This repo is PUBLIC -- that content must not enter its history.\n\n' >&2
             found=1
         fi
         printf '  %s\n' "$f" >&2
@@ -103,7 +138,11 @@ while IFS= read -r f; do
 done < <(list_files)
 
 if [ "$found" -eq 1 ]; then
-    printf '\nMove it to your private strategy repo, or to the gitignored notes/ dir.\n' >&2
+    if [ "$MODE" = msg ]; then
+        printf '\nTake it out of the message and commit again.\n' >&2
+    else
+        printf '\nMove it to your private strategy repo, or to the gitignored notes/ dir.\n' >&2
+    fi
     printf 'See "Where a document goes" in CLAUDE.md.\n' >&2
     printf '\nGenuine false positive? Re-run with:  git commit --no-verify\n\n' >&2
     exit 1

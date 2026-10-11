@@ -544,3 +544,9 @@ Two folders, told apart by looking -- there is no rules file to decode.
   content behind at the old path, and a DELETED one survives in history where no
   check of the working tree can see it. Only a full history rewrite removes it.
   So the rule is: never commit it in the first place.
+- **The commit message publishes too.** `scripts/hooks/commit-msg` runs the same
+  scan over it, plus the private names listed in `.git/info/private-names` -- a
+  local file, never committed, because a committed list of private names would
+  publish them. Linked worktrees share it; a clone without it (CI, a fresh
+  checkout) skips the private-name check. `scripts/hooks/test-hooks.sh`, which CI
+  runs, proves both hooks still block what they must.
