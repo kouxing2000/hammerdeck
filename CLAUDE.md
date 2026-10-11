@@ -550,3 +550,8 @@ Two folders, told apart by looking -- there is no rules file to decode.
   publish them. Linked worktrees share it; a clone without it (CI, a fresh
   checkout) skips the private-name check. `scripts/hooks/test-hooks.sh`, which CI
   runs, proves both hooks still block what they must.
+- **Public copy states what the code does** (`site/`, README, SECURITY.md). Check
+  every claim about Hammerdeck against the code -- a feature's `defaultTrigger` /
+  `defaultEnabled`, the label strings in the Swift views, what `FeatureStats.swift`
+  sends -- never against other copy: a sentence copied from the README carries its
+  error onto every page that reuses it.
