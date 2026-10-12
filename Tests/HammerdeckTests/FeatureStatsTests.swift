@@ -13,20 +13,21 @@ final class FeatureStatsTests: XCTestCase {
                         FeatureStats.askedKey, FeatureStats.countsKey]
     private var saved: [String: Any] = [:]
 
-    override func setUp() {
-        super.setUp()
+    // The async overrides are the shape a @MainActor XCTestCase may isolate
+    // (IntegrationTests precedent); on Xcode 16 the sync ones stay nonisolated
+    // and cannot touch `saved`.
+    override func setUp() async throws {
         // The test bundle's defaults domain is xctest's, not the app's; restore
         // anyway so these tests never depend on order.
         for k in keys { saved[k] = UserDefaults.standard.object(forKey: k) }
         for k in keys { UserDefaults.standard.removeObject(forKey: k) }
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         for k in keys {
             if let v = saved[k] { UserDefaults.standard.set(v, forKey: k) }
             else { UserDefaults.standard.removeObject(forKey: k) }
         }
-        super.tearDown()
     }
 
     private let os27 = OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 1)
