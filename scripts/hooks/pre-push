@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# pre-push: scan every commit message and tag message about to be published.
+#
+# commit-msg checks a message as it is written, but git does not run that hook on
+# a cherry-pick, a plain rebase or a squash's final message, nor on `commit
+# --no-verify`. Push is where a message becomes public, so this gate sees every
+# commit however it was made: the same scan and the same private-name list, via
+# pre-commit --stored-msg. File contents stay pre-commit's job (and CI's --all).
+#
+# Bypass (ONLY for a genuine false positive):  git push --no-verify
+
+set -uo pipefail
+export LC_ALL=C
+
+here="$(dirname "$0")"
+msg="$(mktemp "${TMPDIR:-/tmp}/pre-push-msg.$$.XXXXXX")"
+trap 'rm -f "$msg"' EXIT
+
+is_zero() { [ -z "${1//0/}" ]; }   # git's "no object" id, at any hash length
+
+blocked=0
+scan() {   # scan <label> -- the message is in $msg
+    "$here/pre-commit" --stored-msg "$msg" "$1" < /dev/null || blocked=1
+}
+
+# One stdin line per ref being pushed: <local ref> <local id> <remote ref> <remote id>
+while read -r local_ref local_sha _ remote_sha; do
+    is_zero "$local_sha" && continue   # a deletion publishes nothing
+    if [ "$(git cat-file -t "$local_sha")" = tag ]; then
+        # An annotated tag's message follows its header block.
+        if ! git cat-file tag "$local_sha" | sed '1,/^$/d' > "$msg"; then
+            echo "pre-push: cannot read tag $local_ref -- refusing to push it unscanned" >&2
+            exit 1
+        fi
+        scan "tag ${local_ref#refs/tags/}"
+    fi
+    # New to the remote, or a remote tip never fetched here: everything no
+    # remote-tracking ref already holds. Otherwise only what the remote lacks.
+    if is_zero "$remote_sha" || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+        range=("$local_sha" --not --remotes)
+    else
+        range=("$remote_sha..$local_sha")
+    fi
+    if ! commits=$(git rev-list "${range[@]}"); then
+        echo "pre-push: cannot list the commits in $local_ref -- refusing to push them unscanned" >&2
+        exit 1
+    fi
+    for c in $commits; do
+        if ! git log -1 --format=%B "$c" > "$msg"; then
+            echo "pre-push: cannot read commit $c -- refusing to push it unscanned" >&2
+            exit 1
+        fi
+        scan "commit $(git log -1 --format='%h %s' "$c")"
+    done
+done
+
+exit "$blocked"

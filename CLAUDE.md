@@ -547,9 +547,12 @@ Two folders, told apart by looking -- there is no rules file to decode.
 - **The commit message publishes too.** `scripts/hooks/commit-msg` runs the same
   scan over it, plus the private names listed in `.git/info/private-names` -- a
   local file, never committed, because a committed list of private names would
-  publish them. Linked worktrees share it; a clone without it (CI, a fresh
-  checkout) skips the private-name check. `scripts/hooks/test-hooks.sh`, which CI
-  runs, proves both hooks still block what they must.
+  publish them. Git skips commit-msg on a cherry-pick, a plain rebase, a squash
+  and `--no-verify`, so `scripts/hooks/pre-push` scans every commit and tag
+  message again on its way out. Linked worktrees share the list; a clone without
+  it (CI, a fresh checkout) skips the private-name check.
+  `scripts/hooks/test-hooks.sh`, which CI runs, proves the hooks still block what
+  they must.
 - **Public copy states what the code does** (`site/`, README, SECURITY.md). Check
   every claim about Hammerdeck against the code -- a feature's `defaultTrigger` /
   `defaultEnabled`, the label strings in the Swift views, what `FeatureStats.swift`

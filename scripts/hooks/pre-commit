@@ -14,7 +14,8 @@
 # See "Where a document goes" in CLAUDE.md.
 #
 # The commit MESSAGE publishes with the code too: scripts/hooks/commit-msg runs
-# this same scan over it (--msg).
+# this same scan over it (--msg), and scripts/hooks/pre-push runs it again over
+# every commit and tag message as it leaves (--stored-msg).
 #
 # Install:  git config core.hooksPath scripts/hooks
 # Bypass (ONLY for a genuine false positive):  git commit --no-verify
@@ -25,14 +26,23 @@
 
 set -uo pipefail
 
+# Bytes, not characters: under a UTF-8 locale BSD grep never matches a line that
+# holds an invalid byte and BSD sed stops at it, so one latin1 byte would hide a
+# name. The pattern and the names are ASCII, so -i still folds their case.
+export LC_ALL=C
+
+# Every mode lists its candidates NUL-separated: without -z git quotes a path that
+# holds a non-ASCII byte, `git show` then finds no such path, and the file goes
+# unscanned.
 MODE=staged
+MSG_FILE=""
 if [ "${1:-}" = "--all" ]; then
     MODE=all
     # git ls-files is cwd-relative: from a subdirectory it silently scans a
     # SUBSET and exits 0 -- indistinguishable from a clean full scan. Pin to the
     # repo root and refuse an empty list, so a partial scan can never pass green.
     cd "$(git rev-parse --show-toplevel)" || exit 1
-    list_files() { git ls-files; }
+    list_files() { git ls-files -z; }
     # Whole-tree sweep: the working file IS the subject, and a tracked path with
     # no working file is a pending deletion with nothing left to scan.
     read_candidate() { [ -f "$1" ] && cat -- "$1" > "$SCAN_TMP"; }
@@ -40,17 +50,27 @@ if [ "${1:-}" = "--all" ]; then
         printf 'pre-commit --all: git ls-files returned nothing -- refusing a vacuous pass.\n' >&2
         exit 1
     fi
-elif [ "${1:-}" = "--msg" ]; then
-    # The commit-msg hook: a commit message publishes with the code, so it gets the
-    # same scan as a file. Every line is scanned, "#" lines included: with -m / -F
-    # git keeps them in the published message. Only what follows the scissors line
-    # is dropped -- that is the diff `git commit -v` shows, never part of the message.
-    MODE=msg
-    MSG_FILE="${2:?--msg needs the commit message file}"
-    list_files() { printf '%s\n' "(commit message)"; }
-    read_candidate() { sed '/^[^ ] -\{24\} >8 -\{24\}$/,$d' "$MSG_FILE" > "$SCAN_TMP"; }
+elif [ "${1:-}" = "--msg" ] || [ "${1:-}" = "--stored-msg" ]; then
+    # A message publishes with the code, so it gets the same scan as a file.
+    # --msg is the commit-msg hook. Every line is scanned, "#" lines included: with
+    # -m / -F git keeps them in the published message. Only what follows the
+    # scissors line is dropped -- that is the diff `git commit -v` shows, never part
+    # of the message.
+    # --stored-msg is pre-push: a message already in a commit or a tag is final, so
+    # all of it is scanned, and the label names that commit or tag in the report.
+    MODE="${1#--}"
+    MSG_FILE="${2:?$1 needs a message file}"
+    MSG_LABEL="${3:-(commit message)}"
+    list_files() { printf '%s\0' "$MSG_LABEL"; }
+    if [ "$MODE" = msg ]; then
+        read_candidate() { sed '/^[^ ] -\{24\} >8 -\{24\}$/,$d' "$MSG_FILE" > "$SCAN_TMP"; }
+    else
+        read_candidate() { cat -- "$MSG_FILE" > "$SCAN_TMP"; }
+    fi
 else
-    list_files() { git diff --cached --name-only --diff-filter=ACM; }
+    # d = every staged path except a deletion: a rename (R) and a type change (T,
+    # a file turned into a symlink) publish new bytes too.
+    list_files() { git diff --cached --name-only -z --diff-filter=d; }
     # The INDEX blob, never the working file. A commit writes what is staged, so
     # reading the working copy asks about bytes that are not the ones going into
     # history: stage prohibited content, then clean or delete the working file,
@@ -103,32 +123,45 @@ is_exempt() {
 
 found=0
 
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
+    matches=""
+    # A path publishes too: a file NAMED after a private repo leaks the name
+    # whatever it holds, so this comes before the empty and binary skips.
+    if [ -z "$MSG_FILE" ] && [ -s "$NAMES_TMP" ] && printf '%s\n' "$f" | grep -qiF -f "$NAMES_TMP"; then
+        matches="(the path itself)"
+    fi
     # Materialize the candidate bytes ONCE, then classify and scan the same file.
     # Reading into a shell variable instead would silently drop NUL bytes (bash
     # warns and truncates), which both mangles binaries and re-reads a path that
-    # may be changing underneath us.
+    # may be changing underneath us. A message that cannot be read fails closed.
     : > "$SCAN_TMP"
-    read_candidate "$f"
-    [ -s "$SCAN_TMP" ] || continue
+    if ! read_candidate "$f" && [ -n "$MSG_FILE" ]; then
+        printf 'pre-commit: cannot read %s -- refusing to pass it unscanned.\n' "$MSG_FILE" >&2
+        exit 1
+    fi
     # Skip binaries (icons, bundles) -- grep on them is noise. Asked of the bytes
     # in hand, so the staged blob is classified rather than whatever the working
-    # tree happens to hold at that path.
-    if file --mime "$SCAN_TMP" 2>/dev/null | grep -q 'charset=binary'; then
-        continue
-    fi
-    matches=""
-    if ! is_exempt "$f"; then
-        matches=$(grep -inE "$PATTERN" -- "$SCAN_TMP" 2>/dev/null | head -5)
-    fi
-    if [ -s "$NAMES_TMP" ]; then
-        private=$(grep -inF -f "$NAMES_TMP" -- "$SCAN_TMP" 2>/dev/null | head -5)
-        [ -n "$private" ] && matches="${matches:+$matches$'\n'}$private"
+    # tree happens to hold at that path. A message is never skipped: one control
+    # byte would otherwise excuse all of it.
+    if [ -s "$SCAN_TMP" ] && { [ -n "$MSG_FILE" ] ||
+            ! file --mime "$SCAN_TMP" 2>/dev/null | grep -q 'charset=binary'; }; then
+        if ! is_exempt "$f"; then
+            words=$(grep -inE "$PATTERN" -- "$SCAN_TMP" 2>/dev/null | head -5)
+            [ -n "$words" ] && matches="${matches:+$matches$'\n'}$words"
+        fi
+        if [ -s "$NAMES_TMP" ]; then
+            private=$(grep -inF -f "$NAMES_TMP" -- "$SCAN_TMP" 2>/dev/null | head -5)
+            [ -n "$private" ] && matches="${matches:+$matches$'\n'}$private"
+        fi
     fi
     if [ -n "$matches" ]; then
         if [ "$found" -eq 0 ]; then
-            printf '\n\033[31mBLOCKED\033[0m: business/strategy content or a private name in %s.\n' \
-                "$([ "$MODE" = msg ] && echo "the commit message" || echo "a checked file")" >&2
+            case "$MODE" in
+                msg)        where="the commit message" ;;
+                stored-msg) where="a message about to be pushed" ;;
+                *)          where="a checked file" ;;
+            esac
+            printf '\n\033[31mBLOCKED\033[0m: business/strategy content or a private name in %s.\n' "$where" >&2
             printf 'This repo is PUBLIC -- that content must not enter its history.\n\n' >&2
             found=1
         fi
@@ -138,13 +171,14 @@ while IFS= read -r f; do
 done < <(list_files)
 
 if [ "$found" -eq 1 ]; then
-    if [ "$MODE" = msg ]; then
-        printf '\nTake it out of the message and commit again.\n' >&2
-    else
-        printf '\nMove it to your private strategy repo, or to the gitignored notes/ dir.\n' >&2
-    fi
+    case "$MODE" in
+        msg)        printf '\nTake it out of the message and commit again.\n' >&2 ;;
+        stored-msg) printf '\nRewrite that message before it publishes: git commit --amend or git rebase -i\nfor a commit, git tag -f -a for a tag.\n' >&2 ;;
+        *)          printf '\nMove it to your private strategy repo, or to the gitignored notes/ dir.\n' >&2 ;;
+    esac
     printf 'See "Where a document goes" in CLAUDE.md.\n' >&2
-    printf '\nGenuine false positive? Re-run with:  git commit --no-verify\n\n' >&2
+    printf '\nGenuine false positive? Re-run with:  git %s --no-verify\n\n' \
+        "$([ "$MODE" = stored-msg ] && echo push || echo commit)" >&2
     exit 1
 fi
 
