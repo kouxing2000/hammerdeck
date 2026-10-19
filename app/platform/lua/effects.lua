@@ -238,7 +238,8 @@ end
 --   misses  -- present-display placements that matched NO window (app closed).
 --   failed  -- matched a window but the move itself failed (AX can refuse).
 -- Returns:
---   (false, reason)  -- moved nothing: reason distinguishes no-match from all-moves-failed.
+--   (false, reason)  -- moved nothing: reason distinguishes no-match from all-moves-failed,
+--                       and a no-match names every placement that found no window.
 --   (true, note)     -- moved some but not all: note names the misses AND move-failures,
 --                       so a partial fire is visible in the log, never silently dropped.
 --   (true)           -- every present-display placement moved cleanly.
@@ -285,7 +286,9 @@ local function applyLayout(node)
         if present == 0 and #absent > 0 then
             return false, "target display not connected: " .. table.concat(absent, ", ")
         end
-        return false, "no matching windows on present displays"
+        local reason = "no matching windows on present displays"
+        if #misses > 0 then reason = reason .. ": " .. table.concat(misses, ", ") end
+        return false, reason
     end
     local notes = {}
     if #misses > 0 then notes[#notes + 1] = "no window for: " .. table.concat(misses, ", ") end

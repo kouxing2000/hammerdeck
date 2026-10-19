@@ -103,6 +103,17 @@ return {
         } })
         ok(okD2 == true and noteD2:find("1/2", 1, true) ~= nil and noteD2:find("3", 1, true) == nil,
             "the partial-fire denominator counts only present-display placements (1/2, not 1/3)")
+        -- a TOTAL miss names the closed apps too: the site's restore guide promises the run
+        -- says which apps were skipped, and the Test button shows this reason verbatim
+        fake.windowFrameSets = {}
+        local okN, reasonN = effects.dispatch({ kind = "layout", placements = {
+            { app = "Mail",  screen = "DELL", pos = "left" },    -- present, Mail is closed
+            { app = "Notes", screen = "DELL", pos = "right" },   -- present, Notes is closed
+        } })
+        ok(okN == false and #fake.windowFrameSets == 0
+            and reasonN:find("no matching windows", 1, true) ~= nil
+            and reasonN:find("Mail", 1, true) ~= nil and reasonN:find("Notes", 1, true) ~= nil,
+            "a layout that matched nothing names every skipped app (Mail, Notes)")
 
         -- (b4) matched-but-move-FAILED: the window is found but the AX move is refused
         -- -- surfaced in the note, never a silent "fired"
