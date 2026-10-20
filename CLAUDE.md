@@ -383,7 +383,15 @@ then STOP and let the user verify the behavior in the live app before moving on
 commit signal). The user has standing opt-in to this restart, so it overrides the
 "ask before restarting the running instance" caution below for the normal
 change-verify loop; still avoid restarting mid-way through work the user is
-actively watching without a heads-up.
+actively watching without a heads-up. Give them steps that reach the CHANGED
+branch: the nearest-looking setup they already have can run a different path
+and read as a pass. When that branch needs state they may not have (a rule of a
+given kind, an option value), stage it yourself with the app stopped: `defaults
+export Hammerdeck` a backup to the scratchpad, then ADD the fixture -- rules are
+ONE JSON string under `hammerdeck.rules`, so append a disabled rule to it and
+write the whole string back, never a bare array. Afterwards remove only that
+rule, by its id, and write back any option's previous value; never `defaults
+delete` the key.
 
 `swift test` is QUIET by default: the tests that show real panels, synthesize
 system keystrokes, or touch the login Keychain are SKIPPED (all gated behind the
