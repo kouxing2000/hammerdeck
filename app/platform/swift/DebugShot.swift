@@ -1,6 +1,6 @@
 #if DEBUG
 import AppKit
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 /// App-owned visual verification. Compositor capture preserves native materials;
 /// view rendering exports a scroll document at full height. DEBUG-only host
