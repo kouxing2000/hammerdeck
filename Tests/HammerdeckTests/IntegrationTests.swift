@@ -1085,7 +1085,7 @@ final class IntegrationTests: XCTestCase {
     }
 
     // The card data the Gallery renders, end to end through the real bridge:
-    // category + one-line description, the service/action distinction (a pure
+    // category + full description and benefit summary, the service/action distinction (a pure
     // service has no actions, so its card shows "always on"), and the
     // store-level selection the card click deep-links into the Settings detail.
     func testGalleryCardDataAndDeepLink() {
@@ -1094,7 +1094,9 @@ final class IntegrationTests: XCTestCase {
         let palette = host.store.features.first { $0.id == "command_palette" }
         XCTAssertEqual(palette?.category, "switching")
         XCTAssertFalse(palette?.description.isEmpty ?? true,
-                       "a card needs the one-line description")
+                       "the full description remains available")
+        XCTAssertEqual(palette?.summary, "Search and run any feature action.",
+                       "the Gallery benefit reaches Swift through the real catalog bridge")
 
         let off = host.store.features.first { $0.id == "display_off" }
         XCTAssertEqual(off?.kind, "service")

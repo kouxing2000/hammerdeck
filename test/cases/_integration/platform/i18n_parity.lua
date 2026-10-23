@@ -34,7 +34,7 @@
 -- The fields registry.lua localizes (see its "Localized feature metadata" header) and the
 -- keys it looks them up under. If a new localizable field is added there, add it here or
 -- it ships unguarded.
-local FEATURE_FIELDS = { "name", "description" }
+local FEATURE_FIELDS = { "name", "description", "summary" }
 local ACTION_FIELDS  = { "label", "description", "mnemonic" }
 local OPTION_FIELDS  = { "label", "hint", "section", "defaultLabel", "actionLabel" }
 

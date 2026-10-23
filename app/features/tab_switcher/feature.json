@@ -2,6 +2,7 @@
   "name": "Tab Switcher",
   "version": "1.1.0",
   "description": "Searchable switcher across all Chrome + Safari tabs, most recently used first, with favicons.",
+  "summary": "Search Chrome and Safari tabs.",
   "category": "switching",
   "order": 3,
   "selfEvident": true,

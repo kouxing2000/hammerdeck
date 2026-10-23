@@ -194,6 +194,10 @@ function manifest.validate(m)
         "feature '" .. m.id .. "' declares api=" .. tostring(m.api) ..
         " but this platform implements api=" .. manifest.API_VERSION)
     assert(type(m.name) == "string" and m.name ~= "", "feature '" .. m.id .. "' needs a name")
+    if m.summary ~= nil then
+        assert(type(m.summary) == "string" and m.summary ~= "",
+            "feature '" .. m.id .. "': summary must be a non-empty string")
+    end
 
     local hasAction  = type(m.action) == "function"
     local hasActions = m.actions ~= nil

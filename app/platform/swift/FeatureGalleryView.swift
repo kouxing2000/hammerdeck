@@ -171,7 +171,8 @@ struct FeatureGalleryView: View {
 
     private var visibleContexts: [FeatureContext] {
         if case .context(let c) = filter { return [c] }
-        return contexts
+        // Reorder the browse groups while retaining the familiar filter-chip positions.
+        return contexts.filter { $0 == .window } + contexts.filter { $0 != .window }
     }
 
     private var visibleFeatures: [FeatureInfo] {
@@ -196,6 +197,7 @@ struct FeatureGalleryView: View {
         let ctx = FeatureContext(f.context)
         return f.name.lowercased().contains(q)
             || f.description.lowercased().contains(q)
+            || (f.summary?.lowercased().contains(q) ?? false)
             || f.category.lowercased().contains(q)
             || ctx.title.lowercased().contains(q)
             || ctx.scenario.lowercased().contains(q)
@@ -278,11 +280,12 @@ private struct FeatureCard: View {
             Text(feature.name).font(.headline).lineLimit(1)
             Text(feature.failed
                  ? (feature.errorMessage.isEmpty ? Strings.t("gallery.failedToLoad", default: "Failed to load.") : feature.errorMessage)
-                 : (feature.description.isEmpty ? Strings.t("gallery.noDescription", default: "No description.") : feature.description))
-                .font(.caption)
-                .foregroundStyle(feature.failed ? .red : .secondary)
-                .lineLimit(2)
+                 : (feature.summary ?? (feature.description.isEmpty ? Strings.t("gallery.noDescription", default: "No description.") : feature.description)))
+                .font(feature.summary == nil ? .caption : .callout)
+                .foregroundStyle(feature.failed ? .red : (feature.summary == nil ? .secondary : .primary))
+                .lineLimit(feature.failed || feature.summary == nil ? 2 : 1)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                .help(feature.failed ? feature.errorMessage : feature.description)
             if !unmetRequirements.isEmpty && !feature.failed {
                 requirementBadges
             }

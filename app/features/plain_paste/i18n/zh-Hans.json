@@ -1,6 +1,7 @@
 {
   "name": "粘贴为纯文本",
   "description": "无格式粘贴：去除复制文本的字体/颜色/链接后粘贴 (或以键盘输入的方式录入)。",
+  "summary": "粘贴文字，去掉原有格式。",
 
   "option.mode.label": "转换",
   "option.mode.values.plainText": "纯文本",

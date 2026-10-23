@@ -2,6 +2,7 @@
   "name": "Bing Daily Wallpaper",
   "version": "1.1.0",
   "description": "Sets Bing's picture of the day as your wallpaper, refreshed on a schedule.",
+  "summary": "Set Bing’s daily photo as wallpaper.",
   "category": "appearance",
   "icon": "photo.artframe",
   "context": "automatic",

@@ -2,6 +2,7 @@
   "name": "Window Switcher",
   "version": "1.2.0",
   "description": "Searchable Alt-Tab: switch windows across all apps, most recently used first.",
+  "summary": "Find any window with a quick search.",
   "category": "switching",
   "order": 2,
   "selfEvident": true,

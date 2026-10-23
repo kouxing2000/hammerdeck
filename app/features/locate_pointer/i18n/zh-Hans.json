@@ -1,6 +1,7 @@
 {
   "name": "指针",
   "description": "按需的指针助手 -- 闪现十字线以找到鼠标，或将其居中到聚焦窗口或某个屏幕上。",
+  "summary": "找到指针，或将它移到中央。",
 
   "action.main.label": "定位指针",
   "action.main.description": "在鼠标指针周围闪现十字线，让你在屏幕上找到它。",

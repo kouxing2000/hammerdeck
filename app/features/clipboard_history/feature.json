@@ -2,6 +2,7 @@
   "name": "Clipboard History",
   "version": "1.0.0",
   "description": "Keeps a searchable history of copied text; pick an entry to paste it. Password-manager entries are never recorded.",
+  "summary": "Find and paste text you copied.",
   "category": "switching",
   "order": 5,
   "icon": "list.clipboard",

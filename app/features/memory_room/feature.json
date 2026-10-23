@@ -2,6 +2,7 @@
   "name": "Memory Room",
   "version": "1.0.0",
   "description": "A memory palace for an app's many windows: open the room in an app and each of its windows keeps a spot in a room -- an illustrated room, or a photo of one you know -- so you find the one you need by where it lives, not by reading titles. Click a window to bring it forward; drag it to move its spot.",
+  "summary": "Find windows by where they live.",
   "category": "switching",
   "order": 7,
   "selfEvident": true,

@@ -2,6 +2,7 @@
   "name": "Insert Date/Time",
   "version": "1.0.0",
   "description": "Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern).",
+  "summary": "Type the current date and time.",
   "category": "text",
   "icon": "calendar.badge.clock",
   "context": "textField",

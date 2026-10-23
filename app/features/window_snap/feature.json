@@ -2,6 +2,7 @@
   "name": "Window Snap",
   "version": "1.0.0",
   "description": "Move the focused window from the keyboard: throw it to the next display and the pointer rides along, snap to a half, toggle maximize/75%, or land on a rectangle you saved -- plus a one-shot swap of two displays' windows. No macOS version through 26 has a display-move shortcut; beyond Sequoia's halves and quarters this adds the 75% toggle, your own placements, and undo through Window Rewind -- from macOS 13.",
+  "summary": "Snap or move windows to a display.",
   "category": "windows",
   "order": 1,
   "icon": "rectangle.lefthalf.inset.filled",

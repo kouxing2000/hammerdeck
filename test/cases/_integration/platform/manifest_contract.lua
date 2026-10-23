@@ -16,6 +16,8 @@ return {
         local ok, rejects, manifest = t.ok, t.rejects, t.manifest
 
         rejects({ api = 99, id = "x", name = "X", action = function() end }, "wrong api version")
+        rejects({ api = 1, id = "x", name = "X", summary = 4, action = function() end }, "non-string summary")
+        rejects({ api = 1, id = "x", name = "X", summary = "", action = function() end }, "empty summary")
         rejects({ api = 1, id = "x", name = "X" }, "neither action nor start")
         rejects({ api = 1, id = "x", name = "X", action = function() end, start = function() end },
             "both action and start")

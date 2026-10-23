@@ -1,6 +1,7 @@
 {
   "name": "倒计时",
   "description": "询问分钟数，然后在屏幕底部运行一条细进度条；时间到时通知你。",
+  "summary": "用屏幕边缘的细条查看倒计时。",
 
   "notify.up.title": "时间 (%s 分钟) 到了！",
   "notify.up.body": "现在是 %s",

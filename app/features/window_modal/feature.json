@@ -2,6 +2,7 @@
   "name": "Window Mode",
   "version": "1.0.0",
   "description": "Fine control, one key at a time: a modal keyboard layer for move/resize/corners/center/undo, live until Escape. For arranging by feel without spending a global hotkey on every arrangement.",
+  "summary": "Move and resize one key at a time.",
   "category": "windows",
   "order": 3,
   "selfEvident": true,

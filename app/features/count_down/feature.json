@@ -2,6 +2,7 @@
   "name": "Countdown",
   "version": "1.0.0",
   "description": "Ask for minutes, then run a thin progress strip along the bottom of the screen; notifies when time is up.",
+  "summary": "See a countdown along your screen.",
   "category": "utilities",
   "icon": "timer",
   "context": "anywhere",

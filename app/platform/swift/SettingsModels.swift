@@ -277,6 +277,7 @@ struct FeatureInfo: Identifiable {
     let id: String
     let name: String
     let description: String
+    let summary: String?        // concise Gallery benefit; absent on older manifests
     let category: String        // domain tag (text/windows/web/...), shown as a small label
     let icon: String?           // per-feature SF Symbol; nil -> fall back to the category glyph
     let context: String         // WHEN it applies -- the primary grouping axis (FeatureContext)
@@ -318,6 +319,7 @@ struct FeatureInfo: Identifiable {
         self.id = id
         self.name = name
         self.description = dict.str("description")
+        self.summary = (dict["summary"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.category = dict.str("category", "general")
         self.icon = (dict["icon"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.context = dict.str("context", "anywhere")

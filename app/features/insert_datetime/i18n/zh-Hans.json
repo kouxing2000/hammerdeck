@@ -1,6 +1,7 @@
 {
   "name": "插入日期/时间",
   "description": "按你选择的格式 (或自定义 strftime 模式) 将当前日期和时间输入到聚焦的输入框中。",
+  "summary": "一键输入当前日期和时间。",
 
   "action.main.mnemonic": "D 代表日期 (Date)",
 

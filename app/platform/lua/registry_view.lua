@@ -23,7 +23,7 @@
 -- that inline English (so an untranslated feature/field just shows English).
 -- Applied at describe()/emit time, so a language switch needs only a re-describe,
 -- never a re-register. The key scheme is the convention feature authors follow:
---   name | description | page.title
+--   name | description | summary | page.title
 --   action.<id>.label | .description | .mnemonic
 --   option.<key>.label | .hint | .section | .defaultLabel | .actionLabel
 --   option.<key>.values.<value>     (enum labels, parallel to values)
@@ -394,6 +394,7 @@ function view.describe()
         end
         local row = {
             id = m.id, name = view.locName(m), description = view.locDesc(m),
+            summary = m.summary and i18n.tFeature(m.id, "summary", m.summary),
             category = m.category, version = m.version or "",
             -- Slot within the category section, low first; nil (the common case)
             -- means "sort me after the ranked ones, alphabetically". Carried to

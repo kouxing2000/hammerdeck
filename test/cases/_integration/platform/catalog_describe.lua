@@ -44,9 +44,20 @@ return {
         -- a feature declares none (host then falls back to the category glyph).
         ok(jumpDesc.icon == "macwindow.on.rectangle",
             "describe() surfaces the per-feature icon overlaid from feature.json")
+        ok(jumpDesc.summary == "Find any window with a quick search.",
+            "Gallery summary flows from feature.json through the real catalog overlay")
+        local i18n = require("platform.i18n")
+        local appdir = require("loader").appdir
+        i18n.configure({ locale = "zh-Hans", appdir = appdir })
+        local translated = registry.describe()[3]
+        ok(translated.summary == "快速搜索，找到想要的窗口。",
+            "Gallery summary uses the feature's translated catalog")
+        ok(translated.description ~= jumpDesc.description,
+            "full localized descriptions remain separate from summaries")
+        i18n.configure({ locale = "en", appdir = appdir })
         -- typed option export incl. enum values, on a synthetic probe
         package.loaded["features._enum_probe"] = {
-            api = 1, id = "enum_probe", name = "Enum Probe",
+            api = 1, id = "enum_probe", name = "Enum Probe", description = "Full probe description.",
             options = { { key = "mode", type = "enum", default = "a",
                           values = { "a", "b", "c" }, labels = { "Ay", "Bee", "Cee" },
                           label = "Mode" } },
@@ -64,6 +75,8 @@ return {
         ok(probeDesc0.options[1].labels and probeDesc0.options[1].labels[2] == "Bee",
             "enum display labels exported parallel to values")
         ok(probeDesc0.kind == "action", "a feature with no start() is an action")
+        ok(probeDesc0.summary == nil and probeDesc0.description == "Full probe description.",
+            "old manifests retain an absent summary and the full description fallback")
         registry.unregister("enum_probe")
         local sleepDesc = desc[2]
         ok(sleepDesc.kind == "service" and sleepDesc.triggerDesc == "always-on service",
