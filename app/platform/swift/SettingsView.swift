@@ -964,6 +964,7 @@ private struct FeatureDetailHeader: View {
                         }
                     }
                     .buttonStyle(.link)
+                    .fontWeight(.medium)
                     .fixedSize()
                 }
             }
@@ -1022,6 +1023,7 @@ private struct TriggerRow: View {
         } label: {
             HStack(spacing: 6) {
                 Text(action.label)
+                    .fontWeight(.medium)
                 // The "why this key" hint survives collapsing as a badge -- it is
                 // the one teaching device this layout could otherwise cost, and it
                 // only ever describes the DEFAULT binding (hidden once rebound,
@@ -1029,7 +1031,7 @@ private struct TriggerRow: View {
                 if !action.mnemonic.isEmpty && !action.triggerOverridden {
                     Image(systemName: "lightbulb")
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .help(action.mnemonic)
                 }
                 Spacer(minLength: 8)
@@ -1037,9 +1039,12 @@ private struct TriggerRow: View {
                 if glyph.isEmpty {
                     Text(Strings.t("settings.no_shortcut", default: "None"))
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 } else {
                     ShortcutPill(glyph: glyph)
+                        .foregroundStyle(.primary)
+                        .overlay(RoundedRectangle(cornerRadius: 5)
+                            .stroke(.primary.opacity(0.12), lineWidth: 0.5))
                 }
             }
             // Without this the glyph pill is a separate element and a
@@ -1103,6 +1108,7 @@ private struct AboutSection: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(Strings.t("settings.about_and_permissions", default: "About & permissions"))
+                        .fontWeight(.semibold)
                     Spacer(minLength: 8)
                     // Names the reach rather than counting it: "Browser, Network"
                     // answers the question the section exists for without opening
@@ -1238,6 +1244,7 @@ private struct OptionEditor: View {
         } label: {
             HStack(spacing: 6) {
                 Text(opt.label)
+                    .fontWeight(.medium)
                 // A subtle "customized" tag flags an edited prompt without
                 // forcing the user to expand each one to check.
                 if store.isOptionOverridden(featureId, opt) {
@@ -1689,7 +1696,7 @@ private struct TriggerEditor: View {
         if !action.mnemonic.isEmpty && !action.triggerOverridden {
             Label(action.mnemonic, systemImage: "lightbulb")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .labelStyle(.titleAndIcon)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
