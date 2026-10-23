@@ -116,7 +116,7 @@ struct FeatureTourView: View {
                         .padding(14)
                 }
             }
-            .frame(height: 280)
+            .frame(maxHeight: 280)
             .padding(.horizontal, 18)
             .id(f.id)   // restart the scene's animation when the feature changes
 
@@ -145,27 +145,27 @@ struct FeatureTourView: View {
                             .font(.caption2)
                             .padding(.horizontal, 7).padding(.vertical, 2)
                             .background(Capsule().fill(Color.yellow.opacity(0.16)))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 Text(f.name).font(.title2.weight(.semibold))
                 Text(f.description.isEmpty ? Strings.t("tour.noDescription", default: "No description.") : f.description)
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(Color.primary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 460)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 18)
-            Spacer(minLength: 0)
         }
-        .padding(.top, 16)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func contextBadge(_ ctx: FeatureContext) -> some View {
         HStack(spacing: 6) {
             Image(systemName: ctx.icon).font(.caption)
-            Text(ctx.scenario).font(.caption.weight(.medium))
+            Text(ctx.scenario).font(.caption.weight(.semibold))
+                .foregroundStyle(Color.primary)
         }
         .foregroundStyle(ctx.color)
         .padding(.horizontal, 10).padding(.vertical, 4)
