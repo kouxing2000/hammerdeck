@@ -232,7 +232,7 @@ struct DashboardView: View {
     @State private var tipId: String?
     private let tick = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
-    private let columns = [GridItem(.adaptive(minimum: 300, maximum: 460), spacing: 14)]
+    private let columns = [GridItem(.adaptive(minimum: 300, maximum: 460), spacing: 16, alignment: .top)]
 
     var body: some View {
         ScrollView {
@@ -240,7 +240,7 @@ struct DashboardView: View {
                 header
                 getStartedCard
                 tipCard
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
                     rightNowCard
                     statusCard
                 }
@@ -446,11 +446,11 @@ struct DashboardView: View {
     @ViewBuilder private func tipShortcut(_ f: FeatureInfo) -> some View {
         if f.actions.isEmpty {
             Label(Strings.t("home.always_on", default: "always on"), systemImage: "infinity")
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(.secondary)
         } else {
             let glyph = shortcutGlyph(f.actions.first?.trigger)
             if glyph.isEmpty {
-                Text(Strings.t("home.no_shortcut_bound", default: "no shortcut bound")).font(.caption2).foregroundStyle(.tertiary)
+                Text(Strings.t("home.no_shortcut_bound", default: "no shortcut bound")).font(.caption).foregroundStyle(.secondary)
             } else {
                 ShortcutPill(glyph: glyph)
             }
@@ -476,7 +476,7 @@ struct DashboardView: View {
                         Text(item.label).font(.callout).lineLimit(1)
                         Spacer()
                         Text(Self.relative(item.untilNext))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                     }
                 }
                 Button(Strings.t("home.open_timeline", default: "Open Timeline")) { goTo(.timeline) }
