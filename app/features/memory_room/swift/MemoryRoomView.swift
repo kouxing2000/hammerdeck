@@ -160,7 +160,7 @@ struct MemoryRoomView: View {
                  : String(format: Strings.t("memoryRoom.page.kept",
                                             default: "The faint icons are the spots you placed in %@'s room. Each is kept for its window, even while the window is closed, and the room never gives it to a new window. Hover one and click × to forget it: a window that is still open gets a new spot the next time you open its room."),
                           keptApp.flatMap { appNames[$0] } ?? ""))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             roomPicker
             HStack(spacing: 8) {
@@ -176,7 +176,7 @@ struct MemoryRoomView: View {
             }
             Text(Strings.t("memoryRoom.page.privacy",
                            default: "While your photo is the room in use, it shows whenever the room opens -- including while you share your screen. It stays on this Mac: Hammerdeck keeps its own copy until you remove it or choose another photo."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -363,9 +363,12 @@ private struct RoomTile: View {
                         }
                     }
                 Text(label)
-                    .font(.caption.weight(selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? .primary : .secondary)
+                    .font(.caption.weight(selected ? .bold : .medium))
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 4)
+                        .fill(selected ? Color.accentColor.opacity(0.18) : Color.clear))
             }
             .contentShape(Rectangle())
         }
