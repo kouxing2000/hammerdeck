@@ -151,7 +151,7 @@ struct UsageReportView: View {
                           sub: String? = nil, delta: (String, Bool)? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label.uppercased())
-                .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                .font(.caption2.weight(.semibold)).foregroundStyle(.primary)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(value).font(.title3.weight(.semibold).monospacedDigit()).lineLimit(1)
                 if let delta {
@@ -162,7 +162,7 @@ struct UsageReportView: View {
                     .foregroundStyle(delta.1 ? Color.green : Color.red)
                 }
             }
-            Text(sub ?? " ").font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+            Text(sub ?? " ").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -189,7 +189,10 @@ struct UsageReportView: View {
                 AxisMarks { value in
                     AxisGridLine()
                     AxisValueLabel {
-                        if let h = value.as(Double.self) { Text(String(format: Strings.t("usage.hours", default: "%dh"), Int(h))) }
+                        if let h = value.as(Double.self) {
+                            Text(String(format: Strings.t("usage.hours", default: "%dh"), Int(h)))
+                                .foregroundStyle(Color.primary)
+                        }
                     }
                 }
             }
@@ -198,6 +201,7 @@ struct UsageReportView: View {
                     AxisValueLabel(format: range == .month
                                    ? .dateTime.day()
                                    : .dateTime.weekday(.narrow))
+                        .foregroundStyle(Color.primary)
                 }
             }
         }
@@ -216,7 +220,7 @@ struct UsageReportView: View {
             // discoverable BEFORE any site is recorded.
             if top.contains(where: { !$0.contexts.isEmpty || isBrowser($0.app) }) {
                 Text(Strings.t("usage.clickHint", default: "Click an app (›) to see its sites / projects."))
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             ForEach(top) { app in
                 Button { selectedApp = app.app } label: {
@@ -228,7 +232,7 @@ struct UsageReportView: View {
             }
             if data.apps.count > top.count {
                 Text(String(format: Strings.t("usage.moreInTable", default: "+ %d more in the table below"), data.apps.count - top.count))
-                    .font(.caption2).foregroundStyle(.tertiary).padding(.top, 2)
+                    .font(.caption2).foregroundStyle(.secondary).padding(.top, 2)
             }
         }
     }
@@ -251,13 +255,14 @@ struct UsageReportView: View {
             Text(usageTimeString(secs)).font(.caption.monospacedDigit().weight(.medium))
                 .frame(width: 56, alignment: .trailing)
             Text(String(format: Strings.t("usage.percent", default: "%d%%"), Int((share * 100).rounded())))
-                .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                .font(.caption2.monospacedDigit().weight(.medium))
+                .foregroundStyle(muted ? Color.secondary : Color.primary)
                 .frame(width: 34, alignment: .trailing)
             // Marks rows that drill into a site/project breakdown, so the click
             // affordance is discoverable (esp. a browser -> its domains). Kept in
             // the layout (opacity, not omitted) so bars stay column-aligned.
             Image(systemName: "chevron.right")
-                .font(.caption2).foregroundStyle(.tertiary)
+                .font(.caption2).foregroundStyle(.secondary)
                 .frame(width: 10, alignment: .trailing)
                 .opacity(showChevron ? 1 : 0)
         }
@@ -384,11 +389,11 @@ struct UsageReportView: View {
     private var detailTableCard: some View {
         DashCard(title: Strings.t("usage.allApps", default: "All Apps"), icon: "list.bullet", tint: .gray) {
             HStack {
-                Text(Strings.t("usage.app", default: "APP")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Strings.t("usage.app", default: "APP")).font(.caption2.weight(.semibold)).foregroundStyle(.primary)
                 Spacer()
-                Text(Strings.t("usage.time", default: "TIME")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Strings.t("usage.time", default: "TIME")).font(.caption2.weight(.semibold)).foregroundStyle(.primary)
                     .frame(width: 56, alignment: .trailing)
-                Text(Strings.t("usage.share", default: "SHARE")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(Strings.t("usage.share", default: "SHARE")).font(.caption2.weight(.semibold)).foregroundStyle(.primary)
                     .frame(width: 44, alignment: .trailing)
                 Color.clear.frame(width: 10, height: 1)   // aligns with the row chevron
             }
@@ -398,13 +403,13 @@ struct UsageReportView: View {
                     HStack {
                         Text(app.app).font(.callout).lineLimit(1)
                         Spacer()
-                        Text(usageTimeString(app.secs)).font(.caption.monospacedDigit())
+                        Text(usageTimeString(app.secs)).font(.caption.monospacedDigit().weight(.medium))
                             .frame(width: 56, alignment: .trailing)
                         Text(String(format: Strings.t("usage.percent", default: "%d%%"), Int((app.share * 100).rounded())))
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .font(.caption.monospacedDigit().weight(.medium)).foregroundStyle(.primary)
                             .frame(width: 44, alignment: .trailing)
                         Image(systemName: "chevron.right")
-                            .font(.caption2).foregroundStyle(.tertiary)
+                            .font(.caption2).foregroundStyle(.secondary)
                             .frame(width: 10, alignment: .trailing)
                             .opacity(app.contexts.isEmpty && !isBrowser(app.app) ? 0 : 1)
                     }
@@ -441,11 +446,11 @@ struct UsageReportView: View {
                 .padding(.top, 2)
                 ForEach(days, id: \.date) { day in
                     HStack(spacing: 10) {
-                        Text(day.date).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                        Text(day.date).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                             .frame(width: 84, alignment: .leading)
                         dayTrack(day.sessions)
                         Text(usageTimeString(day.totalMin * 60))
-                            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                            .font(.caption2.monospacedDigit().weight(.medium)).foregroundStyle(.primary)
                             .frame(width: 56, alignment: .trailing)
                     }
                 }
@@ -477,8 +482,8 @@ struct UsageReportView: View {
             let w = geo.size.width
             ForEach(0...4, id: \.self) { i in
                 Text(i == 0 ? "00" : (i == 4 ? "24" : String(format: "%02d", i * 6)))
-                    .font(.system(size: 8).monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
                     .fixedSize()
                     .position(x: min(max(w * (Double(i) / 4), 7), w - 7), y: 5)
             }
