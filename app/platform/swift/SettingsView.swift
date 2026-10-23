@@ -365,26 +365,6 @@ private struct GeneralSettingsDetail: View {
     var body: some View {
         ScrollViewReader { proxy in
         Form {
-            Section(Strings.t("settings.keyboard", default: "Keyboard")) {
-                Toggle(Strings.t("settings.caps_hyper_toggle", default: "Caps Lock acts as Hyper (⌘⌥⌃)"), isOn: $capsHyper)
-                    .onChange(of: capsHyper) { on in CapsHyperPreference.userToggle(to: on) }
-                Text(Strings.t("settings.caps_hyper_caption", default: "Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper shortcuts are a one-key press. Double-tap Caps Lock for its normal lock. Remaps Caps Lock and needs Accessibility."))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !behaviorPreferences.isEmpty {
-                Section(Strings.t("settings.behavior", default: "Behavior")) {
-                    ForEach(behaviorPreferences) { pref in
-                        Toggle(pref.name, isOn: Binding(
-                            get: { pref.enabled },
-                            set: { store.requestSetEnabled(pref.id, $0) }
-                        ))
-                        Text(pref.description)
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
             Section(Strings.t("settings.app", default: "App")) {
                 // Absent in a dev `swift run`: no packaged Info.plist means no
                 // SUFeedURL, so there is no updater to configure. Same reasoning as
@@ -510,6 +490,26 @@ private struct GeneralSettingsDetail: View {
                 Text(String(format: Strings.t("settings.language_caption", default: "Pick the app language, or follow the macOS system language. Relaunch %@ to fully apply a change."), AppInfo.displayName))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            Section(Strings.t("settings.keyboard", default: "Keyboard")) {
+                Toggle(Strings.t("settings.caps_hyper_toggle", default: "Caps Lock acts as Hyper (⌘⌥⌃)"), isOn: $capsHyper)
+                    .onChange(of: capsHyper) { on in CapsHyperPreference.userToggle(to: on) }
+                Text(Strings.t("settings.caps_hyper_caption", default: "Hold Caps Lock as the ⌘⌥⌃ Hyper modifier so Hyper shortcuts are a one-key press. Double-tap Caps Lock for its normal lock. Remaps Caps Lock and needs Accessibility."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !behaviorPreferences.isEmpty {
+                Section(Strings.t("settings.behavior", default: "Behavior")) {
+                    ForEach(behaviorPreferences) { pref in
+                        Toggle(pref.name, isOn: Binding(
+                            get: { pref.enabled },
+                            set: { store.requestSetEnabled(pref.id, $0) }
+                        ))
+                        Text(pref.description)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             // The two developer sections sit LAST, and collapsed. Hammerdeck's
             // promise is config-and-select ("lowers the bar from write Lua"),
