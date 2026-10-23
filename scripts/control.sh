@@ -13,21 +13,17 @@
 # End the snippet with `return X` to read a value back; otherwise you get "nil".
 # Pair with scripts/shot.sh to capture a screenshot for visual verification.
 #
-# SINGLE-USER by construction: the file handshake has no request/response
-# correlation id, so two callers racing on cmd.lua/result.txt can hand each
-# other's answers back or strand a command entirely. That used to be a comment
-# asking you not to do it; it is now ENFORCED by the lock below, because the
-# symptom (a timeout that reads as "the app is hung") costs far more to diagnose
-# than the collision costs to prevent. Agents in particular batch independent
-# commands into one parallel block by default -- a note in a header does not
-# reach them.
+# One caller at a time: the lock prevents command-file collisions. Each request
+# has its own reply filename so an abandoned asynchronous capture cannot answer
+# the next caller. Replies live inside the lock directory and leave with it.
 
 set -euo pipefail
 
 CONTROL_DIR="$HOME/Library/Application Support/Hammerdeck/run/control"
 CMD="$CONTROL_DIR/cmd.lua"
-RES="$CONTROL_DIR/result.txt"
 LOCK="$CONTROL_DIR/.inflight.lock"
+REQUEST_ID="$(uuidgen)"
+RES="$LOCK/result.$REQUEST_ID.txt"
 
 code="${1:-}"
 if [[ -z "$code" ]]; then
@@ -63,10 +59,9 @@ acquire_lock() {
 acquire_lock || exit 3
 trap 'rm -rf "$LOCK"' EXIT       # released on success, failure, and ^C alike
 
-rm -f "$RES"                      # so the result's appearance means "fresh"
 # Atomic publish: the app's poller guards only on existence, so write to a temp
 # then rename (same dir => atomic) so it never reads a half-written command.
-printf '%s' "$code" >"$CMD.tmp" && mv -f "$CMD.tmp" "$CMD"
+printf '%s\n%s' "-- hammerdeck-request:$REQUEST_ID" "$code" >"$CMD.tmp.$$" && mv -f "$CMD.tmp.$$" "$CMD"
 
 # The app polls every 0.2s; wait up to ~8s for it to consume + answer.
 for _ in $(seq 1 80); do

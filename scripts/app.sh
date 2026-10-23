@@ -4,7 +4,7 @@
 #
 # "start" rebuilds (swift build) and launches the built binary in the
 # background so you always run the latest code; the menubar app keeps running
-# after the terminal closes (nohup + reparented to launchd). PID + the
+# after the terminal closes (a separate process session, reparented to launchd). PID + the
 # launcher's stdout live under the app's own Application Support dir, so they
 # survive a `swift package clean` that would wipe .build.
 #
@@ -98,8 +98,18 @@ cmd_start() {
     echo "----- $(date '+%Y-%m-%d %H:%M:%S') start -----" >>"$OUTLOG"
     mkdir -p "$CONTROL_DIR"
     rm -f "$CONTROL_DIR/cmd.lua" "$CONTROL_DIR/result.txt"
-    HAMMERDECK_CONTROL_DIR="$CONTROL_DIR" nohup "$bin" "$@" >>"$OUTLOG" 2>&1 &
-    local newpid=$!
+    # A separate session survives command runners that clean up their process
+    # group when the launching command exits; stdin cannot retain the terminal.
+    local newpid
+    newpid="$(HAMMERDECK_CONTROL_DIR="$CONTROL_DIR" python3 - "$bin" "$OUTLOG" "$@" <<'PY'
+import subprocess
+import sys
+with open(sys.argv[2], "ab", buffering=0) as output:
+    app = subprocess.Popen([sys.argv[1], *sys.argv[3:]], stdin=subprocess.DEVNULL,
+                           stdout=output, stderr=output, start_new_session=True)
+print(app.pid)
+PY
+    )"
     echo "$newpid" >"$PIDFILE"
     sleep 1
     if kill -0 "$newpid" 2>/dev/null; then

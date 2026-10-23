@@ -17,10 +17,10 @@ scripts/control.sh '@<cmd>'   # host-UI commands the Lua eval cannot reach
 
 ## `control.sh` is SINGLE-USER -- never batch it in parallel
 
-One command at a time. The file handshake (`cmd.lua` / `result.txt`) has no
-request/response correlation id, so two concurrent callers can hand each other's
-answers back or strand a command entirely. A lock enforces it: a second caller
-exits non-zero with `another control.sh (PID N) is mid-request`.
+One command at a time. The file channel shares one `cmd.lua` and one app UI.
+A second caller that finds a live lock-holder PID exits non-zero with
+`another control.sh (PID N) is mid-request`. Each invocation uses a UUID-specific
+reply file so a delayed asynchronous reply cannot satisfy a later request.
 
 This bites agents specifically, because the default habit is to batch
 independent commands into one parallel block. **Run every `control.sh` call
@@ -32,7 +32,8 @@ Three capture paths, not two. Picking the wrong one is the usual time sink.
 
 | Target | Tool | Permissions needed |
 |---|---|---|
-| **Settings window / Homepage** (option forms, chord+trigger editors, gallery) | `scripts/control.sh '@shot:<path>'` | none |
+| **Settings window / Homepage** (visible window, light or dark) | `scripts/control.sh '@windowshot:<path>'` | none; macOS 14.4+ |
+| **Full scroll document** (including below the fold, light only) | `scripts/control.sh '@shot:<path>'` | none |
 | **Native panels** (chooser, banner, hint cards) | `scripts/shot.sh out.png` | Screen Recording |
 | **Menubar menu** (the status-bar popup) | `scripts/menu-shot.sh out.png` | Screen Recording **+** Accessibility |
 
@@ -51,7 +52,7 @@ drawing. Bump it (`HD_SHOT_DELAY=0.6`) if you capture mid-animation.
 
 ## Host-UI commands (`DebugControl`, DEBUG-only)
 
-The Lua eval channel cannot reach host UI. These six can. All are intercepted
+The Lua eval channel cannot reach host UI. These commands can. All are intercepted
 before the Lua eval; the whole channel is inside `#if DEBUG` with a release no-op.
 
 | Command | Effect |
@@ -59,10 +60,23 @@ before the Lua eval; the whole channel is inside `#if DEBUG` with a release no-o
 | `@settings` | open the Settings tab |
 | `@settings:<featureId>` | open Settings straight to that feature's detail (e.g. `@settings:count_down`) |
 | `@home[:features\|shortcuts\|rules\|timeline\|home]` | open the Homepage, optionally on a tab |
+| `@home:rules:<ruleId>` | open the existing Rules editor for that rule |
 | `@tour` | present the first-run Feature Tour |
 | `@hyperhint` | **toggle** the Hyper which-key legend (there is no Caps release to dismiss it) |
 | `@chordhint` | **toggle** the chord which-key hint card (no armed chord to time it out) |
 | `@shot[:<path>]` | in-process self-capture; default `/tmp/hammerdeck-shot.png` |
+| `@windowshot:<path>` | compositor capture of this app's selected window, including native materials |
+| `@appearance:light\|dark\|system` | temporary app appearance; does not persist the preference |
+| `@size:<width>x<height>` | set the selected window's content size in points; reports actual bounds |
+| `@scroll:<fraction>` | scroll the widest vertical document from top (`0`) to bottom (`1`); reports the visible rect |
+
+Use `@windowshot` for before/after comparisons. It uses ScreenCaptureKit's
+current-process content query and matches this process and the exact window id;
+it never captures another app or the desktop. It preserves dark colors and
+native materials, including when occluded. Captures time out before control.sh's
+request deadline. Select the screen first, then size/appearance, then capture,
+all sequentially. Check `blank=false` AND a visible landmark for the intended
+screen. Restore `@appearance:system` (or the original app override) afterwards.
 
 `@home` / `@tour` are the ONLY route to Homepage / Gallery / Tour pixels. The
 two hint commands exist precisely because those cards have no dismissal you

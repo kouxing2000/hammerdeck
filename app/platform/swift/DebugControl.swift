@@ -21,8 +21,8 @@ import Foundation
 /// `<dir>/cmd.lua`; on finding one it consumes it, evaluates the Lua via the
 /// bridge (so the FULL platform is reachable -- registry.runAction,
 /// setEnabled, opt writes, queries), and writes the result to
-/// `<dir>/result.txt`. The waiter (control.sh) deletes result.txt first and
-/// polls for it, so its appearance signals a fresh, complete answer.
+/// a request-specific reply inside `<dir>/.inflight.lock`. The waiter polls
+/// only its own reply; an abandoned async request cannot answer the next caller.
 ///
 /// This is HOST infrastructure (a peer of Boot.swift), NOT a feature API: it
 /// never grows the adapter/ctx seam, so features gain nothing from it -- the
@@ -61,7 +61,6 @@ enum DebugControl {
         let fm = FileManager.default
         try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let cmdPath = (dir as NSString).appendingPathComponent("cmd.lua")
-        let resPath = (dir as NSString).appendingPathComponent("result.txt")
         try? fm.removeItem(atPath: cmdPath)   // drop a command stranded by a crash
         print("[hammerdeck] debug control listening at \(dir)")
         evalState = lua
@@ -81,9 +80,22 @@ enum DebugControl {
             MainActor.assumeIsolated {
                 let fm = FileManager.default
                 guard fm.fileExists(atPath: cmdPath),
-                      let code = try? String(contentsOfFile: cmdPath, encoding: .utf8)
+                      let request = try? String(contentsOfFile: cmdPath, encoding: .utf8)
                 else { return }
                 try? fm.removeItem(atPath: cmdPath)   // consume exactly once
+                let code: String
+                let resPath: String
+                let prefix = "-- hammerdeck-request:"
+                if request.hasPrefix(prefix), let newline = request.firstIndex(of: "\n") {
+                    let token = String(request[prefix.endIndex..<newline])
+                    guard UUID(uuidString: token) != nil else { return }
+                    code = String(request[request.index(after: newline)...])
+                    resPath = (dir as NSString).appendingPathComponent(".inflight.lock/result.\(token).txt")
+                } else {
+                    // Raw commands retain the direct-file debugging interface.
+                    code = request
+                    resPath = (dir as NSString).appendingPathComponent("result.txt")
+                }
                 let out: String
                 if code == "@settings" || code.hasPrefix("@settings:") {
                     // Host-UI deep link (see openSettings) -- not Lua.
@@ -91,6 +103,29 @@ enum DebugControl {
                         .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
                     DebugControl.openSettings?(id.isEmpty ? nil : id)
                     out = "opened settings\(id.isEmpty ? "" : ":" + id)"
+                } else if code.hasPrefix("@windowshot:") {
+                    let path = String(code.dropFirst("@windowshot:".count))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(6))
+                    var replied = false
+                    let reply: @MainActor (String) -> Void = { result in
+                        // Deduplicate timeout and capture completions. The reply
+                        // path belongs only to this request, even after cancellation.
+                        guard !replied, ContinuousClock.now < deadline.advanced(by: .seconds(1)) else { return }
+                        replied = true
+                        try? result.write(toFile: resPath, atomically: true, encoding: .utf8)
+                    }
+                    Task { reply(await DebugShot.captureWindow(to: path, deadline: deadline)) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                        reply("ERROR: window capture timed out")
+                    }
+                    return
+                } else if code.hasPrefix("@appearance:") {
+                    out = DebugShot.setAppearance(String(code.dropFirst("@appearance:".count)))
+                } else if code.hasPrefix("@size:") {
+                    out = DebugShot.resizeWindow(String(code.dropFirst("@size:".count)))
+                } else if code.hasPrefix("@scroll:") {
+                    out = DebugShot.scrollDetail(String(code.dropFirst("@scroll:".count)))
                 } else if code == "@shot" || code.hasPrefix("@shot:") || code.hasPrefix("@shot ") {
                     // In-process self-capture (see DebugShot) -- no Screen
                     // Recording / frontmost / scrolling needed.

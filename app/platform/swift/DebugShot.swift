@@ -1,15 +1,81 @@
 #if DEBUG
 import AppKit
+import ScreenCaptureKit
 
-/// In-process window capture for visual verification -- the app screenshots
-/// ITSELF. Because we render our own view hierarchy directly into a bitmap, this
-/// needs no Screen Recording permission, does not care whether the window is
-/// frontmost / occluded / off-screen, and -- crucially -- can render a scroll
-/// view's documentView at its FULL content height, so content below the fold is
-/// included without any scrolling. DEBUG-only host infra (a peer of
-/// DebugControl); never a feature API.
+/// App-owned visual verification. Compositor capture preserves native materials;
+/// view rendering exports a scroll document at full height. DEBUG-only host
+/// infrastructure (a peer of DebugControl), never a feature API.
 @MainActor
 enum DebugShot {
+    static func setAppearance(_ mode: String) -> String {
+        guard AppearancePreference.modes.contains(mode) else { return "ERROR: unknown appearance" }
+        NSApp.appearance = AppearancePreference.appearance(for: mode)
+        return "temporary appearance: \(mode)"
+    }
+
+    static func resizeWindow(_ size: String) -> String {
+        let parts = size.split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2, (960...3840).contains(parts[0]), (560...2160).contains(parts[1]),
+              let window = targetWindow() else { return "ERROR: expected window size 960x560 through 3840x2160" }
+        window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+        return "window content: \(window.contentLayoutRect)"
+    }
+
+    static func scrollDetail(_ value: String) -> String {
+        guard let fraction = Double(value), (0...1).contains(fraction),
+              let content = targetWindow()?.contentView,
+              let document = detailScrollDocument(in: content, verticalOnly: true),
+              let scroll = document.enclosingScrollView else {
+            return "ERROR: expected scroll fraction 0 through 1 and a vertical document"
+        }
+        let clip = scroll.contentView
+        let travel = max(0, document.bounds.height - clip.bounds.height)
+        let y = document.bounds.minY + travel * (document.isFlipped ? fraction : 1 - fraction)
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(clip)
+        return "document visible: \(document.visibleRect)"
+    }
+
+    /// Compositor pixels preserve native materials. The current-process query and
+    /// exact window id keep this capture within the app's own content.
+    static func captureWindow(to path: String, deadline: ContinuousClock.Instant) async -> String {
+        guard #available(macOS 14.4, *) else { return "ERROR: window capture needs macOS 14.4" }
+        guard let window = targetWindow() else { return "ERROR: no window to capture" }
+        let id = CGWindowID(window.windowNumber)
+        do {
+            let content = try await SCShareableContent.currentProcess
+            guard ContinuousClock.now < deadline else { return "ERROR: window capture timed out" }
+            guard let owned = content.windows.first(where: {
+                $0.windowID == id && $0.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
+            }) else { return "ERROR: own window unavailable for capture" }
+            let filter = SCContentFilter(desktopIndependentWindow: owned)
+            let config = SCStreamConfiguration()
+            config.width = Int(ceil(filter.contentRect.width * Double(filter.pointPixelScale)))
+            config.height = Int(ceil(filter.contentRect.height * Double(filter.pointPixelScale)))
+            config.showsCursor = false
+            config.ignoreShadowsSingleWindow = true
+            config.ignoreGlobalClipSingleWindow = true
+            let captured: CGImage
+            do {
+                captured = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            } catch {
+                let fault = error as NSError
+                guard fault.domain == SCStreamErrorDomain,
+                      fault.code == SCStreamError.internalError.rawValue,
+                      ContinuousClock.now.advanced(by: .milliseconds(200)) < deadline else { throw error }
+                NSLog("[windowshot] retrying internal stream failure: %@ (%ld)", fault.domain, fault.code)
+                try await Task.sleep(for: .milliseconds(200))
+                guard ContinuousClock.now < deadline else { return "ERROR: window capture timed out" }
+                captured = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            }
+            guard ContinuousClock.now < deadline else { return "ERROR: window capture timed out" }
+            let rep = NSBitmapImageRep(cgImage: captured)
+            guard let png = rep.representation(using: .png, properties: [:]) else { return "ERROR: PNG encode failed" }
+            try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+            return "windowshot \(rep.pixelsWide)x\(rep.pixelsHigh) blank=\(looksBlank(rep)) -> \(path)"
+        } catch { return "ERROR: window capture: \(error.localizedDescription)" }
+    }
+
     /// Capture to `path`. Targets the rightmost scroll view's documentView (the
     /// Settings detail form) at full size; falls back to the whole content view.
     static func capture(to path: String) -> String {
@@ -59,10 +125,11 @@ enum DebugShot {
     /// a single detail ScrollView whose window-x can sit at the split, where a
     /// minX comparison mis-picks the sidebar.) The documentView holds the full,
     /// un-clipped content, so below-the-fold is captured without scrolling.
-    private static func detailScrollDocument(in root: NSView) -> NSView? {
+    private static func detailScrollDocument(in root: NSView, verticalOnly: Bool = false) -> NSView? {
         var docs: [NSView] = []
         func walk(_ v: NSView) {
-            if let s = v as? NSScrollView, let d = s.documentView { docs.append(d) }
+            if let s = v as? NSScrollView, let d = s.documentView,
+               !verticalOnly || d.bounds.height > s.contentSize.height + 1 { docs.append(d) }
             v.subviews.forEach(walk)
         }
         walk(root)
