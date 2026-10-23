@@ -150,16 +150,16 @@ struct AutomationTimelineView: View {
             ForEach(legendCategories, id: \.self) { c in
                 HStack(spacing: 4) {
                     Circle().fill(categoryColor(c)).frame(width: 7, height: 7)
-                    Text(categoryLabel(c)).font(.caption2).foregroundStyle(.secondary)
+                    Text(categoryLabel(c)).font(.caption).foregroundStyle(.secondary)
                 }
             }
             HStack(spacing: 4) {
-                Image(systemName: "wand.and.stars").font(.caption2).foregroundStyle(.purple)
-                Text(Strings.t("timeline.rule", default: "rule")).font(.caption2).foregroundStyle(.secondary)
+                Image(systemName: "wand.and.stars").font(.caption).foregroundStyle(.purple)
+                Text(Strings.t("timeline.rule", default: "rule")).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Text(Strings.t("timeline.legendHint", default: "Click a feature marker to edit its time; click a rule to open it in the Rules page."))
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
     }
@@ -299,7 +299,7 @@ private struct DayView: View {
             ForEach(0..<25) { h in
                 let y = CGFloat(h) * hourHeight
                 Text(h < 24 ? String(format: "%02d:00", h) : "")
-                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .trailing)
                     .offset(x: 0, y: y - 6)
                 Rectangle().fill(.quaternary).frame(height: 1)
@@ -342,10 +342,10 @@ private struct DayView: View {
 
     @ViewBuilder
     private func laneSection(_ title: String, _ rows: [TLItem], empty: String) -> some View {
-        Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.primary)
             .padding(.bottom, 6)
         if rows.isEmpty {
-            Text(empty).font(.caption).foregroundStyle(.tertiary).padding(.bottom, 4)
+            Text(empty).font(.caption).foregroundStyle(.secondary).padding(.bottom, 4)
         } else {
             ForEach(rows) { LaneChip(item: $0, store: store) }
         }
@@ -367,8 +367,8 @@ private struct DayMarker: View {
                 Circle().fill(item.tint.opacity(item.enabled ? 1 : 0.4))
                     .frame(width: 8, height: 8)
                 Text(fmtHM(item.minutesOfDay ?? 0))
-                    .font(.caption.monospacedDigit().weight(.medium))
-                Text(item.label).font(.caption).lineLimit(1)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                Text(item.label).font(.caption.weight(.medium)).lineLimit(1)
                 if item.isRule {
                     Image(systemName: "wand.and.stars").font(.system(size: 8))
                         .foregroundStyle(.purple).help(Strings.t("timeline.ruleMarkerHelp", default: "Automation rule -- click to open in the Rules page"))
@@ -433,8 +433,8 @@ private struct LaneChip: View {
                 Image(systemName: icon).font(.caption2)
                     .foregroundStyle(item.tint)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(item.label).font(.caption).lineLimit(1)
-                    Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    Text(item.label).font(.callout.weight(.medium)).lineLimit(1)
+                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
                 if item.isRule {
@@ -450,7 +450,7 @@ private struct LaneChip: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 5)
+            .padding(.horizontal, 8).padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.08)))
             .opacity(item.enabled ? 1 : 0.5)
         }
