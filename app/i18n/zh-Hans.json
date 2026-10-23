@@ -348,6 +348,7 @@
   "rules.windowIncomplete": "不完整 -- 设置应用和显示器，否则此窗口在保存时会被跳过。",
   "rules.lead.every": "每",
   "rules.lead.when": "当",
+  "rules.lead.then": "执行",
   "rules.lead.on": "于",
   "rules.lead.to": "就",
   "rules.tokenTriggerHelp": "这条规则监听什么",

@@ -634,18 +634,8 @@ private struct AddRuleForm: View {
             // LABEL that hides the editable field; a prompt stays an in-field placeholder.
             TextField(Strings.t("rules.namePlaceholder", default: "Name (optional)"),
                       text: $name, prompt: Text(namePlaceholder))
-            // The rule AS AN EDITABLE SENTENCE -- a row of token pills, each a
-            // tappable popover over the SAME @State the Pickers bound. The engine,
-            // buildSpec, loadForEdit, canSubmit and the seeders are all unchanged.
+            // Trigger and effect tokens edit the same form state as their popovers.
             sentenceRow
-            // chain/layout don't fit inline tokens: the effect-verb pill ("arrange
-            // windows" / "do several things") is the stem, and the existing block
-            // editor renders here beneath the row ("stem + block").
-            if selectedEffect?.kind == "layout" {
-                layoutEditor
-            } else if selectedEffect?.kind == "chain" {
-                chainEditor
-            }
             // The engine's grammatical read-back now lives in the Name field's
             // placeholder (namePlaceholder) -- self-documenting and one row tighter.
             // The footgun warning stays INLINE (not only in the app pill's popover):
@@ -939,18 +929,36 @@ private struct AddRuleForm: View {
         return store.ruleSentence(json)
     }
 
-    // --- Token sentence (the editable read-back) -------------------------------
-    // The rule rendered as a wrapping row of pill tokens. Each pill opens a popover
-    // bound to the SAME @State the old Pickers used, so buildSpec/loadForEdit/the
-    // engine are untouched -- this is a pure presentation swap (see the plan). The
-    // word ORDER mirrors rules.sentence (entity "value verb" / property "the label
-    // verb value" / event-schedule lead); the engine read-back beneath is the
-    // grammatical authority and a drift check.
+    // Trigger and effect stay in reading order. Each token opens its field editor;
+    // compound effects keep their additional controls inside the effect block.
     @ViewBuilder private var sentenceRow: some View {
-        FlowLayout(hSpacing: 6, vSpacing: 8) {
-            triggerTokens
-            sentenceWord(",")
-            effectTokens
+        VStack(alignment: .leading, spacing: 10) {
+            FlowLayout(hSpacing: 6, vSpacing: 8) {
+                triggerTokens
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.15)))
+            Image(systemName: "arrow.down")
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(.leading, 14)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 12) {
+                FlowLayout(hSpacing: 6, vSpacing: 8) {
+                    sentenceWord(Strings.t("rules.lead.then", default: "Then"), lead: true)
+                    effectTokens
+                }
+                if selectedEffect?.kind == "layout" {
+                    layoutEditor
+                } else if selectedEffect?.kind == "chain" {
+                    chainEditor
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.15)))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
