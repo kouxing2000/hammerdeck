@@ -408,17 +408,15 @@ final class IntegrationTests: XCTestCase {
     /// `hidutil property --set` is last-writer-wins and the spawn is no longer
     /// serialized by a blocking wait, so two writes on ONE path race -- and the
     /// losing order leaves Caps remapped to F18 with no tap running, a dead key
-    /// until the next launch reconciles it. The old shape had exactly that pair:
-    /// remap first, then undo it when `tapCreate` was denied, on the
-    /// no-Accessibility path a new user is on.
+    /// for the rest of the session. Remapping first and undoing it when
+    /// `tapCreate` is denied is exactly that pair, on the no-Accessibility path
+    /// a new user is on.
     ///
-    /// The invariant is the ORDER, not a call count. `enable()` legitimately
-    /// mentions the remap twice -- once to clear a stale one left by a crashed
-    /// session, once to apply a new one -- and those branches are mutually
-    /// exclusive, so counting text would fail the correct code. What must stay
-    /// true is that the apply follows `tapCreate`, because that is what leaves
-    /// the denied branch with nothing to undo. Nothing about creating the tap
-    /// depends on the remap: it filters on `f18KeyCode`.
+    /// The invariant is the ORDER: the apply follows `tapCreate`, which is what
+    /// leaves the denied branch with nothing to undo. Nothing about creating the
+    /// tap depends on the remap: it filters on `f18KeyCode`. And the denied branch
+    /// writes nothing at all -- `testCapsHyperNeverClearsARemapItDidNotApply` says
+    /// why -- so `enable()` never clears.
     ///
     /// A source scan rather than a behavioral test on purpose: exercising this
     /// needs the AX grant and remaps the machine's real keyboard.
@@ -462,6 +460,81 @@ final class IntegrationTests: XCTestCase {
             + "denied-grant path, and the two hidutil writes then race with no wait to "
             + "serialize them -- the losing order leaves Caps a dead key. Create the tap "
             + "first and apply the remap only on success.")
+        XCTAssertNil(body.range(of: "remapCapsToF18(false)"),
+            "enable() clears the remap. Its only failure is the denied grant, and a remap "
+            + "already in place then may belong to another running copy: clearing it kills "
+            + "that copy's Hyper key and the user's own hidutil remaps. Write nothing there.")
+    }
+
+    /// Hammerdeck never clears a Caps remap it did not apply.
+    ///
+    /// `hidutil`'s `UserKeyMapping` is one list per login, shared with the user's
+    /// own remapping tools and with every other running copy of Hammerdeck, and
+    /// the clear replaces the whole list. A launch with the pref off (the
+    /// default) that cleared it would wipe the user's own remaps on every launch
+    /// and quit, and kill the Hyper key of another copy running with it on.
+    ///
+    /// Behavioral, through the writer seam: the real write would remap the
+    /// machine's keyboard, and the default pref-off path is the one under test,
+    /// so it needs no Accessibility grant.
+    func testCapsHyperNeverClearsARemapItDidNotApply() {
+        _ = host
+        // Fatal, and before the writer swap: with a live tap, disable() below would
+        // tear it down while the fake writer swallowed the clear, leaving the real
+        // remap with no tap -- a dead Caps key.
+        guard !CapsHyperTap.shared.isEnabled else {
+            XCTFail("precondition: a Caps tap is live in the test process")
+            return
+        }
+        let key = CapsHyperPreference.key
+        let saved = UserDefaults.standard.object(forKey: key)
+        let realWriter = CapsHyperTap.remapCapsToF18
+        var writes: [Bool] = []
+        CapsHyperTap.remapCapsToF18 = { writes.append($0) }
+        defer {
+            CapsHyperTap.remapCapsToF18 = realWriter
+            if let saved { UserDefaults.standard.set(saved, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+
+        UserDefaults.standard.set(false, forKey: key)
+        CapsHyperPreference.apply()       // what every pref-off launch runs
+        CapsHyperTap.shared.disable()     // what every quit runs
+        XCTAssertEqual(writes, [],
+            "a process that never applied the Caps remap wrote to UserKeyMapping. That "
+            + "clears the user's own hidutil remaps and another running copy's Hyper key; "
+            + "only the process that applied the remap may clear it.")
+    }
+
+    /// The process that applied the Caps remap clears it on the way out, or a quit
+    /// leaves Caps a dead F18 key. The twin of the test above: together they pin
+    /// "only the applier clears" from both sides.
+    ///
+    /// Gated: it creates a real session event tap, which needs the Accessibility
+    /// grant and sits in the user's live input path while it runs. The writer seam
+    /// keeps the keyboard itself untouched.
+    func testCapsHyperClearsTheRemapItApplied() throws {
+        try requireUITests()
+        _ = host
+        guard !CapsHyperTap.shared.isEnabled else {
+            XCTFail("precondition: a Caps tap is live in the test process")
+            return
+        }
+        let realWriter = CapsHyperTap.remapCapsToF18
+        var writes: [Bool] = []
+        CapsHyperTap.remapCapsToF18 = { writes.append($0) }
+        defer {
+            CapsHyperTap.shared.disable()
+            CapsHyperTap.remapCapsToF18 = realWriter
+        }
+        guard CapsHyperTap.shared.enable() else {
+            throw XCTSkip("tapCreate denied -- this launch context has no Accessibility grant")
+        }
+        XCTAssertEqual(writes, [true], "enable() with the grant applies the remap once")
+        CapsHyperTap.shared.disable()
+        XCTAssertEqual(writes, [true, false],
+            "disable() in the process that applied the remap did not clear it, so a quit "
+            + "or a toggle-off would leave Caps a dead F18 key.")
     }
 
     /// `LuaState.call` reads `module[function]` off whatever `require` handed

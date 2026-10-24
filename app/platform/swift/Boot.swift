@@ -259,6 +259,9 @@ enum CapsHyperPreference {
     /// leave the user confused later. Distinct from apply()-on-launch, which must
     /// stay silent (no toast on every boot when it's already on).
     @MainActor static func userToggle(to on: Bool) {
+        // The tap is the remap's ownership test (CapsHyperTap.disable()): without
+        // one, turning off writes nothing, so "restored" would be a guess.
+        let owned = CapsHyperTap.shared.isEnabled
         set(on)
         apply()
         if on {
@@ -271,10 +274,14 @@ enum CapsHyperPreference {
                            text: "Grant Accessibility, then toggle again to enable.",
                            centered: true, seconds: 4)
             }
-        } else {
+        } else if owned {
             Toast.show(title: "Caps Lock restored",
                        text: "Caps Lock works normally again.",
                        centered: true, seconds: 2)
+        } else {
+            Toast.show(title: "Caps Lock → Hyper off",
+                       text: "If Caps Lock still does nothing, turn this on and off again, or restart the Mac.",
+                       centered: true, seconds: 4)
         }
     }
 }
@@ -575,8 +582,9 @@ public func hammerdeckMain() {
         forName: NSApplication.willTerminateNotification, object: nil, queue: .main
     ) { _ in
         MainActor.assumeIsolated {
-            // Restore plain Caps Lock on a clean quit (clears the hidutil remap);
-            // otherwise Caps would stay a dead F18 key until the next launch.
+            // Restore plain Caps Lock on a clean quit (clears the hidutil remap
+            // this process applied); otherwise Caps would stay a dead F18 key until
+            // a reboot, or until the feature is turned on again with the grant.
             CapsHyperTap.shared.disable()
             // Close the agent door explicitly rather than leaving it to process
             // teardown -- same reasoning as the feature stop below.
