@@ -737,7 +737,7 @@ end
 --- nothing is focused.
 ---@param ctx table the curated feature ctx
 ---@param featureName string shown in the Accessibility onboarding message
----@return table|nil frame `{x,y,w,h,fullscreen,screenIndex,screen={x,y,w,h}}`
+---@return table|nil frame `{x,y,w,h,fullscreen,transitioning,screenIndex,screen={x,y,w,h}}`
 function M.focusedOrAlert(ctx, featureName)
     local f = ctx.window.frame()
     if f then return f end

@@ -42,15 +42,22 @@ return {
         ok(lf.x == 0 and lf.y == 0 and lf.w == 1000 and lf.h == 800,
             "75% window toggles to maximized")
 
-        -- fullscreen: exits, then retries after the settle timer
+        -- Fire the settle wait's polls until it ends (bounded); returns how many.
+        local function settle()
+            local rounds = 0
+            while fake.fireTimers("after") > 0 and rounds < 100 do rounds = rounds + 1 end
+            return rounds
+        end
+
+        -- fullscreen: exits, then applies once the window has settled
         fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1, fullscreen = true }
         local framesBefore = #fake.windowFrames
         fake.pressHotkey("return", AC)
         ok(fake.fullscreenSets[#fake.fullscreenSets] == false and #fake.windowFrames == framesBefore,
             "fullscreen exits first, no frame change yet")
-        fake.fireTimers("after", 0.5)
+        settle()
         lf = lastFrame()
-        ok(lf.w == 750 and lf.h == 600, "the retry then applies the toggle")
+        ok(lf.w == 750 and lf.h == 600, "the toggle applies once the window has settled")
 
         -- W-6: the HALF snaps get the same fullscreen prologue the header promises.
         -- AX refuses a frame write to a fullscreen window, so without it `left` was a
@@ -63,10 +70,10 @@ return {
             ok(fake.fullscreenSets[#fake.fullscreenSets] == false
                 and #fake.windowFrames == before,
                 "a half-snap on a fullscreen window exits fullscreen first (W-6)")
-            fake.fireTimers("after", 0.5)
+            settle()
             lf = lastFrame()
             ok(lf.x == 0 and lf.w == 500 and lf.h == 800,
-                "...and the retry then applies the left half")
+                "...and the left half applies once the window has settled")
         end
 
         -- W-7: "already maximized" is a tolerance, not float equality. An app that
@@ -126,6 +133,108 @@ return {
             fake.pressHotkey("[", AC)
             ok(lastFrame().x < 0, "[ throws to the screen on the left")
             fake.screenList = saved
+        end
+
+        -- A fullscreen window thrown to another display waits for the window server
+        -- to finish the exit, not a fixed beat: AXFullScreen reads false at once
+        -- while the animation runs on, and a frame written inside it lands on the
+        -- new display still owned by the old display's Space -- drawn by neither.
+        do
+            fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1,
+                                   fullscreen = true }
+            local before = #fake.windowFrames
+            fake.pressHotkey("]", AC)
+            fake.focusedWindow.transitioning = true    -- the exit animation in flight
+            for _ = 1, 5 do fake.fireTimers("after") end
+            ok(#fake.windowFrames == before,
+                "no frame is written while the fullscreen exit is still in flight")
+            fake.focusedWindow.transitioning = false
+            fake.fireTimers("after")
+            ok(#fake.windowFrames == before + 1 and lastFrame().x >= 1000,
+                "...and the throw lands once the window server has caught up")
+        end
+
+        -- After a fullscreen exit nothing applies before the 0.5s floor, even when
+        -- the window reads settled at the first poll.
+        do
+            fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1,
+                                   fullscreen = true }
+            local before = #fake.windowFrames
+            fake.pressHotkey("]", AC)
+            for _ = 1, 4 do fake.fireTimers("after") end
+            ok(#fake.windowFrames == before, "no throw before the 0.5s floor after a fullscreen exit")
+            fake.fireTimers("after")
+            ok(#fake.windowFrames == before + 1, "...and it lands at the floor")
+        end
+
+        -- A window the window server never catches up with is thrown at the 3s
+        -- ceiling rather than never.
+        do
+            fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1,
+                                   transitioning = true }
+            local before = #fake.windowFrames
+            fake.pressHotkey("]", AC)
+            local rounds = settle()
+            ok(rounds < 100 and #fake.windowFrames == before + 1,
+                "a window that never settles is thrown at the ceiling, once")
+            fake.focusedWindow.transitioning = false
+        end
+
+        -- An app that never leaves fullscreen ends the wait instead of polling
+        -- forever: a retry would land straight back in the exit.
+        do
+            fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1,
+                                   fullscreen = true, fullscreenStuck = true }
+            local before = #fake.windowFrames
+            fake.pressHotkey("]", AC)
+            local rounds = 0
+            while fake.fireTimers("after") > 0 and rounds < 100 do rounds = rounds + 1 end
+            ok(rounds < 100 and #fake.windowFrames == before,
+                "a window that stays fullscreen stops the wait with nothing applied")
+        end
+
+        -- A press while the window server still lags waits too, with no fullscreen
+        -- write: AXFullScreen already reads false for a second press during the
+        -- exit, or for a press right after the user left fullscreen themselves.
+        do
+            fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1,
+                                   transitioning = true }
+            local sets, before = #fake.fullscreenSets, #fake.windowFrames
+            fake.pressHotkey("]", AC)
+            ok(#fake.windowFrames == before and #fake.fullscreenSets == sets,
+                "a lagging, non-fullscreen window waits without a fullscreen write")
+            fake.focusedWindow.transitioning = false
+            fake.fireTimers("after")
+            ok(#fake.windowFrames == before + 1, "...then throws once it has settled")
+        end
+
+        -- A second press during the wait is dropped, so the window is thrown once:
+        -- its own wait would land a second frame right after the first.
+        do
+            fake.focusedWindow = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1,
+                                   fullscreen = true }
+            local before = #fake.windowFrames
+            fake.pressHotkey("]", AC)
+            fake.focusedWindow.transitioning = true
+            fake.pressHotkey("]", AC)                  -- the impatient second press
+            fake.fireTimers("after")
+            ok(#fake.windowFrames == before, "a second press during the exit writes nothing")
+            fake.focusedWindow.transitioning = false
+            settle()
+            ok(#fake.windowFrames == before + 1, "...and the window is thrown once, not twice")
+        end
+
+        -- A poll that briefly finds no focused window keeps waiting.
+        do
+            local w = { x = 0, y = 0, w = 1000, h = 800, screenIndex = 1, fullscreen = true }
+            fake.focusedWindow = w
+            local before = #fake.windowFrames
+            fake.pressHotkey("]", AC)
+            fake.focusedWindow = nil
+            fake.fireTimers("after")
+            fake.focusedWindow = w
+            settle()
+            ok(#fake.windowFrames == before + 1, "a poll with no focused window keeps the wait going")
         end
 
         -- (The thirds are no longer hardcoded snap actions: they live as a QUICK-ADD

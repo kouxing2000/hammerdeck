@@ -61,6 +61,16 @@ local window_ops = require("platform.window_ops")
 ---@field w number
 ---@field h number
 
+---`ctx.window.frame()`: the focused window's frame plus where it sits.
+---@class FocusedFrame : Frame
+---@field fullscreen boolean
+---@field transitioning boolean  the window server still lags this frame: a
+---                              fullscreen exit in flight, or ~90ms after any
+---                              frame write. A frame written to ANOTHER display
+---                              now strands the window off every display.
+---@field screenIndex integer     indexes ctx.screen.frames()
+---@field screen Frame            that display's VISIBLE frame
+
 ---One row of `ctx.window.list()`, front-to-back stacking order (not focus recency).
 ---@class WindowInfo : Frame
 ---@field id integer          valid ONLY until the next list() -- never persist it
@@ -452,7 +462,7 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ---@param id integer from a CURRENT list() -- ids die at the next list
     ---@return boolean
     function ctx.window.focus(id)        return adapter.focusWindow(id) end
-    ---@return Frame|nil nil when there is no focused window / no permission
+    ---@return FocusedFrame|nil nil when there is no focused window / no permission
     function ctx.window.frame()          return adapter.focusedWindowFrame() end
     ---@return string|nil
     function ctx.window.title()          return adapter.focusedWindowTitle() end

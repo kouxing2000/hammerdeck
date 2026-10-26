@@ -2234,6 +2234,10 @@ final class IntegrationTests: XCTestCase {
             XCTAssertTrue((1...screens.count).contains(idx),
                           "screenIndex points into screenFrames()")
             XCTAssertNotNil((f["screen"] as? [String: Any])?["w"] as? Double)
+            // A window nobody is moving reads as caught up. Stuck at true, every
+            // Window Snap press would wait out its full 3s ceiling.
+            XCTAssertEqual(f["transitioning"] as? Bool, false,
+                           "a still window is not reported as transitioning")
         }
     }
 

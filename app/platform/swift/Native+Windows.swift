@@ -542,9 +542,29 @@ extension Native {
         lua_pushnumber(L, r.height); lua_setfield(L, -2, "h")
     }
 
-    // focused_window_frame() -> nil | { x,y,w,h, fullscreen, screenIndex,
-    // screen = {x,y,w,h} } -- screen is the window's screen's VISIBLE frame
-    // (menubar/dock excluded, hs screen:frame() parity).
+    /// Whether the window server has not yet caught up with the window's AX frame:
+    /// the window is missing from the window list, or listed at other bounds. That
+    /// is the fullscreen exit in flight. AXFullScreen reads false the instant it is
+    /// written, while the animation runs about 0.65s more (measured, TextEdit), and
+    /// a frame written inside it strands the window: it lands on the target display
+    /// still assigned to the old display's Space, so neither display draws it. An
+    /// unresolved wid answers false, so no caller waits on a window it cannot see.
+    private func windowServerLags(_ win: AXUIElement, behind frame: CGRect) -> Bool {
+        let wid = axStableWindowID(win)
+        guard wid != 0 else { return false }
+        guard let row = (CGWindowListCopyWindowInfo([.optionIncludingWindow], wid)
+                            as? [[String: Any]])?.first,
+              let bDict = row[kCGWindowBounds as String] as? [String: Any],
+              let bounds = CGRect(dictionaryRepresentation: bDict as CFDictionary)
+        else { return true }
+        return abs(bounds.minX - frame.minX) >= 2 || abs(bounds.minY - frame.minY) >= 2
+            || abs(bounds.width - frame.width) >= 2 || abs(bounds.height - frame.height) >= 2
+    }
+
+    // focused_window_frame() -> nil | { x,y,w,h, fullscreen, transitioning,
+    // screenIndex, screen = {x,y,w,h} } -- screen is the window's screen's VISIBLE
+    // frame (menubar/dock excluded, hs screen:frame() parity); transitioning is
+    // windowServerLags.
     func focusedWindowFrame(_ L: OpaquePointer?) -> Int32 {
         guard let win = focusedAXWindow() else {
             lua_pushnil(L)
@@ -557,6 +577,7 @@ extension Native {
         if AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &fsRef) == .success {
             fullscreen = (fsRef as? Bool) ?? false
         }
+        let transitioning = windowServerLags(win, behind: frame)
 
         // The window's screen: the one containing its midpoint, else the first.
         let screens = NSScreen.screens
@@ -571,6 +592,7 @@ extension Native {
 
         pushRect(L, frame)
         lua_pushboolean(L, fullscreen ? 1 : 0); lua_setfield(L, -2, "fullscreen")
+        lua_pushboolean(L, transitioning ? 1 : 0); lua_setfield(L, -2, "transitioning")
         lua_pushinteger(L, lua_Integer(screenIndex + 1)); lua_setfield(L, -2, "screenIndex")
         pushRect(L, visible); lua_setfield(L, -2, "screen")
         return 1

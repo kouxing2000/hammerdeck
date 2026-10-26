@@ -68,14 +68,23 @@ local function arrangerFor(ctx)
     end
 
     -- Run `op(f, stepw, steph)` -> new frame, on the focused window, with the
-    -- donor's fullscreen guard and history stash.
-    local function apply(op)
+    -- donor's fullscreen guard and history stash. `throw` marks a move to another
+    -- display: one written while the window server still lags the AX frame -- a
+    -- press inside the fullscreen exit below, which AXFullScreen reports done at
+    -- once -- leaves the window owned by the old display's Space, drawn by
+    -- neither. Only throws wait: the lag follows every frame write for ~90ms, so
+    -- gating nudges would drop fast key repeats.
+    local function apply(op, throw)
         local f = focused()
         if not f then return end
         if f.fullscreen then
             -- Exit fullscreen; the next key press applies normally.
             ctx.log("focused window is fullscreen -- exiting fullscreen, nothing applied")
             ctx.window.setFullscreen(false)
+            return
+        end
+        if throw and f.transitioning then
+            ctx.log("move-screen skipped -- the window is still settling (leaving fullscreen?)")
             return
         end
         local stepw, steph = steps(f)
@@ -172,7 +181,7 @@ local function arrangerFor(ctx)
             -- size kept (shrunk to fit) + clamp -- shared geometry (windows.lua).
             if not target then return nil end   -- unreachable (#screens >= 2); keeps types exact
             return W.moveToScreen(f, s, target, { keepSize = true })
-        end)
+        end, true)
     end
 
     local function snap(xR, yR, wR, hR)

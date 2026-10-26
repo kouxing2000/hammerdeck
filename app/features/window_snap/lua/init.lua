@@ -8,7 +8,8 @@
 --
 -- MULTI-ACTION feature: each arrangement is its own independently rebindable
 -- action (the donor's seven hotkeys). Fullscreen windows are taken out of
--- fullscreen first, then the arrangement retries (donor behavior).
+-- fullscreen first, and the arrangement applies once the window server has
+-- caught up (settleThen); a window that stays fullscreen is left alone.
 --
 -- Needs the Accessibility permission (focused-window frame surface); without
 -- it every action alerts the onboarding message.
@@ -16,7 +17,14 @@
 local W = require("platform.windows")
 local json = require("platform.json")
 
-local RETRY_SECONDS = 0.5   -- fullscreen exit settle time before retrying
+-- Leaving fullscreen: poll until the window server has finished (the exit runs
+-- about 0.65s, measured on TextEdit), giving up after 3s. After a fullscreen
+-- exit nothing applies before 0.5s either: the settle signal was measured on
+-- TextEdit alone, and an app whose window-list entry matched its AX frame early
+-- would otherwise be moved mid-exit at 0.1s.
+local EXIT_POLL_SECONDS = 0.1
+local EXIT_MIN_POLLS    = 5
+local EXIT_MAX_POLLS    = 30
 local TOGGLE_SCALE  = 0.75  -- the "smaller" size of the maximize toggle
 -- Slack, in px, for "is this window already maximized". Exact equality is the
 -- wrong test: an app that QUANTIZES the frame it accepts -- Terminal to character
@@ -36,31 +44,77 @@ local function arranger(ctx)
         return W.focusedOrAlert(ctx, "Window Arrange")
     end
 
-    -- Exit fullscreen and re-run `retry` after a beat (donor behavior).
-    local function unfullscreenThen(retry)
-        ctx.window.setFullscreen(false)
-        ctx.afterSeconds(RETRY_SECONDS, retry)
+    -- Whether `f` cannot take a frame yet. AX refuses a frame write to a
+    -- fullscreen window, so without this the shortcut is silent. And a frame
+    -- written while the window server still lags the AX frame strands the
+    -- window: after a fullscreen exit, which AXFullScreen reports done at once
+    -- while the animation runs on, a window moved to another display stays
+    -- assigned to the old display's Space and neither display draws it.
+    local function unsettled(f) return f.fullscreen or f.transitioning end
+
+    local waiting = false   -- a settleThen wait is in flight
+    -- Leave fullscreen if needed, then poll until the window has settled and run
+    -- `apply` with that settled frame -- polled, not a fixed beat, since how long
+    -- the exit runs is the app's business. A press during the wait is dropped:
+    -- its own wait would apply a second frame when this one lands. A window
+    -- still fullscreen at the end is NOT applied, which also ends the wait for
+    -- an app that refuses the exit.
+    local function settleThen(f, apply)
+        if waiting then
+            ctx.log("snap: still waiting for the window to settle -- press ignored")
+            return
+        end
+        waiting = true
+        ctx.log(string.format("snap: waiting to settle (fullscreen=%s, transitioning=%s)",
+            tostring(f.fullscreen), tostring(f.transitioning)))
+        local minPolls = f.fullscreen and EXIT_MIN_POLLS or 1
+        if f.fullscreen then ctx.window.setFullscreen(false) end
+        local polls = 0
+        local function check()
+            polls = polls + 1
+            local g = ctx.window.frame()
+            if (not g or unsettled(g) or polls < minPolls) and polls < EXIT_MAX_POLLS then
+                ctx.afterSeconds(EXIT_POLL_SECONDS, check)
+                return
+            end
+            waiting = false
+            if not g then
+                ctx.log("snap: no focused window when the wait ended -- nothing applied")
+            elseif g.fullscreen then
+                ctx.log(string.format(
+                    "snap: still fullscreen after %d polls -- nothing applied", polls))
+            elseif g.transitioning then
+                ctx.log(string.format(
+                    "snap: gave up waiting after %d polls -- applying anyway", polls))
+                apply(g)
+            else
+                ctx.log(string.format("snap: settled after %d polls", polls))
+                apply(g)
+            end
+        end
+        ctx.afterSeconds(EXIT_POLL_SECONDS, check)
     end
+
+    -- Each action below takes an optional `settled` frame: the one settleThen
+    -- waited for, applied as-is. Without it the action reads the focused window
+    -- and waits first when that window is unsettled.
 
     -- Snap to a screen-ratio rect: x/y position, w/h size (donor's
     -- positionWindow).
-    function a.snap(xR, yR, wR, hR)
-        local f = focused()
+    function a.snap(xR, yR, wR, hR, settled)
+        local f = settled or focused()
         if not f then return end
-        -- Same prologue as every other action here, and the one the header
-        -- promises: AX refuses a frame write to a fullscreen window, so without
-        -- it the shortcut is silent -- no move, no alert, nothing in the log.
-        if f.fullscreen then
-            return unfullscreenThen(function() a.snap(xR, yR, wR, hR) end)
+        if not settled and unsettled(f) then
+            return settleThen(f, function(g) a.snap(xR, yR, wR, hR, g) end)
         end
         ctx.window.setFrame(W.rectFromRatios(f.screen, xR, yR, wR, hR))
     end
 
     -- Maximized (full width or height) -> centered 75%; else maximize.
-    function a.toggleMax()
-        local f = focused()
+    function a.toggleMax(settled)
+        local f = settled or focused()
         if not f then return end
-        if f.fullscreen then return unfullscreenThen(a.toggleMax) end
+        if not settled and unsettled(f) then return settleThen(f, a.toggleMax) end
         local s = f.screen
         if f.w >= s.w - MAX_SLACK or f.h >= s.h - MAX_SLACK then
             local m = (1 - TOGGLE_SCALE) / 2
@@ -75,11 +129,12 @@ local function arranger(ctx)
     -- shared least-distortion geometry (windows.moveToScreen). The pointer is
     -- carried over at the same relative spot and flashed.
     ---@param dir ScreenDir
-    function a.moveScreen(dir)
-        local f = focused()
+    ---@param settled table|nil
+    function a.moveScreen(dir, settled)
+        local f = settled or focused()
         if not f then return end
-        if f.fullscreen then
-            return unfullscreenThen(function() a.moveScreen(dir) end)
+        if not settled and unsettled(f) then
+            return settleThen(f, function(g) a.moveScreen(dir, g) end)
         end
         local screens = ctx.screen.frames()
         if #screens < 2 then

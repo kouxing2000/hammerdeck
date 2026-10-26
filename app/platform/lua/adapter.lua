@@ -683,7 +683,10 @@ end
 -- ---------------------------------------------------------------------------
 
 -- nil when there is no focused window (or no permission); else
--- { x,y,w,h, fullscreen, screenIndex, screen = {x,y,w,h} }.
+-- { x,y,w,h, fullscreen, transitioning, screenIndex, screen = {x,y,w,h} }.
+-- `transitioning` is true while the window server is still catching up with the
+-- AX frame -- the fullscreen exit animation, which runs on after AXFullScreen
+-- already reads false. A frame written then strands the window off every display.
 function adapter.focusedWindowFrame()
     return native.focused_window_frame()
 end

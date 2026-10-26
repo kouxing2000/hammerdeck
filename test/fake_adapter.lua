@@ -856,6 +856,7 @@ function adapter.focusedWindowFrame()
     return {
         x = w.x, y = w.y, w = w.w, h = w.h,
         fullscreen = w.fullscreen == true,
+        transitioning = w.transitioning == true,
         screenIndex = idx,
         screen = fake.screenList[idx],
     }
@@ -917,7 +918,9 @@ end
 
 function adapter.setFocusedWindowFullscreen(on)
     fake.fullscreenSets[#fake.fullscreenSets + 1] = on
-    if fake.focusedWindow then fake.focusedWindow.fullscreen = on end
+    -- fullscreenStuck: an app that ignores the write and stays fullscreen
+    local w = fake.focusedWindow
+    if w and not w.fullscreenStuck then w.fullscreen = on end
     return true
 end
 

@@ -63,6 +63,20 @@ return {
             and fake.windowFrames[#fake.windowFrames].w == 800,
             "right-arrow moves to the right screen, size kept")
 
+        -- A throw while the window server still lags the AX frame (a press inside a
+        -- fullscreen exit) writes nothing: it would land on the other display still
+        -- owned by the old display's Space. Nudges stay ungated.
+        do
+            fake.focusedWindow = { x = 200, y = 200, w = 400, h = 300, screenIndex = 1,
+                                   transitioning = true }
+            local before = #fake.windowFrames
+            fake.pressHotkey("right", {})
+            ok(#fake.windowFrames == before, "a throw on a settling window writes nothing")
+            fake.pressHotkey("a", {})
+            ok(#fake.windowFrames == before + 1, "a nudge on a settling window still applies")
+            fake.focusedWindow.transitioning = false
+        end
+
         -- escape exits: banner gone, bare keys dead
         local xBefore = fake.focusedWindow.x
         fake.pressHotkey("escape", {})
