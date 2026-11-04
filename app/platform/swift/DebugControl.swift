@@ -103,8 +103,9 @@ enum DebugControl {
                         .trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
                     DebugControl.openSettings?(id.isEmpty ? nil : id)
                     out = "opened settings\(id.isEmpty ? "" : ":" + id)"
-                } else if code.hasPrefix("@windowshot:") {
-                    let path = String(code.dropFirst("@windowshot:".count))
+                } else if code.hasPrefix("@windowshot:") || code.hasPrefix("@panelshot:") {
+                    let panel = code.hasPrefix("@panelshot:")
+                    let path = String(code.drop(while: { $0 != ":" }).dropFirst())
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     let deadline = ContinuousClock.now.advanced(by: .seconds(6))
                     var replied = false
@@ -115,7 +116,7 @@ enum DebugControl {
                         replied = true
                         try? result.write(toFile: resPath, atomically: true, encoding: .utf8)
                     }
-                    Task { reply(await DebugShot.captureWindow(to: path, deadline: deadline)) }
+                    Task { reply(await DebugShot.captureWindow(to: path, panel: panel, deadline: deadline)) }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                         reply("ERROR: window capture timed out")
                     }

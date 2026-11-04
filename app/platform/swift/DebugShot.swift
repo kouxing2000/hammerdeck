@@ -38,9 +38,14 @@ enum DebugShot {
 
     /// Compositor pixels preserve native materials. The current-process query and
     /// exact window id keep this capture within the app's own content.
-    static func captureWindow(to path: String, deadline: ContinuousClock.Instant) async -> String {
+    /// `panel` picks the key floating panel (a chat, a chooser) instead of the
+    /// main window.
+    static func captureWindow(to path: String, panel: Bool = false,
+                              deadline: ContinuousClock.Instant) async -> String {
         guard #available(macOS 14.4, *) else { return "ERROR: window capture needs macOS 14.4" }
-        guard let window = targetWindow() else { return "ERROR: no window to capture" }
+        guard let window = panel ? targetPanel() : targetWindow() else {
+            return "ERROR: no \(panel ? "panel" : "window") to capture"
+        }
         let id = CGWindowID(window.windowNumber)
         do {
             let content = try await SCShareableContent.currentProcess
@@ -107,6 +112,14 @@ enum DebugShot {
             return "ERROR: write failed: \(error)"
         }
         return "shot \(Int(bounds.width))x\(Int(bounds.height)) blank=\(looksBlank(rep)) -> \(path)"
+    }
+
+    /// The floating panel to capture: the visible KEY one (a chat, a chooser). A
+    /// fallback by level would pick a click-through overlay (a deck scrim, an
+    /// outline) over the panel meant. NSApp.windows, not orderedWindows, which
+    /// leaves panels out.
+    private static func targetPanel() -> NSWindow? {
+        NSApp.windows.first { $0.isVisible && $0.isKeyWindow && $0 is FloatingPanel }
     }
 
     /// A visible main-capable window (the homepage / Settings), preferring the

@@ -34,11 +34,13 @@ Three capture paths, not two. Picking the wrong one is the usual time sink.
 |---|---|---|
 | **Settings window / Homepage** (visible window, light or dark) | `scripts/control.sh '@windowshot:<path>'` | none; macOS 14.4+ |
 | **Full scroll document** (including below the fold, light only) | `scripts/control.sh '@shot:<path>'` | none |
-| **Native panels** (chooser, banner, hint cards) | `scripts/shot.sh out.png` | Screen Recording |
+| **Key native panels** (chat, chooser) | `scripts/control.sh '@panelshot:<path>'` | none; macOS 14.4+ |
+| **Other native panels** (banner, hint cards) | `scripts/shot.sh out.png` | Screen Recording |
 | **Menubar menu** (the status-bar popup) | `scripts/menu-shot.sh out.png` | Screen Recording **+** Accessibility |
 
-`@shot` cannot reach the native panels: they are `FloatingPanel: NSPanel` and
-`DebugShot.targetWindow()` filters `NSPanel` out.
+`@shot` and `@windowshot` cannot reach the native panels: they are `FloatingPanel: NSPanel`
+and `DebugShot.targetWindow()` filters `NSPanel` out. `@panelshot` targets them instead;
+open the panel first (a `control.sh` Lua call), then capture.
 
 `scripts/shot.sh` cannot reliably frame the **menubar menu** -- it is a transient
 popup that flashes, toggles closed, and shifts position with the other menu
@@ -66,6 +68,7 @@ before the Lua eval; the whole channel is inside `#if DEBUG` with a release no-o
 | `@chordhint` | **toggle** the chord which-key hint card (no armed chord to time it out) |
 | `@shot[:<path>]` | in-process self-capture; default `/tmp/hammerdeck-shot.png` |
 | `@windowshot:<path>` | compositor capture of this app's selected window, including native materials |
+| `@panelshot:<path>` | the same capture of the key floating panel (chat, chooser) |
 | `@appearance:light\|dark\|system` | temporary app appearance; does not persist the preference |
 | `@size:<width>x<height>` | set the selected window's content size in points; reports actual bounds |
 | `@scroll:<fraction>` | scroll the widest vertical document from top (`0`) to bottom (`1`); reports the visible rect |
