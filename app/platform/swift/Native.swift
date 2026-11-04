@@ -33,6 +33,7 @@ final class Native {
     var roomPanels: [Int32: RoomPanel] = [:]
     var progresses: [Int32: ProgressPanel] = [:]
     var askTexts: [Int32: AskTextPanel] = [:]
+    var chats: [Int32: ChatPanel] = [:]
     var widgets: [Int32: UsageWidgetPanel] = [:]
     var mouseLocator: MouseLocatorPanel?
 
@@ -102,6 +103,7 @@ final class Native {
         roomPanels[id] = nil
         progresses[id] = nil
         askTexts[id] = nil
+        chats[id] = nil
         widgets[id] = nil
     }
 
@@ -169,6 +171,8 @@ final class Native {
             "ask_windows":  { L in MainActor.assumeIsolated { Native.shared.askWindows(L) } },
             "ask_text":     { L in MainActor.assumeIsolated { Native.shared.askText(L) } },
             "ask_text_dismiss": { L in MainActor.assumeIsolated { Native.shared.askTextDismiss(L) } },
+            "chat_show":    { L in MainActor.assumeIsolated { Native.shared.chatShow(L) } },
+            "chat_set_messages": { L in MainActor.assumeIsolated { Native.shared.chatSetMessages(L) } },
             "outline_show":      { L in MainActor.assumeIsolated { Native.shared.outlineShow(L) } },
             "outline_set_frame": { L in MainActor.assumeIsolated { Native.shared.outlineSetFrame(L) } },
             "outline_set_style": { L in MainActor.assumeIsolated { Native.shared.outlineSetStyle(L) } },

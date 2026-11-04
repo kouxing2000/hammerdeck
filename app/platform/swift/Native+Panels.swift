@@ -514,6 +514,65 @@ extension Native {
         return 0
     }
 
+    // MARK: - Chat (a floating conversation)
+
+    // Args: title, placeholder, onSend(text) -- each Enter or send click with
+    // non-blank text -- and onClose() -- Escape or the close button, at most once.
+    // Both callbacks stay registered until the window closes or stop is called.
+    func chatShow(_ L: OpaquePointer?) -> Int32 {
+        let title = LuaState.string(L, 1) ?? ""
+        let placeholder = LuaState.string(L, 2) ?? ""
+        let sendRef = lua.makeRef(at: 3)
+        let closeRef = lua.makeRef(at: 4)
+
+        let id = allocId()
+        var done = false
+        let release = {
+            Native.shared.lua.releaseRef(sendRef)
+            Native.shared.lua.releaseRef(closeRef)
+        }
+        let panel = ChatPanel(title: title, placeholder: placeholder, onSend: { text in
+            guard !done else { return }
+            Native.shared.lua.callRef(sendRef) { L in
+                lua_pushstring(L, text)
+                return 1
+            }
+        }, onClose: {
+            guard !done else { return }
+            done = true
+            Native.shared.lua.callRef(closeRef)
+            release()
+            Native.shared.freeResource(id)
+        })
+        cancellers[id] = {
+            if !done {
+                done = true
+                release()
+            }
+            // Deferred close: see the askWindows canceller.
+            DispatchQueue.main.async { panel.close() }
+        }
+        chats[id] = panel
+        lua_pushinteger(L, lua_Integer(id))
+        return 1
+    }
+
+    // Replace a chat's conversation. Args: id, an array of {role = "user" |
+    // "assistant" | "note", text}, busy (a typing bubble after the last turn).
+    // A late call for a closed chat finds no panel and does nothing.
+    func chatSetMessages(_ L: OpaquePointer?) -> Int32 {
+        guard let id = LuaState.int(L, 1).map(Int32.init), let chat = chats[id] else { return 0 }
+        let rows = (LuaState.any(L, 2) as? [Any]) ?? []
+        var turns: [ChatTurn] = []
+        for case let row as [String: Any] in rows {
+            guard let text = row["text"] as? String else { continue }
+            let role = ChatTurn.Role(rawValue: row["role"] as? String ?? "") ?? .note
+            turns.append(ChatTurn(id: turns.count, role: role, text: text))
+        }
+        chat.setTurns(turns, busy: LuaState.bool(L, 3) ?? false)
+        return 0
+    }
+
     // MARK: - Outline (click-through accent border overlays: member/hero/ghost)
 
     func outlineShow(_ L: OpaquePointer?) -> Int32 {

@@ -25,6 +25,7 @@ fake.dialogs       = {}   -- see adapter.askChoice
 fake.banners       = {}   -- {text, stopped}
 fake.huds          = {}   -- {spec, title, stopped}
 fake.textPrompts   = {}   -- see adapter.askText
+fake.chats         = {}   -- see adapter.chat
 fake.progressBars  = {}   -- {fraction, stopped}
 fake.windows       = {}   -- preset by the test for listWindows()
 fake.focused       = {}   -- focusWindow(id) calls
@@ -646,6 +647,34 @@ function adapter.askText(opts)
     return {
         dismiss = function() finish(nil) end,
         stop    = function() d.open = false; freeOnce(d) end,
+    }
+end
+
+function adapter.chat(opts)
+    local c = {
+        title = opts.title, placeholder = opts.placeholder,
+        turns = {}, busy = false, open = true, stopped = false,
+    }
+    fake.chats[#fake.chats + 1] = c
+    alloc()
+    -- test-side drivers, mirroring the panel: Enter / send with text (blank, or
+    -- while busy, is held back; the window stays), and Escape / the close button,
+    -- which reports onClose BEFORE freeing, as the bridge does, so a stop() from
+    -- inside onClose runs against a still-registered handle.
+    function c.send(text)
+        if c.open and not c.busy and text:match("%S") and opts.onSend then opts.onSend(text) end
+    end
+    function c.close()
+        if not c.open then return end
+        c.open = false
+        if opts.onClose then opts.onClose() end
+        freeOnce(c)
+    end
+    return {
+        setMessages = function(turns, busy)
+            if c.open then c.turns = turns; c.busy = busy == true end
+        end,
+        stop = function() c.open = false; freeOnce(c) end,
     }
 end
 
@@ -1640,6 +1669,13 @@ end
 function fake.openTextPrompt()
     for i = #fake.textPrompts, 1, -1 do
         if fake.textPrompts[i].open then return fake.textPrompts[i] end
+    end
+    return nil
+end
+
+function fake.openChat()
+    for i = #fake.chats, 1, -1 do
+        if fake.chats[i].open then return fake.chats[i] end
     end
     return nil
 end

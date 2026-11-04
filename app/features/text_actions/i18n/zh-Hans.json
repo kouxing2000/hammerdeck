@@ -1,6 +1,6 @@
 {
   "name": "文本操作",
-  "description": "在任意位置对选中文本执行操作：打开网址，改变大小写，计算，在 macOS 词典中查询，以及 -- 配合 OpenAI 密钥 -- 通过 AI 润色/翻译/摘要。结果就地粘贴回去。",
+  "description": "在任意位置对选中文本执行操作：打开网址，改变大小写，计算，在 macOS 词典中查询，以及 -- 配合 OpenAI 密钥 -- 交给 AI 处理。润色、丰富、补全的结果就地粘贴回去；摘要、翻译、自由提问会打开一个可以继续追问的窗口。",
   "summary": "对选中的文字执行操作。",
 
   "dialog.title": "对 [%s] 的操作",
@@ -10,13 +10,16 @@
   "alert.noKey": "请先在设置中填写 OpenAI API 密钥",
   "alert.aiFailed": "AI 请求失败 (%s)",
   "alert.aiNoResult": "AI 没有返回结果",
+  "alert.pasted": "%s：已粘贴，也在剪贴板里",
+  "chat.placeholder": "继续追问",
+  "chat.translateInto": "翻译成%s",
   "alert.noneEnabled": "没有启用任何文本操作 -- 请在设置中开启一些",
   "alert.notExpr": "不是表达式：%s",
   "alert.calcFailed": "计算失败：%s",
   "prompt.translate.title": "翻译成哪种语言？",
   "prompt.translate.ph": "例如 French，日本語",
   "prompt.instruct.title": "对选中文本的指令",
-  "prompt.instruct.ph": "例如 让它更正式一些",
+  "prompt.instruct.ph": "例如 这段话想说明什么？",
 
   "action.dictionary": "词典",
   "action.lowercase": "小写",
@@ -30,7 +33,7 @@
   "action.aiFreeAsk": "AI：自由提问",
 
   "action.quick_open.label": "对选中文本执行操作",
-  "action.quick_open.description": "复制选中内容，然后提供一个菜单：打开网址，改变大小写，计算，在词典中查询，或 (配合密钥) 通过 AI 处理 -- 结果就地粘贴回去。",
+  "action.quick_open.description": "复制选中内容，然后提供一个菜单：打开网址，改变大小写，计算，在词典中查询，或 (配合密钥) 交给 AI 处理 -- 修改类结果就地粘贴回去，回答类结果在可以继续追问的窗口里打开。",
   "action.quick_open.mnemonic": "O - 对选区执行操作 (act On)",
 
   "option.showLowercase.label": "显示小写",

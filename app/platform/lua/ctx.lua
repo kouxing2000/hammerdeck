@@ -380,6 +380,10 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     -- returned handle in its onChoose to drop it from the scope immediately.
     function ctx.askWindows(opts) return track(adapter.askWindows(opts)) end
     function ctx.askText(opts)   return track(adapter.askText(opts)) end
+    -- A floating chat window (see adapter.chat); the feature keeps the
+    -- conversation and hands the whole of it to setMessages after each change.
+    -- Call the handle's stop() in onClose, or it stays in scope until disable.
+    function ctx.chat(opts)      return track(adapter.chat(opts)) end
     -- `screenFrame` (optional, a ctx.screen.frames() row) pins the banner to
     -- that screen's top edge (else: the key window's screen).
     function ctx.banner(text, screenFrame)

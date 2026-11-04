@@ -88,7 +88,7 @@ A feature ships **off** unless its row says *on by default* -- those work from a
 
 - **Insert Date/Time** -- Type the current date and time into the focused field, in a format you choose (or a custom strftime pattern). <sub>Reaches: types keystrokes.</sub>
 - **Paste as Plain Text** -- Paste without formatting: strips fonts/colors/links from the copied text and pastes it (or types it as keystrokes). <sub>Reaches: types keystrokes.</sub>
-- **Text Actions** -- Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- refine/translate/summarize via AI. Results paste back in place. <sub>Reaches: types keystrokes, network.</sub>
+- **Text Actions** -- Act on the selected text anywhere: open URLs, change case, calculate, look up in the macOS Dictionary, and -- with an OpenAI key -- run it through AI. Refine, enrich and complete paste back in place; summary, translate and free ask open a window where you can keep asking. <sub>Reaches: types keystrokes, network.</sub>
 
 ### Health
 

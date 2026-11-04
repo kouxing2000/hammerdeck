@@ -450,6 +450,29 @@ function adapter.askText(opts)
     }
 end
 
+---@class ChatTurnSpec
+---@field role "user"|"assistant"|"note"
+---@field text string
+
+-- A floating chat window: the conversation as bubbles (the user's turns on the
+-- right, replies on the left, notes centred) above an input line. opts:
+--   title, placeholder,
+--   onSend(text) -- each Enter or send click with non-blank text; the window stays
+--   onClose()    -- Escape or the close button, at most once (not on stop)
+-- Returns { setMessages(turns, busy), stop }: setMessages replaces the whole
+-- conversation; busy shows a typing bubble after the last turn.
+---@param opts { title: string?, placeholder: string?, onSend: fun(text: string)?, onClose: fun()? }
+---@return { setMessages: fun(turns: ChatTurnSpec[], busy: boolean?), stop: fun() }
+function adapter.chat(opts)
+    local id = native.chat_show(opts.title or "", opts.placeholder or "",
+        function(text) if opts.onSend then opts.onSend(text) end end,
+        function() if opts.onClose then opts.onClose() end end)
+    return {
+        setMessages = function(turns, busy) native.chat_set_messages(id, turns, busy == true) end,
+        stop        = function() native.stop(id) end,
+    }
+end
+
 -- A click-through accent BORDER drawn around a window region (Window Deck's
 -- member/hero/ghost markers). `kind` styles it: "member" (subtle), "hero"
 -- (strong), "ghost" (faint dashed). `f` is a top-left-origin global-points rect

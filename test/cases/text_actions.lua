@@ -1,7 +1,8 @@
 -- test/cases/text_actions.lua -- text_actions: capture the current selection (via a
 -- synthesized cmd+c), then open/transform/paste it back. Covers URL passthrough, the
 -- four base transforms, the math sandbox, dict:// + a custom dict app, the AI actions
--- (gated on a VALIDATED key), per-action toggles, translate's {lang} template, and the
+-- (gated on a VALIDATED key; editing ones paste back, reading ones open the follow-up
+-- chat window), per-action toggles, translate's {lang} template, and the
 -- empty-selection path.
 --
 -- Migrated from run.lua T22 (RUN_LUA_SPLIT_SPEC Phase 2). Hermetic: registers its own
@@ -25,6 +26,13 @@ return {
 
         registry.register(require("features.text_actions"))
         registry.setEnabled("text_actions", true)
+
+        -- A chat window's conversation as one comparable line: "role: text | ...".
+        local function said(c)
+            local out = {}
+            for _, turn in ipairs(c.turns) do out[#out + 1] = turn.role .. ": " .. turn.text end
+            return table.concat(out, " | ")
+        end
 
         local function invokeOnSelection(text)
             fake.pasteboard = nil
@@ -131,6 +139,11 @@ return {
         ok(fake.pasteboard == "REFINED", "AI result trimmed and pasted back")
         ok(sent.messages[1].content:match("^Refine and improve") ~= nil,
             "default refine system prompt sent when not customized")
+        ok(fake.alerts[#fake.alerts] == "AI: Refine: pasted, and on your clipboard",
+            "an editing action says where the reply went (a read-only paste lands nowhere)")
+        local refineBanner = fake.banners[#fake.banners]
+        ok(refineBanner.text == "AI: Refine …" and refineBanner.stopped,
+            "a banner shows while the request runs and goes when the reply lands")
 
         -- the per-action system prompt is editable: a custom aiRefinePrompt is what gets sent
         fake.settings["hammerdeck.opt.text_actions.aiRefinePrompt"] = "Make it pirate-speak."
@@ -162,6 +175,12 @@ return {
         ok(fake.httpRequests[#fake.httpRequests].method == "POST", "translate fires after the language prompt")
         local tReq = require("platform.json").decode(fake.httpRequests[#fake.httpRequests].body)
         ok(tReq.messages[1].content:match("French") ~= nil, "target language woven into the system prompt")
+        local tChat = fake.openChat()
+        ok(tChat ~= nil and said(tChat) == "user: Translate into French\nhello | assistant: REFINED"
+            and not tChat.busy,
+            "translate's reply opens in the chat window, under the request it answers")
+        ok(fake.pasteboard == "hello", "and is not pasted over the selection")
+        tChat.close()
 
         -- a custom translate template's {lang} token is substituted with the entered language
         fake.settings["hammerdeck.opt.text_actions.aiTranslatePrompt"] = "Render into {lang} only."
@@ -171,7 +190,71 @@ return {
         local tReq2 = require("platform.json").decode(fake.httpRequests[#fake.httpRequests].body)
         ok(tReq2.messages[1].content == "Render into Japanese only.",
             "custom translate template substitutes {lang}")
+        fake.openChat().close()
         fake.settings["hammerdeck.opt.text_actions.aiTranslatePrompt"] = nil
+
+        -- summary, a reading action, opens its reply in the chat window, and the
+        -- window carries the conversation on
+        local json = require("platform.json")
+        invokeOnSelection("long article text")
+        fake.openDialog().choose("AI: Summary")
+        local sReq = json.decode(fake.httpRequests[#fake.httpRequests].body)
+        ok(not sReq.messages[1].content:lower():find("language", 1, true),
+            "the default summary prompt names no language (a language clause got English text "
+            .. "summarized in Spanish)")
+        local chat = fake.openChat()
+        ok(chat ~= nil and said(chat) == "user: long article text | assistant: REFINED",
+            "the window opens on the selection as the first turn, the summary under it")
+        ok(fake.pasteboard == "long article text", "and is not pasted over the selection")
+        chat.send("why?")
+        local fReq = json.decode(fake.httpRequests[#fake.httpRequests].body)
+        ok(#fReq.messages == 4 and fReq.messages[3].role == "assistant"
+            and fReq.messages[3].content == "REFINED" and fReq.messages[4].content == "why?",
+            "a follow-up resends the whole conversation, reply included")
+        ok(chat.open and said(chat)
+            == "user: long article text | assistant: REFINED | user: why? | assistant: REFINED",
+            "the window shows the question and the new reply")
+        local sentSoFar = #fake.httpRequests
+        chat.send("   ")
+        ok(#fake.httpRequests == sentSoFar, "a blank Enter sends nothing")
+
+        -- while a reply is on its way the window holds the next question back, so
+        -- every reply lands under the question it answers
+        fake.deferAsync = true
+        chat.send("and then?")
+        ok(chat.busy, "a typing bubble shows while the reply is on its way")
+        chat.send("one more")
+        ok(#fake.httpRequests == sentSoFar + 1 and chat.turns[#chat.turns].text == "and then?",
+            "a question typed meanwhile is neither sent nor shown")
+        fake.deliverAsync()
+        ok(not chat.busy and chat.turns[#chat.turns].role == "assistant",
+            "the reply lands under its question")
+        chat.send("one more")
+        ok(#fake.httpRequests == sentSoFar + 2, "then the next question goes out")
+        local qReq = json.decode(fake.httpRequests[#fake.httpRequests].body)
+        ok(qReq.messages[#qReq.messages].content == "one more"
+            and qReq.messages[#qReq.messages - 1].role == "assistant",
+            "after that reply, keeping the conversation in order")
+        -- Escape while that one is still out: the window closes and the late reply is dropped
+        local before = said(chat)
+        chat.close()
+        ok(not chat.open, "Escape closes the window")
+        fake.deliverAsync()
+        ok(said(chat) == before, "the reply still in flight is dropped")
+        fake.deferAsync = false
+        -- free ask: the instruction typed for it heads the request in the history
+        invokeOnSelection("long article text")
+        fake.openDialog().choose("AI: Free ask")
+        fake.openTextPrompt().submit("make it formal")
+        local askChat = fake.openChat()
+        ok(said(askChat) == "user: make it formal\nlong article text | assistant: REFINED",
+            "free ask shows the instruction over the selection, then the reply")
+        askChat.close()
+        local closedLogged = false
+        for _, l in ipairs(fake.logs) do
+            if l:find("ai aiSummary: chat closed after 3 replies", 1, true) then closedLogged = true end
+        end
+        ok(closedLogged, "closing the window logs how many replies it held")
 
         -- failure path: a non-200 alerts and does not paste
         fake.pasteboard = "untouched"
@@ -179,6 +262,33 @@ return {
         invokeOnSelection("draft text")
         fake.openDialog().choose("AI: Refine")
         ok(fake.alerts[#fake.alerts]:match("AI request failed") ~= nil, "AI failure alerts")
+        invokeOnSelection("draft text")
+        fake.openDialog().choose("AI: Summary")
+        local failedChat = fake.openChat()
+        ok(said(failedChat) == "user: draft text | note: AI request failed (500)",
+            "a failed reply shows in the window as a note")
+        local function lastSent()
+            local out = {}
+            for _, m in ipairs(json.decode(fake.httpRequests[#fake.httpRequests].body).messages) do
+                out[#out + 1] = m.content
+            end
+            return table.concat(out, " | ")
+        end
+        fake.httpResponses[OPENAI_TEST_URL] =
+            { status = 200, body = '{"choices":[{"message":{"content":"OK"}}]}' }
+        failedChat.send("still there?")
+        ok(lastSent():find("draft text | still there?", 1, true) ~= nil,
+            "after a failed first reply the selection stays in the conversation")
+        fake.httpResponses[OPENAI_TEST_URL] = { status = 500, body = "oops" }
+        failedChat.send("lost question")
+        fake.httpResponses[OPENAI_TEST_URL] =
+            { status = 200, body = '{"choices":[{"message":{"content":"OK"}}]}' }
+        failedChat.send("next question")
+        ok(not lastSent():find("lost question", 1, true) and lastSent():find("next question", 1, true),
+            "a question whose request failed is not resent with the next one")
+        ok(said(failedChat):find("user: lost question | note: AI request failed (500)", 1, true) ~= nil,
+            "though it stays on screen with its failure")
+        failedChat.close()
         fake.secrets["hammerdeck.opt.text_actions.openaiKey"] = nil
         fake.settings["hammerdeck.state.text_actions.openaiKey__validated"] = nil
 

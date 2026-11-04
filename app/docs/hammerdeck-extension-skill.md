@@ -286,7 +286,8 @@ end
   arrow keys, and Return then picks the wrong row.
 - Also on the handle: `hide`, `isVisible`, `setTitle(text, sfSymbol?, badge?)`
   (all strings; a numeric badge disappears), `setQuery`, `getQuery`, `stop`. For
-  a one-shot question, `ctx.askChoice` and `ctx.askText` are simpler.
+  a one-shot question, `ctx.askChoice` and `ctx.askText` are simpler; for a
+  conversation, `ctx.chat` opens a chat window you feed with `setMessages`.
 
 **Persisted state** — `ctx.getState(key, default)` / `ctx.setState(key, value)`
 survive restarts and are private to your feature. Values must be boolean, number

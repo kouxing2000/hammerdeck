@@ -9,9 +9,12 @@
 -- as a Lua expression in a math-only sandbox), Dictionary (the macOS Dictionary
 -- via dict:// by default; a custom app via launchOrFocus+paste+return if configured),
 -- and -- once an OpenAI key is entered AND validated in Settings -- six AI
--- actions (refine, enrich, complete, translate, summary, freeAsk) that send the
--- selection to OpenAI chat completions and paste the reply back. The AI entries
--- stay hidden until the key validates (ctx.getState("openaiKey__validated")).
+-- actions that send the selection to OpenAI chat completions. The EDITING ones
+-- (refine, enrich, complete) paste the reply back over the selection; the
+-- READING ones (summary, translate, freeAsk) open the reply in a follow-up chat
+-- window instead, because the text they run on is often read-only (a web page,
+-- a PDF), where a paste lands nowhere. The AI entries stay hidden until the key
+-- validates (ctx.getState("openaiKey__validated")).
 --
 -- Every AI action's SYSTEM PROMPT is a per-action option (aiRefinePrompt, ...),
 -- so the user can tune what each one asks the model -- the strings below are
@@ -56,8 +59,10 @@ local PROMPTS = {
         .. "keeping its meaning and language. Return only the result.",
     complete = "Continue and complete the following text naturally. "
         .. "Return only the continuation appended to the original.",
-    summary = "Summarize the following text concisely in its own language. "
-        .. "Return only the summary.",
+    -- No language clause: with one ("in its own language", "in the same language
+    -- as the text") gpt-4o-mini answers English text in Spanish; without one it
+    -- answers in the text's language.
+    summary = "Summarize the following text concisely. Return only the summary.",
     translate = "Translate the following into {lang}. Return only the translation.",
 }
 
@@ -65,13 +70,15 @@ local PROMPTS = {
 -- a `promptOpt` -- the option key holding its editable system prompt. translate
 -- and freeAsk are handled specially (they prompt for input first): translate
 -- still has an editable prompt (with a {lang} token); free ask's prompt IS the
--- user's run-time instruction, so it has no promptOpt. AI entries appear only
--- when BOTH the key is validated and the entry's toggle is on.
+-- user's run-time instruction, so it has no promptOpt. `chat` marks a reading
+-- action whose reply opens in the follow-up window; translate and freeAsk open
+-- it too, once their input is in. AI entries appear only when BOTH the key is
+-- validated and the entry's toggle is on.
 local AI_ACTIONS = {
     { id = "aiRefine",    label = "AI: Refine",    opt = "showAiRefine",    promptOpt = "aiRefinePrompt",    icon = "symbol:wand.and.stars" },
     { id = "aiEnrich",    label = "AI: Enrich",    opt = "showAiEnrich",    promptOpt = "aiEnrichPrompt",    icon = "symbol:sparkles" },
     { id = "aiComplete",  label = "AI: Complete",  opt = "showAiComplete",  promptOpt = "aiCompletePrompt",  icon = "symbol:text.append" },
-    { id = "aiSummary",   label = "AI: Summary",   opt = "showAiSummary",   promptOpt = "aiSummaryPrompt",   icon = "symbol:list.bullet.rectangle" },
+    { id = "aiSummary",   label = "AI: Summary",   opt = "showAiSummary",   promptOpt = "aiSummaryPrompt",   chat = true, icon = "symbol:list.bullet.rectangle" },
     { id = "aiTranslate", label = "AI: Translate", opt = "showAiTranslate", promptOpt = "aiTranslatePrompt", translate = true, icon = "symbol:globe" },
     { id = "aiFreeAsk",   label = "AI: Free ask",  opt = "showAiFreeAsk",   freeAsk = true,                  icon = "symbol:questionmark.bubble" },
 }
@@ -107,39 +114,151 @@ local function pasteBack(ctx, text)
     ctx.keyStroke({ "cmd" }, "v")
 end
 
--- Send `content` to OpenAI with `systemPrompt`; paste the reply back over the
--- selection. Async (httpPost): the result lands in the completion callback.
+---@class ChatMessage
+---@field role "system"|"user"|"assistant"
+---@field content string
+
+-- One chat-completions call over `messages`. Async (httpPost): `cb(reply)` gets
+-- the trimmed reply, or `cb(nil, failure)` a localized reason. Logs what was sent
+-- (sizes, never the text) and how it came back. Returns the request handle
+-- (stop() drops a reply still in flight), or nil when no key is set.
 ---@param ctx Ctx
-local function askAI(ctx, content, systemPrompt)
+---@param what string the action id, for the log
+---@param messages ChatMessage[]
+---@param cb fun(reply: string|nil, failure: string|nil)
+---@return { stop: fun() }|nil
+local function requestAI(ctx, what, messages, cb)
     local key = ctx.secret("openaiKey")
     if not key or key == "" then
-        ctx.alert(ctx.t("alert.noKey", "Set an OpenAI API key in Settings first"))
-        return
+        ctx.log("ai " .. what .. ": no API key")
+        cb(nil, ctx.t("alert.noKey", "Set an OpenAI API key in Settings first"))
+        return nil
     end
-    local body = json.encode(json.asObject({
-        model = ctx.opt("model"),
-        messages = json.asArray({
-            json.asObject({ role = "system", content = systemPrompt }),
-            json.asObject({ role = "user",   content = content }),
-        }),
-    }))
-    ctx.httpPost(OPENAI_URL, {
+    local model = ctx.opt("model")
+    local wire, bytes = {}, 0
+    for i, m in ipairs(messages) do
+        wire[i] = json.asObject({ role = m.role, content = m.content })
+        bytes = bytes + #m.content
+    end
+    local body = json.encode(json.asObject({ model = model, messages = json.asArray(wire) }))
+    ctx.log(string.format("ai %s: sent (model %s, %d messages, %d bytes)",
+        what, tostring(model), #messages, bytes))
+    local started = ctx.now()
+    return ctx.httpPost(OPENAI_URL, {
         ["Content-Type"]  = "application/json",
         ["Authorization"] = "Bearer " .. key,
     }, body, function(status, respBody)
+        local secs = ctx.now() - started
         if status ~= 200 or not respBody then
-            ctx.alert(ctx.t("alert.aiFailed", "AI request failed (%s)", tostring(status)))
+            ctx.log(string.format("ai %s: failed (status %s, %ds)", what, tostring(status), secs))
+            cb(nil, ctx.t("alert.aiFailed", "AI request failed (%s)", tostring(status)))
             return
         end
         local doc = json.decode(respBody)
         local msg = doc and doc.choices and doc.choices[1] and doc.choices[1].message
         local result = msg and msg.content
-        if not result then
-            ctx.alert(ctx.t("alert.aiNoResult", "AI returned no result"))
+        if type(result) ~= "string" then
+            ctx.log(string.format("ai %s: status 200 but no reply text (%ds)", what, secs))
+            cb(nil, ctx.t("alert.aiNoResult", "AI returned no result"))
             return
         end
-        pasteBack(ctx, (result:gsub("^%s*(.-)%s*$", "%1")))
+        local reply = (result:gsub("^%s*(.-)%s*$", "%1"))
+        ctx.log(string.format("ai %s: reply (%d bytes, %ds)", what, #reply, secs))
+        cb(reply)
     end)
+end
+
+-- An EDITING action: send the selection, paste the reply back over it. A banner
+-- shows while the request runs, and a toast says where the reply went -- over
+-- read-only text the paste does nothing, and the clipboard still holds it.
+---@param ctx Ctx
+local function pasteAI(ctx, entry, content, systemPrompt)
+    local label = ctx.t("action." .. entry.id, entry.label)
+    local banner = ctx.banner(label .. " …")
+    requestAI(ctx, entry.id, {
+        { role = "system", content = systemPrompt },
+        { role = "user",   content = content },
+    }, function(reply, failure)
+        banner.stop()
+        if not reply then
+            ctx.alert(failure)
+            return
+        end
+        pasteBack(ctx, reply)
+        ctx.log("ai " .. entry.id .. ": pasted back")
+        ctx.alert(ctx.t("alert.pasted", "%s: pasted, and on your clipboard", label))
+    end)
+end
+
+-- A READING action: the reply opens in a chat window (ctx.chat), where the
+-- conversation shows as bubbles. It opens on the request -- what the user typed
+-- for it (translate's target, free ask's instruction) over the selection -- and
+-- the selection is the first user message; each follow-up adds a question and
+-- sends the whole conversation again. The window holds a question back while a
+-- reply is on its way, so turns stay in order. A question whose request failed
+-- leaves the conversation the model sees (it stays on screen with the failure),
+-- so the next one does not carry it along unanswered. Closing the window drops a
+-- reply still in flight.
+---@param ctx Ctx
+---@param request string|nil
+local function openChat(ctx, entry, content, systemPrompt, request)
+    local label = ctx.t("action." .. entry.id, entry.label)
+    ---@type ChatMessage[]
+    local messages = {
+        { role = "system", content = systemPrompt },
+        { role = "user",   content = content },
+    }
+    -- What the window shows: the request, then replies, failures and questions.
+    ---@type ChatTurnSpec[]
+    local turns = { { role = "user", text = (request and (request .. "\n") or "") .. content } }
+    local replies = 0
+    local pending, chat = nil, nil
+    local function show()
+        if chat then chat.setMessages(turns, pending ~= nil) end
+    end
+    local function send()
+        -- The reply can arrive before requestAI returns (no key), so `pending`
+        -- is set only while the request is genuinely still out.
+        local landed = false
+        local handle = requestAI(ctx, entry.id, messages, function(reply, failure)
+            landed = true
+            pending = nil
+            if reply then
+                messages[#messages + 1] = { role = "assistant", content = reply }
+                turns[#turns + 1] = { role = "assistant", text = reply }
+                replies = replies + 1
+            else
+                if #messages > 2 then messages[#messages] = nil end
+                turns[#turns + 1] = { role = "note", text = failure or "" }
+            end
+            show()
+        end)
+        if not landed then pending = handle end
+    end
+    chat = ctx.chat {
+        title = label,
+        placeholder = ctx.t("chat.placeholder", "Ask a follow-up"),
+        onSend = function(text)
+            if pending then
+                ctx.log("ai " .. entry.id .. ": follow-up ignored, a reply is still on its way")
+                return
+            end
+            messages[#messages + 1] = { role = "user", content = text }
+            turns[#turns + 1] = { role = "user", text = text }
+            send()
+            show()
+        end,
+        onClose = function()
+            if pending then pending.stop() end
+            pending = nil
+            ctx.log(string.format("ai %s: chat closed after %d replies", entry.id, replies))
+            local closing = chat
+            chat = nil
+            if closing then closing.stop() end
+        end,
+    }
+    send()
+    show()
 end
 
 -- Build the picker from the enabled toggles: base transforms, plus AI entries
@@ -205,20 +324,23 @@ local function runEntry(ctx, content, entry)
                     -- gsub with a function replacement so a "%" in the language
                     -- can't be read as a capture reference.
                     local tmpl = ctx.opt(entry.promptOpt)
-                    askAI(ctx, content, (tmpl:gsub("{lang}", function() return lang end)))
+                    openChat(ctx, entry, content, (tmpl:gsub("{lang}", function() return lang end)),
+                        ctx.t("chat.translateInto", "Translate into %s", lang))
                 end
             end,
         }
     elseif entry.freeAsk then
         ctx.askText {
             title = ctx.t("prompt.instruct.title", "Instruction for the selected text"),
-            placeholder = ctx.t("prompt.instruct.ph", "e.g. make this more formal"),
+            placeholder = ctx.t("prompt.instruct.ph", "e.g. what does this imply?"),
             onSubmit = function(prompt)
-                if prompt and prompt ~= "" then askAI(ctx, content, prompt) end
+                if prompt and prompt ~= "" then openChat(ctx, entry, content, prompt, prompt) end
             end,
         }
+    elseif entry.chat then
+        openChat(ctx, entry, content, ctx.opt(entry.promptOpt))
     elseif entry.promptOpt then
-        askAI(ctx, content, ctx.opt(entry.promptOpt))
+        pasteAI(ctx, entry, content, ctx.opt(entry.promptOpt))
     end
 end
 
@@ -228,7 +350,9 @@ end
 ---@param ctx Ctx
 local function actOnSelection(ctx, content)
     if content == "" then
-        if not ctx.axTrusted() then
+        local trusted = ctx.axTrusted()
+        ctx.log("nothing selected (Accessibility granted: " .. tostring(trusted) .. ")")
+        if not trusted then
             ctx.axPrompt()
             ctx.alert(ctx.t("alert.axRequired",
                 "Selection Actions needs the Accessibility permission to read the selection -- grant it in System Settings, then try again"))
@@ -240,16 +364,19 @@ local function actOnSelection(ctx, content)
 
     -- URL: open it directly, no picker.
     if content:lower():find("^https?://") then
+        ctx.log("selection is a URL -- opened")
         ctx.openURL(content)
         return
     end
 
     local actions, byId = buildPicker(ctx)
     if #actions == 0 then
+        ctx.log("picker empty: every action is switched off")
         ctx.alert(ctx.t("alert.noneEnabled", "No Text Actions are enabled -- turn some on in Settings"))
         return
     end
 
+    ctx.log(string.format("picker: %d actions for a %d-byte selection", #actions, #content))
     local snippet = content:sub(1, 24)
     ctx.askChoice {
         title = ctx.t("dialog.title", "Action for [%s]", snippet),
@@ -257,6 +384,7 @@ local function actOnSelection(ctx, content)
         actions = actions,
         onChoose = function(choice)
             local entry = choice and byId[choice]
+            ctx.log("picker: " .. (entry and entry.id or "dismissed"))
             if entry then runEntry(ctx, content, entry) end
         end,
     }
@@ -340,14 +468,15 @@ return {
             label = "Act on selected text",
             description = "Copies the selection, then offers a menu: open URLs, change "
                 .. "case, calculate, look it up in a dictionary, or (with a key) run it "
-                .. "through AI -- the result pastes back in place.",
+                .. "through AI -- edits paste back in place, answers open in a window "
+                .. "you can keep asking in.",
             defaultTrigger = { type = "hotkey", mods = { "cmd", "alt", "ctrl" }, key = "o" },
             mnemonic = "O — act On the selection",
             ---@param ctx Ctx
             run = function(ctx)
                 -- Capture the selection (cmd+C), then act on it once it has
                 -- reached the clipboard. The body lives in the module-level
-                -- helpers above (pasteBack / askAI / buildPicker / runEntry /
+                -- helpers above (pasteBack / requestAI / buildPicker / runEntry /
                 -- actOnSelection) -- this closure is just the copy + handoff.
                 ctx.keyStroke({ "cmd" }, "c")
                 ctx.afterSeconds(COPY_SETTLE_SECONDS, function()
