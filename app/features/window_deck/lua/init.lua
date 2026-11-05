@@ -988,7 +988,6 @@ local function controllerFor(ctx)
             -- this panel is open.
 
             onChoose = function(kept, heroOn)
-                if h then h.stop() end   -- drop the one-shot from the scope
                 st.panel = nil
                 st.picking = false
                 if not kept then return st.releaseScreen() end   -- cancelled

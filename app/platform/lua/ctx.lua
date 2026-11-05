@@ -174,6 +174,20 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
         return h
     end
 
+    -- A one-shot PANEL (a picker, a prompt, the chat window) is the same thing:
+    -- its end callback `endCb` (the pick, the submit, the close) is its delivery,
+    -- so the handle retires there and the caller never has to stop() it. The
+    -- caller's opts are copied, not modified. Stopping a panel from inside its own
+    -- end callback is safe: the bridge defers the close past the panel's frame.
+    local function trackPanel(open, opts, endCb)
+        local o = {}
+        for k, v in pairs(opts) do o[k] = v end
+        return trackOneShot(function(onEnd)
+            o[endCb] = onEnd
+            return open(o)
+        end, opts[endCb])
+    end
+
     local scope = {}
     function scope.adopt(raw) return track(raw) end
     function scope.teardown()
@@ -371,19 +385,19 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
     ---One-shot "pick an action" dialog. `onChoose` receives the chosen row's
     ---stable id (or its 1-based index when the row declares none) -- NOT the
     ---label. Dismissal passes nil alone. See adapter.askChoice for why.
+    ---askChoice, askWindows, askText and chat leave the scope by themselves when
+    ---they end (see trackPanel); stop() is only for closing one early.
     ---@param opts { title: string?, infos: string[]?, actions: (ChoiceAction|string)[], onChoose: fun(choiceId: string|integer|nil, label: string?) }
     ---@return Handle handle -- also carries dismiss()
-    function ctx.askChoice(opts) return track(adapter.askChoice(opts)) end
+    function ctx.askChoice(opts) return trackPanel(adapter.askChoice, opts, "onChoose") end
     -- One-shot multi-select picker (rows optionally grouped under a header with a
-    -- whole-group Deck button; see adapter.askWindows). The one-shot frees itself
-    -- on completion, so a well-behaved caller stops the
-    -- returned handle in its onChoose to drop it from the scope immediately.
-    function ctx.askWindows(opts) return track(adapter.askWindows(opts)) end
-    function ctx.askText(opts)   return track(adapter.askText(opts)) end
+    -- whole-group Deck button; see adapter.askWindows).
+    function ctx.askWindows(opts) return trackPanel(adapter.askWindows, opts, "onChoose") end
+    function ctx.askText(opts)   return trackPanel(adapter.askText, opts, "onSubmit") end
     -- A floating chat window (see adapter.chat); the feature keeps the
     -- conversation and hands the whole of it to setMessages after each change.
-    -- Call the handle's stop() in onClose, or it stays in scope until disable.
-    function ctx.chat(opts)      return track(adapter.chat(opts)) end
+    -- It leaves the scope on onClose (onSend can fire any number of times).
+    function ctx.chat(opts)      return trackPanel(adapter.chat, opts, "onClose") end
     -- `screenFrame` (optional, a ctx.screen.frames() row) pins the banner to
     -- that screen's top edge (else: the key window's screen).
     function ctx.banner(text, screenFrame)
@@ -649,8 +663,7 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
         if not arb then return deny("lost the arbitration race") end
         arb = track(arb)   -- scope-tracked: teardown must be able to free the slot
 
-        local h
-        h = ctx.askChoice {
+        ctx.askChoice {
             title = ctx.t("window.modeBusy", "%1$s is using this screen", busy),
             infos = { ctx.t("window.modeBusyInfo",
                 "%1$s needs this screen to itself. Quitting %2$s puts its windows back "
@@ -660,7 +673,6 @@ function M.make(m, resolveTrigger, extra, confirmFlash)
                 { id = "cancel", label = ctx.t("window.modeBusyCancel", "Cancel") },
             },
             onChoose = function(choice)
-                if h then h.stop() end
                 if choice ~= "quit" then
                     arb.stop()
                     return deny(busy .. " keeps the screen (cancelled)")

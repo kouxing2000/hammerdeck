@@ -252,9 +252,7 @@ local function openChat(ctx, entry, content, systemPrompt, request)
             if pending then pending.stop() end
             pending = nil
             ctx.log(string.format("ai %s: chat closed after %d replies", entry.id, replies))
-            local closing = chat
             chat = nil
-            if closing then closing.stop() end
         end,
     }
     send()

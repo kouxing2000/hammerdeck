@@ -134,5 +134,42 @@ return {
             "a timer still pending at disable never fires")
         ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0,
             "clean after the timer probe")
+
+        -- A one-shot PANEL retires the same way when it ends -- the pick, the
+        -- submit, the chat window's close -- so a caller that never stops the
+        -- handle does not leave a scope entry per use until disable.
+        local pctx
+        registry.register({
+            api = 1,
+            id = "panel_probe",
+            name = "Panel probe",
+            start = function(ctx) pctx = ctx end,
+        })
+        registry.setEnabled("panel_probe", true)
+        local pbase = registry.liveHandleCount()
+        local got, sends = {}, 0
+        pctx.askChoice({ actions = { "A" }, onChoose = function(id) got.choice = id end })
+        pctx.askWindows({ items = { { text = "w" } }, onChoose = function(kept) got.kept = kept and #kept end })
+        pctx.askText({ onSubmit = function(text) got.text = text end })
+        pctx.chat({ onSend = function() sends = sends + 1 end, onClose = function() got.closed = true end })
+        ok(registry.liveHandleCount() == pbase + 4, "four open panels are tracked handles")
+        fake.openChat().send("hi")
+        ok(sends == 1 and registry.liveHandleCount() == pbase + 4, "a chat's onSend does not retire it")
+        fake.openDialog().choose("A")
+        fake.openWindowPicker().confirm()
+        fake.openTextPrompt().submit("x")
+        fake.openChat().close()
+        ok(got.choice == 1 and got.kept == 1 and got.text == "x" and got.closed == true,
+            "each panel's own end callback still runs")
+        ok(registry.liveHandleCount() == pbase,
+            "four ended panels leave no dead scope entries (got "
+            .. registry.liveHandleCount() .. ", expected " .. pbase .. ")")
+        pctx.askText({ onSubmit = function(text) got.escaped = text == nil end })
+        fake.openTextPrompt().submit(nil)
+        ok(got.escaped and registry.liveHandleCount() == pbase, "a dismissed panel retires too")
+        pctx.askText({ onSubmit = function() got.late = true end })
+        registry.setEnabled("panel_probe", false)
+        ok(fake.openTextPrompt() == nil and not got.late, "a panel still open at disable closes with it")
+        ok(registry.liveHandleCount() == 0 and fake.liveHandles == 0, "clean after the panel probe")
     end,
 }
