@@ -256,6 +256,53 @@ return {
         end
         ok(closedLogged, "closing the window logs how many replies it held")
 
+        -- a long selection shows in the first bubble as its opening; the model
+        -- still gets all of it
+        local words = {}
+        for i = 1, 200 do words[i] = "word" .. i end
+        local longText = table.concat(words, " ")
+        invokeOnSelection(longText)
+        fake.openDialog().choose("AI: Summary")
+        local longChat = fake.openChat()
+        local first = longChat.turns[1].text
+        local shownPart = first:sub(1, -4)   -- "…" is 3 bytes
+        ok(first:sub(-3) == "…" and utf8.len(shownPart) <= 300
+            and longText:sub(1, #shownPart) == shownPart,
+            "a long selection shows as its first 300 characters and an ellipsis (got "
+            .. #first .. " bytes)")
+        ok(longText:sub(#shownPart + 1, #shownPart + 1) == " ", "cut after a whole word")
+        longChat.close()
+        -- character 300 ends a word: that word stays (7-char units: 42 of them,
+        -- then "abcdef" fills 295-300 and a space is 301)
+        invokeOnSelection(("abcdef "):rep(60))
+        fake.openDialog().choose("AI: Summary")
+        longChat = fake.openChat()
+        first = longChat.turns[1].text
+        ok(utf8.len(first) == 301 and first:sub(-9) == "abcdef…",
+            "a cut that already ends a word keeps that word (got " .. utf8.len(first) .. " characters)")
+        longChat.close()
+        invokeOnSelection(longText)
+        fake.openDialog().choose("AI: Summary")
+        longChat = fake.openChat()
+        ok(json.decode(fake.httpRequests[#fake.httpRequests].body).messages[2].content == longText,
+            "the model gets the whole selection")
+        longChat.close()
+        invokeOnSelection(string.rep("汉", 400))
+        fake.openDialog().choose("AI: Summary")
+        ok(fake.openChat().turns[1].text == string.rep("汉", 300) .. "…",
+            "text with no spaces is cut at 300 whole characters")
+        fake.openChat().close()
+        invokeOnSelection("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8")
+        fake.openDialog().choose("AI: Summary")
+        ok(fake.openChat().turns[1].text == "l1\nl2\nl3\nl4\nl5\nl6…",
+            "a many-line selection shows its first six lines")
+        fake.openChat().close()
+        invokeOnSelection("l1\nl2\nl3\nl4\nl5\nl6\n")
+        fake.openDialog().choose("AI: Summary")
+        ok(fake.openChat().turns[1].text == "l1\nl2\nl3\nl4\nl5\nl6",
+            "six lines and a trailing newline show whole, with no ellipsis")
+        fake.openChat().close()
+
         -- failure path: a non-200 alerts and does not paste
         fake.pasteboard = "untouched"
         fake.httpResponses[OPENAI_TEST_URL] = { status = 500, body = "oops" }
@@ -289,6 +336,38 @@ return {
         ok(said(failedChat):find("user: lost question | note: AI request failed (500)", 1, true) ~= nil,
             "though it stays on screen with its failure")
         failedChat.close()
+
+        -- OpenAI's error code names the cause in words the user can act on
+        local function failWith(status, code)
+            fake.httpResponses[OPENAI_TEST_URL] = { status = status,
+                body = '{"error":{"message":"m","type":"t","code":"' .. code .. '"}}' }
+            invokeOnSelection("draft text")
+            fake.openDialog().choose("AI: Summary")
+            local c = fake.openChat()
+            local note = c.turns[#c.turns].text
+            c.close()
+            return note
+        end
+        ok(failWith(429, "insufficient_quota") == "Your OpenAI account is out of credit",
+            "an account out of credit says so")
+        ok(failWith(401, "invalid_api_key") == "OpenAI rejected the API key -- check it in Settings",
+            "a rejected key says so")
+        ok(failWith(400, "context_length_exceeded") == "The text is too long for the model",
+            "text over the model's limit says so")
+        ok(failWith(429, "rate_limit_exceeded") == "AI request failed (429)",
+            "any other code keeps the status")
+        local function logged(s)
+            for i = #fake.logs, 1, -1 do
+                if fake.logs[i]:find(s, 1, true) then return true end
+            end
+            return false
+        end
+        ok(logged("ai aiSummary: failed (status 429, rate_limit_exceeded"), "the log names the code")
+        fake.httpResponses[OPENAI_TEST_URL] = { status = 429, body = '{"error":{"code":"insufficient_quota"}}' }
+        invokeOnSelection("draft text")
+        fake.openDialog().choose("AI: Refine")
+        ok(fake.alerts[#fake.alerts] == "Your OpenAI account is out of credit",
+            "an editing action alerts the same reason")
         fake.secrets["hammerdeck.opt.text_actions.openaiKey"] = nil
         fake.settings["hammerdeck.state.text_actions.openaiKey__validated"] = nil
 

@@ -118,6 +118,64 @@ end
 ---@field role "system"|"user"|"assistant"
 ---@field content string
 
+-- The `code` OpenAI's error body names the failure by, or nil when the body has
+-- none (a network failure, a proxy's HTML page).
+---@param respBody string|nil
+---@return string|nil
+local function errorCode(respBody)
+    local doc = json.decode(respBody)
+    local err = type(doc) == "table" and doc.error or nil
+    local code = type(err) == "table" and err.code or nil
+    return type(code) == "string" and code or nil
+end
+
+-- Why a call failed, in words the user can act on: the three causes they can do
+-- something about get their own message, anything else shows the HTTP status.
+---@param ctx Ctx
+---@param status integer|nil
+---@param code string|nil
+---@return string
+local function failureReason(ctx, status, code)
+    if code == "insufficient_quota" then
+        return ctx.t("alert.aiNoCredit", "Your OpenAI account is out of credit")
+    elseif code == "invalid_api_key" then
+        return ctx.t("alert.aiBadKey", "OpenAI rejected the API key -- check it in Settings")
+    elseif code == "context_length_exceeded" then
+        return ctx.t("alert.aiTooLong", "The text is too long for the model")
+    end
+    return ctx.t("alert.aiFailed", "AI request failed (%s)", tostring(status))
+end
+
+-- The selection (already trimmed, see the action's run) as the chat window's
+-- first bubble shows it: at most SHOWN_LINES lines and SHOWN_CHARS characters,
+-- cut after a word when one ends in the second half, and "…" when anything was
+-- left out. Display only: the model always gets the whole selection.
+local SHOWN_CHARS, SHOWN_LINES = 300, 6
+---@param text string
+---@return string
+local function excerpt(text)
+    local cut, byChars = #text, false
+    local lines, from = 0, 1
+    while true do
+        local nl = text:find("\n", from, true)
+        if not nl then break end
+        lines = lines + 1
+        if lines == SHOWN_LINES then cut = nl - 1; break end
+        from = nl + 1
+    end
+    -- utf8.offset keeps the cut on a character boundary (CJK is 3 bytes a char).
+    local after = utf8.offset(text, SHOWN_CHARS + 1)
+    if after and after <= cut then cut, byChars = after - 1, true end
+    if cut >= #text then return text end
+    local shown = text:sub(1, cut)
+    -- A cut that already ends a word (whitespace follows) keeps that word.
+    if byChars and not text:sub(cut + 1, cut + 1):match("%s") then
+        local space = shown:match(".*()%s")
+        if space and space > cut / 2 then shown = shown:sub(1, space - 1) end
+    end
+    return (shown:gsub("%s+$", "")) .. "…"
+end
+
 -- One chat-completions call over `messages`. Async (httpPost): `cb(reply)` gets
 -- the trimmed reply, or `cb(nil, failure)` a localized reason. Logs what was sent
 -- (sizes, never the text) and how it came back. Returns the request handle
@@ -150,8 +208,10 @@ local function requestAI(ctx, what, messages, cb)
     }, body, function(status, respBody)
         local secs = ctx.now() - started
         if status ~= 200 or not respBody then
-            ctx.log(string.format("ai %s: failed (status %s, %ds)", what, tostring(status), secs))
-            cb(nil, ctx.t("alert.aiFailed", "AI request failed (%s)", tostring(status)))
+            local code = errorCode(respBody)
+            ctx.log(string.format("ai %s: failed (status %s%s, %ds)", what, tostring(status),
+                code and (", " .. code) or "", secs))
+            cb(nil, failureReason(ctx, status, code))
             return
         end
         local doc = json.decode(respBody)
@@ -192,8 +252,9 @@ end
 
 -- A READING action: the reply opens in a chat window (ctx.chat), where the
 -- conversation shows as bubbles. It opens on the request -- what the user typed
--- for it (translate's target, free ask's instruction) over the selection -- and
--- the selection is the first user message; each follow-up adds a question and
+-- for it (translate's target, free ask's instruction) over the selection's
+-- opening lines (excerpt) -- and the whole selection is the first user message
+-- the model gets; each follow-up adds a question and
 -- sends the whole conversation again. The window holds a question back while a
 -- reply is on its way, so turns stay in order. A question whose request failed
 -- leaves the conversation the model sees (it stays on screen with the failure),
@@ -210,7 +271,7 @@ local function openChat(ctx, entry, content, systemPrompt, request)
     }
     -- What the window shows: the request, then replies, failures and questions.
     ---@type ChatTurnSpec[]
-    local turns = { { role = "user", text = (request and (request .. "\n") or "") .. content } }
+    local turns = { { role = "user", text = (request and (request .. "\n") or "") .. excerpt(content) } }
     local replies = 0
     local pending, chat = nil, nil
     local function show()
