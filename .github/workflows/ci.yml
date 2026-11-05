@@ -106,7 +106,7 @@ jobs:
           brew install lua-language-server
           scripts/check-lua-types.sh
 
-      # Real-bridge integration tests. The 8 gated UI tests auto-skip here
+      # Real-bridge integration tests. The gated UI tests auto-skip here
       # (HAMMERDECK_UI_TESTS unset), so this is the reliable per-commit gate.
       # Same link flags as the dev and release builds (scripts/lib/sdk-link-flags.sh
       # says why), so CI links the way a shipped binary does.
