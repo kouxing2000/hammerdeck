@@ -458,11 +458,11 @@ extension Native {
     }
 
     /// FileManager walk of the standard install roots, one subfolder level deep
-    /// (Utilities, vendor folders). Entries are visited sorted with
-    /// /Applications first, so dedupe keeps the user-visible copy of an app
-    /// that exists in two roots. Names come from Finder's display name (the
-    /// same derivation AppCatalog uses everywhere), so the launcher and the
-    /// host's app pickers agree on what an app is called. Pure helper.
+    /// (Utilities, vendor folders), plus Finder's CoreServices bundle. Entries
+    /// are visited sorted with /Applications first, so dedupe keeps the
+    /// user-visible copy of an app that exists in two roots. Names come from
+    /// Finder's display name (the same derivation AppCatalog uses everywhere),
+    /// so the launcher and host's app pickers agree on what an app is called.
     nonisolated static func scanInstalledApps()
             -> [(name: String, bundleId: String, path: String)] {
         let fm = FileManager.default
@@ -491,6 +491,8 @@ extension Native {
                 }
             }
         }
+        // Finder lives alongside OS agents outside the Applications roots.
+        add("/System/Library/CoreServices/Finder.app")
         return out
     }
 
