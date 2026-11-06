@@ -159,6 +159,12 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
             }
         }
 
+        let report = NSMenuItem(title: Strings.t("menu.report", default: "Report a Problem…"),
+                                action: #selector(reportProblem), keyEquivalent: "")
+        report.target = self
+        report.toolTip = Strings.t("menu.report.tip", default: "Email us or open a GitHub issue with your version, macOS, permissions and enabled features filled in -- the details that make a report reproducible")
+        menu.addItem(report)
+
         // "More": the other Homepage tabs plus rarely-touched utilities, tucked
         // into one submenu so the top level stays short.
         let more = NSMenuItem(title: Strings.t("menu.more", default: "More"), action: nil, keyEquivalent: "")
@@ -194,12 +200,6 @@ final class StatusBarController: NSObject, NSMenuDelegate, NSApplicationDelegate
         logs.target = self
         logs.toolTip = Strings.t("menu.logs.tip", default: "Daily log files (troubleshooting clues live here)")
         moreMenu.addItem(logs)
-
-        let report = NSMenuItem(title: Strings.t("menu.report", default: "Report a Problem…"),
-                                action: #selector(reportProblem), keyEquivalent: "")
-        report.target = self
-        report.toolTip = Strings.t("menu.report.tip", default: "Email us or open a GitHub issue with your version, macOS, permissions and enabled features filled in -- the details that make a report reproducible")
-        moreMenu.addItem(report)
 
         // Only a packaged build can update itself: a dev `swift run` has no
         // SUFeedURL, so Updater has no controller and the item would do nothing.

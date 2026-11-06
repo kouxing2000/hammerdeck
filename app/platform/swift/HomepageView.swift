@@ -148,6 +148,26 @@ struct HomepageView: View {
                 }
                 .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    Divider()
+                    Button {
+                        NSApp.sendAction(#selector(StatusBarController.reportProblem), to: nil, from: nil)
+                    } label: {
+                        Label(Strings.t("menu.report", default: "Report a Problem…"),
+                              systemImage: "exclamationmark.bubble")
+                            .font(.callout)
+                            .foregroundStyle(.tint)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Strings.t("menu.report", default: "Report a Problem…"))
+                }
+            }
         } detail: {
             switch nav.destination {
             case .home:
