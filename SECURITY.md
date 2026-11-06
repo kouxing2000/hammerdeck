@@ -103,8 +103,11 @@ consequences of something you turned on or did:
 2. **Bing Daily Wallpaper** (feature, off by default) -- fetches the picture of
    the day from `bing.com`. It is the entire point of the feature.
 3. **Text Actions -> AI entries** (feature, off by default, and the AI half stays
-   hidden until you enter and validate a key) -- posts the text you selected to
-   `api.openai.com` with your own key, which is stored in the login Keychain.
+   hidden until you enter and validate a key) -- posts the text you selected,
+   with the action's prompt (editable in Settings) and what you type for it (a
+   target language, an instruction, or a follow-up question in its chat window,
+   which resends the conversation so far), to `api.openai.com` with your own
+   key, which is stored in the login Keychain.
    This is the only feature that sends your content anywhere, it only fires on
    an action you invoke, and it does nothing without a key you supplied.
 4. **Favicons** -- Tab Switcher and Quick Sites show a site's icon. They first ask
