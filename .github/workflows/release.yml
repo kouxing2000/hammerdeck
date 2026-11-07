@@ -63,7 +63,7 @@ jobs:
       VERSION: ${{ github.ref_name }}
 
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
 
       # `actions/checkout` does NOT bring the annotation. For a tag push its
       # ref-helper builds the refspec `+<github.sha>:refs/tags/<name>`, which

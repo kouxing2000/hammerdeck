@@ -61,7 +61,7 @@ jobs:
       # ARCHIVE -- its version, bundle id, public key, notarization ticket, and
       # `HDSourceCommit`, which is compared against what this tag resolves to.
       # That comparison needs the tag object, not a checkout of it.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
 
       # The release notes live in the tag's ANNOTATION and the generator refuses
       # a lightweight tag; the provenance gate needs the same object to resolve
@@ -135,7 +135,7 @@ jobs:
     env:
       TAG: ${{ inputs.tag }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
 
       - name: Point the Homebrew cask at this build
         env:
